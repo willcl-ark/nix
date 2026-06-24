@@ -51,6 +51,7 @@ systemd ordering details.
 ## Interface
 
 - `services.bitcoinDnsSeed.enable`
+- `services.bitcoinDnsSeed.package`
 - `services.bitcoinDnsSeed.dataDir`
 - `services.bitcoinDnsSeed.serverName`
 - `services.bitcoinDnsSeed.soaRname`

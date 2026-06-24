@@ -1,7 +1,7 @@
 # Nix Packages and Modules
 
-Reusable NixOS modules and, eventually, package definitions for services I run
-or maintain.
+Reusable Nix packages and NixOS modules for software and services I run or
+maintain.
 
 This repository is intentionally a collection repo: each service stays in its
 own directory, but consumers can import just the module they need through a
@@ -13,9 +13,16 @@ stable named flake output.
 | --- | --- | --- |
 | `nixosModules.bitcoin-dnsseed` | `services.bitcoinDnsSeed` | Bitcoin DNS seed deployment using `dnsseedrs`, CoreDNS, DNSSEC key material, optional Tor/I2P proxies, and Caddy seed dumps. |
 | `nixosModules.bitcoin-core-guix-substitutes` | `services.bitcoinCoreGuixSubstitutes` | Bitcoin Core Guix substitute publisher with `guix publish`, scheduled builds, signing-key publication, and Caddy wiring. |
+| `nixosModules.dnsseedrs` | `services.dnsseedrs` | Generic multi-instance dnsseedrs service module. |
 | `nixosModules.forgejo-site` | `services.forgejoSite` | Forgejo site deployment with Caddy, optional Anubis, sops-managed secrets, mailer settings, and initial admin bootstrap. |
 | `nixosModules.radicle-mirror` | `services.radicleMirror` | Public Radicle seed, Radicle Explorer frontend, and scheduled Bitcoin Core Git mirror. |
 | `nixosModules.stuntman` | `services.stuntman` | STUNTMAN STUN server plus the `btcpunch` UDP rendezvous helper. |
+
+## Packages
+
+| Output | Purpose |
+| --- | --- |
+| `packages.<system>.dnsseedrs` | Bitcoin DNS seeder built from `willcl-ark/dnsseedrs`. |
 
 ## Usage
 
@@ -67,9 +74,12 @@ keeps hosts from accidentally depending on unrelated services.
 modules/
   bitcoin-core-guix-substitutes/
   bitcoin-dnsseed/
+  dnsseedrs/
   forgejo-site/
   radicle-mirror/
   stuntman/
+pkgs/
+  dnsseedrs/
 ```
 
 Each module directory may contain:
@@ -79,7 +89,7 @@ Each module directory may contain:
 - `README.md`: service-specific options and notes.
 - `scripts/`: runtime helpers used by the module.
 
-Future custom derivations should live under `pkgs/` and be exposed through
+Package derivations live under `pkgs/` and are exposed through
 `packages.<system>.<name>`.
 
 ## Development

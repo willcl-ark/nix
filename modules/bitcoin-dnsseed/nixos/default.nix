@@ -1,11 +1,12 @@
-{ dnsseedrs }:
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
   cfg = config.services.bitcoinDnsSeed;
+  defaultPackage = pkgs.callPackage ../../../pkgs/dnsseedrs { };
 
   mkDnssecSecrets =
     network: files:
@@ -23,6 +24,7 @@ let
 
   mkDnsseedrsInstance = name: network: {
     enable = network.enable;
+    package = cfg.package;
     chain = network.chain;
     seedDomain = network.seedDomain;
     serverName = cfg.serverName;
@@ -63,11 +65,18 @@ let
 in
 {
   imports = [
-    dnsseedrs.nixosModules.default
+    ../../dnsseedrs/nixos
   ];
 
   options.services.bitcoinDnsSeed = {
     enable = lib.mkEnableOption "Bitcoin DNS seed deployment";
+
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = defaultPackage;
+      defaultText = lib.literalExpression "pkgs.callPackage ../../../pkgs/dnsseedrs { }";
+      description = "dnsseedrs package to run.";
+    };
 
     dataDir = lib.mkOption {
       type = lib.types.str;
@@ -280,8 +289,6 @@ in
         message = "services.bitcoinDnsSeed.signet.dnssecKeyFiles must be set when signet is enabled.";
       }
     ];
-
-    nixpkgs.overlays = [ dnsseedrs.overlays.default ];
 
     networking.nameservers = lib.mkIf cfg.coredns.enable [
       "1.1.1.1"

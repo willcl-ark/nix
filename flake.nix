@@ -1,18 +1,11 @@
 {
   description = "Reusable NixOS modules and packages";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    dnsseedrs = {
-      url = "github:willcl-ark/dnsseedrs";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-  };
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs =
     {
       nixpkgs,
-      dnsseedrs,
       ...
     }:
     let
@@ -23,7 +16,14 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
-      nixosModules = import ./modules { inherit dnsseedrs; };
+      packages = forAllSystems (
+        system:
+        import ./pkgs {
+          pkgs = nixpkgs.legacyPackages.${system};
+        }
+      );
+
+      nixosModules = import ./modules;
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-tree);
     };
