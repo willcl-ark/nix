@@ -219,7 +219,7 @@ in
 
     additionalGuixTimemachineFlags = lib.mkOption {
       type = lib.types.str;
-      default = "--url=https://github.com/Millak/guix.git";
+      default = "--url=https://codeberg.org/guix/guix.git";
       description = "Flags passed through ADDITIONAL_GUIX_TIMEMACHINE_FLAGS.";
     };
 
