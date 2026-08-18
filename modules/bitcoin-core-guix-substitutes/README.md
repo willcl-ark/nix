@@ -4,8 +4,8 @@ Reusable NixOS module for publishing Bitcoin Core Guix build substitutes.
 
 The base module owns the Guix daemon, `guix publish`, public signing-key files,
 the landing page, and Caddy virtual host wiring. The optional builder owns the
-immutable manifest queue, nightly manifest submission, manifest worker, and
-retention timers.
+source-job queue, nightly source submission, Bitcoin worker, and retention
+timers.
 
 Host-local policy such as cloud instance lifecycle, Guix offload machine
 definitions, credentials, and archive-key trust stays outside this module. If
@@ -64,9 +64,17 @@ Guix offloading in the host configuration.
 }
 ```
 
-The builder installs `guix-bitcoin-submit` as an operator tool. Manual jobs are
-submitted from a staged directory containing `manifests/manifest_*.scm` and an
-optional regular-file-only `context/` directory.
+The builder installs `guix-bitcoin-submit` as an operator tool:
+
+```bash
+guix-bitcoin-submit [--repository REPOSITORY] COMMIT
+```
+
+`COMMIT` must be a lowercase full 40-character commit hash. If `--repository`
+is omitted, the configured Bitcoin Core repository is used. The server fetches
+the requested repository into its local Git object store, proves the commit is
+reachable from that repository's fetched refs, pins the accepted job, and builds
+the `contrib/guix/manifest_*.scm` files from a detached worktree.
 
 ## Interface
 
@@ -87,7 +95,6 @@ Builder options:
 - `services.bitcoinCoreGuixSubstitutes.builder.buildUser`
 - `services.bitcoinCoreGuixSubstitutes.builder.buildGroup`
 - `services.bitcoinCoreGuixSubstitutes.builder.bitcoinRepository`
-- `services.bitcoinCoreGuixSubstitutes.builder.bitcoinRemote`
 - `services.bitcoinCoreGuixSubstitutes.builder.bitcoinBranch`
 - `services.bitcoinCoreGuixSubstitutes.builder.buildJobs`
 - `services.bitcoinCoreGuixSubstitutes.builder.nativeSystems`
@@ -98,7 +105,6 @@ Builder options:
 - `services.bitcoinCoreGuixSubstitutes.builder.schedule.*`
 - `services.bitcoinCoreGuixSubstitutes.builder.retention.*`
 
-The builder is a hard cutover from the old mutable-checkout `guix-build` timer.
-It materializes each queued manifest as immutable jobs, roots profile
-derivations, materializes the complete derivation-output closure, then waits for
-the local `guix publish` endpoint to serve all resulting substitutes.
+The builder materializes each queued source job as immutable profiles, roots
+profile derivations, materializes the complete derivation-output closure, then
+waits for the local `guix publish` endpoint to serve all resulting substitutes.

@@ -13,6 +13,16 @@ let
   nativeSystemsText = lib.concatStringsSep " " builder.nativeSystems;
   targetHostsText = lib.concatStringsSep " " builder.targetHosts;
   timeMachineFlagsText = lib.concatStringsSep "\n" builder.additionalTimeMachineFlags;
+  runtimePath = lib.makeBinPath [
+    pkgs.coreutils
+    pkgs.curl
+    pkgs.findutils
+    pkgs.git
+    pkgs.gnugrep
+    pkgs.gnused
+    pkgs.util-linux
+    config.services.guix.package
+  ];
 
   submitSource = pkgs.writeText "guix-bitcoin-submit" (
     builtins.readFile ../scripts/guix-bitcoin-submit
@@ -20,8 +30,8 @@ let
   nightlySource = pkgs.writeText "guix-bitcoin-nightly" (
     builtins.readFile ../scripts/guix-bitcoin-nightly
   );
-  workerSource = pkgs.writeText "guix-manifest-worker" (
-    builtins.readFile ../scripts/guix-manifest-worker
+  workerSource = pkgs.writeText "guix-bitcoin-worker" (
+    builtins.readFile ../scripts/guix-bitcoin-worker
   );
   tool =
     name: source:
@@ -37,11 +47,12 @@ let
       export GUIX_BITCOIN_TIMEMACHINE_URL=${lib.escapeShellArg builder.timeMachineUrl}
       export GUIX_BITCOIN_TIMEMACHINE_COMMIT=${lib.escapeShellArg builder.timeMachineCommit}
       export GUIX_BITCOIN_TIMEMACHINE_FLAGS=${lib.escapeShellArg timeMachineFlagsText}
+      export PATH=${lib.escapeShellArg runtimePath}:$PATH
       exec ${pkgs.bash}/bin/bash ${source} "$@"
     '';
   submitTool = tool "guix-bitcoin-submit" submitSource;
   nightlyTool = tool "guix-bitcoin-nightly" nightlySource;
-  workerTool = tool "guix-manifest-worker" workerSource;
+  workerTool = tool "guix-bitcoin-worker" workerSource;
   servicePath = [
     pkgs.bash
     pkgs.coreutils
@@ -50,11 +61,11 @@ let
     pkgs.git
     pkgs.gnugrep
     pkgs.gnused
+    pkgs.util-linux
     config.services.guix.package
     submitTool
   ];
   jobDirectories = [
-    "${cfg.dataDir}/bitcoin"
     jobsRoot
     "${jobsRoot}/.tmp"
     "${jobsRoot}/queued"
@@ -62,6 +73,8 @@ let
     "${jobsRoot}/succeeded"
     "${jobsRoot}/failed"
     profilesRoot
+    "${cfg.dataDir}/repositories"
+    "${cfg.dataDir}/worktrees"
   ];
   prepareDirectories = [
     "+${pkgs.coreutils}/bin/install -d -m 0751 -o ${builder.buildUser} -g ${builder.buildGroup} ${cfg.dataDir}"
@@ -83,36 +96,30 @@ let
 in
 {
   options.services.bitcoinCoreGuixSubstitutes.builder = {
-    enable = lib.mkEnableOption "Bitcoin Core Guix manifest builder";
+    enable = lib.mkEnableOption "Bitcoin Core Guix source-job builder";
 
     buildUser = lib.mkOption {
       type = lib.types.str;
       default = "guix-bitcoin-build";
-      description = "System user that runs Bitcoin Core Guix manifest builds.";
+      description = "System user that runs Bitcoin Core Guix source jobs.";
     };
 
     buildGroup = lib.mkOption {
       type = lib.types.str;
       default = "guix-bitcoin-build";
-      description = "System group that runs Bitcoin Core Guix manifest builds.";
+      description = "System group that runs Bitcoin Core Guix source jobs.";
     };
 
     bitcoinRepository = lib.mkOption {
       type = lib.types.str;
       default = "https://github.com/bitcoin/bitcoin";
-      description = "Bitcoin Core Git repository used for nightly manifest submissions.";
-    };
-
-    bitcoinRemote = lib.mkOption {
-      type = lib.types.str;
-      default = "origin";
-      description = "Remote name used for the Bitcoin Core checkout.";
+      description = "Bitcoin Core Git repository used for nightly source jobs.";
     };
 
     bitcoinBranch = lib.mkOption {
       type = lib.types.str;
       default = "master";
-      description = "Branch used for nightly manifest submissions.";
+      description = "Branch used for nightly source jobs.";
     };
 
     buildJobs = lib.mkOption {
@@ -155,13 +162,13 @@ in
       onCalendar = lib.mkOption {
         type = lib.types.str;
         default = "*-*-* 06:00:00 UTC";
-        description = "systemd OnCalendar value for nightly manifest submissions.";
+        description = "systemd OnCalendar value for nightly source-job submissions.";
       };
 
       randomizedDelaySec = lib.mkOption {
         type = lib.types.str;
         default = "0";
-        description = "Randomized delay for nightly manifest submissions.";
+        description = "Randomized delay for nightly source-job submissions.";
       };
     };
 
@@ -169,25 +176,19 @@ in
       succeededJobMaxAgeDays = lib.mkOption {
         type = lib.types.ints.positive;
         default = 14;
-        description = "Age in days after which succeeded manifest jobs are removed.";
+        description = "Age in days after which succeeded source jobs are removed.";
       };
 
       failedJobMaxAgeDays = lib.mkOption {
         type = lib.types.ints.positive;
         default = 30;
-        description = "Age in days after which failed manifest jobs are removed.";
+        description = "Age in days after which failed source jobs are removed.";
       };
 
       profileMaxAgeDays = lib.mkOption {
         type = lib.types.ints.positive;
         default = 14;
         description = "Age in days after which materialized Guix profiles are removed.";
-      };
-
-      checkoutBuildMaxAgeDays = lib.mkOption {
-        type = lib.types.ints.positive;
-        default = 14;
-        description = "Age in days after which guix-build-* checkout directories are removed.";
       };
 
       cleanupRandomizedDelaySec = lib.mkOption {
@@ -234,7 +235,7 @@ in
     ) jobDirectories;
 
     systemd.services.guix-bitcoin-nightly = {
-      description = "Submit the nightly Bitcoin Core Guix manifest job";
+      description = "Submit the nightly Bitcoin Core Guix source job";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       path = servicePath;
@@ -244,11 +245,10 @@ in
         User = builder.buildUser;
         Group = builder.buildGroup;
         ExecStartPre = prepareDirectories;
-        ExecStartPost = "+${pkgs.systemd}/bin/systemctl start --no-block guix-manifest-worker.service";
+        ExecStartPost = "+${pkgs.systemd}/bin/systemctl start --no-block guix-bitcoin-worker.service";
       };
       environment = {
         GUIX_BITCOIN_REPOSITORY = builder.bitcoinRepository;
-        GUIX_BITCOIN_REMOTE = builder.bitcoinRemote;
         GUIX_BITCOIN_BRANCH = builder.bitcoinBranch;
       };
     };
@@ -262,8 +262,8 @@ in
       };
     };
 
-    systemd.services.guix-manifest-worker = {
-      description = "Build queued immutable Guix manifest jobs";
+    systemd.services.guix-bitcoin-worker = {
+      description = "Build queued Bitcoin Core Guix source jobs";
       after = [
         "network-online.target"
         "guix-daemon.service"
@@ -275,7 +275,7 @@ in
         "guix-publish.service"
       ];
       path = servicePath ++ [ workerTool ];
-      script = "${workerTool}/bin/guix-manifest-worker";
+      script = "${workerTool}/bin/guix-bitcoin-worker";
       serviceConfig = {
         Type = "oneshot";
         User = builder.buildUser;
@@ -285,7 +285,7 @@ in
     };
 
     systemd.services.guix-bitcoin-build-cleanup = {
-      description = "Clean old Bitcoin Core Guix manifest builder state";
+      description = "Clean old Bitcoin Core Guix source builder state";
       serviceConfig = {
         Type = "oneshot";
         User = builder.buildUser;
@@ -293,24 +293,52 @@ in
         ExecStartPre = prepareDirectories;
       };
       path = [
+        pkgs.bash
+        pkgs.coreutils
         pkgs.findutils
+        pkgs.git
+        pkgs.gnugrep
+        pkgs.util-linux
       ];
       script = ''
-        find ${jobsRoot}/succeeded \
+        set -euo pipefail
+
+        cleanup_job() {
+          local job=$1
+          local job_id
+          job_id=$(basename "$job")
+          if ! [[ $job_id =~ ^[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9]+$ ]]; then
+            echo "Skipping unsafe terminal job name: $job_id" >&2
+            return 0
+          fi
+
+          if [[ -d ${cfg.dataDir}/repositories/bitcoin.git ]]; then
+            (
+              flock 9
+              git --git-dir ${cfg.dataDir}/repositories/bitcoin.git worktree remove \
+                --force ${cfg.dataDir}/worktrees/"$job_id" >/dev/null 2>&1 || true
+              git --git-dir ${cfg.dataDir}/repositories/bitcoin.git update-ref \
+                -d refs/guix-jobs/"$job_id" >/dev/null 2>&1 || true
+            ) 9>${cfg.dataDir}/repositories/git.lock
+          fi
+          rm -rf -- ${cfg.dataDir}/worktrees/"$job_id"
+          rm -rf -- ${profilesRoot}/*/"$job_id"
+          rm -rf -- "$job"
+        }
+
+        while IFS= read -r -d "" job; do
+          cleanup_job "$job"
+        done < <(find ${jobsRoot}/succeeded \
           -mindepth 1 -maxdepth 1 -type d \
-          -mtime +${toString builder.retention.succeededJobMaxAgeDays} \
-          -exec rm -rf {} +
-        find ${jobsRoot}/failed \
+          -mtime +${toString builder.retention.succeededJobMaxAgeDays} -print0)
+        while IFS= read -r -d "" job; do
+          cleanup_job "$job"
+        done < <(find ${jobsRoot}/failed \
           -mindepth 1 -maxdepth 1 -type d \
-          -mtime +${toString builder.retention.failedJobMaxAgeDays} \
-          -exec rm -rf {} +
+          -mtime +${toString builder.retention.failedJobMaxAgeDays} -print0)
         find ${profilesRoot} \
           -mindepth 2 -maxdepth 2 -type d \
           -mtime +${toString builder.retention.profileMaxAgeDays} \
-          -exec rm -rf {} +
-        find ${cfg.dataDir}/bitcoin \
-          -maxdepth 1 -type d -name 'guix-build-*' \
-          -mtime +${toString builder.retention.checkoutBuildMaxAgeDays} \
           -exec rm -rf {} +
       '';
     };

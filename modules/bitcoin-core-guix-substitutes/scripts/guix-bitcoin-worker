@@ -5,6 +5,10 @@ set -euo pipefail
 data_dir=${GUIX_BITCOIN_DATA_DIR:?GUIX_BITCOIN_DATA_DIR is required}
 jobs_dir=$data_dir/jobs
 profiles_root=$data_dir/profiles
+repositories_dir=$data_dir/repositories
+repo_dir=$repositories_dir/bitcoin.git
+git_lock=$repositories_dir/git.lock
+worktrees_root=$data_dir/worktrees
 build_jobs=${GUIX_BITCOIN_BUILD_JOBS:?GUIX_BITCOIN_BUILD_JOBS is required}
 host_true=${GUIX_BITCOIN_HOST_TRUE:?GUIX_BITCOIN_HOST_TRUE is required}
 prewarm_url=${GUIX_BITCOIN_PREWARM_URL:?GUIX_BITCOIN_PREWARM_URL is required}
@@ -16,7 +20,24 @@ time_machine_commit=${GUIX_BITCOIN_TIMEMACHINE_COMMIT:?GUIX_BITCOIN_TIMEMACHINE_
 time_machine_flags=${GUIX_BITCOIN_TIMEMACHINE_FLAGS:-}
 
 mkdir -p "$jobs_dir/.tmp" "$jobs_dir/queued" "$jobs_dir/running" \
-    "$jobs_dir/succeeded" "$jobs_dir/failed" "$profiles_root"
+    "$jobs_dir/succeeded" "$jobs_dir/failed" "$profiles_root" \
+    "$repositories_dir" "$worktrees_root"
+
+exec 8>"$jobs_dir/worker.lock"
+if ! flock -n 8; then
+    echo "Another guix-bitcoin-worker is already running"
+    exit 0
+fi
+
+with_git_lock() {
+    flock 9
+    "$@"
+    local status=$?
+    flock -u 9
+    return "$status"
+}
+
+exec 9>"$git_lock"
 
 recover_running_jobs() {
     shopt -s nullglob
@@ -251,12 +272,106 @@ check_manifest() {
     done
 }
 
+read_metadata() {
+    local metadata=$1
+    local expected_job_id=$2
+    local line key value
+    local -A seen=()
+
+    schema_version=
+    job_id=
+    submitted_at=
+    method=
+    source_repository=
+    source_commit=
+
+    while IFS= read -r line || [[ -n $line ]]; do
+        [[ $line == *=* && $line != *$'\r'* ]] || {
+            echo "invalid metadata line" >&2
+            return 1
+        }
+        key=${line%%=*}
+        value=${line#*=}
+        [[ -z ${seen[$key]+x} ]] || {
+            echo "duplicate metadata key: $key" >&2
+            return 1
+        }
+        seen[$key]=1
+        case $key in
+            schema_version) schema_version=$value ;;
+            job_id) job_id=$value ;;
+            submitted_at) submitted_at=$value ;;
+            method) method=$value ;;
+            source_repository) source_repository=$value ;;
+            source_commit) source_commit=$value ;;
+            *)
+                echo "unknown metadata key: $key" >&2
+                return 1
+                ;;
+        esac
+    done < "$metadata"
+
+    [[ $schema_version == 2 ]] || {
+        echo "unsupported metadata schema: ${schema_version:-missing}" >&2
+        return 1
+    }
+    [[ $job_id == "$expected_job_id" ]] || {
+        echo "metadata job_id does not match directory: $expected_job_id" >&2
+        return 1
+    }
+    [[ $submitted_at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+        echo "invalid submitted_at timestamp: ${submitted_at:-missing}" >&2
+        return 1
+    }
+    [[ $method == manual || $method == nightly ]] || {
+        echo "invalid job method: $method" >&2
+        return 1
+    }
+    [[ $source_repository != -* && -n $source_repository ]] || {
+        echo "invalid source repository" >&2
+        return 1
+    }
+    [[ $source_commit =~ ^[0-9a-f]{40}$ ]] || {
+        echo "invalid source commit: $source_commit" >&2
+        return 1
+    }
+}
+
+prepare_worktree() {
+    local job_id=$1
+    local commit=$2
+    local worktree=$worktrees_root/$job_id
+    local current=
+
+    [[ -d $repo_dir ]] || {
+        echo "missing Git repository object store: $repo_dir" >&2
+        return 1
+    }
+    if [[ -e $worktree ]]; then
+        current=$(git -C "$worktree" rev-parse --verify HEAD 2>/dev/null || true)
+        [[ $current == "$commit" ]] || {
+            echo "existing worktree is not at requested commit: $worktree" >&2
+            return 1
+        }
+        printf '%s\n' "$worktree"
+        return 0
+    fi
+
+    with_git_lock git --git-dir "$repo_dir" worktree add \
+        --detach "$worktree" "refs/guix-jobs/$job_id" >/dev/null
+    current=$(git -C "$worktree" rev-parse --verify HEAD)
+    [[ $current == "$commit" ]] || {
+        echo "created worktree at unexpected commit: $current" >&2
+        return 1
+    }
+    printf '%s\n' "$worktree"
+}
+
 materialize_job() {
     local job_id=$1
     local job=$jobs_dir/running/$job_id
-    local manifests_dir=$job/manifests
-    local context_manifest_dir=$job/context/contrib/guix
-    local work_dir=$job/work
+    local worktree
+    local manifests_dir
     local manifest source wrapper profile
     local derivation_roots_dir derivation_outputs_dir derivation_root output_root
     local derivations_output
@@ -266,34 +381,28 @@ materialize_job() {
     local -a hosts=()
     local -a derivations=()
 
-    [[ -f $job/metadata && -d $manifests_dir ]] || {
+    [[ -f $job/metadata ]] || {
         echo "invalid job structure: $job_id" >&2
         return 1
     }
+    read_metadata "$job/metadata" "$job_id"
     if find "$job" -type l -print -quit | grep -q .; then
         echo "job contains a symlink: $job_id" >&2
         return 1
     fi
-    if [[ -d $job/context ]] && find "$job/context" ! -type f ! -type d -print -quit | grep -q .; then
-        echo "job context contains a non-regular entry: $job_id" >&2
-        return 1
-    fi
-    mapfile -t manifests < <(find "$manifests_dir" -mindepth 1 -maxdepth 1 -print | sort)
-    (("${#manifests[@]}" > 0)) || {
-        echo "job has no manifests: $job_id" >&2
+
+    worktree=$(prepare_worktree "$job_id" "$source_commit")
+    manifests_dir=$worktree/contrib/guix
+    [[ -d $manifests_dir ]] || {
+        echo "job source has no contrib/guix directory: $job_id" >&2
         return 1
     }
-    for manifest in "${manifests[@]}"; do
-        name=$(basename "$manifest")
-        [[ -f $manifest && ! -L $manifest ]] || {
-            echo "manifest entries must be regular files: $name" >&2
-            return 1
-        }
-        [[ $name =~ ^manifest_[A-Za-z0-9._-]+\.scm$ ]] || {
-            echo "unsafe manifest filename: $name" >&2
-            return 1
-        }
-    done
+    mapfile -t manifests < <(find "$manifests_dir" -mindepth 1 -maxdepth 1 \
+        -type f -name 'manifest_*.scm' -print | sort)
+    (("${#manifests[@]}" > 0)) || {
+        echo "job has no contrib/guix/manifest_*.scm files: $job_id" >&2
+        return 1
+    }
     read -r -a systems <<< "$native_systems"
     read -r -a hosts <<< "$target_hosts"
     (("${#systems[@]}" > 0 && "${#hosts[@]}" > 0)) || {
@@ -306,10 +415,7 @@ materialize_job() {
             for manifest in "${manifests[@]}"; do
                 name=$(basename "$manifest")
                 source=$manifest
-                if [[ -f $context_manifest_dir/$name ]]; then
-                    source=$context_manifest_dir/$name
-                fi
-                wrapper=$work_dir/wrappers/$system/$name
+                wrapper=$job/work/wrappers/$system/$name
                 profile=$profiles_root/$system/$job_id/$host/${name%.scm}
                 derivation_roots_dir=$profile.derivations
                 derivation_outputs_dir=$profile.derivation-outputs
@@ -371,7 +477,7 @@ materialize_job() {
         for host in "${hosts[@]}"; do
             for manifest in "${manifests[@]}"; do
                 name=$(basename "$manifest")
-                check_manifest "$system" "$host" "$work_dir/wrappers/$system/$name"
+                check_manifest "$system" "$host" "$job/work/wrappers/$system/$name"
                 profile=$profiles_root/$system/$job_id/$host/${name%.scm}
                 write_result "$job" "$system" "$host" "${name%.scm}" succeeded "$profile"
             done

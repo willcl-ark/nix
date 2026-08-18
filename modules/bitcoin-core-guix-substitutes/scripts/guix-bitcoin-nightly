@@ -2,43 +2,30 @@
 
 set -euo pipefail
 
-data_dir=${GUIX_BITCOIN_DATA_DIR:?GUIX_BITCOIN_DATA_DIR is required}
 repository=${GUIX_BITCOIN_REPOSITORY:?GUIX_BITCOIN_REPOSITORY is required}
-remote=${GUIX_BITCOIN_REMOTE:-origin}
 branch=${GUIX_BITCOIN_BRANCH:-master}
-checkout=$data_dir/bitcoin
 
-if [[ ! -d $checkout/.git ]]; then
-    git clone "$repository" "$checkout"
+if [[ -z $repository || $repository == -* || $repository == *$'\n'* || $repository == *$'\r'* ]]; then
+    echo "repository must be a safe single-line string" >&2
+    exit 2
 fi
-git -C "$checkout" fetch "$remote" "$branch"
-commit=$(git -C "$checkout" rev-parse "$remote/$branch")
-git -C "$checkout" reset --hard "$commit"
+if ! git check-ref-format "refs/heads/$branch"; then
+    echo "invalid branch name: $branch" >&2
+    exit 2
+fi
 
-mapfile -t manifests < <(
-    find "$checkout/contrib/guix" -mindepth 1 -maxdepth 1 \
-        -type f -name 'manifest_*.scm' -print | sort
-)
-if ((${#manifests[@]} == 0)); then
-    echo "ERR: no contrib/guix/manifest_*.scm files found" >&2
+line=$(git ls-remote --heads "$repository" "$branch")
+if [[ -z $line ]]; then
+    echo "branch not found in repository: $branch" >&2
+    exit 1
+fi
+commit=${line%%$'\t'*}
+if [[ ! $commit =~ ^[0-9a-f]{40}$ ]]; then
+    echo "repository returned an invalid commit for $branch: $commit" >&2
     exit 1
 fi
 
-stage=$(mktemp -d "$data_dir/jobs/.tmp/nightly.XXXXXX")
-cleanup() {
-    rm -rf -- "$stage"
-}
-trap cleanup EXIT
-mkdir -p "$stage/manifests" "$stage/context/contrib/guix"
-cp -a --no-preserve=ownership "$checkout/contrib/guix/." \
-    "$stage/context/contrib/guix/"
-for manifest in "${manifests[@]}"; do
-    cp --reflink=auto -- "$manifest" "$stage/manifests/$(basename "$manifest")"
-done
-
 guix-bitcoin-submit \
-    --staged "$stage" \
+    --repository "$repository" \
     --method nightly \
-    --source-repository "$repository" \
-    --source-commit "$commit" \
-    --description "Nightly Bitcoin Core manifests from $branch"
+    "$commit"
