@@ -15,11 +15,10 @@ if [[ $(id -u) == 0 && -n ${GUIX_BITCOIN_BUILD_USER:-} ]]; then
 fi
 
 repository=$default_repository
-method=manual
 commit=
 
 usage() {
-    echo "usage: guix-bitcoin-submit [--repository REPOSITORY] [--method manual|nightly] COMMIT" >&2
+    echo "usage: guix-bitcoin-submit [--repository REPOSITORY] COMMIT" >&2
 }
 
 while (($#)); do
@@ -28,11 +27,7 @@ while (($#)); do
             repository=${2:?--repository requires a value}
             shift 2
             ;;
-        --method)
-            method=${2:?--method requires a value}
-            shift 2
-            ;;
-        --staged|--source-repository|--source-commit)
+        --method|--staged|--source-repository|--source-commit)
             usage
             exit 2
             ;;
@@ -53,10 +48,6 @@ done
 
 if [[ -z $commit ]]; then
     usage
-    exit 2
-fi
-if [[ $method != manual && $method != nightly ]]; then
-    echo "method must be manual or nightly" >&2
     exit 2
 fi
 if [[ ! $commit =~ ^[0-9a-f]{40}$ ]]; then
@@ -105,15 +96,8 @@ cleanup() {
 trap cleanup EXIT
 
 git --git-dir "$repo_dir" update-ref "refs/guix-jobs/$job_id" "$commit"
-timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-{
-    printf 'schema_version=2\n'
-    printf 'job_id=%s\n' "$job_id"
-    printf 'submitted_at=%s\n' "$timestamp"
-    printf 'method=%s\n' "$method"
-    printf 'source_repository=%s\n' "$repository"
-    printf 'source_commit=%s\n' "$commit"
-} > "$tmp_dir/metadata"
+printf '%s\n' "$repository" > "$tmp_dir/source_repository"
+printf '%s\n' "$commit" > "$tmp_dir/source_commit"
 mv -T --no-clobber -- "$tmp_dir" "$jobs_dir/queued/$job_id"
 if [[ -e $tmp_dir ]]; then
     echo "job destination already exists: $job_id" >&2

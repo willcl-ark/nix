@@ -27,5 +27,4 @@ fi
 
 guix-bitcoin-submit \
     --repository "$repository" \
-    --method nightly \
     "$commit"

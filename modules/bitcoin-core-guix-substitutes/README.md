@@ -73,6 +73,7 @@ guix-bitcoin-submit [--repository REPOSITORY] COMMIT
 `COMMIT` must be a lowercase full 40-character commit hash. If `--repository`
 is omitted, the configured Bitcoin Core repository is used. The server fetches
 only that commit into its local Git object store, pins the accepted job, and
+queues `source_repository` and `source_commit` descriptor files. The worker
 builds the `contrib/guix/manifest_*.scm` files from a detached worktree. This is
 a trusted-operator interface; the repository is the source used to obtain the
 requested commit, not a provenance boundary.
@@ -102,7 +103,6 @@ Builder options:
 - `services.bitcoinCoreGuixSubstitutes.builder.targetHosts`
 - `services.bitcoinCoreGuixSubstitutes.builder.timeMachineUrl`
 - `services.bitcoinCoreGuixSubstitutes.builder.timeMachineCommit`
-- `services.bitcoinCoreGuixSubstitutes.builder.additionalTimeMachineFlags`
 - `services.bitcoinCoreGuixSubstitutes.builder.schedule.*`
 - `services.bitcoinCoreGuixSubstitutes.builder.retention.*`
 

@@ -17,7 +17,6 @@ native_systems=${GUIX_BITCOIN_NATIVE_SYSTEMS:?GUIX_BITCOIN_NATIVE_SYSTEMS is req
 target_hosts=${GUIX_BITCOIN_TARGET_HOSTS:?GUIX_BITCOIN_TARGET_HOSTS is required}
 time_machine_url=${GUIX_BITCOIN_TIMEMACHINE_URL:?GUIX_BITCOIN_TIMEMACHINE_URL is required}
 time_machine_commit=${GUIX_BITCOIN_TIMEMACHINE_COMMIT:?GUIX_BITCOIN_TIMEMACHINE_COMMIT is required}
-time_machine_flags=${GUIX_BITCOIN_TIMEMACHINE_FLAGS:-}
 
 mkdir -p "$jobs_dir/.tmp" "$jobs_dir/queued" "$jobs_dir/running" \
     "$jobs_dir/succeeded" "$jobs_dir/failed" "$profiles_root" \
@@ -49,17 +48,12 @@ recover_running_jobs() {
 }
 
 time_machine() {
-    local -a flags=()
-    if [[ -n $time_machine_flags ]]; then
-        mapfile -t flags <<< "$time_machine_flags"
-    fi
     guix time-machine \
         --url="$time_machine_url" \
         --commit="$time_machine_commit" \
         --cores="$build_jobs" \
         --keep-failed \
         --fallback \
-        "${flags[@]}" \
         -- "$@"
 }
 
@@ -244,22 +238,6 @@ materialize_derivation_closure_outputs() {
     materialize_derivation_outputs "$root_dir" "${derivations[@]}"
 }
 
-write_result() {
-    local job=$1
-    local system=$2
-    local host=$3
-    local manifest=$4
-    local status=$5
-    local profile=$6
-    local result_dir=$job/results/$system/$host
-    local result_tmp
-    mkdir -p "$result_dir"
-    result_tmp=$(mktemp "$result_dir/.result.XXXXXX")
-    printf 'status=%s\nmanifest=%s\nnative_system=%s\ntarget_host=%s\nprofile=%s\n' \
-        "$status" "$manifest" "$system" "$host" "$profile" > "$result_tmp"
-    mv -- "$result_tmp" "$result_dir/$manifest.result"
-}
-
 check_manifest() {
     local system=$1
     local host=$2
@@ -272,61 +250,12 @@ check_manifest() {
     done
 }
 
-read_metadata() {
-    local metadata=$1
-    local expected_job_id=$2
-    local line key value
-    local -A seen=()
+read_source_descriptor() {
+    local job=$1
 
-    schema_version=
-    job_id=
-    submitted_at=
-    method=
-    source_repository=
-    source_commit=
+    source_repository=$(read_descriptor_value "$job/source_repository" source_repository) || return 1
+    source_commit=$(read_descriptor_value "$job/source_commit" source_commit) || return 1
 
-    while IFS= read -r line || [[ -n $line ]]; do
-        [[ $line == *=* && $line != *$'\r'* ]] || {
-            echo "invalid metadata line" >&2
-            return 1
-        }
-        key=${line%%=*}
-        value=${line#*=}
-        [[ -z ${seen[$key]+x} ]] || {
-            echo "duplicate metadata key: $key" >&2
-            return 1
-        }
-        seen[$key]=1
-        case $key in
-            schema_version) schema_version=$value ;;
-            job_id) job_id=$value ;;
-            submitted_at) submitted_at=$value ;;
-            method) method=$value ;;
-            source_repository) source_repository=$value ;;
-            source_commit) source_commit=$value ;;
-            *)
-                echo "unknown metadata key: $key" >&2
-                return 1
-                ;;
-        esac
-    done < "$metadata"
-
-    [[ $schema_version == 2 ]] || {
-        echo "unsupported metadata schema: ${schema_version:-missing}" >&2
-        return 1
-    }
-    [[ $job_id == "$expected_job_id" ]] || {
-        echo "metadata job_id does not match directory: $expected_job_id" >&2
-        return 1
-    }
-    [[ $submitted_at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
-        echo "invalid submitted_at timestamp: ${submitted_at:-missing}" >&2
-        return 1
-    }
-    [[ $method == manual || $method == nightly ]] || {
-        echo "invalid job method: $method" >&2
-        return 1
-    }
     [[ $source_repository != -* && -n $source_repository ]] || {
         echo "invalid source repository" >&2
         return 1
@@ -335,6 +264,27 @@ read_metadata() {
         echo "invalid source commit: $source_commit" >&2
         return 1
     }
+}
+
+read_descriptor_value() {
+    local path=$1
+    local name=$2
+    local -a lines=()
+
+    [[ -f $path ]] || {
+        echo "missing source descriptor file: $name" >&2
+        return 1
+    }
+    mapfile -t lines < "$path"
+    ((${#lines[@]} == 1)) || {
+        echo "source descriptor must contain exactly one line: $name" >&2
+        return 1
+    }
+    [[ ${lines[0]} != *$'\r'* ]] || {
+        echo "source descriptor contains a carriage return: $name" >&2
+        return 1
+    }
+    printf '%s\n' "${lines[0]}"
 }
 
 prepare_worktree() {
@@ -406,7 +356,6 @@ materialize_native_system() {
                 --cores="$build_jobs" \
                 --root="$profile" \
                 -- "$host_true"; then
-                write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
                 return 1
             fi
 
@@ -414,17 +363,14 @@ materialize_native_system() {
                 --system="$system" \
                 --manifest="$wrapper" \
                 --derivations); then
-                write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
                 return 1
             fi
             mapfile -t derivations <<< "$derivations_output"
             if ((${#derivations[@]} == 0)) \
                 || ! root_derivations "$derivation_roots_dir" "${derivations[@]}" \
                 || ! materialize_derivation_closure_outputs "$derivation_outputs_dir" "${derivations[@]}"; then
-                write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
                 return 1
             fi
-            write_result "$job" "$system" "$host" "${name%.scm}" built "$profile"
         done
     done
 
@@ -451,8 +397,6 @@ materialize_native_system() {
         for manifest in "${manifests[@]}"; do
             name=$(basename "$manifest")
             check_manifest "$system" "$host" "$job/work/wrappers/$system/$name"
-            profile=$profiles_root/$system/$job_id/$host/${name%.scm}
-            write_result "$job" "$system" "$host" "${name%.scm}" succeeded "$profile"
         done
     done
 }
@@ -470,15 +414,15 @@ materialize_job() {
     local -a branch_systems=()
     local -A seen_systems=()
 
-    [[ -f $job/metadata ]] || {
+    [[ -f $job/source_repository && -f $job/source_commit ]] || {
         echo "invalid job structure: $job_id" >&2
         return 1
     }
-    read_metadata "$job/metadata" "$job_id"
     if find "$job" -type l -print -quit | grep -q .; then
         echo "job contains a symlink: $job_id" >&2
         return 1
     fi
+    read_source_descriptor "$job"
 
     worktree=$(prepare_worktree "$job_id" "$source_commit")
     manifests_dir=$worktree/contrib/guix

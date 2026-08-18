@@ -12,7 +12,6 @@ let
   jobsRoot = "${cfg.dataDir}/jobs";
   nativeSystemsText = lib.concatStringsSep " " builder.nativeSystems;
   targetHostsText = lib.concatStringsSep " " builder.targetHosts;
-  timeMachineFlagsText = lib.concatStringsSep "\n" builder.additionalTimeMachineFlags;
   runtimePath = lib.makeBinPath [
     pkgs.coreutils
     pkgs.curl
@@ -46,7 +45,6 @@ let
       export GUIX_BITCOIN_TARGET_HOSTS=${lib.escapeShellArg targetHostsText}
       export GUIX_BITCOIN_TIMEMACHINE_URL=${lib.escapeShellArg builder.timeMachineUrl}
       export GUIX_BITCOIN_TIMEMACHINE_COMMIT=${lib.escapeShellArg builder.timeMachineCommit}
-      export GUIX_BITCOIN_TIMEMACHINE_FLAGS=${lib.escapeShellArg timeMachineFlagsText}
       export PATH=${lib.escapeShellArg runtimePath}:$PATH
       exec ${pkgs.bash}/bin/bash ${source} "$@"
     '';
@@ -152,12 +150,6 @@ in
       description = "Guix commit used by guix time-machine.";
     };
 
-    additionalTimeMachineFlags = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "Additional flags passed to guix time-machine.";
-    };
-
     schedule = {
       onCalendar = lib.mkOption {
         type = lib.types.str;
@@ -183,12 +175,6 @@ in
         type = lib.types.ints.positive;
         default = 30;
         description = "Age in days after which failed source jobs are removed.";
-      };
-
-      profileMaxAgeDays = lib.mkOption {
-        type = lib.types.ints.positive;
-        default = 14;
-        description = "Age in days after which materialized Guix profiles are removed.";
       };
 
       cleanupRandomizedDelaySec = lib.mkOption {
@@ -340,10 +326,6 @@ in
         done < <(find ${jobsRoot}/failed \
           -mindepth 1 -maxdepth 1 -type d \
           -mtime +${toString builder.retention.failedJobMaxAgeDays} -print0)
-        find ${profilesRoot} \
-          -mindepth 2 -maxdepth 2 -type d \
-          -mtime +${toString builder.retention.profileMaxAgeDays} \
-          -exec rm -rf {} +
       '';
     };
 
