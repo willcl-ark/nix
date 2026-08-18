@@ -1,0 +1,416 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+data_dir=${GUIX_BITCOIN_DATA_DIR:?GUIX_BITCOIN_DATA_DIR is required}
+jobs_dir=$data_dir/jobs
+profiles_root=$data_dir/profiles
+build_jobs=${GUIX_BITCOIN_BUILD_JOBS:?GUIX_BITCOIN_BUILD_JOBS is required}
+host_true=${GUIX_BITCOIN_HOST_TRUE:?GUIX_BITCOIN_HOST_TRUE is required}
+prewarm_url=${GUIX_BITCOIN_PREWARM_URL:?GUIX_BITCOIN_PREWARM_URL is required}
+prewarm_jobs=16
+native_systems=${GUIX_BITCOIN_NATIVE_SYSTEMS:?GUIX_BITCOIN_NATIVE_SYSTEMS is required}
+target_hosts=${GUIX_BITCOIN_TARGET_HOSTS:?GUIX_BITCOIN_TARGET_HOSTS is required}
+time_machine_url=${GUIX_BITCOIN_TIMEMACHINE_URL:?GUIX_BITCOIN_TIMEMACHINE_URL is required}
+time_machine_commit=${GUIX_BITCOIN_TIMEMACHINE_COMMIT:?GUIX_BITCOIN_TIMEMACHINE_COMMIT is required}
+time_machine_flags=${GUIX_BITCOIN_TIMEMACHINE_FLAGS:-}
+
+mkdir -p "$jobs_dir/.tmp" "$jobs_dir/queued" "$jobs_dir/running" \
+    "$jobs_dir/succeeded" "$jobs_dir/failed" "$profiles_root"
+
+recover_running_jobs() {
+    shopt -s nullglob
+    for job in "$jobs_dir/running"/*; do
+        [[ -d $job ]] || continue
+        mv -T --no-clobber -- "$job" "$jobs_dir/queued/$(basename "$job")"
+    done
+    shopt -u nullglob
+}
+
+time_machine() {
+    local -a flags=()
+    if [[ -n $time_machine_flags ]]; then
+        mapfile -t flags <<< "$time_machine_flags"
+    fi
+    guix time-machine \
+        --url="$time_machine_url" \
+        --commit="$time_machine_commit" \
+        --cores="$build_jobs" \
+        --keep-failed \
+        --fallback \
+        "${flags[@]}" \
+        -- "$@"
+}
+
+manifest_wrapper() {
+    local system=$1
+    local source=$2
+    local output=$3
+    mkdir -p "$(dirname "$output")"
+    cat > "$output" <<EOF
+(use-modules (guix))
+
+(parameterize
+  ((%current-system "$system"))
+  (primitive-load "$source"))
+EOF
+}
+
+prewarm_store_path() {
+    local path=$1
+    case $path in
+        *.drv)
+            return 0
+            ;;
+    esac
+    local hash=${path##*/}
+    hash=${hash%%-*}
+    until curl -fsS -o /dev/null "$prewarm_url/$hash.narinfo"; do
+        sleep 10
+    done
+}
+
+prewarm_store_paths() {
+    local path
+    local running=0
+    while IFS= read -r path; do
+        prewarm_store_path "$path" &
+        ((running += 1))
+        if ((running == prewarm_jobs)); then
+            wait -n
+            ((running -= 1))
+        fi
+    done
+    while ((running > 0)); do
+        wait -n
+        ((running -= 1))
+    done
+}
+
+root_derivations() {
+    local root_dir=$1
+    shift
+    local derivation root
+    local -A seen=()
+    mkdir -p "$root_dir"
+    for derivation in "$@"; do
+        [[ $derivation == /gnu/store/*.drv && -e $derivation ]] || {
+            echo "invalid derivation path: $derivation" >&2
+            return 1
+        }
+        [[ ${seen[$derivation]+yes} ]] && continue
+        seen[$derivation]=yes
+        root=$root_dir/$(basename "$derivation")
+        if [[ -L $root ]]; then
+            [[ $(readlink -f "$root") == "$derivation" ]] || {
+                echo "GC root points to the wrong derivation: $root" >&2
+                return 1
+            }
+            continue
+        fi
+        [[ ! -e $root ]] || {
+            echo "GC root is not a symlink: $root" >&2
+            return 1
+        }
+        guix build --derivations --root="$root" "$derivation" >/dev/null
+    done
+}
+
+derivation_outputs_are_rooted() {
+    local root_base=$1
+    shift
+    local root output
+    local missing=false
+    local index=0
+    local output_count=$#
+
+    for output in "$@"; do
+        if ((output_count == 1)); then
+            root=$root_base
+        else
+            root=$root_base-$index
+        fi
+
+        if [[ -L $root ]]; then
+            [[ $(readlink -f "$root") == "$output" ]] || {
+                echo "GC root points to the wrong derivation output: $root" >&2
+                return 2
+            }
+        elif [[ -e $root ]]; then
+            echo "GC root is not a symlink: $root" >&2
+            return 2
+        else
+            missing=true
+        fi
+        ((index += 1))
+    done
+
+    [[ $missing == false ]]
+}
+
+materialize_derivation_outputs() {
+    local root_dir=$1
+    shift
+    local derivation root output outputs_output root_status
+    local -A seen=()
+    local -a outputs=()
+
+    mkdir -p "$root_dir"
+    for derivation in "$@"; do
+        [[ $derivation == /gnu/store/*.drv && -e $derivation ]] || {
+            echo "invalid derivation path: $derivation" >&2
+            return 1
+        }
+        [[ ${seen[$derivation]+yes} ]] && continue
+        seen[$derivation]=yes
+
+        if ! outputs_output=$(guix build \
+            --cores="$build_jobs" \
+            --keep-failed \
+            --fallback \
+            "$derivation"); then
+            return 1
+        fi
+        outputs=()
+        while IFS= read -r output; do
+            [[ -n $output ]] && outputs+=("$output")
+        done <<< "$outputs_output"
+        ((${#outputs[@]} > 0)) || {
+            echo "derivation has no outputs: $derivation" >&2
+            return 1
+        }
+
+        root=$root_dir/$(basename "${derivation%.drv}")
+        root_status=0
+        derivation_outputs_are_rooted "$root" "${outputs[@]}" || root_status=$?
+        case $root_status in
+            0) continue ;;
+            1) ;;
+            *) return 1 ;;
+        esac
+        guix build \
+            --cores="$build_jobs" \
+            --keep-failed \
+            --fallback \
+            --root="$root" \
+            "$derivation" >/dev/null
+    done
+}
+
+materialize_derivation_closure_outputs() {
+    local root_dir=$1
+    shift
+    local derivation path derivations_output
+    local -a derivations=()
+
+    if ! derivations_output=$(
+        for derivation in "$@"; do
+            guix gc --requisites "$derivation"
+        done | while IFS= read -r path; do
+            [[ $path == /gnu/store/*.drv ]] && printf '%s\n' "$path"
+        done | sort -u
+    ); then
+        return 1
+    fi
+    while IFS= read -r derivation; do
+        [[ -n $derivation ]] && derivations+=("$derivation")
+    done <<< "$derivations_output"
+    ((${#derivations[@]} > 0)) || {
+        echo "derivation closure has no derivations" >&2
+        return 1
+    }
+
+    materialize_derivation_outputs "$root_dir" "${derivations[@]}"
+}
+
+write_result() {
+    local job=$1
+    local system=$2
+    local host=$3
+    local manifest=$4
+    local status=$5
+    local profile=$6
+    local result_dir=$job/results/$system/$host
+    local result_tmp
+    mkdir -p "$result_dir"
+    result_tmp=$(mktemp "$result_dir/.result.XXXXXX")
+    printf 'status=%s\nmanifest=%s\nnative_system=%s\ntarget_host=%s\nprofile=%s\n' \
+        "$status" "$manifest" "$system" "$host" "$profile" > "$result_tmp"
+    mv -- "$result_tmp" "$result_dir/$manifest.result"
+}
+
+check_manifest() {
+    local system=$1
+    local host=$2
+    local manifest_file=$3
+    until HOST="$host" time_machine weather \
+        --system="$system" \
+        --substitute-urls="$prewarm_url" \
+        --manifest="$manifest_file" | grep -q '100.0% substitutes available'; do
+        sleep 10
+    done
+}
+
+materialize_job() {
+    local job_id=$1
+    local job=$jobs_dir/running/$job_id
+    local manifests_dir=$job/manifests
+    local context_manifest_dir=$job/context/contrib/guix
+    local work_dir=$job/work
+    local manifest source wrapper profile
+    local derivation_roots_dir derivation_outputs_dir derivation_root output_root
+    local derivations_output
+    local system host name
+    local -a manifests=()
+    local -a systems=()
+    local -a hosts=()
+    local -a derivations=()
+
+    [[ -f $job/metadata && -d $manifests_dir ]] || {
+        echo "invalid job structure: $job_id" >&2
+        return 1
+    }
+    if find "$job" -type l -print -quit | grep -q .; then
+        echo "job contains a symlink: $job_id" >&2
+        return 1
+    fi
+    if [[ -d $job/context ]] && find "$job/context" ! -type f ! -type d -print -quit | grep -q .; then
+        echo "job context contains a non-regular entry: $job_id" >&2
+        return 1
+    fi
+    mapfile -t manifests < <(find "$manifests_dir" -mindepth 1 -maxdepth 1 -print | sort)
+    (("${#manifests[@]}" > 0)) || {
+        echo "job has no manifests: $job_id" >&2
+        return 1
+    }
+    for manifest in "${manifests[@]}"; do
+        name=$(basename "$manifest")
+        [[ -f $manifest && ! -L $manifest ]] || {
+            echo "manifest entries must be regular files: $name" >&2
+            return 1
+        }
+        [[ $name =~ ^manifest_[A-Za-z0-9._-]+\.scm$ ]] || {
+            echo "unsafe manifest filename: $name" >&2
+            return 1
+        }
+    done
+    read -r -a systems <<< "$native_systems"
+    read -r -a hosts <<< "$target_hosts"
+    (("${#systems[@]}" > 0 && "${#hosts[@]}" > 0)) || {
+        echo "native system and target host lists must not be empty" >&2
+        return 1
+    }
+
+    for system in "${systems[@]}"; do
+        for host in "${hosts[@]}"; do
+            for manifest in "${manifests[@]}"; do
+                name=$(basename "$manifest")
+                source=$manifest
+                if [[ -f $context_manifest_dir/$name ]]; then
+                    source=$context_manifest_dir/$name
+                fi
+                wrapper=$work_dir/wrappers/$system/$name
+                profile=$profiles_root/$system/$job_id/$host/${name%.scm}
+                derivation_roots_dir=$profile.derivations
+                derivation_outputs_dir=$profile.derivation-outputs
+                mkdir -p "$(dirname "$profile")"
+                manifest_wrapper "$system" "$source" "$wrapper"
+
+                echo "Building $job_id: $name for $host on $system"
+                if ! HOST="$host" time_machine shell \
+                    --system="$system" \
+                    --manifest="$wrapper" \
+                    --cores="$build_jobs" \
+                    --root="$profile" \
+                    -- "$host_true"; then
+                    write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
+                    return 1
+                fi
+
+                if ! derivations_output=$(HOST="$host" time_machine build \
+                    --system="$system" \
+                    --manifest="$wrapper" \
+                    --derivations); then
+                    write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
+                    return 1
+                fi
+                mapfile -t derivations <<< "$derivations_output"
+                if ((${#derivations[@]} == 0)) \
+                    || ! root_derivations "$derivation_roots_dir" "${derivations[@]}" \
+                    || ! materialize_derivation_closure_outputs "$derivation_outputs_dir" "${derivations[@]}"; then
+                    write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
+                    return 1
+                fi
+                write_result "$job" "$system" "$host" "${name%.scm}" built "$profile"
+            done
+        done
+    done
+
+    echo "Prewarming Guix substitute closures for $job_id"
+    for system in "${systems[@]}"; do
+        for host in "${hosts[@]}"; do
+            for manifest in "${manifests[@]}"; do
+                name=$(basename "$manifest")
+                profile=$profiles_root/$system/$job_id/$host/${name%.scm}
+                guix gc --requisites "$(readlink -f "$profile")"
+                derivation_roots_dir=$profile.derivations
+                for derivation_root in "$derivation_roots_dir"/*.drv; do
+                    [[ -L $derivation_root ]] || continue
+                    guix gc --requisites "$(readlink -f "$derivation_root")"
+                done
+                derivation_outputs_dir=$profile.derivation-outputs
+                for output_root in "$derivation_outputs_dir"/*; do
+                    [[ -L $output_root ]] || continue
+                    guix gc --requisites "$(readlink -f "$output_root")"
+                done
+            done
+        done
+    done | sort -u | prewarm_store_paths
+
+    for system in "${systems[@]}"; do
+        for host in "${hosts[@]}"; do
+            for manifest in "${manifests[@]}"; do
+                name=$(basename "$manifest")
+                check_manifest "$system" "$host" "$work_dir/wrappers/$system/$name"
+                profile=$profiles_root/$system/$job_id/$host/${name%.scm}
+                write_result "$job" "$system" "$host" "${name%.scm}" succeeded "$profile"
+            done
+        done
+    done
+}
+
+recover_running_jobs
+
+while :; do
+    claimed=false
+    shopt -s nullglob
+    for queued in "$jobs_dir/queued"/*; do
+        [[ -d $queued ]] || continue
+        job_id=$(basename "$queued")
+        if ! [[ $job_id =~ ^[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9]+$ ]]; then
+            echo "Skipping unsafe queued job name: $job_id" >&2
+            continue
+        fi
+        if ! mv -T --no-clobber -- "$queued" "$jobs_dir/running/$job_id" 2>/dev/null \
+            || [[ -e $queued ]]; then
+            continue
+        fi
+        claimed=true
+        job=$jobs_dir/running/$job_id
+        set +e
+        (materialize_job "$job_id") 2>&1 | tee -a "$job/worker.log"
+        status=${PIPESTATUS[0]}
+        set -e
+        if ((status == 0)); then
+            mv -T --no-clobber -- "$job" "$jobs_dir/succeeded/$job_id"
+            echo "Job $job_id succeeded"
+        else
+            mv -T --no-clobber -- "$job" "$jobs_dir/failed/$job_id"
+            echo "Job $job_id failed" >&2
+            exit "$status"
+        fi
+        break
+    done
+    shopt -u nullglob
+    [[ $claimed == true ]] || break
+done

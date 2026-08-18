@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+data_dir=${GUIX_BITCOIN_DATA_DIR:?GUIX_BITCOIN_DATA_DIR is required}
+jobs_dir=$data_dir/jobs
+
+staged_dir=
+method=manual
+source_repository=
+source_commit=
+description=
+
+while (($#)); do
+    case $1 in
+        --staged)
+            staged_dir=$2
+            shift 2
+            ;;
+        --method)
+            method=$2
+            shift 2
+            ;;
+        --source-repository)
+            source_repository=$2
+            shift 2
+            ;;
+        --source-commit)
+            source_commit=$2
+            shift 2
+            ;;
+        --description)
+            description=$2
+            shift 2
+            ;;
+        *)
+            echo "usage: guix-bitcoin-submit --staged DIRECTORY [options]" >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [[ -z $staged_dir || ! -d $staged_dir ]]; then
+    echo "staged directory does not exist: $staged_dir" >&2
+    exit 2
+fi
+if [[ $method != manual && $method != nightly ]]; then
+    echo "method must be manual or nightly" >&2
+    exit 2
+fi
+for value in "$source_repository" "$source_commit" "$description"; do
+    if [[ $value == *$'\n'* || $value == *$'\r'* ]]; then
+        echo "metadata values must not contain newlines" >&2
+        exit 2
+    fi
+done
+
+manifests_dir=$staged_dir/manifests
+if [[ ! -d $manifests_dir ]]; then
+    echo "missing manifests directory" >&2
+    exit 2
+fi
+mapfile -t manifest_paths < <(find "$manifests_dir" -mindepth 1 -maxdepth 1 -print | sort)
+if (("${#manifest_paths[@]}" == 0)); then
+    echo "at least one manifest is required" >&2
+    exit 2
+fi
+for manifest in "${manifest_paths[@]}"; do
+    name=$(basename "$manifest")
+    if [[ ! -f $manifest || -L $manifest ]]; then
+        echo "manifest entries must be regular files: $name" >&2
+        exit 2
+    fi
+    if [[ ! $name =~ ^manifest_[A-Za-z0-9._-]+\.scm$ ]]; then
+        echo "unsafe manifest filename: $name" >&2
+        exit 2
+    fi
+    if [[ -L $manifest ]]; then
+        echo "manifest symlinks are not allowed: $name" >&2
+        exit 2
+    fi
+done
+
+context_dir=$staged_dir/context
+if [[ -e $context_dir ]]; then
+    if [[ ! -d $context_dir ]]; then
+        echo "context must be a directory" >&2
+        exit 2
+    fi
+    if find "$context_dir" -type l -print -quit | grep -q .; then
+        echo "context symlinks are not allowed" >&2
+        exit 2
+    fi
+    if find "$context_dir" ! -type f ! -type d -print -quit | grep -q .; then
+        echo "context entries must be regular files or directories" >&2
+        exit 2
+    fi
+fi
+
+mkdir -p "$jobs_dir/.tmp" "$jobs_dir/queued" "$jobs_dir/running" \
+    "$jobs_dir/succeeded" "$jobs_dir/failed"
+umask 027
+tmp_dir=$(mktemp -d "$jobs_dir/.tmp/job.XXXXXX")
+cleanup() {
+    rm -rf -- "$tmp_dir"
+}
+trap cleanup EXIT
+mkdir -p "$tmp_dir/manifests"
+for manifest in "${manifest_paths[@]}"; do
+    cp --reflink=auto -- "$manifest" "$tmp_dir/manifests/$(basename "$manifest")"
+done
+if [[ -d $context_dir ]]; then
+    mkdir -p "$tmp_dir/context"
+    cp -a --no-preserve=ownership "$context_dir/." "$tmp_dir/context/"
+fi
+
+timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+{
+    printf 'job_id=%s\n' pending
+    printf 'submitted_at=%s\n' "$timestamp"
+    printf 'method=%s\n' "$method"
+    printf 'source_repository=%s\n' "$source_repository"
+    printf 'source_commit=%s\n' "$source_commit"
+    printf 'description=%s\n' "$description"
+    printf 'manifests='
+    printf '%s,' "${manifest_paths[@]##*/}" | sed 's/,$//'
+    printf '\n'
+} > "$tmp_dir/metadata"
+
+while :; do
+    job_id="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+    if [[ ! -e $jobs_dir/queued/$job_id && ! -e $jobs_dir/running/$job_id \
+        && ! -e $jobs_dir/succeeded/$job_id && ! -e $jobs_dir/failed/$job_id ]]; then
+        break
+    fi
+done
+sed -i "s/^job_id=.*/job_id=$job_id/" "$tmp_dir/metadata"
+
+if [[ $(id -u) == 0 && -n ${GUIX_BITCOIN_BUILD_USER:-} && -n ${GUIX_BITCOIN_BUILD_GROUP:-} ]]; then
+    chown -R "$GUIX_BITCOIN_BUILD_USER:$GUIX_BITCOIN_BUILD_GROUP" "$tmp_dir"
+fi
+mv -T --no-clobber -- "$tmp_dir" "$jobs_dir/queued/$job_id"
+if [[ -e $tmp_dir ]]; then
+    echo "job destination already exists: $job_id" >&2
+    exit 1
+fi
+trap - EXIT
+echo "$job_id"

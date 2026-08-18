@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+data_dir=${GUIX_BITCOIN_DATA_DIR:?GUIX_BITCOIN_DATA_DIR is required}
+repository=${GUIX_BITCOIN_REPOSITORY:?GUIX_BITCOIN_REPOSITORY is required}
+remote=${GUIX_BITCOIN_REMOTE:-origin}
+branch=${GUIX_BITCOIN_BRANCH:-master}
+checkout=$data_dir/bitcoin
+
+if [[ ! -d $checkout/.git ]]; then
+    git clone "$repository" "$checkout"
+fi
+git -C "$checkout" fetch "$remote" "$branch"
+commit=$(git -C "$checkout" rev-parse "$remote/$branch")
+git -C "$checkout" reset --hard "$commit"
+
+mapfile -t manifests < <(
+    find "$checkout/contrib/guix" -mindepth 1 -maxdepth 1 \
+        -type f -name 'manifest_*.scm' -print | sort
+)
+if ((${#manifests[@]} == 0)); then
+    echo "ERR: no contrib/guix/manifest_*.scm files found" >&2
+    exit 1
+fi
+
+stage=$(mktemp -d "$data_dir/jobs/.tmp/nightly.XXXXXX")
+cleanup() {
+    rm -rf -- "$stage"
+}
+trap cleanup EXIT
+mkdir -p "$stage/manifests" "$stage/context/contrib/guix"
+cp -a --no-preserve=ownership "$checkout/contrib/guix/." \
+    "$stage/context/contrib/guix/"
+for manifest in "${manifests[@]}"; do
+    cp --reflink=auto -- "$manifest" "$stage/manifests/$(basename "$manifest")"
+done
+
+guix-bitcoin-submit \
+    --staged "$stage" \
+    --method nightly \
+    --source-repository "$repository" \
+    --source-commit "$commit" \
+    --description "Nightly Bitcoin Core manifests from $branch"
