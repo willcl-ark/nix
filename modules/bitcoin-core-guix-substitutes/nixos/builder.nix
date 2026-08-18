@@ -317,11 +317,14 @@ in
               flock 9
               git --git-dir ${cfg.dataDir}/repositories/bitcoin.git worktree remove \
                 --force ${cfg.dataDir}/worktrees/"$job_id" >/dev/null 2>&1 || true
+              rm -rf -- ${cfg.dataDir}/worktrees/"$job_id"
+              git --git-dir ${cfg.dataDir}/repositories/bitcoin.git worktree prune
               git --git-dir ${cfg.dataDir}/repositories/bitcoin.git update-ref \
                 -d refs/guix-jobs/"$job_id" >/dev/null 2>&1 || true
             ) 9>${cfg.dataDir}/repositories/git.lock
+          else
+            rm -rf -- ${cfg.dataDir}/worktrees/"$job_id"
           fi
-          rm -rf -- ${cfg.dataDir}/worktrees/"$job_id"
           rm -rf -- ${profilesRoot}/*/"$job_id"
           rm -rf -- "$job"
         }

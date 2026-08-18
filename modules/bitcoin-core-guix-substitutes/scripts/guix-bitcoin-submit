@@ -109,8 +109,10 @@ done
 
 tmp_dir=$(mktemp -d "$jobs_dir/.tmp/job.XXXXXX")
 cleanup() {
-    rm -rf -- "$tmp_dir"
-    git --git-dir "$repo_dir" update-ref -d "refs/guix-jobs/$job_id" >/dev/null 2>&1 || true
+    if [[ -e $tmp_dir ]]; then
+        rm -rf -- "$tmp_dir"
+        git --git-dir "$repo_dir" update-ref -d "refs/guix-jobs/$job_id" >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
 
