@@ -220,6 +220,7 @@ in
       group = builder.buildGroup;
       home = cfg.dataDir;
       createHome = true;
+      homeMode = "0751";
     };
     users.groups.${builder.buildGroup} = { };
 
