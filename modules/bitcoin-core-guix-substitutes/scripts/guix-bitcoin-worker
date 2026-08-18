@@ -96,15 +96,15 @@ prewarm_store_paths() {
     local running=0
     while IFS= read -r path; do
         prewarm_store_path "$path" &
-        ((running += 1))
+        running=$((running + 1))
         if ((running == prewarm_jobs)); then
             wait -n
-            ((running -= 1))
+            running=$((running - 1))
         fi
     done
     while ((running > 0)); do
         wait -n
-        ((running -= 1))
+        running=$((running - 1))
     done
 }
 
@@ -367,19 +367,108 @@ prepare_worktree() {
     printf '%s\n' "$worktree"
 }
 
+materialize_native_system() {
+    local job_id=$1
+    local job=$2
+    local system=$3
+    local manifests_dir=$4
+    local manifest source wrapper profile
+    local derivation_roots_dir derivation_outputs_dir derivation_root output_root
+    local derivations_output
+    local host name
+    local -a manifests=()
+    local -a hosts=()
+    local -a derivations=()
+
+    mapfile -t manifests < <(find "$manifests_dir" -mindepth 1 -maxdepth 1 \
+        -type f -name 'manifest_*.scm' -print | sort)
+    read -r -a hosts <<< "$target_hosts"
+    (("${#manifests[@]}" > 0 && "${#hosts[@]}" > 0)) || {
+        echo "native system branch has no manifests or target hosts: $system" >&2
+        return 1
+    }
+
+    for host in "${hosts[@]}"; do
+        for manifest in "${manifests[@]}"; do
+            name=$(basename "$manifest")
+            source=$manifest
+            wrapper=$job/work/wrappers/$system/$name
+            profile=$profiles_root/$system/$job_id/$host/${name%.scm}
+            derivation_roots_dir=$profile.derivations
+            derivation_outputs_dir=$profile.derivation-outputs
+            mkdir -p "$(dirname "$profile")"
+            manifest_wrapper "$system" "$source" "$wrapper"
+
+            echo "Building $job_id: $name for $host on $system"
+            if ! HOST="$host" time_machine shell \
+                --system="$system" \
+                --manifest="$wrapper" \
+                --cores="$build_jobs" \
+                --root="$profile" \
+                -- "$host_true"; then
+                write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
+                return 1
+            fi
+
+            if ! derivations_output=$(HOST="$host" time_machine build \
+                --system="$system" \
+                --manifest="$wrapper" \
+                --derivations); then
+                write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
+                return 1
+            fi
+            mapfile -t derivations <<< "$derivations_output"
+            if ((${#derivations[@]} == 0)) \
+                || ! root_derivations "$derivation_roots_dir" "${derivations[@]}" \
+                || ! materialize_derivation_closure_outputs "$derivation_outputs_dir" "${derivations[@]}"; then
+                write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
+                return 1
+            fi
+            write_result "$job" "$system" "$host" "${name%.scm}" built "$profile"
+        done
+    done
+
+    echo "Prewarming Guix substitute closures for $job_id on $system"
+    for host in "${hosts[@]}"; do
+        for manifest in "${manifests[@]}"; do
+            name=$(basename "$manifest")
+            profile=$profiles_root/$system/$job_id/$host/${name%.scm}
+            guix gc --requisites "$(readlink -f "$profile")"
+            derivation_roots_dir=$profile.derivations
+            for derivation_root in "$derivation_roots_dir"/*.drv; do
+                [[ -L $derivation_root ]] || continue
+                guix gc --requisites "$(readlink -f "$derivation_root")"
+            done
+            derivation_outputs_dir=$profile.derivation-outputs
+            for output_root in "$derivation_outputs_dir"/*; do
+                [[ -L $output_root ]] || continue
+                guix gc --requisites "$(readlink -f "$output_root")"
+            done
+        done
+    done | sort -u | prewarm_store_paths
+
+    for host in "${hosts[@]}"; do
+        for manifest in "${manifests[@]}"; do
+            name=$(basename "$manifest")
+            check_manifest "$system" "$host" "$job/work/wrappers/$system/$name"
+            profile=$profiles_root/$system/$job_id/$host/${name%.scm}
+            write_result "$job" "$system" "$host" "${name%.scm}" succeeded "$profile"
+        done
+    done
+}
+
 materialize_job() {
     local job_id=$1
     local job=$jobs_dir/running/$job_id
     local worktree
     local manifests_dir
-    local manifest source wrapper profile
-    local derivation_roots_dir derivation_outputs_dir derivation_root output_root
-    local derivations_output
-    local system host name
+    local system branch_index branch_status failed_status
     local -a manifests=()
     local -a systems=()
     local -a hosts=()
-    local -a derivations=()
+    local -a branch_pids=()
+    local -a branch_systems=()
+    local -A seen_systems=()
 
     [[ -f $job/metadata ]] || {
         echo "invalid job structure: $job_id" >&2
@@ -409,80 +498,40 @@ materialize_job() {
         echo "native system and target host lists must not be empty" >&2
         return 1
     }
-
     for system in "${systems[@]}"; do
-        for host in "${hosts[@]}"; do
-            for manifest in "${manifests[@]}"; do
-                name=$(basename "$manifest")
-                source=$manifest
-                wrapper=$job/work/wrappers/$system/$name
-                profile=$profiles_root/$system/$job_id/$host/${name%.scm}
-                derivation_roots_dir=$profile.derivations
-                derivation_outputs_dir=$profile.derivation-outputs
-                mkdir -p "$(dirname "$profile")"
-                manifest_wrapper "$system" "$source" "$wrapper"
-
-                echo "Building $job_id: $name for $host on $system"
-                if ! HOST="$host" time_machine shell \
-                    --system="$system" \
-                    --manifest="$wrapper" \
-                    --cores="$build_jobs" \
-                    --root="$profile" \
-                    -- "$host_true"; then
-                    write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
-                    return 1
-                fi
-
-                if ! derivations_output=$(HOST="$host" time_machine build \
-                    --system="$system" \
-                    --manifest="$wrapper" \
-                    --derivations); then
-                    write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
-                    return 1
-                fi
-                mapfile -t derivations <<< "$derivations_output"
-                if ((${#derivations[@]} == 0)) \
-                    || ! root_derivations "$derivation_roots_dir" "${derivations[@]}" \
-                    || ! materialize_derivation_closure_outputs "$derivation_outputs_dir" "${derivations[@]}"; then
-                    write_result "$job" "$system" "$host" "${name%.scm}" failed "$profile"
-                    return 1
-                fi
-                write_result "$job" "$system" "$host" "${name%.scm}" built "$profile"
-            done
-        done
+        [[ -z ${seen_systems[$system]+x} ]] || {
+            echo "duplicate native system: $system" >&2
+            return 1
+        }
+        seen_systems[$system]=1
     done
 
-    echo "Prewarming Guix substitute closures for $job_id"
     for system in "${systems[@]}"; do
-        for host in "${hosts[@]}"; do
-            for manifest in "${manifests[@]}"; do
-                name=$(basename "$manifest")
-                profile=$profiles_root/$system/$job_id/$host/${name%.scm}
-                guix gc --requisites "$(readlink -f "$profile")"
-                derivation_roots_dir=$profile.derivations
-                for derivation_root in "$derivation_roots_dir"/*.drv; do
-                    [[ -L $derivation_root ]] || continue
-                    guix gc --requisites "$(readlink -f "$derivation_root")"
-                done
-                derivation_outputs_dir=$profile.derivation-outputs
-                for output_root in "$derivation_outputs_dir"/*; do
-                    [[ -L $output_root ]] || continue
-                    guix gc --requisites "$(readlink -f "$output_root")"
-                done
-            done
-        done
-    done | sort -u | prewarm_store_paths
-
-    for system in "${systems[@]}"; do
-        for host in "${hosts[@]}"; do
-            for manifest in "${manifests[@]}"; do
-                name=$(basename "$manifest")
-                check_manifest "$system" "$host" "$job/work/wrappers/$system/$name"
-                profile=$profiles_root/$system/$job_id/$host/${name%.scm}
-                write_result "$job" "$system" "$host" "${name%.scm}" succeeded "$profile"
-            done
-        done
+        (
+            set -e
+            materialize_native_system "$job_id" "$job" "$system" "$manifests_dir"
+        ) &
+        branch_pids+=("$!")
+        branch_systems+=("$system")
     done
+
+    failed_status=0
+    for branch_index in "${!branch_pids[@]}"; do
+        if wait "${branch_pids[$branch_index]}"; then
+            branch_status=0
+        else
+            branch_status=$?
+        fi
+        if ((branch_status == 0)); then
+            echo "Native system ${branch_systems[$branch_index]} succeeded for $job_id"
+        else
+            echo "Native system ${branch_systems[$branch_index]} failed for $job_id with status $branch_status" >&2
+            if ((failed_status == 0)); then
+                failed_status=$branch_status
+            fi
+        fi
+    done
+    return "$failed_status"
 }
 
 recover_running_jobs
