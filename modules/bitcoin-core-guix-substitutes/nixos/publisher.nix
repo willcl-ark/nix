@@ -174,6 +174,7 @@ in
       after = [ "sops-install-secrets.service" ];
       wants = [ "sops-install-secrets.service" ];
       serviceConfig.ExecStartPre = [
+        "+${pkgs.coreutils}/bin/chmod 0751 ${cfg.dataDir}"
         "+${pkgs.coreutils}/bin/install -d -m 0751 -o ${dataDirOwner} -g ${dataDirGroup} ${cfg.dataDir}"
         "+${pkgs.coreutils}/bin/install -d -m 0755 -o guix-publish -g guix-publish ${publishCacheDirectory}"
         "+${pkgs.coreutils}/bin/install -d -m 0755 -o root -g root ${publicDirectory}"
