@@ -72,9 +72,6 @@ mkdir -p "$jobs_dir/.tmp" "$jobs_dir/queued" "$jobs_dir/running" \
     "$jobs_dir/succeeded" "$jobs_dir/failed" "$repositories_dir"
 umask 027
 
-repo_id=$(printf '%s' "$repository" | sha256sum | cut -d ' ' -f1)
-repo_ref_prefix=refs/guix/repositories/$repo_id
-
 exec 9>"$git_lock"
 flock 9
 
@@ -82,20 +79,11 @@ if [[ ! -d $repo_dir ]]; then
     git init --bare "$repo_dir" >/dev/null
 fi
 
-git --git-dir "$repo_dir" fetch --prune --no-tags "$repository" \
-    "+refs/heads/*:$repo_ref_prefix/heads/*" \
-    "+refs/tags/*:$repo_ref_prefix/tags/*"
-
-object_type=$(git --git-dir "$repo_dir" cat-file -t "$commit" 2>/dev/null || true)
-if [[ $object_type != commit ]]; then
-    echo "object is not a commit in fetched repository: $commit" >&2
-    exit 1
-fi
-if ! git --git-dir "$repo_dir" for-each-ref \
-    --contains="$commit" \
-    --format='%(refname)' \
-    "$repo_ref_prefix/heads" "$repo_ref_prefix/tags" | grep -q .; then
-    echo "commit is not reachable from fetched repository refs: $commit" >&2
+git --git-dir "$repo_dir" fetch --no-tags "$repository" "$commit"
+fetched_commit=$(git --git-dir "$repo_dir" \
+    rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null || true)
+if [[ $fetched_commit != "$commit" ]]; then
+    echo "requested object is not available as a commit: $commit" >&2
     exit 1
 fi
 
