@@ -101,6 +101,7 @@ Builder options:
 - `services.bitcoinCoreGuixSubstitutes.builder.buildJobs`
 - `services.bitcoinCoreGuixSubstitutes.builder.nativeSystems`
 - `services.bitcoinCoreGuixSubstitutes.builder.targetHosts`
+- `services.bitcoinCoreGuixSubstitutes.builder.publisherHosts`
 - `services.bitcoinCoreGuixSubstitutes.builder.timeMachineUrl`
 - `services.bitcoinCoreGuixSubstitutes.builder.timeMachineCommit`
 - `services.bitcoinCoreGuixSubstitutes.builder.schedule.*`
@@ -109,3 +110,6 @@ Builder options:
 The builder materializes each queued source job as immutable profiles, roots
 profile derivations, materializes the complete derivation-output closure, then
 waits for the local `guix publish` endpoint to serve all resulting substitutes.
+When `builder.publisherHosts` is non-empty, the worker marks each completed job
+for publication. A root-owned post-build step copies its profile closures to
+each SSH host and creates remote GC roots before recording publication.

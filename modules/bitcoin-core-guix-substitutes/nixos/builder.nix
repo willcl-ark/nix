@@ -12,6 +12,7 @@ let
   jobsRoot = "${cfg.dataDir}/jobs";
   nativeSystemsText = lib.concatStringsSep " " builder.nativeSystems;
   targetHostsText = lib.concatStringsSep " " builder.targetHosts;
+  publisherHostsText = lib.concatStringsSep " " builder.publisherHosts;
   runtimePath = lib.makeBinPath [
     pkgs.coreutils
     pkgs.curl
@@ -19,6 +20,7 @@ let
     pkgs.git
     pkgs.gnugrep
     pkgs.gnused
+    pkgs.openssh
     pkgs.util-linux
     config.services.guix.package
   ];
@@ -32,6 +34,9 @@ let
   workerSource = pkgs.writeText "guix-bitcoin-worker" (
     builtins.readFile ../scripts/guix-bitcoin-worker
   );
+  publisherSource = pkgs.writeText "guix-bitcoin-publish" (
+    builtins.readFile ../scripts/guix-bitcoin-publish
+  );
   tool =
     name: source:
     pkgs.writeShellScriptBin name ''
@@ -43,6 +48,7 @@ let
       export GUIX_BITCOIN_PREWARM_URL=http://${cfg.publishAddress}:${toString cfg.publishPort}
       export GUIX_BITCOIN_NATIVE_SYSTEMS=${lib.escapeShellArg nativeSystemsText}
       export GUIX_BITCOIN_TARGET_HOSTS=${lib.escapeShellArg targetHostsText}
+      export GUIX_BITCOIN_PUBLISHER_HOSTS=${lib.escapeShellArg publisherHostsText}
       export GUIX_BITCOIN_TIMEMACHINE_URL=${lib.escapeShellArg builder.timeMachineUrl}
       export GUIX_BITCOIN_TIMEMACHINE_COMMIT=${lib.escapeShellArg builder.timeMachineCommit}
       export PATH=${lib.escapeShellArg runtimePath}:$PATH
@@ -51,6 +57,7 @@ let
   submitTool = tool "guix-bitcoin-submit" submitSource;
   nightlyTool = tool "guix-bitcoin-nightly" nightlySource;
   workerTool = tool "guix-bitcoin-worker" workerSource;
+  publisherTool = tool "guix-bitcoin-publish" publisherSource;
   servicePath = [
     pkgs.bash
     pkgs.coreutils
@@ -59,6 +66,7 @@ let
     pkgs.git
     pkgs.gnugrep
     pkgs.gnused
+    pkgs.openssh
     pkgs.util-linux
     config.services.guix.package
     submitTool
@@ -136,6 +144,12 @@ in
       type = lib.types.listOf lib.types.str;
       default = bitcoinGuixHosts;
       description = "Bitcoin Core HOST triplets built from each manifest.";
+    };
+
+    publisherHosts = lib.mkOption {
+      type = lib.types.listOf (lib.types.strMatching "[A-Za-z0-9][A-Za-z0-9.-]*");
+      default = [ ];
+      description = "SSH hosts that receive completed job profile closures.";
     };
 
     timeMachineUrl = lib.mkOption {
@@ -268,6 +282,9 @@ in
         User = builder.buildUser;
         Group = builder.buildGroup;
         ExecStartPre = prepareDirectories;
+      }
+      // lib.optionalAttrs (builder.publisherHosts != [ ]) {
+        ExecStartPost = "+${publisherTool}/bin/guix-bitcoin-publish";
       };
     };
 

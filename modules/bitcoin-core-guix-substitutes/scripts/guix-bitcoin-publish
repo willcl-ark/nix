@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+data_dir=${GUIX_BITCOIN_DATA_DIR:?GUIX_BITCOIN_DATA_DIR is required}
+jobs_dir=$data_dir/jobs
+profiles_root=$data_dir/profiles
+publisher_hosts=${GUIX_BITCOIN_PUBLISHER_HOSTS:?GUIX_BITCOIN_PUBLISHER_HOSTS is required}
+
+read -r -a publishers <<< "$publisher_hosts"
+((${#publishers[@]} > 0)) || exit 0
+
+shopt -s nullglob
+for job in "$jobs_dir/succeeded"/*; do
+    [[ -f $job/publish-pending && ! -e $job/published ]] || continue
+    job_id=$(basename "$job")
+    [[ $job_id =~ ^[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9]+$ ]] || {
+        echo "Skipping unsafe succeeded job name: $job_id" >&2
+        continue
+    }
+
+    mapfile -t profiles < <(find "$profiles_root" -path "*/$job_id/*" -type l \
+        ! -path '*.derivations/*' ! -path '*.derivation-outputs/*' \
+        -exec readlink -f {} \; | sort -u)
+    ((${#profiles[@]} > 0)) || {
+        echo "job has no profile closures to publish: $job_id" >&2
+        exit 1
+    }
+
+    for publisher in "${publishers[@]}"; do
+        echo "Publishing $job_id to $publisher"
+        guix copy --to="$publisher" "${profiles[@]}"
+
+        roots=/var/guix/gcroots/bitcoin-nightly/$job_id
+        ssh "$publisher" "install -d -m 0755 '$roots'"
+        for profile in "${profiles[@]}"; do
+            name=${profile##*/}
+            ssh "$publisher" "ln -sfn '$profile' '$roots/$name'"
+        done
+    done
+    touch "$job/published"
+done

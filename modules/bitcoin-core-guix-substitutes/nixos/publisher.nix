@@ -10,6 +10,7 @@ let
   runtimeDirectory = "guix-publish";
   runtimePath = "/run/${runtimeDirectory}";
   publishCacheDirectory = "${cfg.dataDir}/publish-cache";
+  publishRootsDirectory = "/var/guix/gcroots/bitcoin-nightly";
   publicDirectory = "${cfg.dataDir}/public";
   publicKeyRuntimePath = "${runtimePath}/signing-key.pub";
   privateKeyRuntimePath = "${runtimePath}/signing-key.sec";
@@ -192,6 +193,53 @@ in
       ];
       serviceConfig.RuntimeDirectory = runtimeDirectory;
       serviceConfig.RuntimeDirectoryMode = "0750";
+    };
+
+    systemd.services.guix-bitcoin-publish-bake = {
+      description = "Bake imported Bitcoin Core Guix substitute closures";
+      after = [
+        "guix-daemon.service"
+        "guix-publish.service"
+      ];
+      wants = [
+        "guix-daemon.service"
+        "guix-publish.service"
+      ];
+      path = [
+        pkgs.coreutils
+        pkgs.curl
+        pkgs.findutils
+        pkgs.gnused
+        config.services.guix.package
+      ];
+      script = ''
+        set -euo pipefail
+
+        [[ -d ${publishRootsDirectory} ]] || exit 0
+        find ${publishRootsDirectory} -type l -exec readlink -f {} \; \
+          | sort -u \
+          | xargs -r guix gc --requisites \
+          | sort -u \
+          | while IFS= read -r path; do
+              case "$path" in
+                *.drv) continue ;;
+              esac
+              hash=''${path#${cfg.storeDir}/}
+              hash=''${hash%%-*}
+              curl --fail --silent --show-error -o /dev/null \
+                http://${cfg.publishAddress}:${toString cfg.publishPort}/"$hash".narinfo
+            done
+      '';
+      serviceConfig.Type = "oneshot";
+    };
+
+    systemd.timers.guix-bitcoin-publish-bake = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "2m";
+        OnUnitActiveSec = "15m";
+        Persistent = true;
+      };
     };
   };
 }

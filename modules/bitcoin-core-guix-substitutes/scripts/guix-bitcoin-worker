@@ -15,6 +15,7 @@ prewarm_url=${GUIX_BITCOIN_PREWARM_URL:?GUIX_BITCOIN_PREWARM_URL is required}
 prewarm_jobs=16
 native_systems=${GUIX_BITCOIN_NATIVE_SYSTEMS:?GUIX_BITCOIN_NATIVE_SYSTEMS is required}
 target_hosts=${GUIX_BITCOIN_TARGET_HOSTS:?GUIX_BITCOIN_TARGET_HOSTS is required}
+publisher_hosts=${GUIX_BITCOIN_PUBLISHER_HOSTS:?GUIX_BITCOIN_PUBLISHER_HOSTS is required}
 time_machine_url=${GUIX_BITCOIN_TIMEMACHINE_URL:?GUIX_BITCOIN_TIMEMACHINE_URL is required}
 time_machine_commit=${GUIX_BITCOIN_TIMEMACHINE_COMMIT:?GUIX_BITCOIN_TIMEMACHINE_COMMIT is required}
 
@@ -501,6 +502,7 @@ while :; do
         status=${PIPESTATUS[0]}
         set -e
         if ((status == 0)); then
+            [[ -z $publisher_hosts ]] || touch "$job/publish-pending"
             mv -T --no-clobber -- "$job" "$jobs_dir/succeeded/$job_id"
             echo "Job $job_id succeeded"
         else
