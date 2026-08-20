@@ -50,7 +50,6 @@ let
       export GUIX_BITCOIN_TARGET_HOSTS=${lib.escapeShellArg targetHostsText}
       export GUIX_BITCOIN_PUBLISHER_HOSTS=${lib.escapeShellArg publisherHostsText}
       export GUIX_BITCOIN_TIMEMACHINE_URL=${lib.escapeShellArg builder.timeMachineUrl}
-      export GUIX_BITCOIN_TIMEMACHINE_COMMIT=${lib.escapeShellArg builder.timeMachineCommit}
       export PATH=${lib.escapeShellArg runtimePath}:$PATH
       exec ${pkgs.bash}/bin/bash ${source} "$@"
     '';
@@ -156,12 +155,6 @@ in
       type = lib.types.str;
       default = "https://codeberg.org/guix/guix.git";
       description = "Guix repository URL used by guix time-machine.";
-    };
-
-    timeMachineCommit = lib.mkOption {
-      type = lib.types.str;
-      default = "c5eee3336cc1d10a3cc1c97fde2809c3451624d3";
-      description = "Guix commit used by guix time-machine.";
     };
 
     schedule = {

@@ -49,13 +49,34 @@ recover_running_jobs() {
 }
 
 time_machine() {
+    local commit=$1
+    shift
     guix time-machine \
         --url="$time_machine_url" \
-        --commit="$time_machine_commit" \
+        --commit="$commit" \
         --cores="$build_jobs" \
         --keep-failed \
         --fallback \
         -- "$@"
+}
+
+read_time_machine_commit() {
+    local worktree=$1
+    local prelude=$worktree/contrib/guix/libexec/prelude.bash
+    local -a commits=()
+
+    [[ -f $prelude ]] || {
+        echo "missing Guix prelude: $prelude" >&2
+        return 1
+    }
+    mapfile -t commits < <(
+        sed -nE 's/^[[:space:]]*--commit=([0-9a-f]{40})[[:space:]]*\\$/\1/p' "$prelude"
+    )
+    ((${#commits[@]} == 1)) || {
+        echo "expected exactly one Guix time-machine commit in $prelude" >&2
+        return 1
+    }
+    printf '%s\n' "${commits[0]}"
 }
 
 manifest_wrapper() {
@@ -243,7 +264,7 @@ check_manifest() {
     local system=$1
     local host=$2
     local manifest_file=$3
-    until HOST="$host" time_machine weather \
+    until HOST="$host" time_machine "$time_machine_commit" weather \
         --system="$system" \
         --substitute-urls="$prewarm_url" \
         --manifest="$manifest_file" | grep -q '100.0% substitutes available'; do
@@ -351,7 +372,7 @@ materialize_native_system() {
             manifest_wrapper "$system" "$source" "$wrapper"
 
             echo "Building $job_id: $name for $host on $system"
-            if ! HOST="$host" time_machine shell \
+            if ! HOST="$host" time_machine "$time_machine_commit" shell \
                 --system="$system" \
                 --manifest="$wrapper" \
                 --cores="$build_jobs" \
@@ -360,7 +381,7 @@ materialize_native_system() {
                 return 1
             fi
 
-            if ! derivations_output=$(HOST="$host" time_machine build \
+            if ! derivations_output=$(HOST="$host" time_machine "$time_machine_commit" build \
                 --system="$system" \
                 --manifest="$wrapper" \
                 --derivations); then
@@ -407,6 +428,7 @@ materialize_job() {
     local job=$jobs_dir/running/$job_id
     local worktree
     local manifests_dir
+    local time_machine_commit
     local system branch_index branch_status failed_status
     local -a manifests=()
     local -a systems=()
@@ -426,6 +448,8 @@ materialize_job() {
     read_source_descriptor "$job"
 
     worktree=$(prepare_worktree "$job_id" "$source_commit")
+    time_machine_commit=$(read_time_machine_commit "$worktree")
+    echo "Using Guix time-machine commit $time_machine_commit for $job_id"
     manifests_dir=$worktree/contrib/guix
     [[ -d $manifests_dir ]] || {
         echo "job source has no contrib/guix directory: $job_id" >&2
