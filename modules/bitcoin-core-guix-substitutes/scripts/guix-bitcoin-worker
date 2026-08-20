@@ -17,7 +17,6 @@ native_systems=${GUIX_BITCOIN_NATIVE_SYSTEMS:?GUIX_BITCOIN_NATIVE_SYSTEMS is req
 target_hosts=${GUIX_BITCOIN_TARGET_HOSTS:?GUIX_BITCOIN_TARGET_HOSTS is required}
 publisher_hosts=${GUIX_BITCOIN_PUBLISHER_HOSTS:?GUIX_BITCOIN_PUBLISHER_HOSTS is required}
 time_machine_url=${GUIX_BITCOIN_TIMEMACHINE_URL:?GUIX_BITCOIN_TIMEMACHINE_URL is required}
-time_machine_commit=${GUIX_BITCOIN_TIMEMACHINE_COMMIT:?GUIX_BITCOIN_TIMEMACHINE_COMMIT is required}
 
 mkdir -p "$jobs_dir/.tmp" "$jobs_dir/queued" "$jobs_dir/running" \
     "$jobs_dir/succeeded" "$jobs_dir/failed" "$profiles_root" \
