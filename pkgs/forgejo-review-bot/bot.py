@@ -967,6 +967,7 @@ def debug_section(debug):
 def review_body(base_sha, head_sha, content, debug=None):
     require_config()
     return (f"{COMMENT_MARKER}\n"
+            "## Ralph review\n\n"
             f"Base: `{base_sha}`  \nHead: `{head_sha}`\n\n"
             f"{content.strip()}\n"
             f"{debug_section(debug) if debug is not None else ''}")

@@ -617,12 +617,13 @@ class BotTests(unittest.TestCase):
         self.assertEqual(metrics["total_output_tokens"], 20)
         self.assertEqual(metrics["estimated_cost_usd"], 0.0006)
 
-    def test_review_body_starts_with_commit_ids(self):
+    def test_review_body_includes_stable_heading_after_marker(self):
         base = "b" * 40
         head = "a" * 40
         body = bot.review_body(base, head, "No findings.")
         self.assertTrue(body.startswith(
-            f"{bot.COMMENT_MARKER}\nBase: `{base}`  \nHead: `{head}`\n\n"))
+            f"{bot.COMMENT_MARKER}\n## Ralph review\n\n"
+            f"Base: `{base}`  \nHead: `{head}`\n\n"))
         self.assertNotIn("First-pass review", body)
         self.assertTrue(bot.comment_matches_head({"body": body}, head))
 
