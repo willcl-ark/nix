@@ -23,6 +23,7 @@ class ProtocolTests(unittest.TestCase):
                                    "assessment": None,
                                    "proposed_review": "continue",
                                    "review_reason": "The verifier found no material concept concern."},
+            "alternatives": [],
             "decisions": decisions,
         })
 
@@ -89,7 +90,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(edited[1]["kind"], "design")
         self.assertIn("incomplete", protocol.render(edited, ["A selected audit was unavailable."]))
 
-    def test_render_orders_design_after_critical_and_before_other_findings(self):
+    def test_render_groups_findings_before_design_and_alternatives(self):
         findings = [
             {**self.finding, "kind": "suggestion", "title": "General suggestion"},
             {**self.finding, "kind": "defect", "severity": "minor", "title": "Minor bug"},
@@ -98,9 +99,10 @@ class ProtocolTests(unittest.TestCase):
         ]
         rendered = protocol.render(findings)
         self.assertEqual(rendered.count("Design concern"), 1)
-        self.assertLess(rendered.index("Critical bug"), rendered.index("Design and approach"))
-        self.assertLess(rendered.index("Design concern"), rendered.index("Minor bug"))
+        self.assertLess(rendered.index("##### Findings"), rendered.index("Critical bug"))
+        self.assertLess(rendered.index("Critical bug"), rendered.index("Minor bug"))
         self.assertLess(rendered.index("Minor bug"), rendered.index("General suggestion"))
+        self.assertLess(rendered.index("General suggestion"), rendered.index("Design and approach"))
         self.assertNotIn("Design and approach", protocol.render([findings[0]]))
 
     def test_verifier_withholds_invalid_kind(self):

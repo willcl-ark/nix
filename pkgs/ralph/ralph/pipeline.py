@@ -22,7 +22,9 @@ ARCHAEOLOGY_TOOL_LIMIT = 12
 def stage_settings(name, tier):
     if name == "design":
         return "xhigh", 25_000
-    if name in ADVERSARIAL_STAGES or name == "verifier" and tier == "sensitive":
+    if name == "verifier" and tier == "sensitive":
+        return "high", model.MAX_VERIFIER_OUTPUT_TOKENS
+    if name in ADVERSARIAL_STAGES:
         return "high", 25_000
     if name == "concurrency":
         return "medium", 8_000
@@ -45,6 +47,7 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
     concept_candidate = None
     alternatives_candidate = None
     verified_concept = None
+    verified_alternatives = []
     concept_summary = None
     research_inventory = (model.research.inventory(research_evidence)
                           if research_evidence is not None else None)
@@ -330,6 +333,10 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
         }
         if result["concept_validation_error"]:
             stages["verifier"]["concept_validation_error"] = result["concept_validation_error"]
+        if result["alternatives_validation_error"]:
+            stages["verifier"]["alternatives_validation_error"] = (
+                result["alternatives_validation_error"])
+        verified_alternatives = result["alternatives"]
         verified_concept = (result["concept"]["assessment"]
                             if result["concept"]["disposition"] == "publish"
                             else None)
@@ -420,4 +427,5 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
     if ppq_budget is not None:
         debug["ppq_budget"] = ppq_budget.summary()
     debug.pop("pipeline_stage", None)
-    return protocol.render(findings, limitations, concept_summary)
+    return protocol.render(findings, limitations, concept_summary,
+                           verified_alternatives)

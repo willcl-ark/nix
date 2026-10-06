@@ -17,7 +17,8 @@ If a concept candidate is supplied, verify it separately from code findings.
 If `blind_alternatives` is supplied, those options came from a reader that saw
 only the problem, goal, and baseline code. Check their assumptions against the
 actual PR before using them. They are hypotheses, not additional votes or
-established improvements. Incorporate useful options into the concept assessment.
+established improvements. Evaluate them for the separate public `alternatives`
+field as well as for any concept objection.
 Check the decisive source claims, cited PR comments, linked prior discussions,
 and stated alternatives. Check the candidate's `goal`, advisory `assessment`,
 `proposed_review`, and `review_reason` when those fields are supplied. Record
@@ -28,29 +29,38 @@ status, or silence as evidence.
 Publish a concept assessment only for a supported, actionable objection to the
 PR's premise or approach. Favorable assessments, reassurance, rejected options,
 and inconclusive comparisons belong in the review trace, not the public comment.
-Include at most one alternative, and only when evidence establishes that it is
-superior to the submitted approach for the PR's actual requirements after
-accounting for implementation cost, maintenance, and behavior. A hypothetical
-future requirement or an unmeasured benefit is insufficient. Do not manufacture
-alternatives. Check technical
-assumptions against the checkout, especially claims that an alternative
-preserves required behavior, removes a risk, enforces an invariant by
-construction, or moves the fix to the right layer. Also inspect code evidence
-from design or other stages that could defeat the concept assessment. Compare
-the costs of the submitted concept and the alternative; do not say an
-alternative dominates unless the evidence supports both its benefit and its
-cost. Preserve the line between evidence and judgment.
+An alternative that supports this objection may appear in the concept
+assessment. Keep the concept assessment focused on the objection; avoid
+repeating details that will appear in the separate alternatives section.
+
+Separately return at most one best alternative in the verifier's top-level
+`alternatives` field, even when the PR's premise and approach are sound. Publish
+it when checkout evidence supports a concrete improvement in at least one
+meaningful dimension, such as simpler code, less maintenance burden, or better
+ergonomics for common callers. It need not dominate the PR across every
+dimension, but it must preserve actual requirements and explain its costs and
+tradeoffs. Do not publish a preference, a line-count reduction by itself, a
+speculative future option, or a minor variation. If no option meets this bar,
+return an empty list. Do not repeat the same option in both the concept
+assessment and top-level alternatives field.
+
+Check technical assumptions against the checkout, especially claims that an
+alternative preserves required behavior, removes a risk, enforces an invariant
+by construction, or moves the fix to the right layer. Also inspect code
+evidence from design or other stages that could defeat the concept assessment.
+Compare costs and describe evidence separately from judgment.
 
 Use `no_concern` with null assessment when the submitted approach is reasonable
-and no actionable concept objection or superior alternative is established.
-Record why the initial objection or alternatives were rejected in `reason`.
-If a concept objection or alternative repeats a design finding, publish it once
-as that finding, including the better alternative there when supported, and
-drop the separate concept assessment with a reason explaining the duplication.
+and no actionable concept objection is established, even when the separate
+alternatives field contains an optional improvement. Record why the initial
+objection or concept alternatives were rejected in `reason`.
+If an alternative identifies a material design problem that needs correction,
+publish it once as a design finding and omit it from the alternatives field.
+Do not duplicate a design finding in the concept assessment or alternatives.
 For a published assessment, choose a critical assessment label and make its
-`recommendation` a concise statement of the objection and correction, including
-the one superior alternative if any. Retain only citations needed to support
-that public claim. Use
+`recommendation` a concise statement of the objection and correction. Keep
+optional improvement details in the separate alternatives section. Retain only
+citations needed to support the concept objection. Use
 `drop` with null assessment when the archaeology brief itself is unsupported or
 not useful, and `unresolved` with null assessment when a decisive source or
 technical assumption cannot be checked. Do not equate `publish` with stopping

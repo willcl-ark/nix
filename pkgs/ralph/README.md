@@ -234,8 +234,10 @@ candidate or failed stage adds a limitation. The collator cannot add, merge or
 remove accepted IDs, or change their kind, severity or location. Python enforces
 those metadata constraints; preservation of meaning is a prompt requirement.
 
-Rendering groups findings as critical, design and approach, major, minor, then
-suggestion, omitting empty sections. Design kind determines its own section.
+Rendering groups findings first, with critical, major, minor, then suggestions.
+Design and approach feedback follows, then at most one independently verified
+optional alternative. Design kind determines its own section. A useful
+alternative can be published even when the PR's overall approach is sound.
 The comment contains the commit header, verified review and optional report link.
 Reports expose stage replies, dispositions and attribution. Statistics distinguish
 sole and shared accepted findings; verifier acceptance is not human validation
@@ -279,19 +281,22 @@ discovery. The pipeline still runs every selected code stage.
 
 The verifier checks the premises before accepting public conceptual feedback.
 It records both the archaeologist's proposed review recommendation and its own
-final recommendation. Public feedback must identify a supported, actionable
-objection to the PR's premise or approach. It may include at most one alternative
-that demonstrably improves on the proposal under its actual requirements, with
-the alternative's costs considered. Favorable assessments and rejected or
-inconclusive alternatives stay in the detailed trace.
+final recommendation. Conceptual feedback must identify a supported, actionable
+objection to the PR's premise or approach. Separately, it may publish one
+evidence-backed optional alternative that improves a meaningful dimension such
+as simplicity, maintenance, or caller ergonomics, with its tradeoffs stated.
+Favorable assessments and rejected or inconclusive alternatives stay in the
+detailed trace.
 
 Conceptual feedback has no finding ID, severity or artificial source location.
-The collator can edit it even when there are no accepted code findings, and
-remains the only writing pass. The public "Concept and approach" section is a
-short paragraph, without a separate alternatives list. It omits objections
-already covered by accepted design findings. A question belongs here only if
-its answer settles a specific material concern. Invalid or unverified
-assessments are withheld. Failed editing falls back to verified wording.
+The collator can edit it even when there are no accepted code findings. It edits
+finding wording and any concept objection; the optional alternative is rendered
+from verifier-approved structured fields. The public comment groups findings
+first, then design and concept feedback, then the optional alternative. It omits
+objections already covered by accepted design findings. A question belongs in
+concept feedback only if its answer settles a specific material concern.
+Invalid or unverified assessments are withheld. Failed editing falls back to
+verified wording.
 
 Reports and statistics count published concept assessments separately from
 findings and distinguish them from completed research. They also expose

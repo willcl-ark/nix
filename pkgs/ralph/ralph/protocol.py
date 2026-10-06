@@ -85,6 +85,7 @@ CONCEPT_VERIFICATION = object_schema({
 VERIFIER_SCHEMA = object_schema({
     "coverage": COVERAGE,
     "concept": CONCEPT_VERIFICATION,
+    "alternatives": {"type": "array", "items": CONCEPT_ALTERNATIVE},
     "decisions": {"type": "array", "items": object_schema({
         "candidate_ids": STRINGS,
         "disposition": {"type": "string", "enum": ["publish", "drop", "unresolved"]},
@@ -192,9 +193,9 @@ def _concept_assessment(value):
     _concept_alternatives(value["alternatives"])
 
 
-def _concept_alternatives(alternatives):
-    if not isinstance(alternatives, list) or not 0 <= len(alternatives) <= 4:
-        raise InvalidReview("Concept assessment must compare up to four alternatives")
+def _concept_alternatives(alternatives, limit=4):
+    if not isinstance(alternatives, list) or not 0 <= len(alternatives) <= limit:
+        raise InvalidReview(f"Expected up to {limit} alternatives")
     for alternative in alternatives:
         _object(alternative, CONCEPT_ALTERNATIVE["properties"])
         _text(alternative, ("name", "concept", "benefit", "cost", "unresolved"))
@@ -258,6 +259,12 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     _coverage(result["coverage"])
     if not isinstance(result["decisions"], list):
         raise InvalidReview("Invalid verifier decisions")
+    result["alternatives_validation_error"] = None
+    try:
+        _concept_alternatives(result["alternatives"], limit=1)
+    except InvalidReview as exc:
+        result["alternatives_validation_error"] = str(exc)
+        result["alternatives"] = []
     concept = result["concept"]
     result["concept_validation_error"] = None
     try:
@@ -366,22 +373,48 @@ def collation(text, accepted, concept_assessment=None):
     return edited, concept_summary
 
 
-def render(findings, limitations=(), concept_summary=None):
+def render(findings, limitations=(), concept_summary=None, alternatives=()):
     sections = []
-    if concept_summary:
-        sections.append(f"##### Concept and approach\n\n{concept_summary}")
-    groups = {}
+    finding_groups = {}
+    design_findings = []
     for finding in findings:
-        section = "design" if finding["kind"] == "design" else finding["severity"]
-        groups.setdefault(section, []).append(finding)
-    for severity, heading in (("critical", "🔴 Critical"), ("design", "Design and approach"),
-                              ("major", "🟠 Major"), ("minor", "🟡 Minor"),
-                              ("suggestion", "💡 Suggestion")):
-        group = groups.get(severity, [])
+        if finding["kind"] == "design":
+            design_findings.append(finding)
+        else:
+            finding_groups.setdefault(finding["severity"], []).append(finding)
+    rendered_findings = []
+    for severity, heading in (("critical", "Critical"), ("major", "Major"),
+                              ("minor", "Minor"), ("suggestion", "Suggestions")):
+        group = finding_groups.get(severity, [])
         if group:
-            sections.append(f"##### {heading}\n\n" + "\n\n".join(
+            rendered_findings.append(f"**{heading}**\n\n" + "\n\n".join(
                 f"**{finding['title']}** ({finding['path']}:{finding['line']}, "
                 f"{finding['side']})\n\n{finding['body']}" for finding in group))
+    if rendered_findings:
+        sections.append("##### Findings\n\n" + "\n\n".join(rendered_findings))
+    rendered_design = []
+    if design_findings:
+        rendered_design.append("\n\n".join(
+            f"**{finding['title']}** ({finding['path']}:{finding['line']}, "
+            f"{finding['side']})\n\n{finding['body']}" for finding in design_findings))
+    if concept_summary:
+        rendered_design.append(f"**Concept and approach.** {concept_summary}")
+    if rendered_design:
+        sections.append("##### Design and approach\n\n" + "\n\n".join(rendered_design))
+    if alternatives:
+        rendered_alternatives = []
+        for alternative in alternatives:
+            text = (f"**{alternative['name']}.** {alternative['concept']} "
+                    f"Benefit: {alternative['benefit']} "
+                    f"Trade-off: {alternative['cost']}")
+            if alternative["unresolved"]:
+                text += f" Unresolved: {alternative['unresolved']}"
+            if alternative["citations"]:
+                text += " " + " ".join(
+                    f"[Source {index}]({citation})"
+                    for index, citation in enumerate(alternative["citations"], 1))
+            rendered_alternatives.append(text)
+        sections.append("##### Alternatives\n\n" + "\n\n".join(rendered_alternatives))
     if not sections:
         sections.append("I found no actionable issues in this static review." if not limitations
                         else "No verified findings are available from this partial review.")

@@ -52,6 +52,7 @@ def verification(decisions=(), concept=None):
                                "assessment": None,
                                "proposed_review": "continue",
                                "review_reason": "The verifier found no material concept concern."},
+        "alternatives": [],
         "decisions": list(decisions),
     })
 
@@ -219,7 +220,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(efforts["adversarial"], "high")
         self.assertEqual(output_limits["adversarial"], 25_000)
         self.assertEqual(efforts["verifier"], "high")
-        self.assertEqual(output_limits["verifier"], 25_000)
+        self.assertEqual(output_limits["verifier"], model.MAX_VERIFIER_OUTPUT_TOKENS)
         self.assertIn(("verifier", "gpt-6-luna"), self.calls)
         self.assertIn("incomplete", content)
         self.assertEqual(self.debug["stages"]["design"]["turns"][0]["input_tokens"], 100)
@@ -407,7 +408,8 @@ class PipelineTests(unittest.TestCase):
             return discovery()
 
         self.run_review(review, budget=budget)
-        self.assertEqual(budget.payloads[0]["max_output_tokens"], 25_000)
+        self.assertEqual(budget.payloads[0]["max_output_tokens"],
+                         model.MAX_VERIFIER_OUTPUT_TOKENS)
         self.assertEqual(budget.payloads[1]["max_output_tokens"], 8_000)
         self.assertEqual(budget.payloads[2]["reasoning"]["effort"], "high")
         self.assertIn("independent:1", budget.payloads[2]["input"][0]["content"])

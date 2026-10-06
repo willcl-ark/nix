@@ -35,12 +35,13 @@ behavior directly while preserving limits on production evidence. Do not say
 Return the collator object in the supplied schema. Include every accepted
 finding ID exactly once, with its edited title and body. If a concept assessment
 is supplied, set `concept_summary` to two or three sentences for the public
-review's "Concept and approach" section. If no concept assessment is supplied,
+review's "Concept and approach" paragraph under "Design and approach". If no
+concept assessment is supplied,
 set `concept_summary` to null. Do not omit a supplied concept assessment.
 
 For the concept paragraph, state the actionable objection and correction.
-If the verifier retained an alternative, name it and explain its demonstrated
-advantage and material cost in this same paragraph. Aim for at most 80 words.
+Keep optional alternative details for the separate alternatives section. Aim
+for at most 80 words.
 Do not list rejected alternatives, reassure the author, or repeat a design
 finding. Preserve every citation link
 from the accepted assessment. Do not quote or argue with PR comments. Do not
