@@ -110,6 +110,11 @@ def _safe_report_name(review):
     return None
 
 
+def _valid_sha(value):
+    return (isinstance(value, str) and len(value) == 40
+            and all(char in "0123456789abcdefABCDEF" for char in value))
+
+
 def _pr_number(review):
     value = _field(review, "number")
     if isinstance(value, int) and value > 0:
@@ -133,10 +138,26 @@ def _pr_link(review, repository_url):
 
 def _report_link(review, report_base_url):
     name = _safe_report_name(review)
+    return _report_name_link(name, report_base_url, "report")
+
+
+def _report_name_link(name, report_base_url, text):
     base = _valid_http_base(report_base_url)
     if name is None or base is None:
         return "N/A"
-    return _link(f"{base}/{quote(name, safe='._-')}", "report")
+    return _link(f"{base}/{quote(name, safe='._-')}", text)
+
+
+def _compare_link(assessment, repository_url):
+    old_head = _field(assessment, "old_head")
+    new_head = _field(assessment, "new_head")
+    if not _valid_sha(old_head) or not _valid_sha(new_head):
+        return "N/A"
+    text = f"{old_head[:12]}..{new_head[:12]}"
+    base = _valid_http_base(repository_url)
+    if base is None:
+        return _escape(text)
+    return _link(f"{base}/compare/{old_head}..{new_head}", text)
 
 
 def _record_rows(records):
@@ -209,6 +230,8 @@ def _top_kpis(summary):
     unique_prs = _field(inventory, "unique_prs")
     findings = _field(overview, "published_findings")
     archaeology = _mapping(overview.get("archaeology"))
+    addressed = _mapping(summary.get("addressed_findings"))
+    addressed_counts = _mapping(addressed.get("status_counts"))
     known = _field(month, "known_cost_micros")
     reserved = _field(month, "reserved_micros")
     review_costs = _mapping(_mapping(summary.get("distributions")).get(
@@ -224,6 +247,9 @@ def _top_kpis(summary):
         _kpi("Verified findings", _fmt_int(findings), "Bot verified, not human confirmed"),
         _kpi("Conceptual concerns", _fmt_int(_field(archaeology, "published_concerns")),
              f"{_fmt_int(_field(archaeology, 'research_completed'))} research runs"),
+        _kpi("Addressed after review", _fmt_int(addressed_counts.get("addressed")),
+             f"{_fmt_int(addressed_counts.get('partially_addressed'))} partial; "
+             f"{_fmt_int(_field(addressed, 'evaluated_findings'))} assessed"),
         _kpi("Current month spend", _fmt_money_micros(known),
              f"{_fmt_money_micros(reserved)} reserved, {provider_count} providers"),
         _kpi("Median review cost", _fmt_money_micros(median_review_cost),
@@ -294,6 +320,75 @@ def _concept_section(summary):
             "Published conceptual concerns are tracked separately from code findings."
         )
         + body
+        + '</section>'
+    )
+
+
+def _addressed_section(summary, repository_url, report_base_url):
+    addressed = _mapping(summary.get("addressed_findings"))
+    findings = [item for item in _list(addressed.get("findings"))
+                if isinstance(item, dict)]
+    counts = _mapping(addressed.get("status_counts"))
+    spend = _mapping(addressed.get("spend"))
+    count_rows = "".join(
+        f"<tr><td>{_escape(status)}</td><td>{_fmt_int(counts.get(status))}</td></tr>"
+        for status in ("addressed", "partially_addressed", "still_present", "unclear")
+    )
+    coverage = (
+        f"{_fmt_int(_field(addressed, 'evaluated_findings'))} assessed findings from "
+        f"{_fmt_int(_field(addressed, 'source_published_findings'))} published findings "
+        f"across {_fmt_int(_field(addressed, 'assessed_source_reviews'))} source reviews."
+    )
+    if not findings:
+        table = "<p>No addressed-finding assessments were recorded.</p>"
+    else:
+        rows = []
+        for finding in findings:
+            source_name = _field(finding, "source_report_name")
+            if not (isinstance(source_name, str)
+                    and report.REPORT_ID.fullmatch(source_name)
+                    and source_name.endswith(".html")):
+                source_name = None
+            finding_label = _field(finding, "title", default=None) or _field(
+                finding, "finding_id", default="unknown")
+            path = _field(finding, "path", default=None)
+            location = "" if path is None else f"<br><span class=\"note\">{_escape(path)}</span>"
+            rows.append(
+                "<tr>"
+                f"<td>{_pr_link(finding, repository_url)}</td>"
+                f"<td>{_report_name_link(source_name, report_base_url, 'source report')}</td>"
+                f"<td>{_compare_link(finding, repository_url)}</td>"
+                f"<td>{_escape(finding_label)}{location}</td>"
+                f"<td>{_escape(_field(finding, 'status', default='unclear'))}</td>"
+                f"<td>{_escape(_field(finding, 'reason', default=''))}</td>"
+                f"<td>{_escape(_field(finding, 'evidence', default=''))}</td>"
+                f"<td>{_escape(_field(finding, 'assessed_at', default='N/A'))}<br>"
+                f"<span class=\"note\">{_escape(_field(finding, 'model', default='unknown'))}</span></td>"
+                "</tr>"
+            )
+        table = (
+            "<table><thead><tr><th>PR</th><th>Original review</th><th>Comparison</th>"
+            "<th>Finding</th><th>Status</th><th>Rationale</th><th>Evidence</th>"
+            "<th>Checked</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+        )
+    return (
+        '<section id="addressed"><h2>Addressed after review</h2>'
+        + _section_note(_field(
+            addressed, "note",
+            default=("Best-effort automated assessment. This is not a causal "
+                     "claim or human validation.")))
+        + f"<p>{coverage}</p>"
+        + "<div class=\"split\"><div>"
+        + "<table><thead><tr><th>Status</th><th>Findings</th></tr></thead>"
+        + f"<tbody>{count_rows}</tbody></table></div>"
+        + "<div>"
+        + f"<p>Assessment jobs: {_fmt_int(_field(addressed, 'assessment_jobs'))}</p>"
+        + f"<p>Assessment spend: {_fmt_money_micros(_field(spend, 'known_cost_micros'))} "
+        + f"known, {_fmt_money_micros(_field(spend, 'reserved_micros'))} reserved, "
+        + f"{_fmt_int(_field(spend, 'request_count'))} attempts.</p>"
+        + "</div></div>"
+        + table
         + '</section>'
     )
 
@@ -708,6 +803,7 @@ def _html(summary, repository_url, report_base_url):
 <nav>
 <a href="#leaderboard">Leaderboard</a>
 <a href="#concepts">Concepts</a>
+<a href="#addressed">Addressed</a>
 <a href="#spend">Spend</a>
 <a href="#stages">Agent stages</a>
 <a href="#paired">Paired models</a>
@@ -721,6 +817,7 @@ def _html(summary, repository_url, report_base_url):
 <div class="cards">{_top_kpis(summary)}</div>
 {_leaderboard_section(summary)}
 {_concept_section(summary)}
+{_addressed_section(summary, repository_url, report_base_url)}
 {_paired_section(summary)}
 <section id="coverage"><h2>Coverage snapshot</h2>
 {_section_note("Bot verification is a consistency check against available evidence, not human confirmation.")}

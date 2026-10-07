@@ -266,6 +266,7 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(summary["inventory"]["analyzed_reviews"], 1)
         self.assertEqual(summary["inventory"]["skipped_results"], 1)
         self.assertEqual(summary["inventory"]["malformed_results"], 1)
+        self.assertEqual(summary["inventory"]["malformed_followups"], 0)
         self.assertEqual(summary["inventory"]["recorded_failed_attempts"], 2)
         self.assertEqual(summary["overview"]["saved_reviews"], 1)
         self.assertEqual(summary["overview"]["published_reviews"], 1)
@@ -326,6 +327,8 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(set(empty.iterdir()), before)
         self.assertTrue(summary["inventory"]["missing_sources"]["jobs_db"])
         self.assertTrue(summary["inventory"]["missing_sources"]["openai_ledger"])
+        self.assertTrue(
+            summary["inventory"]["missing_sources"]["followup_assessments"])
 
         job = self.enqueue(50, "a" * 40)
         self.save_complete(job, self.result())
@@ -417,6 +420,142 @@ class StatsTests(unittest.TestCase):
             summary["distributions"]["saved_review_known_cost_micros"]["median"])
         self.assertEqual(
             summary["distributions"]["saved_review_cost_missing_ledger_count"], 1)
+
+    def test_addressed_findings_are_deduped_and_validated(self):
+        source = self.enqueue(80, "a" * 40)
+        self.save_complete(source, self.result(head="a" * 40))
+        self.report_dir.mkdir()
+        report_name = f'80-{"a" * 40}-{source["id"]}-{source["generation"]}.html'
+        (self.report_dir / report_name).write_text("public report", encoding="utf-8")
+
+        superseded = self.enqueue(80, "c" * 40)
+        self.assertTrue(self.jobs.save_result(superseded, self.result(head="c" * 40)))
+        self.assertTrue(self.jobs.supersede(superseded))
+
+        addressed = self.enqueue(80, "d" * 40)
+        self.save_complete(addressed, self.result(head="d" * 40))
+
+        running = self.enqueue(80, "e" * 40)
+        self.assertTrue(self.jobs.save_result(running, self.result(head="e" * 40)))
+
+        self.create_followups([
+            (superseded["id"], {
+                "assessed_at": "2026-10-07T11:00:00Z",
+                "model": "gpt-6-luna",
+                "findings": [{
+                    "source_job_id": source["id"],
+                    "source_generation": source["generation"],
+                    "finding_id": "finding:1",
+                    "title": "Merged finding",
+                    "path": "src/node.cpp",
+                    "old_head": "a" * 40,
+                    "new_head": "c" * 40,
+                    "status": "still_present",
+                    "reason": "The old issue remains.",
+                    "evidence": "The diff does not touch the guard.",
+                }],
+            }),
+            (addressed["id"], {
+                "assessed_at": "2026-10-07T12:00:00Z",
+                "model": "gpt-6-luna",
+                "findings": [{
+                    "source_job_id": source["id"],
+                    "source_generation": source["generation"],
+                    "finding_id": "finding:1",
+                    "title": "Merged finding",
+                    "path": "src/node.cpp",
+                    "old_head": "a" * 40,
+                    "new_head": "d" * 40,
+                    "status": "addressed",
+                    "reason": "The follow-up adds the missing guard.",
+                    "evidence": "src/node.cpp now rejects the invalid state.",
+                }, {
+                    "source_job_id": source["id"],
+                    "source_generation": source["generation"],
+                    "finding_id": "missing:finding",
+                    "old_head": "a" * 40,
+                    "new_head": "d" * 40,
+                    "status": "addressed",
+                }, {
+                    "source_job_id": source["id"],
+                    "source_generation": source["generation"],
+                    "finding_id": "finding:1",
+                    "old_head": "b" * 40,
+                    "new_head": "d" * 40,
+                    "status": "addressed",
+                }, {
+                    "source_job_id": True,
+                    "source_generation": source["generation"],
+                    "finding_id": "finding:1",
+                    "old_head": "a" * 40,
+                    "new_head": "d" * 40,
+                    "status": "addressed",
+                },
+                ],
+            }),
+            (running["id"], {
+                "assessed_at": "2026-10-07T13:00:00Z",
+                "model": "gpt-6-luna",
+                "findings": [{
+                    "source_job_id": source["id"],
+                    "source_generation": source["generation"],
+                    "finding_id": "finding:1",
+                    "old_head": "a" * 40,
+                    "new_head": "e" * 40,
+                    "status": "still_present",
+                }],
+            }),
+            (9999, {
+                "assessed_at": "2026-10-07T14:00:00Z",
+                "model": "gpt-6-luna",
+                "findings": [{
+                    "source_job_id": source["id"],
+                    "source_generation": source["generation"],
+                    "finding_id": "finding:1",
+                    "old_head": "a" * 40,
+                    "new_head": "f" * 40,
+                    "status": "addressed",
+                }],
+            }),
+        ])
+        self.add_malformed_followup()
+
+        summary = stats.collect_stats(self.state_dir, self.report_dir)
+        addressed_summary = summary["addressed_findings"]
+        findings = addressed_summary["findings"]
+
+        self.assertEqual(addressed_summary["evaluated_findings"], 1)
+        self.assertEqual(addressed_summary["source_published_findings"], 1)
+        self.assertEqual(addressed_summary["assessed_source_reviews"], 1)
+        self.assertEqual(addressed_summary["assessment_jobs"], 1)
+        self.assertEqual(addressed_summary["status_counts"], {
+            "addressed": 1,
+            "partially_addressed": 0,
+            "still_present": 0,
+            "unclear": 0,
+        })
+        self.assertEqual(findings[0]["source_job_id"], source["id"])
+        self.assertEqual(findings[0]["assessment_job_id"], addressed["id"])
+        self.assertEqual(findings[0]["source_report_name"], report_name)
+        self.assertEqual(findings[0]["old_head"], "a" * 40)
+        self.assertEqual(findings[0]["new_head"], "d" * 40)
+        self.assertEqual(summary["inventory"]["malformed_followups"], 1)
+
+    def create_followups(self, rows):
+        followup_dir = self.state_dir / "followup"
+        followup_dir.mkdir()
+        with sqlite3.connect(followup_dir / "assessments.sqlite3") as db:
+            db.execute("""CREATE TABLE assessments (
+                job_id INTEGER PRIMARY KEY,
+                result TEXT
+            )""")
+            db.executemany("INSERT INTO assessments VALUES (?, ?)",
+                           [(job_id, json.dumps(result)) for job_id, result in rows])
+            db.execute("INSERT INTO assessments VALUES (?, ?)", (8888, None))
+
+    def add_malformed_followup(self):
+        with sqlite3.connect(self.state_dir / "followup" / "assessments.sqlite3") as db:
+            db.execute("INSERT INTO assessments VALUES (?, ?)", (12345, "{bad json}"))
 
     def test_snapshot_ledger_cost_joins_only_matching_generic_configuration(self):
         month = datetime.now(timezone.utc).strftime("%Y-%m")

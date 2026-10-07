@@ -157,6 +157,16 @@ in
       description = "Separate per-review spending ceiling in USD for the PPQ GLM pass.";
     };
 
+    followupBudgetUsd = lib.mkOption {
+      type = lib.types.addCheck lib.types.number (value: value > 0);
+      default = 0.10;
+      description = ''
+        Separate per-update spending ceiling in USD for background assessments
+        of previously published findings. Uses its own ledger and never consumes
+        the main review's per-review or monthly allowance.
+      '';
+    };
+
     monthlyBudgetUsd = lib.mkOption {
       type = lib.types.nullOr (lib.types.addCheck lib.types.number (value: value > 0));
       default = null;
@@ -319,6 +329,62 @@ in
       timerConfig = {
         OnBootSec = "1m";
         OnUnitActiveSec = "5m";
+      };
+    };
+
+    systemd.services.ralph-followup = lib.mkIf (cfg.reportDir != null && cfg.reportBaseUrl != null) {
+      description = "Assess changes addressing published Ralph findings";
+      after = [
+        "network-online.target"
+        "ralph.service"
+      ];
+      wants = [ "network-online.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${cfg.package}/bin/ralph-followup ${
+          lib.escapeShellArgs (
+            [
+              "--state-dir"
+              cfg.stateDir
+              "--origin"
+              cfg.origin
+              "--openai-key-file"
+              cfg.openaiKeyFile
+              "--prompt-file"
+              cfg.promptFile
+              "--audit-prompt-dir"
+              cfg.auditPromptDir
+              "--budget-usd"
+              (toString cfg.followupBudgetUsd)
+            ]
+            ++ lib.optionals (cfg.modelsJson != null) [
+              "--models-json"
+              cfg.modelsJson
+            ]
+          )
+        }";
+        User = cfg.user;
+        Group = cfg.group;
+        StateDirectory = "${lib.removePrefix "/var/lib/" cfg.stateDir}/followup";
+        StateDirectoryMode = "0700";
+        WorkingDirectory = "${cfg.stateDir}/followup";
+        ReadOnlyPaths = [ cfg.stateDir ];
+        ReadWritePaths = [ "${cfg.stateDir}/followup" ];
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        Nice = 10;
+        IOSchedulingClass = "idle";
+        TimeoutStartSec = "30m";
+      };
+    };
+
+    systemd.timers.ralph-followup = lib.mkIf (cfg.reportDir != null && cfg.reportBaseUrl != null) {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "2m";
+        OnUnitInactiveSec = "5m";
       };
     };
 

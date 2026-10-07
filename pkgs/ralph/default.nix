@@ -30,6 +30,7 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     install -Dm755 bot.py $out/libexec/ralph/bot.py
     install -Dm755 evaluate.py $out/libexec/ralph/evaluate.py
+    install -Dm755 followup.py $out/libexec/ralph/followup.py
     for module in ralph/*.py; do
       install -Dm644 "$module" $out/libexec/ralph/"$module"
     done
@@ -46,6 +47,9 @@ stdenvNoCC.mkDerivation {
       --prefix PATH : ${lib.makeBinPath [ git ]}
     makeWrapper ${python3.interpreter} $out/bin/ralph-evaluate \
       --add-flags $out/libexec/ralph/evaluate.py \
+      --prefix PATH : ${lib.makeBinPath [ git ]}
+    makeWrapper ${python3.interpreter} $out/bin/ralph-followup \
+      --add-flags $out/libexec/ralph/followup.py \
       --prefix PATH : ${lib.makeBinPath [ git ]}
     runHook postInstall
   '';

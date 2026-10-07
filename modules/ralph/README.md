@@ -183,8 +183,8 @@ report link. Existing comments and private traces are not backfilled.
 
 When reports are configured, a timer also refreshes `reportDir/stats/index.html`
 and its public JSON download every five minutes. The dashboard reads durable
-review jobs and both spend ledgers without model calls or credentials. It ranks
-agents and models by verifier-accepted findings, separates sole and shared
+review jobs and both review spend ledgers without model calls or credentials. It
+ranks agents and models by verifier-accepted findings, separates sole and shared
 contributions, and shows execution opportunities, candidate dispositions,
 coverage, routing, token usage, costs, and review details. Shared findings earn
 credit for each contributing agent, so leaderboard counts overlap. Concept
@@ -193,6 +193,17 @@ counts. Candidate and verifier `would_stop` counts are shown with downstream
 findings and costs so a human can judge false proposed stops and useful findings
 that appeared after a proposed stop. Archaeology costs and execution remain
 visible outside the finding leaderboard.
+
+Addressed-finding checks run outside the main review service. When reports are
+configured, `ralph-followup.timer` runs every five minutes with its own budget,
+checkout and ledgers under `stateDir/followup/`. It stores Git data in
+`stateDir/followup/checkout`, assessment rows in
+`stateDir/followup/assessments.sqlite3`, and model spend in
+`stateDir/followup/spend.sqlite3`. The first run seeds the local history needed
+for future synchronize events; it does not automatically backfill old PR
+updates. `services.ralph.followupBudgetUsd` defaults to `0.10`. Follow-up
+assessment spend is shown in the addressed section, separate from main review
+costs.
 
 Distinct review jobs and paid request attempts are counted separately. Retries
 increase request counts and ledger spend; they do not duplicate the final

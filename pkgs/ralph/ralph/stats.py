@@ -25,6 +25,7 @@ PUBLIC_LIMITATION_NOTES = [
 RESERVED_STATUSES = {"reserved", "uncertain", "unknown"}
 UNKNOWN_COST_STATUSES = RESERVED_STATUSES
 REVIEW_ID_PREFIX = "pr:"
+ADDRESSED_STATUSES = ("addressed", "partially_addressed", "still_present", "unclear")
 
 
 def collect_stats(state_dir: Path, report_dir: Path) -> dict:
@@ -34,7 +35,12 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
     now = datetime.now(timezone.utc)
     current_month = now.strftime("%Y-%m")
     jobs, jobs_missing = _job_rows(state_dir / "jobs.sqlite3")
+    followup_dir = state_dir / "followup"
+    followups, followups_missing, malformed_followups = _followup_rows(
+        followup_dir / "assessments.sqlite3")
     requests, ledger_missing = _ledger_rows(state_dir)
+    followup_requests, followup_ledger_missing = _provider_ledger_rows(
+        "followup", followup_dir / "spend.sqlite3")
     spend = _spend_summary(requests, current_month)
 
     report_dir_missing = not report_dir.exists()
@@ -46,10 +52,13 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         "unique_prs": len({row["number"] for row in jobs}),
         "skipped_results": 0,
         "malformed_results": 0,
+        "malformed_followups": malformed_followups,
         "recorded_failed_attempts": sum(max(0, int(row["attempts"] or 0))
                                         for row in jobs),
         "missing_sources": {
             "jobs_db": jobs_missing,
+            "followup_assessments": followups_missing,
+            "followup_ledger": followup_ledger_missing,
             "openai_ledger": ledger_missing["openai"],
             "glm_ledger": ledger_missing["glm"],
             "report_dir": report_dir_missing,
@@ -74,6 +83,8 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
     stages = defaultdict(_new_stage)
     routing_tiers = Counter()
     review_records = []
+    completed_reviews = {}
+    completed_reviews_by_job = {}
     cost_values = []
     reserved_values = []
     cost_missing_ledger = 0
@@ -170,6 +181,23 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         if report_name is not None:
             record["report_name"] = report_name
         review_records.append(record)
+        if row["status"] == "complete":
+            completed_reviews[(row["number"], row["id"], row["generation"])] = {
+                "number": row["number"],
+                "job_id": row["id"],
+                "generation": row["generation"],
+                "head": record["head"],
+                "published_findings": len(findings) if not skipped else 0,
+                "finding_ids": _published_finding_ids(debug),
+                "report_name": report_name,
+            }
+            completed_reviews_by_job[row["id"]] = completed_reviews[
+                (row["number"], row["id"], row["generation"])]
+
+    addressed_records = []
+    for followup in followups:
+        addressed_records.extend(
+            _addressed_records(followup, completed_reviews_by_job))
 
     for request in requests:
         _add_stage_ledger(stages, request, configured_stage_models)
@@ -198,6 +226,8 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
                 concept_alternative_values),
         },
         "paired_sol_glm": paired,
+        "addressed_findings": _addressed_summary(
+            addressed_records, completed_reviews, followup_requests),
         "recent_reviews": sorted(review_records, key=lambda item: item["job_id"],
                                  reverse=True)[:50],
         "reviews": sorted(review_records, key=lambda item: item["job_id"],
@@ -226,6 +256,29 @@ def _job_rows(path):
                 "status, attempts, review_result FROM jobs ORDER BY id")], False
     except sqlite3.Error:
         return [], True
+
+
+def _followup_rows(path):
+    if not path.exists():
+        return [], True, 0
+    rows = []
+    malformed = 0
+    try:
+        with _connect_readonly(path) as db:
+            records = db.execute(
+                "SELECT job_id, result FROM assessments ORDER BY job_id")
+            for row in records:
+                job_id = _positive_int(row["job_id"])
+                if row["result"] is None:
+                    continue
+                result = _parse_json(row["result"])
+                if job_id is None or not isinstance(result, dict):
+                    malformed += 1
+                    continue
+                rows.append({"job_id": job_id, "result": result})
+            return rows, False, malformed
+    except sqlite3.Error:
+        return [], True, 0
 
 
 def _ledger_rows(state_dir):
@@ -355,6 +408,127 @@ def _review_id(row):
     return f'pr:{row["number"]}:{row["id"]}:{row["generation"]}'
 
 
+def _addressed_records(followup, completed_reviews_by_job):
+    assessment = completed_reviews_by_job.get(followup["job_id"])
+    if assessment is None:
+        return []
+    addressed = followup["result"]
+    if not isinstance(addressed, dict):
+        return []
+    assessed_at = addressed.get("assessed_at")
+    if not isinstance(assessed_at, str) or not assessed_at:
+        assessed_at = None
+    model = addressed.get("model")
+    if not isinstance(model, str) or not model:
+        model = None
+    findings = addressed.get("findings")
+    if not isinstance(findings, list):
+        return []
+    records = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        source_job_id = _positive_int(finding.get("source_job_id"))
+        source_generation = _positive_int(finding.get("source_generation"))
+        finding_id = finding.get("finding_id")
+        if source_job_id is None or source_generation is None:
+            continue
+        if not isinstance(finding_id, str) or not finding_id:
+            continue
+        status = finding.get("status")
+        if status not in ADDRESSED_STATUSES:
+            status = "unclear"
+        records.append({
+            "number": assessment["number"],
+            "assessment_job_id": assessment["job_id"],
+            "assessment_generation": assessment["generation"],
+            "source_job_id": source_job_id,
+            "source_generation": source_generation,
+            "finding_id": finding_id,
+            "title": _optional_string(finding.get("title")),
+            "path": _optional_string(finding.get("path")),
+            "old_head": _optional_string(finding.get("old_head")),
+            "new_head": _optional_string(finding.get("new_head"))
+                        or assessment["head"],
+            "assessment_head": assessment["head"],
+            "status": status,
+            "reason": _optional_string(finding.get("reason")),
+            "evidence": _optional_string(finding.get("evidence")),
+            "assessed_at": assessed_at,
+            "model": model,
+        })
+    return records
+
+
+def _optional_string(value):
+    return value if isinstance(value, str) and value else None
+
+
+def _positive_int(value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value > 0 else None
+
+
+def _addressed_summary(records, completed_reviews, followup_requests):
+    latest = {}
+    for record in records:
+        source_key = (record["number"], record["source_job_id"],
+                      record["source_generation"])
+        source = completed_reviews.get(source_key)
+        if source is None:
+            continue
+        if source["generation"] >= record["assessment_generation"]:
+            continue
+        if record["old_head"] != source["head"]:
+            continue
+        if record["new_head"] != record["assessment_head"]:
+            continue
+        if record["finding_id"] not in source["finding_ids"]:
+            continue
+        enriched = {
+            key: value for key, value in record.items()
+            if key != "assessment_head"
+        }
+        enriched["source_report_name"] = source.get("report_name")
+        key = (*source_key, record["finding_id"])
+        previous = latest.get(key)
+        if previous is None or _assessment_order(enriched) > _assessment_order(previous):
+            latest[key] = enriched
+    findings = sorted(latest.values(), key=lambda item: (
+        item["source_job_id"], item["source_generation"], item["finding_id"],
+        item["assessment_job_id"], item["assessment_generation"]),
+        reverse=True)
+    status_counts = Counter(item["status"] for item in findings)
+    source_keys = {
+        (item["number"], item["source_job_id"], item["source_generation"])
+        for item in findings
+    }
+    source_finding_count = sum(
+        completed_reviews[key]["published_findings"] for key in source_keys)
+    return {
+        "note": (
+            "Best-effort automated assessment of whether later PR updates addressed "
+            "previous Ralph findings. This is not a causal claim or human validation."
+        ),
+        "evaluated_findings": len(findings),
+        "source_published_findings": source_finding_count,
+        "assessed_source_reviews": len(source_keys),
+        "assessment_jobs": len({
+            (item["number"], item["assessment_job_id"], item["assessment_generation"])
+            for item in findings
+        }),
+        "spend": _request_totals(followup_requests),
+        "status_counts": {status: status_counts.get(status, 0)
+                          for status in ADDRESSED_STATUSES},
+        "findings": findings,
+    }
+
+
+def _assessment_order(record):
+    return record["assessment_generation"], record["assessment_job_id"]
+
+
 def _coverage_status(debug):
     coverage = debug.get("coverage") if isinstance(debug, dict) else None
     status = coverage.get("status") if isinstance(coverage, dict) else None
@@ -401,6 +575,14 @@ def _published_findings(debug):
     attribution = trace.finding_attribution(debug)
     return [{"kind": "unknown", "severity": "unknown"}
             for item in attribution if isinstance(item, dict)]
+
+
+def _published_finding_ids(debug):
+    ids = set()
+    for item in trace.finding_attribution(debug):
+        if isinstance(item, dict) and isinstance(item.get("finding_id"), str):
+            ids.add(item["finding_id"])
+    return ids
 
 
 def _has_attribution(debug, findings):

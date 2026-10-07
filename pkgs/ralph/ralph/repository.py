@@ -10,6 +10,8 @@ MAX_FILE_BYTES = 1_000_000
 MAX_TOOL_BYTES = 12_000
 MAX_FOCUSED_DIFF_BYTES = 80_000
 MAX_AUDIT_DOC_BYTES = 100_000
+MAX_FOLLOWUP_DIFF_BYTES = 80_000
+MAX_FOLLOWUP_PATH_DIFF_BYTES = 20_000
 SHA = re.compile(r"^[0-9a-f]{40}$")
 BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
 
@@ -18,6 +20,52 @@ def git(checkout, *args):
         ["git", "-C", str(checkout), *args], check=True, capture_output=True,
         text=True, timeout=180,
     ).stdout
+
+def has_commit(checkout, commit):
+    if not isinstance(commit, str) or not SHA.fullmatch(commit):
+        return False
+    return subprocess.run(
+        ["git", "-C", str(checkout), "cat-file", "-e", f"{commit}^{{commit}}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+    ).returncode == 0
+
+def diff_between_heads(checkout, old_head, new_head, max_bytes=MAX_FOLLOWUP_DIFF_BYTES):
+    if (not isinstance(old_head, str) or not SHA.fullmatch(old_head)
+            or not isinstance(new_head, str) or not SHA.fullmatch(new_head)):
+        raise ValueError("invalid head SHA")
+    output = subprocess.run(
+        ["git", "-C", str(checkout), "diff", "--no-ext-diff", "--no-color",
+         f"{old_head}..{new_head}"],
+        check=True, capture_output=True, timeout=180,
+    ).stdout
+    return output[:max_bytes].decode(errors="replace") + (
+        "\n[Diff truncated]" if len(output) > max_bytes else "")
+
+def diff_path_between_heads(checkout, old_head, new_head, path,
+                            max_bytes=MAX_FOLLOWUP_PATH_DIFF_BYTES):
+    if (not isinstance(old_head, str) or not SHA.fullmatch(old_head)
+            or not isinstance(new_head, str) or not SHA.fullmatch(new_head)
+            or not isinstance(path, str) or "\x00" in path):
+        return "Invalid path diff request."
+    output = subprocess.run(
+        ["git", "-C", str(checkout), "diff", "--no-ext-diff", "--no-color",
+         f"{old_head}..{new_head}", "--", path],
+        check=True, capture_output=True, timeout=180,
+    ).stdout
+    return output[:max_bytes].decode(errors="replace") + (
+        "\n[Path diff truncated]" if len(output) > max_bytes else "")
+
+def file_excerpt_at(checkout, commit, path, line, context=30):
+    if (not isinstance(commit, str) or not SHA.fullmatch(commit)
+            or not isinstance(path, str) or "\x00" in path
+            or type(line) is not int or line < 1):
+        return "Invalid file excerpt request."
+    try:
+        files = tracked_files_at(checkout, commit)
+    except subprocess.CalledProcessError:
+        return f"{path} is unavailable at {commit}."
+    return (f"{path} at {commit} near line {line}:\n"
+            + read_file(checkout, files, path, max(1, line - context)))
 
 def prepare_checkout(checkout, bot_config):
     if not (checkout / ".git").exists():

@@ -241,8 +241,12 @@ alternative can be published even when the PR's overall approach is sound.
 The comment contains the commit header, verified review and optional report link.
 Reports expose stage replies, dispositions and attribution. Statistics distinguish
 sole and shared accepted findings; verifier acceptance is not human validation
-or a measurement of recall. Profiles within one adversarial call get no separate
-causal credit.
+or a measurement of recall. They also summarize later best-effort automated
+checks of whether follow-up PR updates addressed earlier Ralph findings, keyed
+by the original finding ID and head-to-head comparison. Those follow-up checks
+are read from their own assessment database and spend ledger, so their budget is
+reported separately from review cost. These checks are not a causal claim.
+Profiles within one adversarial call get no separate causal credit.
 
 Sources: [protocol.py](ralph/protocol.py),
 [verifier prompt](audits/verifier.md), [collator prompt](audits/collator.md),
