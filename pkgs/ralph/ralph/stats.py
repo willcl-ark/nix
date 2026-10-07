@@ -2,7 +2,10 @@
 
 import json
 import math
+import os
+import re
 import sqlite3
+import subprocess
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -25,6 +28,8 @@ PUBLIC_LIMITATION_NOTES = [
 RESERVED_STATUSES = {"reserved", "uncertain", "unknown"}
 UNKNOWN_COST_STATUSES = RESERVED_STATUSES
 REVIEW_ID_PREFIX = "pr:"
+SHA = re.compile(r"[0-9a-fA-F]{40}")
+TRACE_FILENAME = re.compile(r"(\d+)-([0-9a-fA-F]{40})-(\d+)\.json")
 ADDRESSED_STATUSES = ("addressed", "partially_addressed", "still_present", "unclear")
 COVERAGE_STATUSES = ("complete", "partial", "failed", "unknown")
 
@@ -86,6 +91,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
     stages = defaultdict(_new_stage)
     routing_tiers = Counter()
     review_records = []
+    review_time_records = []
     completed_reviews = {}
     completed_reviews_by_job = {}
     cost_values = []
@@ -188,6 +194,15 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         if report_name is not None:
             record["report_name"] = report_name
         review_records.append(record)
+        review_time_records.append({
+            "number": row["number"],
+            "job_id": row["id"],
+            "generation": row["generation"],
+            "head": record["head"],
+            "verified": _verifier_completed(debug),
+            "published_findings": (
+                len(findings) if row["status"] == "complete" else 0),
+        })
         if row["status"] == "complete":
             completed_reviews[(row["number"], row["id"], row["generation"])] = {
                 "number": row["number"],
@@ -208,6 +223,11 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
 
     for request in requests:
         _add_stage_ledger(stages, request, configured_stage_models)
+
+    addressed_summary = _addressed_summary(
+        addressed_records, completed_reviews, followup_requests)
+    time_series, time_series_undated = _time_series_summary(
+        state_dir, review_time_records, addressed_summary["findings"])
 
     return {
         "generated_at": _iso_z(now),
@@ -233,8 +253,13 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
                 concept_alternative_values),
         },
         "paired_sol_glm": paired,
-        "addressed_findings": _addressed_summary(
-            addressed_records, completed_reviews, followup_requests),
+        "time_series": time_series,
+        "time_series_undated": time_series_undated,
+        "time_series_notes": [
+            "Review months come from private trace filenames and are present only when trace files can be unambiguously matched to saved result rows by PR and head.",
+            "Addressed months come from the new_head commit committer timestamp in the follow-up checkout; assessed_at is not used for trend bucketing.",
+        ],
+        "addressed_findings": addressed_summary,
         "recent_reviews": sorted(review_records, key=lambda item: item["job_id"],
                                  reverse=True)[:50],
         "reviews": sorted(review_records, key=lambda item: item["job_id"],
@@ -413,6 +438,204 @@ def _skipped_result(result):
 
 def _review_id(row):
     return f'pr:{row["number"]}:{row["id"]}:{row["generation"]}'
+
+
+def _verifier_completed(debug):
+    stages = debug.get("stages") if isinstance(debug, dict) else None
+    verifier = stages.get("verifier") if isinstance(stages, dict) else None
+    return isinstance(verifier, dict) and verifier.get("status") == "completed"
+
+
+def _time_series_summary(state_dir, review_records, addressed_findings):
+    series = defaultdict(lambda: {"reviews": 0, "verified_reviews": 0,
+                                  "findings": 0, "addressed": 0})
+    review_months, review_undated = _review_months(
+        state_dir / "review-traces", review_records)
+    for record in review_records:
+        period = review_months.get((record["job_id"], record["generation"]))
+        if period is None:
+            continue
+        series[period]["reviews"] += 1
+        if record["verified"]:
+            series[period]["verified_reviews"] += 1
+        series[period]["findings"] += record["published_findings"]
+
+    addressed_counts, addressed_undated = _addressed_month_counts(
+        state_dir, addressed_findings)
+    for period, count in addressed_counts.items():
+        series[period]["addressed"] += count
+
+    return [
+        {"period": period, **series[period]}
+        for period in _month_range(series)
+    ], {**review_undated, **addressed_undated}
+
+
+def _month_range(series):
+    if not series:
+        return []
+    start = min(series)
+    end = max(series)
+    year, month = (int(part) for part in start.split("-"))
+    end_year, end_month = (int(part) for part in end.split("-"))
+    periods = []
+    while (year, month) <= (end_year, end_month):
+        periods.append(f"{year:04d}-{month:02d}")
+        month += 1
+        if month == 13:
+            year += 1
+            month = 1
+    return periods
+
+
+def _review_months(trace_dir, records):
+    traces, malformed_traces = _trace_months(trace_dir)
+    grouped = defaultdict(list)
+    invalid_heads = 0
+    for record in records:
+        head = record.get("head")
+        if not isinstance(head, str):
+            invalid_heads += 1
+            continue
+        grouped[(record["number"], head.lower())].append(record)
+
+    months = {}
+    undated = invalid_heads
+    missing_groups = 0
+    ambiguous_groups = 0
+    for key, rows in grouped.items():
+        trace_times = sorted(traces.get(key, []))
+        if len(rows) == 1 and len(trace_times) == 1:
+            row = rows[0]
+            months[(row["job_id"], row["generation"])] = trace_times[0][1]
+            continue
+        undated += len(rows)
+        if trace_times:
+            ambiguous_groups += 1
+        else:
+            missing_groups += 1
+
+    return months, {
+        "reviews": undated,
+        "review_missing_trace_groups": missing_groups,
+        "review_ambiguous_trace_groups": ambiguous_groups,
+        "review_unmatched_trace_groups": len(set(traces) - set(grouped)),
+        "review_invalid_head_rows": invalid_heads,
+        "review_malformed_trace_filenames": malformed_traces,
+    }
+
+
+def _trace_months(trace_dir):
+    traces = defaultdict(list)
+    malformed = 0
+    if not trace_dir.exists():
+        return traces, malformed
+    try:
+        paths = sorted(trace_dir.iterdir())
+    except OSError:
+        return traces, malformed
+    for path in paths:
+        if not path.is_file():
+            continue
+        match = TRACE_FILENAME.fullmatch(path.name)
+        if match is None:
+            if path.suffix == ".json":
+                malformed += 1
+            continue
+        period = _time_ns_period(match.group(3))
+        if period is None:
+            malformed += 1
+            continue
+        traces[(int(match.group(1)), match.group(2).lower())].append(
+            (int(match.group(3)), period))
+    return traces, malformed
+
+
+def _time_ns_period(value):
+    try:
+        seconds = int(value) / 1_000_000_000
+        return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _addressed_month_counts(state_dir, findings):
+    eligible = [
+        item for item in findings
+        if item["status"] in {"addressed", "partially_addressed"}
+    ]
+    months = _commit_months(
+        state_dir / "followup" / "checkout" / ".git",
+        {item.get("new_head") for item in eligible})
+    counts = Counter()
+    undated = 0
+    for item in eligible:
+        period = months.get(item.get("new_head"))
+        if period is None:
+            undated += 1
+        else:
+            counts[period] += 1
+    return counts, {"addressed": undated, "addressed_missing_commit": undated}
+
+
+def _commit_months(git_dir, heads):
+    heads = sorted({head.lower() for head in heads
+                    if isinstance(head, str) and SHA.fullmatch(head)})
+    if not heads or not git_dir.exists():
+        return {}
+    env = os.environ.copy()
+    env["GIT_NO_LAZY_FETCH"] = "1"
+    try:
+        completed = subprocess.run(
+            ["git", f"--git-dir={git_dir}", "cat-file", "--batch"],
+            input="".join(f"{head}^{{commit}}\n" for head in heads).encode(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            timeout=15,
+            check=False)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+
+    months = {}
+    offset = 0
+    output = completed.stdout
+    for head in heads:
+        line_end = output.find(b"\n", offset)
+        if line_end < 0:
+            break
+        header = output[offset:line_end].decode(errors="replace").split()
+        offset = line_end + 1
+        if len(header) == 2 and header[1] == "missing":
+            continue
+        if len(header) != 3 or header[1] != "commit":
+            break
+        try:
+            size = int(header[2])
+        except ValueError:
+            break
+        content = output[offset:offset + size]
+        offset += size
+        if offset < len(output) and output[offset:offset + 1] == b"\n":
+            offset += 1
+        timestamp = _committer_timestamp(content)
+        if timestamp is not None:
+            months[head] = datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m")
+    return months
+
+
+def _committer_timestamp(commit):
+    for line in commit.splitlines():
+        if not line.startswith(b"committer "):
+            continue
+        parts = line.rsplit(b" ", 2)
+        if len(parts) != 3:
+            return None
+        try:
+            return int(parts[1])
+        except ValueError:
+            return None
+    return None
 
 
 def _addressed_records(followup, completed_reviews_by_job):

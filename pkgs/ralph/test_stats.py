@@ -1,5 +1,7 @@
 import json
+import os
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -564,9 +566,132 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(findings[0]["new_head"], "d" * 40)
         self.assertEqual(summary["inventory"]["malformed_followups"], 1)
 
+
+    def test_time_series_uses_trace_and_commit_dates_only(self):
+        checkout = self.state_dir / "followup" / "checkout"
+        checkout.mkdir(parents=True)
+        self.git(checkout, "init")
+        self.git(checkout, "config", "user.email", "review@example.org")
+        self.git(checkout, "config", "user.name", "Review Bot")
+        old_head = self.commit(checkout, "old", "2024-01-15T12:00:00+0000")
+        new_head = self.commit(checkout, "new", "2024-03-20T12:00:00+0000")
+        old_head_two = self.commit(checkout, "old-two", "2024-02-10T12:00:00+0000")
+        missing_head = "f" * 40
+
+        source = self.enqueue(90, old_head)
+        self.save_complete(source, self.verifier_result(old_head))
+        addressed = self.enqueue(90, new_head)
+        self.save_complete(addressed, self.result(head=new_head))
+        source_missing = self.enqueue(91, old_head_two)
+        self.save_complete(source_missing, self.verifier_result(old_head_two))
+        addressed_missing = self.enqueue(91, missing_head)
+        self.save_complete(addressed_missing, self.result(head=missing_head))
+
+        self.create_followups([
+            (addressed["id"], {
+                "assessed_at": "2099-12-01T00:00:00Z",
+                "model": "gpt-6-luna",
+                "findings": [{
+                    "source_job_id": source["id"],
+                    "source_generation": source["generation"],
+                    "finding_id": "finding:1",
+                    "old_head": old_head,
+                    "new_head": new_head,
+                    "status": "addressed",
+                }],
+            }),
+            (addressed_missing["id"], {
+                "assessed_at": "2099-12-01T00:00:00Z",
+                "model": "gpt-6-luna",
+                "findings": [{
+                    "source_job_id": source_missing["id"],
+                    "source_generation": source_missing["generation"],
+                    "finding_id": "finding:1",
+                    "old_head": old_head_two,
+                    "new_head": missing_head,
+                    "status": "partially_addressed",
+                }],
+            }),
+        ])
+        self.write_trace(90, old_head, "2024-01-16T00:00:00+0000")
+        self.write_trace(90, new_head, "2024-04-01T00:00:00+0000")
+        self.write_trace(90, new_head, "2024-04-02T00:00:00+0000")
+        self.write_trace(999, "a" * 40, "2024-05-01T00:00:00+0000")
+
+        summary = stats.collect_stats(self.state_dir, self.report_dir)
+
+        self.assertEqual(summary["time_series"], [{
+            "period": "2024-01",
+            "reviews": 1,
+            "verified_reviews": 1,
+            "findings": 1,
+            "addressed": 0,
+        }, {
+            "period": "2024-02",
+            "reviews": 0,
+            "verified_reviews": 0,
+            "findings": 0,
+            "addressed": 0,
+        }, {
+            "period": "2024-03",
+            "reviews": 0,
+            "verified_reviews": 0,
+            "findings": 0,
+            "addressed": 1,
+        }])
+        self.assertEqual(summary["time_series_undated"]["reviews"], 3)
+        self.assertEqual(summary["time_series_undated"]["addressed"], 1)
+        self.assertEqual(
+            summary["time_series_undated"]["review_ambiguous_trace_groups"], 1)
+        self.assertEqual(
+            summary["time_series_undated"]["review_unmatched_trace_groups"], 1)
+        self.assertNotIn("2024-04", {item["period"] for item in summary["time_series"]})
+        self.assertNotIn("2099-12", {item["period"] for item in summary["time_series"]})
+
+    def verifier_result(self, head):
+        result = self.result(head=head)
+        result["debug"]["stages"]["verifier"] = {
+            "model": "gpt-6-luna",
+            "status": "completed",
+            "turns": [],
+            "tools": [],
+        }
+        result["debug"]["coverage"]["verification"] = {
+            "status": "partial",
+            "limitations": ["One candidate had no explicit verifier decision."],
+        }
+        return result
+
+    def write_trace(self, number, head, when):
+        trace_dir = self.state_dir / "review-traces"
+        trace_dir.mkdir(exist_ok=True)
+        timestamp = int(datetime.fromisoformat(when).timestamp() * 1_000_000_000)
+        path = trace_dir / f"{number}-{head}-{timestamp}.json"
+        path.write_text("{}\n", encoding="utf-8")
+
+    def commit(self, checkout, content, when):
+        path = checkout / "file.txt"
+        path.write_text(content + "\n", encoding="utf-8")
+        self.git(checkout, "add", "file.txt")
+        env = os.environ.copy()
+        env["GIT_AUTHOR_DATE"] = when
+        env["GIT_COMMITTER_DATE"] = when
+        self.git(checkout, "commit", "-m", content, env=env)
+        return self.git(checkout, "rev-parse", "HEAD").strip()
+
+    def git(self, checkout, *args, env=None):
+        result = subprocess.run(
+            ["git", "-C", str(checkout), *args],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env)
+        return result.stdout
+
     def create_followups(self, rows):
         followup_dir = self.state_dir / "followup"
-        followup_dir.mkdir()
+        followup_dir.mkdir(exist_ok=True)
         with sqlite3.connect(followup_dir / "assessments.sqlite3") as db:
             db.execute("""CREATE TABLE assessments (
                 job_id INTEGER PRIMARY KEY,

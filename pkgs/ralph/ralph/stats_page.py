@@ -174,6 +174,10 @@ def _section_note(text):
     return f'<p class="note">{_escape(text)}</p>'
 
 
+def _internal_link(href, text):
+    return f'<a href="{href}">{_escape(text)}</a>'
+
+
 def _candidate_denominator(counts):
     values = [counts.get("publish"), counts.get("drop"), counts.get("unresolved")]
     if any(_number(value) is None for value in values):
@@ -336,10 +340,49 @@ def _concept_section(summary):
     )
 
 
-def _addressed_section(summary, repository_url, report_base_url):
+def _addressed_findings(summary):
     addressed = _mapping(summary.get("addressed_findings"))
-    findings = [item for item in _list(addressed.get("findings"))
-                if isinstance(item, dict)]
+    return [item for item in _list(addressed.get("findings")) if isinstance(item, dict)]
+
+
+def _addressed_table(findings, repository_url, report_base_url):
+    if not findings:
+        return "<p>No addressed-finding assessments were recorded.</p>"
+    rows = []
+    for finding in findings:
+        source_name = _field(finding, "source_report_name")
+        if not (isinstance(source_name, str)
+                and report.REPORT_ID.fullmatch(source_name)
+                and source_name.endswith(".html")):
+            source_name = None
+        finding_label = _field(finding, "title", default=None) or _field(
+            finding, "finding_id", default="unknown")
+        path = _field(finding, "path", default=None)
+        location = "" if path is None else f"<br><span class=\"note\">{_escape(path)}</span>"
+        rows.append(
+            "<tr>"
+            f"<td>{_pr_link(finding, repository_url)}</td>"
+            f"<td>{_report_name_link(source_name, report_base_url, 'source report')}</td>"
+            f"<td>{_compare_link(finding, repository_url)}</td>"
+            f"<td>{_escape(finding_label)}{location}</td>"
+            f"<td>{_escape(_field(finding, 'status', default='unclear'))}</td>"
+            f"<td>{_escape(_field(finding, 'reason', default=''))}</td>"
+            f"<td>{_escape(_field(finding, 'evidence', default=''))}</td>"
+            f"<td>{_escape(_field(finding, 'assessed_at', default='N/A'))}<br>"
+            f"<span class=\"note\">{_escape(_field(finding, 'model', default='unknown'))}</span></td>"
+            "</tr>"
+        )
+    return (
+        "<table><thead><tr><th>PR</th><th>Original review</th><th>Comparison</th>"
+        "<th>Finding</th><th>Status</th><th>Rationale</th><th>Evidence</th>"
+        "<th>Checked</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _addressed_section(summary):
+    addressed = _mapping(summary.get("addressed_findings"))
+    findings = _addressed_findings(summary)
     counts = _mapping(addressed.get("status_counts"))
     spend = _mapping(addressed.get("spend"))
     count_rows = "".join(
@@ -351,39 +394,10 @@ def _addressed_section(summary, repository_url, report_base_url):
         f"{_fmt_int(_field(addressed, 'source_published_findings'))} published findings "
         f"across {_fmt_int(_field(addressed, 'assessed_source_reviews'))} source reviews."
     )
-    if not findings:
-        table = "<p>No addressed-finding assessments were recorded.</p>"
-    else:
-        rows = []
-        for finding in findings:
-            source_name = _field(finding, "source_report_name")
-            if not (isinstance(source_name, str)
-                    and report.REPORT_ID.fullmatch(source_name)
-                    and source_name.endswith(".html")):
-                source_name = None
-            finding_label = _field(finding, "title", default=None) or _field(
-                finding, "finding_id", default="unknown")
-            path = _field(finding, "path", default=None)
-            location = "" if path is None else f"<br><span class=\"note\">{_escape(path)}</span>"
-            rows.append(
-                "<tr>"
-                f"<td>{_pr_link(finding, repository_url)}</td>"
-                f"<td>{_report_name_link(source_name, report_base_url, 'source report')}</td>"
-                f"<td>{_compare_link(finding, repository_url)}</td>"
-                f"<td>{_escape(finding_label)}{location}</td>"
-                f"<td>{_escape(_field(finding, 'status', default='unclear'))}</td>"
-                f"<td>{_escape(_field(finding, 'reason', default=''))}</td>"
-                f"<td>{_escape(_field(finding, 'evidence', default=''))}</td>"
-                f"<td>{_escape(_field(finding, 'assessed_at', default='N/A'))}<br>"
-                f"<span class=\"note\">{_escape(_field(finding, 'model', default='unknown'))}</span></td>"
-                "</tr>"
-            )
-        table = (
-            "<table><thead><tr><th>PR</th><th>Original review</th><th>Comparison</th>"
-            "<th>Finding</th><th>Status</th><th>Rationale</th><th>Evidence</th>"
-            "<th>Checked</th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>"
-        )
+    table_link = (
+        "<p>No addressed-finding assessments were recorded.</p>" if not findings else
+        f'<p>{_internal_link("addressed/", f"View all {len(findings):,} addressed assessments")}.</p>'
+    )
     return (
         '<section id="addressed"><h2>Addressed after review</h2>'
         + _section_note(_field(
@@ -400,7 +414,7 @@ def _addressed_section(summary, repository_url, report_base_url):
         + f"known, {_fmt_money_micros(_field(spend, 'reserved_micros'))} reserved, "
         + f"{_fmt_int(_field(spend, 'request_count'))} attempts.</p>"
         + "</div></div>"
-        + table
+        + table_link
         + '</section>'
     )
 
@@ -704,53 +718,193 @@ def _review_sort_key(review):
     return number if number is not None else -1
 
 
-def _reviews_section(summary, repository_url, report_base_url):
+def _sorted_reviews(summary):
     reviews = [review for review in _list(summary.get("reviews")) if isinstance(review, dict)]
-    reviews = sorted(reviews, key=_review_sort_key, reverse=True)
+    return sorted(reviews, key=_review_sort_key, reverse=True)
+
+
+def _reviews_table(reviews, repository_url, report_base_url):
     if not reviews:
-        body = "<p>No saved reviews were recorded.</p>"
-    else:
-        rows = []
-        for review in reviews:
-            findings = _mapping(review.get("findings"))
-            archaeology = _mapping(review.get("archaeology"))
-            ledger = _mapping(review.get("ledger"))
-            if archaeology.get("published_concern"):
-                concept_status = (
-                    f"{_escape(_field(archaeology, 'status', default='unknown'))} "
-                    f"({_fmt_int(_field(archaeology, 'citation_count'))} citations, "
-                    f"{_fmt_int(_field(archaeology, 'alternative_count'))} alternatives)"
-                )
-            elif archaeology.get("research_completed"):
-                concept_status = "research complete; no concern"
-            else:
-                concept_status = "N/A"
-            rows.append(
-                "<tr>"
-                f"<td>{_fmt_int(_field(review, 'job_id'))}</td>"
-                f"<td>{_pr_link(review, repository_url)}</td>"
-                f"<td>{_fmt_int(_field(review, 'generation'))}</td>"
-                f"<td>{_report_link(review, report_base_url)}</td>"
-                f"<td>{_escape(_field(review, 'status', default='saved'))}</td>"
-                f"<td>{_escape(_field(review, 'coverage', default='unknown'))}</td>"
-                f"<td>{_escape(_field(review, 'context_coverage', default='unknown'))}</td>"
-                f"<td>{_escape(_field(review, 'verification_status', default='unknown'))}</td>"
-                f"<td>{_fmt_int(findings.get('saved'))} / {_fmt_int(findings.get('published'))}</td>"
-                f"<td>{concept_status}</td>"
-                f"<td>{_fmt_int(_field(ledger, 'request_count'))}</td>"
-                f"<td>{_fmt_int(_field(review, 'recorded_failed_attempts'))}</td>"
-                f"<td>{_fmt_money_micros(_field(ledger, 'known_cost_micros'))}</td>"
-                f"<td>{_fmt_money_micros(_field(ledger, 'reserved_micros'))}</td>"
-                "</tr>"
+        return "<p>No saved reviews were recorded.</p>"
+    rows = []
+    for review in reviews:
+        findings = _mapping(review.get("findings"))
+        archaeology = _mapping(review.get("archaeology"))
+        ledger = _mapping(review.get("ledger"))
+        if archaeology.get("published_concern"):
+            concept_status = (
+                f"{_escape(_field(archaeology, 'status', default='unknown'))} "
+                f"({_fmt_int(_field(archaeology, 'citation_count'))} citations, "
+                f"{_fmt_int(_field(archaeology, 'alternative_count'))} alternatives)"
             )
-        body = (
-            "<table><thead><tr><th>Job</th><th>PR</th><th>Generation</th><th>Report</th>"
-            "<th>Status</th><th>Code review</th><th>Historical context</th>"
-            "<th>Verification</th><th>Findings saved/published</th>"
-            "<th>Concept</th><th>Attempts</th><th>Failed/retries</th><th>Known cost</th><th>Reserved</th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>"
+        elif archaeology.get("research_completed"):
+            concept_status = "research complete; no concern"
+        else:
+            concept_status = "N/A"
+        rows.append(
+            "<tr>"
+            f"<td>{_fmt_int(_field(review, 'job_id'))}</td>"
+            f"<td>{_pr_link(review, repository_url)}</td>"
+            f"<td>{_fmt_int(_field(review, 'generation'))}</td>"
+            f"<td>{_report_link(review, report_base_url)}</td>"
+            f"<td>{_escape(_field(review, 'status', default='saved'))}</td>"
+            f"<td>{_escape(_field(review, 'coverage', default='unknown'))}</td>"
+            f"<td>{_escape(_field(review, 'context_coverage', default='unknown'))}</td>"
+            f"<td>{_escape(_field(review, 'verification_status', default='unknown'))}</td>"
+            f"<td>{_fmt_int(findings.get('saved'))} / {_fmt_int(findings.get('published'))}</td>"
+            f"<td>{concept_status}</td>"
+            f"<td>{_fmt_int(_field(ledger, 'request_count'))}</td>"
+            f"<td>{_fmt_int(_field(review, 'recorded_failed_attempts'))}</td>"
+            f"<td>{_fmt_money_micros(_field(ledger, 'known_cost_micros'))}</td>"
+            f"<td>{_fmt_money_micros(_field(ledger, 'reserved_micros'))}</td>"
+            "</tr>"
         )
-    return '<section id="reviews"><h2>Latest reviews</h2>' + body + '</section>'
+    return (
+        "<table><thead><tr><th>Job</th><th>PR</th><th>Generation</th><th>Report</th>"
+        "<th>Status</th><th>Code review</th><th>Historical context</th>"
+        "<th>Verification</th><th>Findings saved/published</th>"
+        "<th>Concept</th><th>Attempts</th><th>Failed/retries</th><th>Known cost</th><th>Reserved</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _reviews_section(summary, repository_url, report_base_url):
+    reviews = _sorted_reviews(summary)
+    preview = reviews[:20]
+    if reviews:
+        shown = len(preview)
+        note = (
+            f"<p>Showing the latest {shown:,} of {len(reviews):,} saved reviews. "
+            f'{_internal_link("reviews/", "View all reviews")}.</p>'
+        )
+    else:
+        note = ""
+    return (
+        '<section id="reviews"><h2>Latest reviews</h2>'
+        + note
+        + _reviews_table(preview, repository_url, report_base_url)
+        + '</section>'
+    )
+
+
+def _valid_period(value):
+    return (isinstance(value, str) and len(value) == 7 and value[4] == "-"
+            and value[:4].isdigit() and value[5:].isdigit())
+
+
+def _time_series(summary):
+    records = []
+    for record in _list(summary.get("time_series")):
+        if not isinstance(record, dict):
+            continue
+        period = _field(record, "period")
+        if not _valid_period(period):
+            continue
+        records.append({
+            "period": period,
+            "reviews": max(0, int(_number(_field(record, "reviews")) or 0)),
+            "verified_reviews": max(0, int(_number(_field(record, "verified_reviews")) or 0)),
+            "findings": max(0, int(_number(_field(record, "findings")) or 0)),
+            "addressed": max(0, int(_number(_field(record, "addressed")) or 0)),
+        })
+    return sorted(records, key=lambda item: item["period"])
+
+
+def _chart_svg(chart_id, title, description, records, field):
+    width = 280
+    height = 132
+    left = 34
+    right = 12
+    top = 12
+    bottom = 30
+    values = [_number(record.get(field)) or 0 for record in records]
+    max_value = max(values) or 1
+    x_span = width - left - right
+    y_span = height - top - bottom
+    if len(records) == 1:
+        points = [(left + x_span / 2, top + y_span * (1 - values[0] / max_value))]
+    else:
+        points = [
+            (left + x_span * index / (len(records) - 1),
+             top + y_span * (1 - value / max_value))
+            for index, value in enumerate(values)
+        ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    circles = "".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3"><title>{_escape(record["period"])}: '
+        f'{_fmt_int(record.get(field))}</title></circle>'
+        for (x, y), record in zip(points, records)
+    )
+    first = records[0]["period"]
+    last = records[-1]["period"]
+    title_id = f"{chart_id}-title"
+    desc_id = f"{chart_id}-desc"
+    return (
+        '<figure class="chart">'
+        f'<figcaption>{_escape(title)}</figcaption>'
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-labelledby="{title_id} {desc_id}">'
+        f'<title id="{title_id}">{_escape(title)}</title>'
+        f'<desc id="{desc_id}">{_escape(description)}</desc>'
+        f'<line class="chart-axis" x1="{left}" y1="{top + y_span}" x2="{width - right}" y2="{top + y_span}"></line>'
+        f'<line class="chart-axis" x1="{left}" y1="{top}" x2="{left}" y2="{top + y_span}"></line>'
+        f'<polyline class="chart-line" points="{line}"></polyline>'
+        f'{circles}'
+        f'<text x="{left}" y="{height - 10}">{_escape(first)}</text>'
+        f'<text x="{width - right}" y="{height - 10}" text-anchor="end">{_escape(last)}</text>'
+        f'<text x="{left - 6}" y="{top + 4}" text-anchor="end">{_fmt_int(max_value)}</text>'
+        '<text x="28" y="105" text-anchor="end">0</text>'
+        '</svg>'
+        '</figure>'
+    )
+
+
+def _time_series_notes(summary):
+    notes = [
+        note for note in _list(summary.get("time_series_notes"))
+        if isinstance(note, str) and note
+    ]
+    undated = _mapping(summary.get("time_series_undated"))
+    excluded = []
+    if _number(undated.get("reviews")):
+        excluded.append(f"{_fmt_int(undated.get('reviews'))} reviews")
+    if _number(undated.get("addressed")):
+        excluded.append(f"{_fmt_int(undated.get('addressed'))} addressed findings")
+    if excluded:
+        notes.append(f"Undated records are excluded: {', '.join(excluded)}.")
+    return "".join(f'<p class="note">{_escape(note)}</p>' for note in notes)
+
+
+def _charts_section(summary):
+    records = _time_series(summary)
+    if not records:
+        return (
+            '<section id="trends"><h2>Production trends</h2>'
+            '<p>No review timestamp history is available yet. Older summaries do not include '
+            'enough event timestamps to chart production over time.</p>'
+            + _time_series_notes(summary)
+            + '</section>'
+        )
+    charts = [
+        ("reviews", "Reviews", "Saved reviews by month.", "reviews"),
+        ("verified-reviews", "Verifier-completed reviews",
+         "Reviews whose verifier pass completed by month.", "verified_reviews"),
+        ("findings", "Verified findings", "Published verified findings by month.", "findings"),
+        ("addressed", "Addressed findings by PR head commit date",
+         "Addressed findings by month, based on the assessed PR head commit date.", "addressed"),
+    ]
+    body = "".join(
+        _chart_svg(f"chart-{chart_id}", title, description, records, field)
+        for chart_id, title, description, field in charts
+    )
+    return (
+        '<section id="trends"><h2>Production trends</h2>'
+        + _section_note(
+            "Addressed findings follow the commit date of the PR head used for assessment; "
+            "undated records are excluded."
+        )
+        + _time_series_notes(summary)
+        + f'<div class="charts">{body}</div></section>'
+    )
 
 
 def _style():
@@ -775,6 +929,14 @@ nav a, .download { color: #fff; border: 1px solid rgb(255 255 255 / 35%); border
 .big { font-size: 1.7rem; font-weight: 750; margin: .25rem 0 .75rem; }
 section { background: #fff; border: 1px solid #d8dee8; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
 .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 1rem; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.chart { margin: 0; border: 1px solid #e3e7ee; border-radius: 8px; padding: .75rem; }
+.chart figcaption { font-weight: 700; margin-bottom: .4rem; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { fill: #5b6876; font-size: 10px; }
+.chart-axis { stroke: #cad2dd; stroke-width: 1; }
+.chart-line { fill: none; stroke: #0f766e; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.chart circle { fill: #0f5f8c; }
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; min-width: 44rem; width: 100%; }
 th, td { border-bottom: 1px solid #e3e7ee; padding: .5rem .55rem; text-align: left; vertical-align: top; }
@@ -795,44 +957,62 @@ def _wrap_tables(html_text):
     return html_text.replace("<table>", '<div class="table-wrap"><table>').replace("</table>", "</table></div>")
 
 
-def _html(summary, repository_url, report_base_url):
+def _header(summary, page_prefix=""):
     generated_at = _generated_at(summary)
-    limitations = _mapping(summary.get("limitations"))
-    notes = "".join(f"<li>{_escape(note)}</li>" for note in _list(limitations.get("notes")))
     preview_notice = _field(summary, "preview_notice", default="")
     preview_html = f'<p class="preview">{_escape(preview_notice)}</p>' if preview_notice else ""
-    return _wrap_tables(f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ralph stats</title>
-<style>{_style()}</style>
-</head>
-<body>
-<header>
+    overview_link = f'<a href="{page_prefix}index.html">Overview</a>' if page_prefix else ""
+    def anchor(fragment):
+        return f"{page_prefix}index.html{fragment}" if page_prefix else fragment
+    return f"""<header>
 <h1>ralph stats</h1>
 {preview_html}
 <p class="summary">{_escape(_analysis(summary))}</p>
 <p class="meta">Generated {_escape(generated_at)}. {_escape(_source_status(summary))}</p>
 <nav>
-<a href="#leaderboard">Leaderboard</a>
-<a href="#concepts">Concepts</a>
-<a href="#addressed">Addressed</a>
-<a href="#spend">Spend</a>
-<a href="#stages">Agent stages</a>
-<a href="#paired">Paired models</a>
-<a href="#models">Models</a>
-<a href="#routing">Routing</a>
-<a href="#reviews">Reviews</a>
-<a class="download" href="stats.json" download>Download JSON</a>
+{overview_link}
+<a href="{anchor("#leaderboard")}">Leaderboard</a>
+<a href="{anchor("#concepts")}">Concepts</a>
+<a href="{anchor("#addressed")}">Addressed</a>
+<a href="{anchor("#spend")}">Spend</a>
+<a href="{anchor("#stages")}">Agent stages</a>
+<a href="{anchor("#paired")}">Paired models</a>
+<a href="{anchor("#models")}">Models</a>
+<a href="{anchor("#routing")}">Routing</a>
+<a href="{page_prefix}reviews/">Reviews</a>
+<a href="{page_prefix}addressed/">Addressed details</a>
+<a class="download" href="{page_prefix}stats.json" download>Download JSON</a>
 </nav>
-</header>
+</header>"""
+
+
+def _page(title, summary, body, page_prefix=""):
+    return _wrap_tables(f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_escape(title)}</title>
+<style>{_style()}</style>
+</head>
+<body>
+{_header(summary, page_prefix)}
 <main>
+{body}
+</main>
+</body>
+</html>
+""")
+
+
+def _html(summary, repository_url, report_base_url):
+    limitations = _mapping(summary.get("limitations"))
+    notes = "".join(f"<li>{_escape(note)}</li>" for note in _list(limitations.get("notes")))
+    body = f"""
 <div class="cards">{_top_kpis(summary)}</div>
 {_leaderboard_section(summary)}
 {_concept_section(summary)}
-{_addressed_section(summary, repository_url, report_base_url)}
+{_addressed_section(summary)}
 {_paired_section(summary)}
 <section id="coverage"><h2>Coverage snapshot</h2>
 {_section_note("Code review coverage excludes advisory historical context. Historical context and verification are counted as separate dimensions; bot verification is not human confirmation.")}
@@ -844,19 +1024,48 @@ def _html(summary, repository_url, report_base_url):
 {_routing_section(summary)}
 {_distribution_section(summary)}
 {_reviews_section(summary, repository_url, report_base_url)}
+{_charts_section(summary)}
 <section id="limits"><h2>Limitations</h2>
 <ul>{notes or '<li>No limitations were recorded.</li>'}</ul>
 </section>
-</main>
-</body>
-</html>
-""")
+"""
+    return _page("ralph stats", summary, body)
+
+
+def _reviews_html(summary, repository_url, report_base_url):
+    reviews = _sorted_reviews(summary)
+    body = (
+        '<section id="reviews"><h2>All reviews</h2>'
+        f'<p>{_internal_link("../index.html#reviews", "Back to latest reviews")}.</p>'
+        + _reviews_table(reviews, repository_url, report_base_url)
+        + '</section>'
+    )
+    return _page("ralph review stats", summary, body, "../")
+
+
+def _addressed_html(summary, repository_url, report_base_url):
+    findings = _addressed_findings(summary)
+    body = (
+        '<section id="addressed-details"><h2>Addressed assessment details</h2>'
+        f'<p>{_internal_link("../index.html#addressed", "Back to addressed summary")}.</p>'
+        + _addressed_table(findings, repository_url, report_base_url)
+        + '</section>'
+    )
+    return _page("ralph addressed stats", summary, body, "../")
 
 
 def save_stats(output_dir: Path, summary: dict, repository_url: str, report_base_url: str):
     """Write a static HTML dashboard and matching public JSON."""
     output_dir = Path(output_dir)
     output_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+    (output_dir / "reviews").mkdir(mode=0o755, exist_ok=True)
+    (output_dir / "addressed").mkdir(mode=0o755, exist_ok=True)
     json_text = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
     report._write_public_file(output_dir / "stats.json", json_text + "\n")
     report._write_public_file(output_dir / "index.html", _html(summary, repository_url, report_base_url))
+    report._write_public_file(
+        output_dir / "reviews" / "index.html",
+        _reviews_html(summary, repository_url, report_base_url))
+    report._write_public_file(
+        output_dir / "addressed" / "index.html",
+        _addressed_html(summary, repository_url, report_base_url))

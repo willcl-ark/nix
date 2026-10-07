@@ -111,6 +111,15 @@ class StatsPageTests(unittest.TestCase):
             },
             "recent_reviews": [],
             "reviews": [],
+            "time_series": [],
+            "time_series_undated": {
+                "reviews": 0,
+                "addressed": 0,
+            },
+            "time_series_notes": [
+                "Review months come from private trace filenames.",
+                "Addressed months come from PR head commit timestamps.",
+            ],
         }
 
     def request_totals(self, month=None, request_count=0, known_cost_micros=0,
@@ -388,18 +397,47 @@ class StatsPageTests(unittest.TestCase):
             },
         ]
         summary["recent_reviews"] = list(summary["reviews"])
+        summary["time_series"] = [
+            {
+                "period": "2026-09",
+                "reviews": 1,
+                "verified_reviews": 0,
+                "findings": 1,
+                "addressed": 0,
+            },
+            {
+                "period": "2026-10",
+                "reviews": 2,
+                "verified_reviews": 1,
+                "findings": 3,
+                "addressed": 2,
+            },
+        ]
+        summary["time_series_undated"] = {
+            "reviews": 1,
+            "addressed": 1,
+        }
+        summary["time_series_notes"] = [
+            "Review months come from private trace filenames.",
+            "Addressed months come from the new_head commit committer timestamp.",
+        ]
         return summary
 
     def test_empty_stats_render_stable_public_files(self):
         root, html, public = self.save(self.empty_summary())
 
         self.assertTrue((root / "index.html").is_file())
+        self.assertTrue((root / "reviews" / "index.html").is_file())
+        self.assertTrue((root / "addressed" / "index.html").is_file())
         self.assertTrue((root / "stats.json").is_file())
         self.assertEqual((root / "index.html").stat().st_mode & 0o777, 0o644)
+        self.assertEqual((root / "reviews" / "index.html").stat().st_mode & 0o777, 0o644)
+        self.assertEqual((root / "addressed" / "index.html").stat().st_mode & 0o777, 0o644)
         self.assertEqual((root / "stats.json").stat().st_mode & 0o777, 0o644)
         self.assertEqual(public["overview"]["saved_reviews"], 0)
         self.assertIn("No saved reviews are in this summary yet.", html)
         self.assertIn("Datasets present: 6/6. Missing: none.", html)
+        self.assertIn("No review timestamp history is available yet.", html)
 
     def test_useful_sections_put_leaderboard_before_cost_tables(self):
         _, html, _ = self.save(self.rich_summary())
@@ -414,10 +452,19 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("Addressed after review", html)
         self.assertIn("2 assessed findings from 3 published findings", html)
         self.assertIn("Assessment spend: $0.05 known, $0.01 reserved, 2 attempts.", html)
+        self.assertIn("View all 1 addressed assessments", html)
         self.assertIn("Median citations: 2.0; median alternatives: 3.0.", html)
         self.assertIn("research complete; no concern", html)
         self.assertIn("Shared findings are credited to each contributing agent", html)
         self.assertIn("Paired model reviews", html)
+        self.assertIn("Verifier-completed reviews", html)
+        self.assertIn("Addressed findings follow the commit date of the PR head", html)
+        self.assertIn("Addressed findings by PR head commit date", html)
+        self.assertIn("Undated records are excluded: 1 reviews, 1 addressed findings.", html)
+        self.assertEqual(html.count("<svg"), 4)
+        self.assertEqual(html.count('role="img"'), 4)
+        self.assertIn(".charts", html)
+        self.assertNotIn("The follow-up adds the missing guard.", html)
 
     def test_hostile_markup_is_escaped_and_not_used_as_links(self):
         summary = self.rich_summary()
@@ -451,30 +498,73 @@ class StatsPageTests(unittest.TestCase):
             "assessed_at": "<script>alert('time')</script>",
             "model": "<script>alert('model')</script>",
         })
+        summary["time_series"].append({
+            "period": "2026-<script>",
+            "reviews": "<script>alert('reviews')</script>",
+            "verified_reviews": 1,
+            "findings": 1,
+            "addressed": 1,
+        })
+        summary["time_series_notes"].append("<script>alert('note')</script>")
 
-        _, html, _ = self.save(summary, repository_url="javascript:alert(1)",
-                               report_base_url="https://reports.example.org/reviews?x=<script>")
+        root, html, _ = self.save(summary, repository_url="javascript:alert(1)",
+                                  report_base_url="https://reports.example.org/reviews?x=<script>")
+        addressed_html = (root / "addressed" / "index.html").read_text()
+        all_html = html + addressed_html
 
-        self.assertNotIn("<script", html)
-        self.assertNotIn("javascript:alert", html)
-        self.assertNotIn("../bad", html)
-        self.assertIn("&lt;script&gt;x&lt;/script&gt;", html)
-        self.assertIn("&lt;/td&gt;&lt;script&gt;alert(&#x27;stage&#x27;)&lt;/script&gt;", html)
+        self.assertNotIn("<script", all_html)
+        self.assertNotIn("javascript:alert", all_html)
+        self.assertNotIn("../bad", all_html)
+        self.assertIn("&lt;script&gt;x&lt;/script&gt;", all_html)
+        self.assertIn("&lt;/td&gt;&lt;script&gt;alert(&#x27;stage&#x27;)&lt;/script&gt;", all_html)
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
-        self.assertIn("&lt;/td&gt;&lt;script&gt;alert(&#x27;finding&#x27;)&lt;/script&gt;", html)
-        self.assertIn("&lt;script&gt;alert(&#x27;evidence&#x27;)&lt;/script&gt;", html)
+        self.assertIn("&lt;/td&gt;&lt;script&gt;alert(&#x27;finding&#x27;)&lt;/script&gt;", addressed_html)
+        self.assertIn("&lt;script&gt;alert(&#x27;evidence&#x27;)&lt;/script&gt;", addressed_html)
+        self.assertIn("&lt;script&gt;alert(&#x27;note&#x27;)&lt;/script&gt;", html)
 
     def test_report_and_pr_links_are_constructed_from_safe_parts(self):
-        _, html, _ = self.save(self.rich_summary())
+        root, html, _ = self.save(self.rich_summary())
+        addressed_html = (root / "addressed" / "index.html").read_text()
+        reviews_html = (root / "reviews" / "index.html").read_text()
 
         self.assertIn('href="https://code.example.org/org/repo/pulls/9"', html)
         self.assertIn('href="https://code.example.org/org/repo/compare/'
-                      + "a" * 40 + ".." + "b" * 40 + '"', html)
+                      + "a" * 40 + ".." + "b" * 40 + '"', addressed_html)
         self.assertIn('href="https://reports.example.org/reviews/9-feedface.html"', html)
-        self.assertIn('href="https://reports.example.org/reviews/7-deadbeef.html"', html)
-        self.assertIn('href="https://reports.example.org/reviews/7-deadbeef.html">source report</a>', html)
+        self.assertIn('href="https://reports.example.org/reviews/7-deadbeef.html"', reviews_html)
+        self.assertIn('href="https://reports.example.org/reviews/7-deadbeef.html">source report</a>', addressed_html)
+        self.assertIn('href="reviews/"', html)
+        self.assertIn('href="addressed/"', html)
+        self.assertIn('href="../index.html#reviews"', reviews_html)
+        self.assertIn('href="../index.html#addressed"', addressed_html)
+        self.assertIn('href="../stats.json" download', reviews_html)
+        self.assertIn("The follow-up adds the missing guard.", addressed_html)
         reviews = html[html.index('id="reviews"'):]
         self.assertLess(reviews.index("#9"), reviews.index("#7"))
+
+    def test_overview_limits_reviews_preview_and_standalone_pages_are_complete(self):
+        summary = self.rich_summary()
+        template = summary["reviews"][0]
+        summary["reviews"] = []
+        for number in range(1, 26):
+            review = {
+                **template,
+                "job_id": number,
+                "number": number,
+                "report_name": f"{number}-deadbeef.html",
+            }
+            summary["reviews"].append(review)
+
+        root, html, _ = self.save(summary)
+        reviews_html = (root / "reviews" / "index.html").read_text()
+        overview_reviews = html[html.index('id="reviews"'):html.index("</section>", html.index('id="reviews"'))]
+        full_reviews = reviews_html[
+            reviews_html.index('id="reviews"'):reviews_html.index("</section>", reviews_html.index('id="reviews"'))]
+
+        self.assertEqual(overview_reviews.count("<tr>") - 1, 20)
+        self.assertEqual(full_reviews.count("<tr>") - 1, 25)
+        self.assertIn("Showing the latest 20 of 25 saved reviews.", overview_reviews)
+        self.assertIn('href="reviews/"', overview_reviews)
 
     def test_displayed_formulas_match_schema_values(self):
         _, html, _ = self.save(self.rich_summary())
