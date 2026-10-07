@@ -135,6 +135,11 @@ it or how dramatic the scenario sounds.
 Return the verifier object in the supplied schema, including the separate
 concept disposition and the code-finding decisions. Account for every supplied
 candidate ID exactly once, grouping IDs only when the claims share a root cause.
+Do not repeat candidate IDs within or across decisions, and do not use IDs that
+were not supplied. Use an empty candidate ID list only for an independently
+verified new finding that should be published; do not use it for `drop` or
+`unresolved`. If a supplied candidate cannot be checked, return an `unresolved`
+decision for its known ID instead of omitting it.
 Use `publish`, `drop`, or `unresolved` and ground each code decision in code.
 For a published defect, verify its trigger and consequence, and include the
 production-evidence qualification above when needed. For a published

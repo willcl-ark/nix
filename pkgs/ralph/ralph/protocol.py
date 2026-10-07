@@ -295,17 +295,47 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     if concept["disposition"] == "unresolved":
         result["coverage"]["status"] = "partial"
         result["coverage"]["limitations"].append(concept["reason"])
-    expected = {candidate["id"] for candidate in candidates}
-    seen = set()
-    accepted = []
+    expected_order = [candidate["id"] for candidate in candidates]
+    expected = set(expected_order)
+    records = []
+    candidate_uses = {}
+    unsafe_indexes = set()
     validation_errors = []
-    for decision in result["decisions"]:
+    for index, decision in enumerate(result["decisions"]):
         _object(decision, VERIFIER_SCHEMA["properties"]["decisions"]["items"]["properties"])
         ids = decision["candidate_ids"]
         _strings(ids)
-        if len(set(ids)) != len(ids) or set(ids) - expected or seen.intersection(ids):
-            raise InvalidReview("Unknown or repeated candidate ID")
-        seen.update(ids)
+        records.append((decision, ids))
+        known_ids = {candidate_id for candidate_id in ids if candidate_id in expected}
+        for candidate_id in known_ids:
+            candidate_uses.setdefault(candidate_id, []).append(index)
+        repeated_ids = [candidate_id for candidate_id in dict.fromkeys(ids)
+                        if ids.count(candidate_id) > 1]
+        unknown_ids = [candidate_id for candidate_id in ids if candidate_id not in expected]
+        errors = []
+        if repeated_ids:
+            errors.append("Repeated candidate IDs within decision: " + ", ".join(repeated_ids))
+        if unknown_ids:
+            errors.append("Unknown candidate IDs: " + ", ".join(unknown_ids))
+        if errors:
+            unsafe_indexes.add(index)
+            validation_errors.append({"candidate_ids": ids, "error": "; ".join(errors)})
+    for candidate_id, indexes in candidate_uses.items():
+        if len(indexes) > 1:
+            unsafe_indexes.update(indexes)
+            validation_errors.append({"candidate_ids": [candidate_id],
+                                      "error": "Candidate ID appears in multiple decisions"})
+
+    accepted = []
+    normalized_decisions = []
+    unsafe_ids = set()
+    unsafe_without_known_id = False
+    for index, (decision, ids) in enumerate(records):
+        if index in unsafe_indexes:
+            known_ids = [candidate_id for candidate_id in ids if candidate_id in expected]
+            unsafe_ids.update(known_ids)
+            unsafe_without_known_id = unsafe_without_known_id or not known_ids
+            continue
         _text(decision, ("reason",))
         disposition = decision["disposition"]
         if disposition not in {"publish", "drop", "unresolved"}:
@@ -331,8 +361,48 @@ def verification(text, candidates, snapshot, concept_assessment=None):
                 accepted.append({**finding, "id": f"finding:{len(accepted) + 1}"})
         elif finding is not None or not ids:
             raise InvalidReview("Only publish decisions may introduce a finding")
-    if seen != expected:
-        raise InvalidReview("Verifier omitted candidate decisions")
+        normalized_decisions.append(decision)
+
+    def candidate_key(candidate_id):
+        return expected_order.index(candidate_id)
+
+    if unsafe_ids:
+        candidate_ids = sorted(unsafe_ids, key=candidate_key)
+        normalized_decisions.append({
+            "candidate_ids": candidate_ids,
+            "disposition": "unresolved",
+            "reason": "Decision withheld: invalid candidate ID accounting",
+            "finding": None,
+        })
+        result["coverage"]["status"] = "partial"
+        result["coverage"]["limitations"].append(
+            "Decision withheld: invalid candidate ID accounting")
+    if unsafe_without_known_id:
+        normalized_decisions.append({
+            "candidate_ids": [],
+            "disposition": "unresolved",
+            "reason": "Decision withheld: invalid candidate ID accounting",
+            "finding": None,
+        })
+        result["coverage"]["status"] = "partial"
+        result["coverage"]["limitations"].append(
+            "Decision withheld: invalid candidate ID accounting")
+
+    represented = {candidate_id for decision in normalized_decisions
+                   for candidate_id in decision["candidate_ids"]}
+    omitted = [candidate_id for candidate_id in expected_order if candidate_id not in represented]
+    if omitted:
+        normalized_decisions.append({
+            "candidate_ids": omitted,
+            "disposition": "unresolved",
+            "reason": "Verifier omitted candidate decisions",
+            "finding": None,
+        })
+        validation_errors.append({"candidate_ids": omitted,
+                                  "error": "Verifier omitted candidate decisions"})
+        result["coverage"]["status"] = "partial"
+        result["coverage"]["limitations"].append("Verifier omitted candidate decisions")
+    result["decisions"] = normalized_decisions
     result["validation_errors"] = validation_errors
     return result, accepted
 
@@ -417,7 +487,7 @@ def render(findings, limitations=(), concept_summary=None, alternatives=()):
         sections.append("##### Alternatives\n\n" + "\n\n".join(rendered_alternatives))
     if not sections:
         sections.append("I found no actionable issues in this static review." if not limitations
-                        else "No verified findings are available from this partial review.")
+                        else "No verified findings are available from this review.")
     if limitations:
         sections.append("Review coverage was incomplete. " + " ".join(dict.fromkeys(limitations)))
     return "\n\n".join(sections)

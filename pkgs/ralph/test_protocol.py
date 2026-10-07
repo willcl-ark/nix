@@ -71,8 +71,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len(accepted), 1)
         self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
         decisions.pop()
-        with self.assertRaisesRegex(protocol.InvalidReview, "omitted"):
-            protocol.verification(self.verification(decisions), candidates, self.snapshot)
+        result, accepted = protocol.verification(
+            self.verification(decisions), candidates, self.snapshot)
+        self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
+        omitted = result["decisions"][-1]
+        self.assertEqual(omitted["candidate_ids"], ["independent:1"])
+        self.assertEqual(omitted["disposition"], "unresolved")
+        self.assertIn("omitted", result["validation_errors"][0]["error"])
 
     def test_collator_cannot_add_remove_or_duplicate_accepted_ids(self):
         accepted = [{**self.finding, "id": "finding:1"},
@@ -89,6 +94,12 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(edited[0]["severity"], "suggestion")
         self.assertEqual(edited[1]["kind"], "design")
         self.assertIn("incomplete", protocol.render(edited, ["A selected audit was unavailable."]))
+
+    def test_render_no_findings_with_limitations_does_not_call_review_partial(self):
+        rendered = protocol.render([], ["A selected audit was unavailable."])
+        self.assertIn("No verified findings are available from this review.", rendered)
+        self.assertIn("Review coverage was incomplete.", rendered)
+        self.assertNotIn("partial review", rendered)
 
     def test_render_groups_findings_before_design_and_alternatives(self):
         findings = [
@@ -180,18 +191,85 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(accepted, [])
                 self.assertIn(message, result["validation_errors"][0]["error"])
 
-    def test_invalid_candidate_ids_still_reject_entire_verification(self):
+    def test_unknown_candidate_id_withholds_only_involved_decision(self):
         candidates = [{"id": "tests:1"}, {"id": "design:1"}]
         valid = {"candidate_ids": ["tests:1"], "disposition": "publish",
                  "reason": "Verified", "finding": self.finding}
-        for bad_ids in (["unknown:1"], ["tests:1"], []):
-            with self.subTest(bad_ids=bad_ids):
-                invalid = {"candidate_ids": bad_ids, "disposition": "publish",
-                           "reason": "Verified", "finding": {**self.finding, "path": "missing.cpp"}}
-                with self.assertRaises(protocol.InvalidReview):
-                    protocol.verification(
-                        self.verification([valid, invalid]),
-                        candidates, self.snapshot)
+        invalid = {"candidate_ids": ["design:1", "unknown:1"],
+                   "disposition": "publish", "reason": "Verified",
+                   "finding": {**self.finding, "title": "Unknown source"}}
+
+        result, accepted = protocol.verification(
+            self.verification([valid, invalid]), candidates, self.snapshot)
+
+        self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
+        self.assertEqual(result["coverage"]["status"], "partial")
+        self.assertEqual(result["decisions"][0], valid)
+        self.assertEqual(result["decisions"][1]["candidate_ids"], ["design:1"])
+        self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
+        self.assertIn("Unknown candidate IDs", result["validation_errors"][0]["error"])
+
+    def test_repeated_candidate_id_withholds_involved_decision(self):
+        candidates = [{"id": "tests:1"}, {"id": "design:1"}]
+        valid = {"candidate_ids": ["design:1"], "disposition": "drop",
+                 "reason": "The claim does not hold.", "finding": None}
+        repeated = {"candidate_ids": ["tests:1", "tests:1"],
+                    "disposition": "publish", "reason": "Verified",
+                    "finding": self.finding}
+
+        result, accepted = protocol.verification(
+            self.verification([repeated, valid]), candidates, self.snapshot)
+
+        self.assertEqual(accepted, [])
+        self.assertEqual(result["decisions"][0], valid)
+        self.assertEqual(result["decisions"][1]["candidate_ids"], ["tests:1"])
+        self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
+        self.assertIn("Repeated candidate IDs", result["validation_errors"][0]["error"])
+
+    def test_overlapping_candidate_ids_withhold_all_overlapping_decisions(self):
+        candidates = [{"id": "tests:1"}, {"id": "design:1"}, {"id": "docs:1"}]
+        overlap_a = {"candidate_ids": ["tests:1", "design:1"],
+                     "disposition": "publish", "reason": "Verified",
+                     "finding": self.finding}
+        overlap_b = {"candidate_ids": ["design:1", "docs:1"],
+                     "disposition": "drop", "reason": "Rejected", "finding": None}
+        new = {"candidate_ids": [], "disposition": "publish", "reason": "New issue",
+               "finding": {**self.finding, "title": "New verifier issue"}}
+
+        result, accepted = protocol.verification(
+            self.verification([overlap_a, overlap_b, new]), candidates, self.snapshot)
+
+        self.assertEqual(accepted, [{**new["finding"], "id": "finding:1"}])
+        self.assertEqual(result["decisions"][0], new)
+        self.assertEqual(result["decisions"][1]["candidate_ids"],
+                         ["tests:1", "design:1", "docs:1"])
+        self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
+        self.assertTrue(any("multiple decisions" in error["error"]
+                            for error in result["validation_errors"]))
+
+    def test_omitted_candidate_is_returned_unresolved(self):
+        candidates = [{"id": "tests:1"}, {"id": "design:1"}]
+        valid = {"candidate_ids": ["tests:1"], "disposition": "publish",
+                 "reason": "Verified", "finding": self.finding}
+
+        result, accepted = protocol.verification(
+            self.verification([valid]), candidates, self.snapshot)
+
+        self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
+        self.assertEqual(result["decisions"][1]["candidate_ids"], ["design:1"])
+        self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
+        self.assertIn("omitted", result["validation_errors"][0]["error"])
+
+    def test_publish_without_candidate_ids_preserves_new_verifier_finding(self):
+        decision = {"candidate_ids": [], "disposition": "publish", "reason": "New issue",
+                    "finding": self.finding}
+
+        result, accepted = protocol.verification(
+            self.verification([decision]), [], self.snapshot)
+
+        self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
+        self.assertEqual(result["decisions"], [decision])
+        self.assertEqual(result["validation_errors"], [])
 
     def test_concept_publish_is_separate_from_finding_decisions(self):
         concept = {"disposition": "publish", "reason": "Layering concern is supported",

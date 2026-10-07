@@ -353,7 +353,7 @@ class PipelineTests(unittest.TestCase):
         content = self.run_review(review)
 
         self.assertEqual(self.calls, ["independent", "tests", "verifier"])
-        self.assertIn("partial review", content)
+        self.assertIn("No verified findings", content)
         self.assertEqual(self.debug["concept_assessment"]["status"], "failed")
         self.assertEqual(self.debug["stages"]["archaeologist"]["status"], "invalid")
 
@@ -491,9 +491,9 @@ class PipelineTests(unittest.TestCase):
 
         content = self.run_review(review)
         self.assertNotIn("Simplify fixture", content)
-        self.assertIn("Verifier output failed validation", content)
-        self.assertEqual(self.debug["stages"]["verifier"]["status"], "invalid")
-        self.assertIn("omitted", self.debug["stages"]["verifier"]["validation_error"])
+        self.assertIn("Some findings failed validation", content)
+        self.assertEqual(self.debug["stages"]["verifier"]["status"], "completed")
+        self.assertIn("omitted", self.debug["stages"]["verifier"]["validation_errors"][0]["error"])
 
     def test_partial_specialist_and_invalid_finding_preserve_valid_suggestion(self):
         self.tier, self.audits = "standard", ["tests"]
