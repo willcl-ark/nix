@@ -272,13 +272,25 @@ def _source_status(summary):
 
 def _coverage_table(summary):
     coverage = _mapping(_mapping(summary.get("overview")).get("coverage"))
-    if not coverage:
+    context = _mapping(_mapping(summary.get("overview")).get("context_coverage"))
+    verification = _mapping(_mapping(summary.get("overview")).get("verification_status"))
+    statuses = sorted(set(coverage) | set(context) | set(verification))
+    if not statuses:
         return "<p>No coverage counts were recorded.</p>"
     rows = "".join(
-        f"<tr><td>{_escape(name)}</td><td>{_fmt_int(value)}</td></tr>"
-        for name, value in sorted(coverage.items())
+        "<tr>"
+        f"<td>{_escape(status)}</td>"
+        f"<td>{_fmt_int(coverage.get(status))}</td>"
+        f"<td>{_fmt_int(context.get(status))}</td>"
+        f"<td>{_fmt_int(verification.get(status))}</td>"
+        "</tr>"
+        for status in statuses
     )
-    return f"<table><thead><tr><th>Status</th><th>Reviews</th></tr></thead><tbody>{rows}</tbody></table>"
+    return (
+        "<table><thead><tr><th>Status</th><th>Code review</th>"
+        "<th>Historical context</th><th>Verification</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
 
 
 def _concept_section(summary):
@@ -721,6 +733,8 @@ def _reviews_section(summary, repository_url, report_base_url):
                 f"<td>{_report_link(review, report_base_url)}</td>"
                 f"<td>{_escape(_field(review, 'status', default='saved'))}</td>"
                 f"<td>{_escape(_field(review, 'coverage', default='unknown'))}</td>"
+                f"<td>{_escape(_field(review, 'context_coverage', default='unknown'))}</td>"
+                f"<td>{_escape(_field(review, 'verification_status', default='unknown'))}</td>"
                 f"<td>{_fmt_int(findings.get('saved'))} / {_fmt_int(findings.get('published'))}</td>"
                 f"<td>{concept_status}</td>"
                 f"<td>{_fmt_int(_field(ledger, 'request_count'))}</td>"
@@ -731,7 +745,8 @@ def _reviews_section(summary, repository_url, report_base_url):
             )
         body = (
             "<table><thead><tr><th>Job</th><th>PR</th><th>Generation</th><th>Report</th>"
-            "<th>Status</th><th>Coverage</th><th>Findings saved/published</th>"
+            "<th>Status</th><th>Code review</th><th>Historical context</th>"
+            "<th>Verification</th><th>Findings saved/published</th>"
             "<th>Concept</th><th>Attempts</th><th>Failed/retries</th><th>Known cost</th><th>Reserved</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>"
         )
@@ -820,7 +835,7 @@ def _html(summary, repository_url, report_base_url):
 {_addressed_section(summary, repository_url, report_base_url)}
 {_paired_section(summary)}
 <section id="coverage"><h2>Coverage snapshot</h2>
-{_section_note("Bot verification is a consistency check against available evidence, not human confirmation.")}
+{_section_note("Code review coverage excludes advisory historical context. Historical context and verification are counted as separate dimensions; bot verification is not human confirmation.")}
 {_coverage_table(summary)}
 </section>
 {_spend_section(summary)}

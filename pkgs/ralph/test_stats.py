@@ -34,7 +34,15 @@ class StatsTests(unittest.TestCase):
             "content": "PRIVATE review body must not leak",
             "debug": {
                 "private_state": "PRIVATE debug marker",
-                "coverage": {"status": "partial", "limitations": ["missing run"]},
+                "coverage": {
+                    "status": "failed",
+                    "limitations": ["verifier failed"],
+                    "context": {"status": "complete", "limitations": []},
+                    "verification": {
+                        "status": "failed",
+                        "limitations": ["verifier failed"],
+                    },
+                },
                 "concept_assessment": {
                     "status": "verified",
                     "stage": "archaeologist",
@@ -271,6 +279,12 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(summary["overview"]["saved_reviews"], 1)
         self.assertEqual(summary["overview"]["published_reviews"], 1)
         self.assertEqual(summary["overview"]["saved_findings"], 1)
+        self.assertEqual(summary["overview"]["coverage"], {
+            "complete": 0, "failed": 1, "partial": 0, "unknown": 0})
+        self.assertEqual(summary["overview"]["context_coverage"], {
+            "complete": 1, "failed": 0, "partial": 0, "unknown": 0})
+        self.assertEqual(summary["overview"]["verification_status"], {
+            "complete": 0, "failed": 1, "partial": 0, "unknown": 0})
         self.assertEqual(summary["overview"]["finding_kinds"], {"defect": 1})
         self.assertEqual(summary["overview"]["finding_severities"], {"high": 1})
         self.assertEqual(summary["spend"]["lifetime"]["request_count"], 7)
@@ -311,6 +325,9 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(review["ledger"]["known_cost_micros"], 600)
         self.assertEqual(review["ledger"]["reserved_micros"], 1200)
         self.assertEqual(review["tokens"]["input"], 350)
+        self.assertEqual(review["coverage"], "failed")
+        self.assertEqual(review["context_coverage"], "complete")
+        self.assertEqual(review["verification_status"], "failed")
         self.assertTrue(review["archaeology"]["research_completed"])
         self.assertTrue(review["archaeology"]["published_concern"])
         self.assertEqual(review["archaeology"]["status"], "verified")
@@ -410,11 +427,17 @@ class StatsTests(unittest.TestCase):
                       if item["job_id"] == job["id"])
 
         self.assertEqual(summary["overview"]["saved_findings"], 1)
+        self.assertEqual(summary["overview"]["coverage"]["complete"], 1)
+        self.assertEqual(summary["overview"]["context_coverage"]["unknown"], 1)
+        self.assertEqual(summary["overview"]["verification_status"]["unknown"], 1)
         self.assertEqual(summary["overview"]["attribution_coverage"]["missing"], 1)
         self.assertEqual(stage["selected_candidate_findings"], 1)
         self.assertEqual(stage["accepted_findings"], 0)
         self.assertEqual(stage["attribution_unknown_reviews"], 1)
         self.assertFalse(review["ledger"]["cost_observed"])
+        self.assertEqual(review["coverage"], "complete")
+        self.assertEqual(review["context_coverage"], "unknown")
+        self.assertEqual(review["verification_status"], "unknown")
         self.assertIsNone(review["ledger"]["known_cost_micros"])
         self.assertIsNone(
             summary["distributions"]["saved_review_known_cost_micros"]["median"])

@@ -31,6 +31,8 @@ CANDIDATE_FIELDS = ("kind", "path", "line", "side", "title", "claim", "consequen
                     "evidence", "correction", "uncertainty")
 TOOL_FIELDS = ("name", "output_bytes", "output_sha256", "skipped", "hosted",
                "action_type", "retrieved_at", "frozen")
+COVERAGE_STATUSES = {"complete", "partial", "failed", "unknown"}
+COVERAGE_CATEGORIES = {"inspection", "context", "verification"}
 CONCEPT_FIELDS = ("status", "stage", "model", "problem", "goal", "baseline",
                   "assessment", "proposed_review", "review_reason",
                   "delivered_benefit", "relevant_history", "recommendation",
@@ -52,6 +54,11 @@ def _filtered(record, fields):
 
 def _strings(value):
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def _coverage_status(coverage):
+    status = coverage.get("status") if isinstance(coverage, dict) else None
+    return status if status in COVERAGE_STATUSES else "unknown"
 
 
 def _text_or_strings(value):
@@ -78,8 +85,39 @@ def _safe_http_url(url):
 def _public_coverage(coverage):
     if not isinstance(coverage, dict):
         return None
-    return {"status": coverage.get("status") if isinstance(coverage.get("status"), str) else "unknown",
-            "limitations": _strings(coverage.get("limitations"))}
+    record = {"status": _coverage_status(coverage),
+              "limitations": _strings(coverage.get("limitations"))}
+    for key in ("context", "verification"):
+        child = coverage.get(key)
+        if isinstance(child, dict):
+            record[key] = {
+                "status": _coverage_status(child),
+                "limitations": _strings(child.get("limitations")),
+            }
+    issues = []
+    for issue in coverage.get("issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        public = {}
+        if isinstance(issue.get("stage"), str):
+            public["stage"] = issue["stage"]
+        category = issue.get("category")
+        if category in COVERAGE_CATEGORIES:
+            public["category"] = category
+        if isinstance(issue.get("reason"), str):
+            public["reason"] = issue["reason"]
+        if public:
+            issues.append(public)
+    if issues:
+        record["issues"] = issues
+    notes = _strings(coverage.get("notes"))
+    if notes:
+        record["notes"] = notes
+    return record
+
+
+def _unknown_coverage():
+    return {"status": "unknown", "limitations": []}
 
 
 def _public_validation_errors(stage):
@@ -290,7 +328,7 @@ def _public_record(number, head_sha, content, debug, prompt_config, report_id):
         "head": head_sha,
         "review": content,
         "models": dict(prompt_config.models),
-        "coverage": _public_coverage(debug.get("coverage")),
+        "coverage": _public_coverage(debug.get("coverage")) or _unknown_coverage(),
         "stages": _public_stages(debug),
         "stage_outputs": _public_stage_outputs(debug),
         "stage_metrics": trace.stage_metrics(debug),
@@ -319,15 +357,37 @@ def _summary_list(items):
     return "".join(f"<li>{_escape(item)}</li>" for item in items)
 
 
-def _coverage_html(coverage):
+def _coverage_html(coverage, detailed=False):
     if not isinstance(coverage, dict):
         return "<p>No coverage summary was recorded.</p>"
     limitations = coverage.get("limitations") or []
     status = coverage.get("status", "unknown")
+    if not detailed and not any(key in coverage for key in (
+            "context", "verification", "issues", "notes")):
+        if limitations:
+            return (f"<p>Status: <strong>{_escape(status)}</strong></p>"
+                    f"<ul>{_summary_list(limitations)}</ul>")
+        return f"<p>Status: <strong>{_escape(status)}</strong>. No limitations recorded.</p>"
+    parts = [f"<p>Code review status: <strong>{_escape(status)}</strong></p>"]
     if limitations:
-        return (f"<p>Status: <strong>{_escape(status)}</strong></p>"
-                f"<ul>{_summary_list(limitations)}</ul>")
-    return f"<p>Status: <strong>{_escape(status)}</strong>. No limitations recorded.</p>"
+        parts.append(f"<ul>{_summary_list(limitations)}</ul>")
+    else:
+        parts.append("<p>No code review limitations recorded.</p>")
+    for key, label in (("context", "Historical context"),
+                       ("verification", "Verification")):
+        child = coverage.get(key) if isinstance(coverage.get(key), dict) else {}
+        child_status = child.get("status", "unknown")
+        child_limits = child.get("limitations") or []
+        parts.append(f"<p>{label} status: <strong>{_escape(child_status)}</strong></p>")
+        if child_limits:
+            parts.append(f"<ul>{_summary_list(child_limits)}</ul>")
+        else:
+            parts.append(f"<p>No {label.lower()} limitations recorded.</p>")
+    notes = coverage.get("notes") or []
+    if notes:
+        parts.append("<p>Scope notes:</p>")
+        parts.append(f"<ul>{_summary_list(notes)}</ul>")
+    return "".join(parts)
 
 
 def _findings_html(attribution):
@@ -599,7 +659,7 @@ summary {{ cursor: pointer; font-weight: 600; }}
 </section>
 <section>
 <h2>Coverage</h2>
-{_coverage_html(record.get('coverage'))}
+{_coverage_html(record.get('coverage'), detailed=True)}
 </section>
 <section>
 <h2>Findings</h2>

@@ -342,6 +342,14 @@ class EvaluateTests(unittest.TestCase):
         evaluate.write_private_json(path, artifact)
         return path
 
+    def test_partial_coverage_uses_code_summary_not_advisory_stage(self):
+        artifact = {"raw_debug": {
+            "coverage": {"status": "complete"},
+            "stages": {"archaeologist": {"coverage": {"status": "partial"}}}}}
+        self.assertFalse(evaluate._run_has_partial_coverage(artifact))
+        artifact["raw_debug"]["coverage"]["status"] = "failed"
+        self.assertTrue(evaluate._run_has_partial_coverage(artifact))
+
     def test_summarize_runs_groups_offline_costs_and_outcomes(self):
         first = self.write_run("run-first.json", {
             "status": "completed",

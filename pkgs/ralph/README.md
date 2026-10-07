@@ -169,6 +169,14 @@ through competing workers' monthly spending. Failed discovery becomes a coverage
 limitation; failed verification publishes no unverified findings. Failed editing
 falls back to verified wording.
 
+Public coverage separates code review, historical context, and verification.
+Missing advisory history does not reduce code coverage. Expected static-review
+scope, such as not running tests, is shown as a scope note rather than missing
+evidence. Actual unread paths and failed stages identify their specific reason.
+Failed verification has its own failed status. Candidate ID bookkeeping errors
+withhold the affected decisions, preserve independently valid findings, and
+leave unaccounted candidates unresolved.
+
 Sources: [pipeline.py](ralph/pipeline.py),
 [model.py](ralph/model.py), [spend.py](ralph/spend.py),
 [config.py](ralph/config.py).

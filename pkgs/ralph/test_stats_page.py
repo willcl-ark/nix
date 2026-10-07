@@ -47,7 +47,11 @@ class StatsPageTests(unittest.TestCase):
                 "published_reviews": 0,
                 "saved_findings": 0,
                 "published_findings": 0,
-                "coverage": {"complete": 0, "partial": 0, "unknown": 0},
+                "coverage": {"complete": 0, "partial": 0, "failed": 0, "unknown": 0},
+                "context_coverage": {
+                    "complete": 0, "partial": 0, "failed": 0, "unknown": 0},
+                "verification_status": {
+                    "complete": 0, "partial": 0, "failed": 0, "unknown": 0},
                 "attribution_coverage": {"complete": 0, "missing": 0},
                 "archaeology": {
                     "research_completed": 0,
@@ -141,7 +145,11 @@ class StatsPageTests(unittest.TestCase):
             "published_reviews": 2,
             "saved_findings": 3,
             "published_findings": 3,
-            "coverage": {"complete": 1, "partial": 1, "unknown": 0},
+            "coverage": {"complete": 1, "partial": 1, "failed": 0, "unknown": 0},
+            "context_coverage": {
+                "complete": 1, "partial": 0, "failed": 0, "unknown": 1},
+            "verification_status": {
+                "complete": 1, "partial": 0, "failed": 1, "unknown": 0},
             "archaeology": {
                 "research_completed": 2,
                 "published_concerns": 1,
@@ -336,6 +344,8 @@ class StatsPageTests(unittest.TestCase):
                 "skipped": False,
                 "routing": {"selected_tier": "cheap"},
                 "coverage": "partial",
+                "context_coverage": "complete",
+                "verification_status": "failed",
                 "findings": {"saved": 1, "published": 1},
                 "archaeology": {
                     "research_completed": True,
@@ -364,6 +374,8 @@ class StatsPageTests(unittest.TestCase):
                 "skipped": False,
                 "routing": {"selected_tier": "deep"},
                 "coverage": "complete",
+                "context_coverage": "unknown",
+                "verification_status": "complete",
                 "findings": {"saved": 2, "published": 2},
                 "archaeology": {"research_completed": True, "published_concern": False},
                 "ledger": self.request_totals(request_count=4, known_cost_micros=1_000_000,
@@ -478,6 +490,11 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("<td>1.500</td>", html)
         self.assertIn("9 API request attempts for 3 review jobs", html)
         self.assertIn("Selected / dropped / unresolved / undisposed", html)
+        self.assertIn("Code review coverage excludes advisory historical context.", html)
+        self.assertIn(
+            "<th>Status</th><th>Code review</th><th>Historical context</th><th>Verification</th>",
+            html)
+        self.assertIn("<td>failed</td><td>0</td><td>0</td><td>1</td>", html)
 
     def test_collect_stats_output_renders_with_nested_schema(self):
         with tempfile.TemporaryDirectory() as directory:

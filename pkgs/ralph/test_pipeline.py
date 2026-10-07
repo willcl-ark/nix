@@ -353,7 +353,9 @@ class PipelineTests(unittest.TestCase):
         content = self.run_review(review)
 
         self.assertEqual(self.calls, ["independent", "tests", "verifier"])
-        self.assertIn("No verified findings", content)
+        self.assertIn("no actionable issues", content)
+        self.assertEqual(self.debug["coverage"]["status"], "complete")
+        self.assertEqual(self.debug["coverage"]["context"]["status"], "failed")
         self.assertEqual(self.debug["concept_assessment"]["status"], "failed")
         self.assertEqual(self.debug["stages"]["archaeologist"]["status"], "invalid")
 
@@ -491,9 +493,29 @@ class PipelineTests(unittest.TestCase):
 
         content = self.run_review(review)
         self.assertNotIn("Simplify fixture", content)
-        self.assertIn("Some findings failed validation", content)
+        self.assertIn("omitted", content)
         self.assertEqual(self.debug["stages"]["verifier"]["status"], "completed")
-        self.assertIn("omitted", self.debug["stages"]["verifier"]["validation_errors"][0]["error"])
+        self.assertEqual(self.debug["coverage"]["verification"]["status"], "partial")
+        self.assertEqual(self.debug["decisions"][0]["disposition"], "unresolved")
+
+    def test_omitted_candidate_preserves_valid_finding_and_attribution(self):
+        self.tier, self.audits = "routine", []
+
+        def review(*args, **kwargs):
+            if kwargs["stage_name"] == "verifier":
+                return verification([{
+                    "candidate_ids": ["independent:1"], "disposition": "publish",
+                    "reason": "Checked against the caller", "finding": self.published}])
+            return discovery([candidate(), candidate("Unanswered lead")])
+
+        content = self.run_review(review)
+        self.assertIn(self.published["body"], content)
+        self.assertNotIn("Unanswered lead", content)
+        self.assertEqual(self.debug["coverage"]["verification"]["status"], "partial")
+        self.assertEqual(self.debug["finding_attribution"][0]["candidate_ids"], ["independent:1"])
+        unresolved = [decision for decision in self.debug["decisions"]
+                      if decision["disposition"] == "unresolved"]
+        self.assertEqual(unresolved[0]["candidate_ids"], ["independent:2"])
 
     def test_partial_specialist_and_invalid_finding_preserve_valid_suggestion(self):
         self.tier, self.audits = "standard", ["tests"]

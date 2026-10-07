@@ -58,3 +58,9 @@ regression the test would catch. Do not
 promote an incidental stress case or mechanism to a requirement without that
 support. Do not summarize the patch, praise it, or fill a checklist with
 non-findings.
+
+Coverage limitations must name a specific unread caller, unavailable dependency,
+or unanswered behavior that could change this review. Keep ordinary scope
+statements out of limitations: static analysis, tests not run, unchanged code
+not audited, and completing only your assigned responsibility are expected.
+Do not mark partial merely because further investigation is imaginable.

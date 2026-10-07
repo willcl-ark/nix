@@ -394,11 +394,7 @@ def _run_has_budget_exhaustion(artifact):
 def _run_has_partial_coverage(artifact):
     debug = artifact.get("raw_debug") or {}
     coverage = debug.get("coverage") or {}
-    if coverage.get("status") == "partial":
-        return True
-    stages = debug.get("stages") or {}
-    return any((stage.get("coverage") or {}).get("status") == "partial"
-               for stage in stages.values() if isinstance(stage, dict))
+    return coverage.get("status") in {"partial", "failed"}
 
 
 def _new_summary_group():

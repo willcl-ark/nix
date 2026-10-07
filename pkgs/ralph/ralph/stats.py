@@ -26,6 +26,7 @@ RESERVED_STATUSES = {"reserved", "uncertain", "unknown"}
 UNKNOWN_COST_STATUSES = RESERVED_STATUSES
 REVIEW_ID_PREFIX = "pr:"
 ADDRESSED_STATUSES = ("addressed", "partially_addressed", "still_present", "unclear")
+COVERAGE_STATUSES = ("complete", "partial", "failed", "unknown")
 
 
 def collect_stats(state_dir: Path, report_dir: Path) -> dict:
@@ -69,7 +70,9 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         "published_reviews": 0,
         "saved_findings": 0,
         "published_findings": 0,
-        "coverage": {"complete": 0, "partial": 0, "unknown": 0},
+        "coverage": _new_coverage_counts(),
+        "context_coverage": _new_coverage_counts(),
+        "verification_status": _new_coverage_counts(),
         "attribution_coverage": {"complete": 0, "missing": 0},
         "archaeology": {
             "research_completed": 0,
@@ -123,7 +126,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         findings = _published_findings(debug)
         concept = _concept_summary(debug)
         research_completed = _archaeology_research_completed(debug)
-        coverage = _coverage_status(debug)
+        coverage = _coverage_summary(debug)
         routing = _routing_summary(debug)
         metrics = _saved_review_metrics(debug)
         report_name = _report_name(report_dir, row, result)
@@ -131,7 +134,9 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         if not skipped:
             overview["saved_reviews"] += 1
             overview["saved_findings"] += len(findings)
-            overview["coverage"][coverage] += 1
+            overview["coverage"][coverage["status"]] += 1
+            overview["context_coverage"][coverage["context_status"]] += 1
+            overview["verification_status"][coverage["verification_status"]] += 1
             overview["attribution_coverage"][
                 "complete" if _has_attribution(debug, findings) else "missing"] += 1
             _add_archaeology_counts(overview, research_completed, concept,
@@ -165,7 +170,9 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "recorded_failed_attempts": max(0, int(row["attempts"] or 0)),
             "skipped": skipped,
             "routing": routing,
-            "coverage": coverage,
+            "coverage": coverage["status"],
+            "context_coverage": coverage["context_status"],
+            "verification_status": coverage["verification_status"],
             "findings": {
                 "saved": len(findings),
                 "published": len(findings) if row["status"] == "complete" else 0,
@@ -529,10 +536,24 @@ def _assessment_order(record):
     return record["assessment_generation"], record["assessment_job_id"]
 
 
-def _coverage_status(debug):
+def _new_coverage_counts():
+    return {status: 0 for status in COVERAGE_STATUSES}
+
+
+def _coverage_summary(debug):
     coverage = debug.get("coverage") if isinstance(debug, dict) else None
+    context = coverage.get("context") if isinstance(coverage, dict) else None
+    verification = coverage.get("verification") if isinstance(coverage, dict) else None
+    return {
+        "status": _coverage_status(coverage),
+        "context_status": _coverage_status(context),
+        "verification_status": _coverage_status(verification),
+    }
+
+
+def _coverage_status(coverage):
     status = coverage.get("status") if isinstance(coverage, dict) else None
-    return status if status in {"complete", "partial"} else "unknown"
+    return status if status in COVERAGE_STATUSES else "unknown"
 
 
 def _routing_summary(debug):

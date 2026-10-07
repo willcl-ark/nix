@@ -26,7 +26,32 @@ class ReportTests(unittest.TestCase):
             "review_input": "private patch",
             "review_input_sha256": "hash",
             "private_state": {"token": "credential-marker"},
-            "coverage": {"status": "partial", "limitations": ["Verification was partial."]},
+            "coverage": {
+                "status": "partial",
+                "limitations": ["Verification was partial."],
+                "context": {
+                    "status": "complete",
+                    "limitations": [],
+                    "private": "coverage-context-private-marker",
+                },
+                "verification": {
+                    "status": "failed",
+                    "limitations": ["Verifier failed <hard>."],
+                    "private": "coverage-verification-private-marker",
+                },
+                "issues": [{
+                    "stage": "verifier",
+                    "category": "verification",
+                    "reason": "Verifier failed <hard>.",
+                    "raw_error": "coverage-issue-private-marker",
+                }, {
+                    "stage": "archaeologist",
+                    "category": "private-category",
+                    "reason": "category is not public",
+                }],
+                "notes": ["Documentation-only paths were out of scope."],
+                "private": "coverage-private-marker",
+            },
             "concept_assessment": {
                 "status": "verified",
                 "stage": "archaeologist",
@@ -208,6 +233,47 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn('href="javascript:', html)
         self.assertNotIn('href="https://["', html)
 
+    def test_public_coverage_preserves_safe_summary_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            html_name = self.save(directory)
+            public = json.loads((Path(directory) / "123-abcdef.json").read_text())
+            html = (Path(directory) / html_name).read_text()
+
+        self.assertEqual(public["coverage"], {
+            "status": "partial",
+            "limitations": ["Verification was partial."],
+            "context": {"status": "complete", "limitations": []},
+            "verification": {
+                "status": "failed",
+                "limitations": ["Verifier failed <hard>."],
+            },
+            "issues": [{
+                "stage": "verifier",
+                "category": "verification",
+                "reason": "Verifier failed <hard>.",
+            }, {
+                "stage": "archaeologist",
+                "reason": "category is not public",
+            }],
+            "notes": ["Documentation-only paths were out of scope."],
+        })
+        self.assertIn("Code review status: <strong>partial</strong>", html)
+        self.assertIn("Historical context status: <strong>complete</strong>", html)
+        self.assertIn("Verification status: <strong>failed</strong>", html)
+        self.assertIn("Verifier failed &lt;hard&gt;.", html)
+        self.assertIn("Scope notes:", html)
+        self.assertNotIn("coverage-private-marker", html)
+        self.assertNotIn("coverage-issue-private-marker", html)
+
+    def test_missing_top_level_coverage_defaults_to_unknown(self):
+        debug = self.debug()
+        debug.pop("coverage")
+        with tempfile.TemporaryDirectory() as directory:
+            self.save(directory, debug)
+            public = json.loads((Path(directory) / "123-abcdef.json").read_text())
+
+        self.assertEqual(public["coverage"], {"status": "unknown", "limitations": []})
+
     def test_advisory_stop_and_verifier_disagreement_survive_public_report(self):
         debug = self.debug()
         concept = debug["concept_assessment"]
@@ -261,6 +327,10 @@ class ReportTests(unittest.TestCase):
             "alternative-private-marker",
             "source-private-marker",
             "verification-private-marker",
+            "coverage-context-private-marker",
+            "coverage-verification-private-marker",
+            "coverage-private-marker",
+            "coverage-issue-private-marker",
             "review_input_sha256",
         ):
             self.assertNotIn(private, public_text)

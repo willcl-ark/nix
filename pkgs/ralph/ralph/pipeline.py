@@ -3,7 +3,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-from . import model, protocol, routing
+from . import coverage, model, protocol, routing
 from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
 from .repository import audit_developer_notes, focused_review_input
 from .spend import BudgetExceeded
@@ -41,7 +41,6 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
         allow_discussions = False
     stages = debug.setdefault("stages", {})
     outputs = debug.setdefault("stage_outputs", {})
-    limitations = []
     candidates = []
     candidate_sources = debug.setdefault("candidate_sources", {})
     concept_candidate = None
@@ -187,12 +186,9 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
 
     def collect(name, result):
         if result is None:
-            limitations.append(f"The {name} review did not complete.")
             return False
         candidates.extend(result["findings"])
         candidate_sources.update({finding["id"]: name for finding in result["findings"]})
-        if result["coverage"]["status"] == "partial":
-            limitations.append(f"The {name} review had incomplete evidence.")
         return result["requires_sensitive_review"]
 
     def run_archaeologist():
@@ -219,8 +215,6 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                 "candidate": result["assessment"],
                 "coverage": result["coverage"],
             }
-            if result["coverage"]["status"] == "partial":
-                limitations.append("The archaeology review had incomplete evidence.")
             return result["assessment"]
         except model.StaleReview:
             raise
@@ -234,7 +228,6 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                 "status": "failed",
                 "error_type": type(exc).__name__,
             }
-            limitations.append("The archaeology review did not complete.")
             return None
 
     concept_candidate = run_archaeologist()
@@ -251,15 +244,12 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
             result = protocol.blind_alternatives(answer)
             stages["alternatives"]["coverage"] = result["coverage"]
             alternatives_candidate = result["alternatives"]
-            if result["coverage"]["status"] == "partial":
-                limitations.append("The alternatives experiment had incomplete evidence.")
         except model.StaleReview:
             raise
         except Exception as exc:
             record = stages["alternatives"]
             if record["status"] == "completed":
                 record.update(status="invalid", error_type=type(exc).__name__)
-            limitations.append("The alternatives experiment did not complete.")
     elif blind_alternatives:
         stages["alternatives"] = {
             "model": prompt_config.models["archaeologist"], "status": "skipped",
@@ -346,11 +336,6 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                               for finding, decision in zip(accepted, published)}
         if result["validation_errors"]:
             stages["verifier"]["validation_errors"] = result["validation_errors"]
-            limitations.append("Some findings failed validation and were withheld.")
-        if result["coverage"]["status"] == "partial":
-            limitations.append("Verification was partial.")
-        if any(item["disposition"] == "unresolved" for item in result["decisions"]):
-            limitations.append("Some candidate findings remain unresolved.")
     except model.StaleReview:
         raise
     except Exception as exc:
@@ -358,9 +343,6 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
             stages["verifier"].update(status="invalid", error_type=type(exc).__name__)
         if isinstance(exc, protocol.InvalidReview):
             stages["verifier"]["validation_error"] = str(exc)
-            limitations.append("Verifier output failed validation; no findings were published.")
-        else:
-            limitations.append("Verification did not complete; no unverified findings were published.")
 
     # The editor sees only accepted findings. A failed editor can use the
     # verifier's own wording, without discarding paid verification work.
@@ -404,8 +386,7 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                               "status": "skipped", "turns": [], "tools": [],
                               "reason": "No accepted findings to edit"}
 
-    debug["coverage"] = {"status": "partial" if limitations else "complete",
-                         "limitations": limitations}
+    debug["coverage"] = coverage.summarize(debug)
     was_edited = (stages["collator"]["status"] == "completed"
                   and not stages["collator"].get("used_verified_wording"))
     debug["finding_attribution"] = [
@@ -427,5 +408,5 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
     if ppq_budget is not None:
         debug["ppq_budget"] = ppq_budget.summary()
     debug.pop("pipeline_stage", None)
-    return protocol.render(findings, limitations, concept_summary,
+    return protocol.render(findings, debug["coverage"]["limitations"], concept_summary,
                            verified_alternatives)

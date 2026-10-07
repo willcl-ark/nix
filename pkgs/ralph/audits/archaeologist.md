@@ -63,3 +63,10 @@ proposal fields with `goal`, `assessment`, `proposed_review`, and
 these proposed review values: `continue`, `would_stop`, or `undetermined`. The
 recommendation must state the decisive reason and what evidence would change
 it. Do not use review-label language or write a public review comment.
+
+Coverage here describes the evidence for this concept assessment, not the code
+review. List only specific missing history or evidence that could change your
+assessment. A discussion with no substantive comments, no relevant earlier
+proposal found after a bounded search, and not conducting a full implementation
+audit are not missing evidence by themselves. Distinguish a retrieval failure
+from a successfully retrieved discussion with no relevant information.
