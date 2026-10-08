@@ -20,6 +20,13 @@ the relevant input limits and locks. For changed filters or retry tracking,
 test repeated inputs, cache expiry, and state changes that make a later retry
 valid.
 
+Before reporting a specific unread caller or helper as material, inspect it if
+it is available and tool calls remain. Do not claim the inspection limit was
+reached unless a tool call was actually skipped because that limit was
+exhausted. If you stop earlier, say what evidence you did not inspect without
+attributing it to a limit. Keep the returned findings and coverage limitations
+concise; do not narrate the investigation or repeat the patch summary.
+
 Use find_paths, read_file, read_base_file, read_diff, and search_code to follow
 the affected paths. Compare the merge base with the PR head so you do not
 report an existing defect as new. Before reporting a counterexample, check

@@ -25,6 +25,14 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["verification"]["status"], "complete")
         self.assertEqual(result["limitations"], ["adversarial_glm: Model API request failed."])
+        result = self.summarize(adversarial_glm={
+            "status": "failed", "error_type": "ValueError",
+            "max_output_tokens": 25_000,
+            "turns": [{"status": "incomplete",
+                       "incomplete_reason": "max_output_tokens"}],
+        })
+        self.assertEqual(result["limitations"], [
+            "adversarial_glm: Model response reached its 25,000-token output limit."])
         result = self.summarize(verifier={"status": "invalid", "validation_error": "Unknown candidate ID"})
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["verification"]["status"], "failed")

@@ -24,6 +24,14 @@ def _failure(stage):
         return "Stage budget exhausted before the review completed."
     if status == "invalid":
         return "Output failed validation: " + stage.get("validation_error", "invalid review output")
+    if (stage.get("incomplete_reason") == "max_output_tokens"
+            or any(isinstance(turn, dict)
+                   and turn.get("incomplete_reason") == "max_output_tokens"
+                   for turn in stage.get("turns", []))):
+        limit = stage.get("max_output_tokens")
+        if isinstance(limit, int) and limit > 0:
+            return f"Model response reached its {limit:,}-token output limit."
+        return "Model response reached its output-token limit."
     error = stage.get("error_type")
     return {
         "HTTPError": "Model API request failed.",

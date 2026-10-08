@@ -79,6 +79,12 @@ class PipelineTests(unittest.TestCase):
         self.debug = {}
         self.calls = []
 
+    def test_adversarial_glm_has_extra_output_headroom(self):
+        self.assertEqual(pipeline.stage_settings("adversarial_glm", "sensitive"),
+                         ("high", 32_000))
+        self.assertEqual(pipeline.stage_settings("adversarial", "sensitive"),
+                         ("high", 25_000))
+
     def plan(self, *args, **kwargs):
         result = {"tier": self.tier, "audits": self.audits,
                   "profiles": getattr(self, "profiles", []), "evidence": [], "missing_context": []}
@@ -163,7 +169,9 @@ class PipelineTests(unittest.TestCase):
         ppq_budget.protect_verifier.assert_not_called()
         self.assertEqual(self.debug["ppq_budget"], ppq_budget.summary.return_value)
         self.assertEqual(self.debug["budget"], openai_budget.summary.return_value)
-        self.assertEqual(inputs["adversarial"], inputs["adversarial_glm"])
+        self.assertEqual(inputs["adversarial"][:-1], inputs["adversarial_glm"][:-1])
+        self.assertEqual(inputs["adversarial"][-1], 25_000)
+        self.assertEqual(inputs["adversarial_glm"][-1], 32_000)
         finding = self.debug["finding_attribution"][0]
         self.assertEqual(finding["raised_by"], ["adversarial", "adversarial_glm"])
         self.assertEqual(finding["raised_by_models"], ["glm-5.3", "gpt-6.1-sol"])

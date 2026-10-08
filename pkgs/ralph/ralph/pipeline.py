@@ -22,6 +22,8 @@ ARCHAEOLOGY_TOOL_LIMIT = 12
 def stage_settings(name, tier):
     if name == "design":
         return "xhigh", 25_000
+    if name == "adversarial_glm":
+        return "high", 32_000
     if name == "verifier" and tier == "sensitive":
         return "high", model.MAX_VERIFIER_OUTPUT_TOKENS
     if name in ADVERSARIAL_STAGES:
