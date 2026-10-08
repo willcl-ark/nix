@@ -11,10 +11,10 @@ from .spend import BudgetExceeded
 # Domain stages spend the review budget in a predictable order; the two
 # adversarial models review the same evidence concurrently.
 # Domain correctness precedes design; verification retains protected headroom.
-DISCOVERY_ORDER = ("adversarial", "concurrency", "state", "public_contract",
+DISCOVERY_ORDER = ("script", "adversarial", "concurrency", "state", "public_contract",
                    "build", "tests", "design")
 ADVERSARIAL_STAGES = ("adversarial", "adversarial_glm")
-FULL_CONTEXT_STAGES = {"independent", *ADVERSARIAL_STAGES, "verifier"}
+FULL_CONTEXT_STAGES = {"script", "independent", *ADVERSARIAL_STAGES, "verifier"}
 DISCOVERY_TOOL_LIMITS = {"routine": 12, "standard": 24, "sensitive": 48}
 ARCHAEOLOGY_TOOL_LIMIT = 12
 
@@ -26,7 +26,7 @@ def stage_settings(name, tier):
         return "high", 32_000
     if name == "verifier" and tier == "sensitive":
         return "high", model.MAX_VERIFIER_OUTPUT_TOKENS
-    if name in ADVERSARIAL_STAGES:
+    if name in {*ADVERSARIAL_STAGES, "script"}:
         return "high", 25_000
     if name == "concurrency":
         return "medium", 8_000
@@ -62,6 +62,8 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
     def verifier_input():
         return with_research_inventory(review) + "\n\nVerification input:\n" + json.dumps({
             "candidate_findings": candidates,
+            "inspection_gaps": [issue for issue in coverage.summarize(debug)["issues"]
+                                if issue["category"] == "inspection"],
             "concept_candidate": concept_candidate,
             **({"blind_alternatives": alternatives_candidate}
                if alternatives_candidate is not None else {}),
@@ -97,7 +99,7 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                  else model.TOOLS if name in FULL_CONTEXT_STAGES
                  else model.FOCUSED_TOOLS)
         evidence = research_evidence if name in {"archaeologist", "verifier"} else None
-        return model.available_tools(tools, allow_discussions, evidence)
+        return model.available_tools(tools, allow_discussions and name != "script", evidence)
 
     def run_stage(name, input_text, prompt, schema, *, tools=True):
         if name not in ADVERSARIAL_STAGES:
@@ -111,7 +113,7 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
         try:
             if tools:
                 calls = (ARCHAEOLOGY_TOOL_LIMIT if name in {"archaeologist", "alternatives"}
-                         else 48 if name in {*ADVERSARIAL_STAGES, "verifier"}
+                         else 48 if name in {*ADVERSARIAL_STAGES, "script", "verifier"}
                          else DISCOVERY_TOOL_LIMITS[plan["tier"]])
                 effort, output_tokens = stage_settings(name, plan["tier"])
                 available_tools = stage_tools(name)
@@ -232,6 +234,14 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
             }
             return None
 
+    # Spend on selected script correctness before advisory research or overview.
+    completed = set()
+    script_sensitive = False
+    if "script" in plan["audits"]:
+        protect_verification()
+        script_sensitive = collect("script", discover("script"))
+        completed.add("script")
+
     concept_candidate = run_archaeologist()
     if blind_alternatives and concept_candidate is not None:
         protect_verification()
@@ -258,17 +268,16 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
             "reason": "No valid problem and baseline from concept review.",
             "turns": [], "tools": []}
     protect_verification()
-    sensitive = collect("independent", discover("independent"))
+    sensitive = collect("independent", discover("independent")) or script_sensitive
     selected = set(plan["audits"])
     if sensitive and plan["tier"] != "sensitive":
-        selected.update(AUDIT_NAMES)
-        plan = {**plan, "tier": "sensitive", "audits": list(AUDIT_NAMES),
+        selected.update(name for name in AUDIT_NAMES if name != "script")
+        plan = {**plan, "tier": "sensitive", "audits": [name for name in AUDIT_NAMES if name in selected],
                 "profiles": list(ADVERSARIAL_PROFILES),
                 "evidence": plan["evidence"] + ["Overview requested sensitive review"]}
         debug["routing"]["selected"] = plan
     if plan["tier"] == "sensitive":
         selected.add("adversarial")
-    completed = set()
     while pending := [name for name in DISCOVERY_ORDER if name in selected - completed]:
         name = pending[0]
         protect_verification()

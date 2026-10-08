@@ -53,18 +53,23 @@ proxy setup.
 ```mermaid
 flowchart TD
     input["PR description, commits, patch and complete changed paths"] --> mode{"Routing mode / input"}
-    mode -->|"full mode or oversized patch"| full["Sensitive: all audits and all profiles"]
+    mode -->|"explicit full mode"| full["Sensitive: all audits and all profiles"]
+    mode -->|"oversized patch"| general["General audits and profiles; no automatic script specialist"]
     mode -->|"enabled or shadow"| router["Luna router proposes tier, audits and profiles"]
     router --> uncertain{"Invalid output, failed routing or missing context?"}
-    uncertain -->|yes| full
+    uncertain -->|yes| general
     uncertain -->|no| rules["Union with mandatory path audits and profiles; enforce tier floor"]
     rules --> shadow{"Shadow mode?"}
     shadow -->|yes| full
     shadow -->|no| plan["Selected plan"]
     full --> plan
-    plan --> overview["Always run independent overview"]
+    general --> plan
+    plan --> script{"Router selected substantive script behavior?"}
+    script -->|yes| expert["Script specialist before advisory research"]
+    script -->|no| overview["Always run independent overview"]
+    expert --> overview
     overview --> escalate{"Overview requests sensitive and tier is lower?"}
-    escalate -->|yes| all["Add all audits and profiles; sensitive tier"]
+    escalate -->|yes| all["Add general audits and profiles; sensitive tier"]
     escalate -->|no| selected["Keep selected coverage"]
     all --> stages["Run selected discovery stages"]
     selected --> stages
@@ -97,11 +102,48 @@ Rules overlap. The router can select any additional audit or profile based on
 behavior, including effects that filenames alone do not reveal. Empty audit and
 profile lists are valid when no coverage applies. Routine does not mean no review.
 
+## Script and transaction-policy specialist
+
+The `script` audit is selected by the cheap router only for substantive changes
+in script execution or flags, signatures and sighash commitments, witness or
+annex rules, spend-type acceptance, or transaction validity and fee-bumping
+constraints. Filenames and a sensitive tier do not select it automatically.
+Documentation, test-only changes, mechanical refactors, logging, metrics and
+unrelated work in validation or policy files skip it. Generic missing context,
+routing failures and overview escalation do not add it. Explicit `full` and
+`shadow` modes still request every audit, including `script`.
+
+Its [prompt](audits/script.md) checks consensus versus policy, complete base/head
+functions and relevant spend-type combinations. It distinguishes signed
+participants from inputs such as P2A anchors, and tests the premise of a new
+transaction-wide rule against existing exceptions. The PR #36466 all-input annex
+condition is a motivating case, rather than a reason to run this stage on every
+transaction-related patch.
+
+The default is `gpt-6.1-sol`, high reasoning, 25,000 generated tokens per response
+including reasoning, and 48 total tool calls. These are initial settings, not a
+measured optimum. The specialist sees original PR evidence and repository code,
+not other findings or review discussion. Code tools inspect base/head, diffs,
+callers and tests; history tools settle specific contracts. It must inspect code
+before finishing and prioritize material functions over reporting them unread.
+
+When selected it runs before concept research and other discovery, sharing the
+existing OpenAI budget and protecting verifier headroom and its own final turn.
+It has no additional spending allowance; inadequate review or monthly budget
+still produces an explicit incomplete stage. Candidates go through the existing
+verifier, and named discovery gaps are passed to the verifier for targeted
+inspection. Remaining gaps stay visible in coverage. Stage stats include
+selection, execution, coverage, costs and sole/shared accepted findings.
+Custom model maps must include `script`; there is no fallback to an old map.
+
 ## Stages, models and evidence
 
 ```mermaid
 flowchart TD
-    route["Router: gpt-6-luna"] --> archaeology["Archaeologist: gpt-6-luna / review input, code and research"]
+    route["Router: gpt-6-luna"] --> script{"Script specialist selected?"}
+    script -->|yes| expert["script: gpt-6.1-sol / code and history"]
+    expert --> archaeology["Archaeologist: gpt-6-luna / review input, code and research"]
+    script -->|no| archaeology
     archaeology --> independent["Independent overview: gpt-6-luna"]
     independent --> sensitive{"Sensitive tier?"}
     sensitive -->|yes| pair["Concurrent adversarial passes: same evidence and profiles"]
@@ -121,17 +163,20 @@ flowchart TD
 Skipped audits do not make model calls. Escalation can add pending stages during
 discovery. Sol and GLM run concurrently when a PPQ key is supplied; without that
 key, the Python pipeline runs Sol alone. The service CLI requires both keys.
-The archaeologist runs after routing and before code discovery. Its assessment
+The selected script specialist runs immediately after routing, before advisory
+research and overview. The archaeologist follows it, before other code discovery. Its assessment
 is advisory only: negative, failed or incomplete concept research never skips an
 independent, adversarial or focused code stage selected for the review.
 Reviewers do not see other discovery passes' candidates. The verifier sees the
-pooled candidates, original review input and archaeology candidate. Code
+pooled candidates, original review input, archaeology candidate, and named
+inspection gaps from incomplete discovery. Code
 discovery does not receive the archaeology output or current PR discussion.
 
 | Stage | Default model | Reasoning effort | Per-response output token ceiling | Evidence access |
 | --- | --- | --- | --- | --- |
 | router | gpt-6-luna | low | 4,000 | Supplied input only |
 | independent | gpt-6-luna | low | 4,000 | Full tool set |
+| script | gpt-6.1-sol | high | 25,000 | Original input; code and base history, no discussion or web tools |
 | adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |
 | adversarial_glm | glm-5.3 | high | 25,000 | Same tools and profiles, via PPQ |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
@@ -151,14 +196,14 @@ research call is missing from the frozen manifest, the tool returns an
 unavailable-evidence message and the model continues from code and frozen input.
 
 Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensitive.
-Both adversarial passes and verification allow 48. History and discussion
+The script specialist, both adversarial passes and verification allow 48. History and discussion
 sublimits are eight each per tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit and are capped at
 two per response. Search fees and evidence-token headroom are reserved in the
 existing OpenAI allowance; opening or finding text within a page is not a paid
 search action. The early concept stage spends from the same capped review
 allowance, does not estimate savings and never stops later code stages.
-Independent, adversarial and verifier stages require a first inspection. At
+Script, independent, adversarial and verifier stages require a first inspection. At
 limits, a final turn uses collected evidence and must preserve uncertainty.
 
 OpenAI's default estimated review allowance is USD 1.00; PPQ has a separate
@@ -263,7 +308,7 @@ Sources: [protocol.py](ralph/protocol.py),
 ## Concept and history
 
 The archaeologist receives the full review input plus base/head code tools. It
-runs after routing and before independent discovery. It researches whether the
+runs after routing and any selected script review, before independent discovery. It researches whether the
 proposed goal and approach are worth pursuing, while code review continues no
 matter what it recommends. It establishes the problem, the cost of doing
 nothing, the benefit delivered by the submitted proposal, and relevant prior

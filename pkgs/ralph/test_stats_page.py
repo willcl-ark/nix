@@ -439,6 +439,26 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("Datasets present: 6/6. Missing: none.", html)
         self.assertIn("No review timestamp history is available yet.", html)
 
+    def test_script_stage_displays_statuses_findings_and_cost(self):
+        summary = self.rich_summary()
+        stage = summary["stages"][0]
+        stage["stage"] = "script"
+        stage["configured_model"] = "gpt-6.1-sol"
+        stage["status_counts"] = {
+            "completed": 3, "skipped": 3, "budget_exhausted": 1}
+        stage["coverage_counts"] = {"complete": 2, "partial": 1, "unknown": 4}
+        stage["accepted_findings"] = 7
+        stage["ledger"]["known_cost_micros"] = 250000
+        _, html, public = self.save(summary)
+        section = html.split('<section id="stages">', 1)[1].split('</section>', 1)[0]
+        self.assertIn("<td>script</td><td>gpt-6.1-sol</td>", section)
+        self.assertIn("budget_exhausted: 1, completed: 3, skipped: 3", section)
+        self.assertIn("complete: 2, partial: 1, unknown: 4", section)
+        self.assertIn("<td>7</td>", section)
+        self.assertIn("$0.25", section)
+        self.assertEqual(public["stages"][0]["status_counts"], stage["status_counts"])
+        self.assertEqual(public["stages"][0]["coverage_counts"], stage["coverage_counts"])
+
     def test_useful_sections_put_leaderboard_before_cost_tables(self):
         _, html, _ = self.save(self.rich_summary())
 

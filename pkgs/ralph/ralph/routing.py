@@ -106,7 +106,8 @@ def minimum_tier(paths):
 
 
 def full_plan(reason):
-    return {"tier": "sensitive", "audits": list(AUDIT_NAMES),
+    # Expensive script review needs a semantic trigger, not generic uncertainty.
+    return {"tier": "sensitive", "audits": [name for name in AUDIT_NAMES if name != "script"],
             "profiles": list(ADVERSARIAL_PROFILES), "evidence": [reason],
             "missing_context": []}
 
@@ -132,6 +133,10 @@ def validate_plan(text, paths, floor):
         result["tier"] = "sensitive"
     result["tier"] = TIERS[max(TIERS.index(result["tier"]), TIERS.index(floor))]
     selected = set(result["audits"]) | domain_audits(paths)
+    if all(_doc_path(path) or is_test_path(path) for path in paths):
+        selected.discard("script")
+    if "script" in selected:
+        result["tier"] = "sensitive"
     result["audits"] = [name for name in AUDIT_NAMES if name in selected]
     result["profiles"] = [name for name in ADVERSARIAL_PROFILES if name in selected_profiles]
     return result
@@ -150,6 +155,7 @@ def plan_review(api_key, review, snapshot, prompt_config, debug,
     debug.setdefault("stages", {})["router"] = record
     if mode == "full":
         proposed = full_plan("Full review requested")
+        proposed["audits"] = list(AUDIT_NAMES)
     elif f"Patch exceeds {MAX_REVIEW_BYTES} input bytes." in review:
         proposed = full_plan("Initial patch is incomplete")
     else:
@@ -176,6 +182,8 @@ def plan_review(api_key, review, snapshot, prompt_config, debug,
             record.update(status="failed", error_type=type(exc).__name__)
             proposed = full_plan("Routing unavailable; conservative review required")
     actual = full_plan("Shadow routing retains full review") if mode == "shadow" else proposed
+    if mode == "shadow":
+        actual["audits"] = list(AUDIT_NAMES)
     debug["routing"] = {"mode": mode, "minimum_tier": floor,
                         "proposed": proposed, "selected": actual}
     return actual

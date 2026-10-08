@@ -746,6 +746,49 @@ class StatsTests(unittest.TestCase):
         self.assertIn(("openai", "gpt-6.1-sol-2026-09-01"), spend_models)
         self.assertNotIn(("openai", "gpt-6.1-sol"), spend_models)
 
+    def test_script_totals_include_cost_attribution_and_each_status(self):
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+        for number, (status, coverage_status) in enumerate(
+                (("completed", "complete"), ("completed", "partial"),
+                 ("skipped", None), ("budget_exhausted", None)), start=80):
+            head = str(number % 10) * 40
+            job = self.enqueue(number, head)
+            result = self.single_stage_result("script", "gpt-6.1-sol", head)
+            result["debug"]["stages"]["script"]["status"] = status
+            if coverage_status:
+                result["debug"]["stages"]["script"]["coverage"] = {
+                    "status": coverage_status, "limitations": []}
+            if number != 80:
+                result["debug"]["decisions"] = []
+                result["debug"]["finding_attribution"] = []
+            self.save_complete(job, result)
+            if number == 80:
+                review_id = f'pr:{number}:{job["id"]}:{job["generation"]}'
+                self.create_ledger("spend.sqlite3", [
+                    ("script-request", review_id, "script", "gpt-6.1-sol",
+                     month, "settled", self.usage(), 250000, 0),
+                ])
+
+        summary = stats.collect_stats(self.state_dir, self.report_dir)
+        stage = next(item for item in summary["stages"]
+                     if item["stage"] == "script")
+        self.assertEqual(stage["configured_model"], "gpt-6.1-sol")
+        self.assertEqual(stage["saved_result_runs"], 4)
+        self.assertEqual(stage["executed_runs"], 3)
+        self.assertEqual(stage["skipped_runs"], 1)
+        self.assertEqual(stage["status_counts"], {
+            "completed": 2, "skipped": 1, "budget_exhausted": 1})
+        self.assertEqual(stage["coverage_counts"], {
+            "complete": 1, "partial": 1, "failed": 0, "unknown": 2})
+        self.assertEqual(stage["accepted_findings"], 1)
+        self.assertEqual(stage["sole_source_findings"], 1)
+        self.assertEqual(stage["candidate_counts"]["publish"], 1)
+        self.assertEqual(stage["ledger"]["known_cost_micros"], 250000)
+        self.assertEqual(stage["ledger"]["request_count"], 1)
+        leader = next(item for item in summary["stage_model_leaderboard"]
+                      if item["stage"] == "script")
+        self.assertEqual(leader["accepted_findings"], 1)
+
     def single_stage_result(self, stage_name, model, head="a" * 40):
         return {
             "base_sha": "b" * 40,

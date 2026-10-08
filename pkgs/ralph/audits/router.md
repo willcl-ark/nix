@@ -26,6 +26,18 @@ shared test harness, coverage policy, or fixture shape in a way worth reviewing.
 Select every audit that fits; the tier does not replace relevant specialist
 coverage.
 
+Select `script` only when changed production behavior materially affects script
+execution or flags, signature hashing or verification, witness/annex handling,
+spend-type standardness, or transaction validity and constraints such as
+timelocks, sighash commitments, replacement or package fee-bumping rules. Name
+the changed rule and the affected spend or validation path in the evidence.
+An annex allowance combined with an all-input opt-in condition qualifies.
+The filename alone does not qualify: validation, policy, mempool, wallet and
+transaction files also contain unrelated work. Skip `script` for documentation,
+test-only changes, mechanical refactors, formatting, logging, metrics,
+transaction lookup or transport, and unrelated resource accounting. Generic
+uncertainty or a sensitive tier does not justify this expensive specialist.
+
 Select adversarial profiles only for the domains that changed. Select
 `consensus` for consensus, script, validation, coins, chainstate, kernel, and
 serialization changes. Select `wallet` for wallet funds, privacy, signing,

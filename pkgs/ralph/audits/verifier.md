@@ -19,6 +19,13 @@ satisfies the normal code-finding rules. An unanswered objection alone is not
 evidence of a defect. Keep a verified code finding separate from the concept
 assessment.
 
+The input also lists `inspection_gaps` from incomplete discovery. Prioritize
+named material functions and unanswered spend/validation interactions while
+inspection budget remains, including when there are no candidate code findings.
+Treat gaps as questions, not defects. Independently establish any new finding
+against base/head code and use an empty candidate ID list. If a material gap
+remains unanswered, retain it in your coverage limitations.
+
 If a concept candidate is supplied, verify it separately from code findings.
 If `blind_alternatives` is supplied, those options came from a reader that saw
 only the problem, goal, and baseline code. Check their assumptions against the

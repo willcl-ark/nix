@@ -210,6 +210,48 @@ class ReportTests(unittest.TestCase):
         self.assertIn('{\n  &quot;coverage&quot;: {', html)
         self.assertIn("Raw full reply", html)
 
+    def test_script_report_preserves_status_coverage_and_budget_failure(self):
+        for status, coverage_status in (
+                ("completed", "complete"), ("completed", "partial"),
+                ("skipped", None), ("budget_exhausted", None)):
+            with self.subTest(status=status, coverage=coverage_status):
+                debug = self.debug("Script finding reply")
+                stage = debug["stages"].pop("tests")
+                stage.update({"model": "gpt-6.1-sol", "status": status})
+                stage.pop("coverage", None)
+                if coverage_status:
+                    stage["coverage"] = {
+                        "status": coverage_status,
+                        "limitations": ["Witness path needs replay"]
+                        if coverage_status == "partial" else []}
+                if status == "budget_exhausted":
+                    stage["error_type"] = "BudgetExceeded"
+                    stage["error"] = "Script stage budget exhausted"
+                if status != "completed":
+                    stage.pop("raw_output", None)
+                    stage["turns"] = []
+                    stage["tools"] = []
+                debug["stages"]["script"] = stage
+                debug["stage_outputs"] = (
+                    {"script": "Script finding reply"} if status == "completed" else {})
+                with tempfile.TemporaryDirectory() as directory:
+                    html_name = self.save(directory, debug)
+                    public = json.loads((Path(directory) / "123-abcdef.json").read_text())
+                    html = (Path(directory) / html_name).read_text()
+                self.assertEqual(public["stages"]["script"]["status"], status)
+                if coverage_status:
+                    self.assertEqual(public["stages"]["script"]["coverage"], stage["coverage"])
+                else:
+                    self.assertNotIn("coverage", public["stages"]["script"])
+                self.assertIn(f"script: {status} (gpt-6.1-sol)", html)
+                if coverage_status == "partial":
+                    self.assertIn("Witness path needs replay", html)
+                if status == "completed":
+                    self.assertIn("Script finding reply", html)
+                if status == "budget_exhausted":
+                    self.assertIn("Script stage budget exhausted", html)
+                    self.assertEqual(public["stages"]["script"]["error_type"], "BudgetExceeded")
+
     def test_concept_assessment_renders_without_becoming_a_finding(self):
         with tempfile.TemporaryDirectory() as directory:
             html_name = self.save(directory)

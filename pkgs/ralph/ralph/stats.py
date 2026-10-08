@@ -1060,6 +1060,7 @@ def _new_stage():
         "executed_runs": 0,
         "skipped_runs": 0,
         "status_counts": Counter(),
+        "coverage_counts": Counter(_new_coverage_counts()),
         "candidate_counts": Counter(
             {"publish": 0, "drop": 0, "unresolved": 0, "undisposed": 0}),
         "accepted_findings": 0,
@@ -1109,6 +1110,7 @@ def _add_stage_results(stages, debug):
         record["saved_result_runs"] += 1
         status = stage.get("status") if isinstance(stage.get("status"), str) else "unknown"
         record["status_counts"][status] += 1
+        record["coverage_counts"][_coverage_status(stage.get("coverage"))] += 1
         if status == "skipped":
             record["skipped_runs"] += 1
         else:
@@ -1161,6 +1163,7 @@ def _stage_records(stages):
             "executed_runs": executed,
             "skipped_runs": record["skipped_runs"],
             "status_counts": dict(sorted(record["status_counts"].items())),
+            "coverage_counts": dict(sorted(record["coverage_counts"].items())),
             "candidate_counts": dict(sorted(record["candidate_counts"].items())),
             "accepted_findings": accepted,
             "concept_stage": record["concept_stage"],

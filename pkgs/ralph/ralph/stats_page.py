@@ -499,6 +499,15 @@ def _stage_section(summary):
         for stage in stages:
             candidates = _mapping(stage.get("candidate_counts"))
             ledger = _mapping(stage.get("ledger"))
+            statuses = _mapping(stage.get("status_counts"))
+            status_text = ", ".join(
+                f"{_escape(status)}: {_fmt_int(count)}"
+                for status, count in sorted(statuses.items())
+            )
+            coverage_text = ", ".join(
+                f"{_escape(status)}: {_fmt_int(count)}"
+                for status, count in sorted(_mapping(stage.get("coverage_counts")).items())
+            )
             candidate_denominator = _candidate_denominator(candidates)
             rows.append(
                 "<tr>"
@@ -506,6 +515,8 @@ def _stage_section(summary):
                 f"<td>{_escape(_field(stage, 'configured_model', default='unknown'))}</td>"
                 f"<td>{_fmt_int(_field(stage, 'executed_runs'))}</td>"
                 f"<td>{_fmt_int(_field(stage, 'saved_result_runs'))}</td>"
+                f"<td>{status_text}</td>"
+                f"<td>{coverage_text}</td>"
                 f"<td>{_fmt_int(_field(stage, 'conceptual_concerns'))}</td>"
                 f"<td>{_fmt_int(_field(stage, 'accepted_findings'))}</td>"
                 f"<td>{_fmt_int(_field(stage, 'sole_source_findings'))}</td>"
@@ -521,7 +532,9 @@ def _stage_section(summary):
             )
         body = (
             "<table><thead><tr><th>Stage</th><th>Configured model</th><th>Executed runs</th>"
-            "<th>Saved runs</th><th>Conceptual concerns</th><th>Accepted</th><th>Sole</th><th>Shared</th>"
+            "<th>Saved runs</th><th>Status counts</th><th>Coverage counts</th>"
+            "<th>Conceptual concerns</th>"
+            "<th>Accepted</th><th>Sole</th><th>Shared</th>"
             "<th>Publish / drop / unresolved / undisposed</th><th>Selected among assessed</th>"
             "<th>Accepted findings/run</th><th>Attempts</th>"
             "<th>Known cost</th><th>Cost/accepted</th></tr></thead>"

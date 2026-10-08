@@ -65,6 +65,107 @@ def candidate(title="Simplify fixture"):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_script_runs_before_advisory_work_with_required_code_inspection(self):
+        self.tier, self.audits = "sensitive", ["script"]
+        self.record_archaeologist_call = True
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            self.calls.append((stage, kwargs["model"]))
+            if stage == "script":
+                self.assertEqual(args[1], "PR diff")
+                self.assertEqual(kwargs["model"], "gpt-6.1-sol")
+                self.assertEqual(kwargs["reasoning_effort"], "high")
+                self.assertEqual(kwargs["max_output_tokens"], 25_000)
+                self.assertEqual(kwargs["max_tool_calls"], 48)
+                self.assertTrue(kwargs["first_tool_required"])
+                names = {tool.get("name") for tool in kwargs["tools"]}
+                self.assertTrue({"read_file", "read_base_file", "read_diff",
+                                 "search_code", "blame_base"} <= names)
+                self.assertFalse(names & model.LIVE_RESEARCH_TOOL_NAMES)
+            return verification() if stage == "verifier" else discovery()
+
+        self.run_review(review)
+        self.assertEqual(self.calls[0], ("script", "gpt-6.1-sol"))
+        self.assertEqual(sum(stage == "script" for stage, _ in self.calls), 1)
+        self.assertEqual(self.debug["stages"]["script"]["coverage"], COMPLETE)
+
+    def test_script_partial_coverage_reaches_verifier_and_public_report(self):
+        self.tier, self.audits = "sensitive", ["script"]
+        limitation = "P2A witness policy caller remains unread."
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "script":
+                return json.dumps({"coverage": {"status": "partial",
+                                               "limitations": [limitation]},
+                                   "findings": [], "requires_sensitive_review": False})
+            if stage == "verifier":
+                payload = json.loads(args[1].split("Verification input:\n")[1])
+                self.assertTrue(any(item["stage"] == "script" and
+                                    item["reason"] == limitation
+                                    for item in payload["inspection_gaps"]))
+                return verification()
+            return discovery()
+
+        content = self.run_review(review)
+        self.assertIn("script: " + limitation, content)
+        self.assertEqual(self.debug["coverage"]["status"], "partial")
+
+    def test_script_findings_use_normal_verification_and_attribution(self):
+        self.tier, self.audits = "sensitive", ["script"]
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "script":
+                return discovery([candidate()])
+            if stage == "verifier":
+                payload = json.loads(args[1].split("Verification input:\n")[1])
+                self.assertEqual(payload["candidate_findings"][0]["id"], "script:1")
+                return verification([{"candidate_ids": ["script:1"],
+                                      "disposition": "publish", "reason": "Confirmed",
+                                      "finding": self.published}])
+            return discovery()
+
+        content = self.run_review(review)
+        self.assertIn(self.published["body"], content)
+        self.assertEqual(self.debug["finding_attribution"][0]["raised_by"], ["script"])
+
+    def test_script_budget_failure_is_handed_to_verifier(self):
+        from ralph.spend import BudgetExceeded
+
+        self.tier, self.audits = "sensitive", ["script"]
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "script":
+                raise BudgetExceeded("review spend limit would be exceeded")
+            if stage == "verifier":
+                payload = json.loads(args[1].split("Verification input:\n")[1])
+                self.assertTrue(any(item["stage"] == "script"
+                                    for item in payload["inspection_gaps"]))
+                return verification()
+            return discovery()
+
+        content = self.run_review(review)
+        self.assertEqual(self.debug["stages"]["script"]["status"], "budget_exhausted")
+        self.assertEqual(self.debug["stages"]["verifier"]["status"], "completed")
+        self.assertIn("script: Stage budget exhausted", content)
+
+    def test_sensitive_overview_escalation_does_not_run_script(self):
+        self.tier, self.audits = "standard", ["tests"]
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            self.calls.append(stage)
+            if stage == "verifier":
+                return verification()
+            return discovery(sensitive=stage == "independent")
+
+        self.run_review(review)
+        self.assertNotIn("script", self.calls)
+        self.assertEqual(self.debug["stages"]["script"]["status"], "skipped")
+
     def setUp(self):
         self.config = config.BotConfig("https://example.invalid/repo.git", "o/r",
                                       "https://example.invalid/api/v1/repos/o/r")

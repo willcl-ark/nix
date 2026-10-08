@@ -21,6 +21,41 @@ def route(tier="routine", audits=(), profiles=(), evidence=("Router evidence",),
 
 
 class RoutingTests(unittest.TestCase):
+    def test_script_specialist_requires_semantic_selection(self):
+        for path in ("src/policy/policy.cpp", "src/script/interpreter.cpp",
+                     "src/primitives/transaction.h", "src/validation.cpp",
+                     "src/txmempool.cpp", "src/wallet/spend.cpp"):
+            with self.subTest(path=path):
+                plan = routing.validate_plan(route(), {path}, "routine")
+                self.assertNotIn("script", plan["audits"])
+                plan = routing.validate_plan(route(audits=("script",)), {path}, "routine")
+                self.assertIn("script", plan["audits"])
+                self.assertEqual(plan["tier"], "sensitive")
+
+    def test_script_specialist_skips_docs_tests_and_generic_fallbacks(self):
+        for path in ("doc/transaction.md", "src/test/script_tests.cpp"):
+            with self.subTest(path=path):
+                plan = routing.validate_plan(route(audits=("script",)), {path}, "routine")
+                self.assertNotIn("script", plan["audits"])
+        self.assertNotIn("script", routing.full_plan("Routing unavailable")["audits"])
+
+    def test_explicit_full_review_includes_script_specialist(self):
+        debug = {}
+        with patch("ralph.model.run_audit") as run:
+            plan = routing.plan_review("key", "Patch", self.snapshot("src/util/time.cpp"),
+                                       self.prompt_config(), debug, mode="full")
+        run.assert_not_called()
+        self.assertIn("script", plan["audits"])
+
+    def test_explicit_shadow_review_includes_script_specialist(self):
+        debug = {}
+        with patch("ralph.model.run_audit",
+                   return_value=(route(), {"status": "completed"})):
+            plan = routing.plan_review("key", "Patch", self.snapshot("src/util/time.cpp"),
+                                       self.prompt_config(), debug, mode="shadow")
+        self.assertNotIn("script", debug["routing"]["proposed"]["audits"])
+        self.assertIn("script", plan["audits"])
+
     def snapshot(self, *paths):
         return SimpleNamespace(changed_paths=set(paths))
 
@@ -31,7 +66,7 @@ class RoutingTests(unittest.TestCase):
     def test_full_plan_selects_every_audit_and_profile(self):
         plan = routing.full_plan("Fallback")
         self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(plan["audits"], list(config.AUDIT_NAMES))
+        self.assertEqual(plan["audits"], [name for name in config.AUDIT_NAMES if name != "script"])
         self.assertEqual(plan["profiles"], list(config.ADVERSARIAL_PROFILES))
 
     def test_sensitive_path_still_calls_router_and_adds_only_relevant_floor(self):
@@ -61,7 +96,7 @@ class RoutingTests(unittest.TestCase):
         with patch("ralph.model.run_audit",
                    return_value=('{"tier": "routine"}', {"status": "completed"})):
             plan = routing.plan_review("key", "Patch:\n+change", snapshot, prompt_config, debug)
-        self.assertEqual(plan["audits"], list(config.AUDIT_NAMES))
+        self.assertEqual(plan["audits"], [name for name in config.AUDIT_NAMES if name != "script"])
         self.assertEqual(plan["profiles"], list(config.ADVERSARIAL_PROFILES))
         self.assertEqual(debug["stages"]["router"]["status"], "failed")
 

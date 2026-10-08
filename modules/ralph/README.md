@@ -35,10 +35,22 @@ Tool output is capped.
 A Luna router selects relevant specialists even for sensitive paths. Code rules
 set a minimum risk tier and require the applicable domain checks; they do not
 select every audit just because a change is sensitive. Incomplete input or
-failed routing requests the full set. Routine changes use Luna.
+failed routing requests the general set, excluding the script specialist. Routine changes use Luna.
 Header changes follow their domain's sensitivity rules; the `.h` extension
 alone does not force a full review. The router and reviewers can escalate
 based on changed behavior and inspect relevant headers with their tools.
+The `script` specialist is selected by the router only for substantive changes
+to script execution/flags, signatures, witness/annex rules, spend-type acceptance,
+or transaction validity and fee-bumping constraints. File paths and sensitivity
+alone do not select it. Documentation, test-only changes, mechanical refactors
+and unrelated validation/policy work skip it. Generic fallback and overview
+escalation also skip it; explicit full and shadow modes request it.
+It uses Sol 6.1, high reasoning, 25,000 tokens per response and 48 code/history
+inspections, with no discussion or web tools. Selected script review runs before
+concept research, shares the existing OpenAI allowance, and protects verifier
+headroom. Partial coverage reaches the verifier as named inspection gaps and
+remains visible in reports and stats. See the [specialist design](../../pkgs/ralph/README.md#script-and-transaction-policy-specialist).
+
 Sensitive changes receive parallel independent Sol 6.1 and GLM-5.3
 adversarial reviews. GLM uses PPQ at `https://api.ppq.ai/v1/responses`.
 Selected consensus, wallet, and P2P profiles add the same domain instructions
@@ -336,7 +348,7 @@ be derived from `forgejoApi`.
   audit. This costs more and still respects the same allowance.
 - `routingMode = "full"`: request every audit without calling the router.
 - `modelsJson = null`: optional per-stage replacement for the model map.
-  The map must include router, independent, adversarial, adversarial_glm, concurrency, state,
+  The map must include router, independent, script, adversarial, adversarial_glm, concurrency, state,
   public_contract, tests, design, build, archaeologist, verifier and collator.
   Prices must also be supported by ralph's ledger.
 
