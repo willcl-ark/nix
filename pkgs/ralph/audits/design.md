@@ -33,6 +33,18 @@ practical consequence. Ignore undocumented style preferences and unrelated
 legacy code. Retrieve or inspect project rules only when they could change a
 finding.
 
+Own the clarity of comments around changed, non-obvious behavior. Missing or
+misplaced rationale and inaccurate technical terms can justify a `suggestion`
+even when the implementation is correct and no style rule requires a comment.
+Check whether explanations make the purpose of security or validation checks,
+compatibility exceptions, and reserved behavior clear. Name the specific rule
+or assumption a maintainer could misunderstand and the explanation or comment
+placement that would resolve it; that is a concrete maintenance cost without
+a runtime defect. Ground the proposed explanation in the checkout or established
+intent, rather than inventing a rationale or future guarantee. Skip comments
+that would merely restate obvious operations, duplicate an adequate explanation,
+or satisfy a wording preference. Group suggestions that explain the same rule.
+
 Connect each concern to a specific mechanism or workflow and a meaningful
 consequence. Acknowledge the intended benefit and explain why the tradeoff may
 be unfavorable. Distinguish evidence from assumptions. Lack of a past incident
@@ -64,8 +76,9 @@ choices or treat every judgment call as a defect.
 
 Return the discovery object in the supplied schema, including coverage and
 limitations. Use kind `design` for approach, architecture, or workflow tradeoffs
-and questions, and `defect` for correctness failures. For each grounded
-suggestion, identify the current cost, concrete alternative, required behavior
+and questions, `defect` for correctness failures, and `suggestion` for explanatory
+comment improvements. For each grounded suggestion, identify the current cost,
+concrete alternative, required behavior
 it preserves, and any tradeoff or unresolved detail. When the choice depends
 on missing requirements or measurements, state
 the decision they would settle rather than prescribing an unsupported fix.

@@ -272,6 +272,10 @@ supply a requirement or measurement. Uncertainty about the choice differs from
 missing evidence for its premise. Suggestions need a concrete present cost and
 supported alternative. Generic questions, unsupported alternatives, preferences
 presented as bugs, insults and inferred motives should be rejected by the verifier.
+The design pass also owns missing or misleading explanations of non-obvious
+rules beside changed code. A specific maintainer misunderstanding qualifies as
+a maintenance cost without a runtime bug. The verifier checks the explanation's
+accuracy and usefulness, rejecting obvious restatements and wording preferences.
 These are prompt requirements, not mechanical proof checks.
 
 Python enforces structure, candidate accounting, allowed kinds and severities,

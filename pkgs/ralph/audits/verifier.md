@@ -109,6 +109,17 @@ suggestion, verify the current cost or limitation, the proposed alternative,
 and why it preserves required behavior. Do not reject a supported suggestion
 merely because the current implementation is correct. Do not promote a design
 preference to a bug. Reject unsupported alternatives and generic questions.
+
+For an explanatory-comment suggestion, the concrete maintenance cost can be a
+misleading explanation or missing non-obvious rationale at the changed code.
+Verify the identified misunderstanding and whether the proposed explanation,
+technical term, or comment placement resolves it accurately. Require support
+from the checkout or established intent, without inventing future guarantees.
+Do not require a runtime failure, production incident, or documented style rule
+for this kind of finding. Publish it as kind and severity `suggestion`; drop
+obvious code restatements, redundant explanations, and wording preferences
+without a practical benefit.
+
 Use kind `design` for supported approach, architecture, or workflow concerns;
 use `defect` for correctness failures and `suggestion` for other improvements.
 Use suggestion severity for tradeoff questions without an established defect.
