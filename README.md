@@ -11,6 +11,7 @@ stable named flake output.
 
 | Output | Option prefix | Purpose |
 | --- | --- | --- |
+| `nixosModules.cdash` | `services.cdash` | CDash with PostgreSQL, nginx, PHP-FPM, queue processing, and scheduled maintenance. [Usage](modules/cdash/README.md). |
 | `nixosModules.bitcoin-dnsseed` | `services.bitcoinDnsSeed` | Bitcoin DNS seed deployment using `dnsseedrs`, CoreDNS, DNSSEC key material, optional Tor/I2P proxies, and Caddy seed dumps. |
 | `nixosModules.bitcoin-core-guix-substitutes` | `services.bitcoinCoreGuixSubstitutes` | Bitcoin Core Guix substitute publisher with optional immutable manifest builder, signing-key publication, and Caddy wiring. |
 | `nixosModules.dnsseedrs` | `services.dnsseedrs` | Generic multi-instance dnsseedrs service module. |
@@ -23,6 +24,7 @@ stable named flake output.
 
 | Output | Purpose |
 | --- | --- |
+| `packages.<system>.cdash` | CDash build and test dashboard with locked PHP dependencies and compiled frontend assets. |
 | `packages.<system>.dnsseedrs` | Bitcoin DNS seeder built from `willcl-ark/dnsseedrs`. |
 | `packages.<system>.ralph` | ralph with budgeted code audits, conceptual PR archaeology, and frozen evaluation CLI. [Structure and review flow](pkgs/ralph/README.md). |
 
@@ -74,6 +76,7 @@ keeps hosts from accidentally depending on unrelated services.
 
 ```text
 modules/
+  cdash/
   bitcoin-core-guix-substitutes/
   bitcoin-dnsseed/
   dnsseedrs/
@@ -82,6 +85,7 @@ modules/
   radicle-mirror/
   stuntman/
 pkgs/
+  cdash/
   dnsseedrs/
   ralph/
 ```

@@ -1,4 +1,5 @@
 {
+  cdash = ./cdash/nixos;
   bitcoin-core-guix-substitutes = ./bitcoin-core-guix-substitutes/nixos;
   bitcoin-dnsseed = ./bitcoin-dnsseed/nixos;
   dnsseedrs = ./dnsseedrs/nixos;
