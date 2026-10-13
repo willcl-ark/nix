@@ -33,7 +33,29 @@ Changing the secret file contents requires restarting `cdash-init`. Its
 PHP-FPM pool and queue worker restart with it.
 
 `settings` accepts nonsecret Laravel environment variables. These override
-values in the dotenv file. Configure mail through CDash's `MAIL_*` variables.
+values in the dotenv file. CDash's [configuration guide](https://github.com/Kitware/CDash/blob/v5.4.0/docs/config.md)
+describes common settings; [`.env.example`](https://github.com/Kitware/CDash/blob/v5.4.0/.env.example)
+lists the available variables. For example:
+
+```nix
+services.cdash.settings = {
+  MAIL_MAILER = "smtp";
+  MAIL_HOST = "smtp.example.org";
+  MAIL_PORT = "587";
+  MAIL_FROM_ADDRESS = "cdash@example.org";
+  BACKUP_TIMEFRAME = "48";
+  DEFAULT_PROJECT = "Example";
+  LARGE_TEXT_LIMIT = "0";
+  USE_VCS_API = "true";
+};
+```
+
+Put `MAIL_PASSWORD` and other credentials in `environmentFile`. S3 and MinIO
+storage use the same interface: set `FILESYSTEM_DRIVER = "s3"` and the
+appropriate `AWS_*` settings, with access keys in `environmentFile`.
+`QUEUE_CONNECTION = "sync"` selects synchronous parsing; the default
+`"database"` uses the module's supervised queue worker.
+
 The GraphQL API is available, but the optional GraphiQL explorer is disabled
 because its downloaded assets are not included in the package.
 
