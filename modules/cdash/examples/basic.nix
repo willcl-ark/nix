@@ -1,14 +1,17 @@
+{ config, ... }:
 {
+  # Import sops-nix and configure its encrypted secret file in the host.
+  sops.secrets.cdash-app-key.restartUnits = [ "cdash-init.service" ];
+
   services.cdash = {
     enable = true;
     hostName = "cdash.example.org";
-    environmentFile = "/run/secrets/cdash.env";
-    settings.APP_URL = "https://cdash.example.org";
+    appUrl = "https://cdash.example.org";
+    appKeyFile = config.sops.secrets.cdash-app-key.path;
   };
 
   services.nginx.virtualHosts."cdash.example.org" = {
     enableACME = true;
     forceSSL = true;
-    extraConfig = "client_max_body_size 100m;";
   };
 }
