@@ -102,6 +102,14 @@ describe a hypothetical consequence as observed. Set severity from the supported
 consequence. If the behavior change itself cannot be established, use unresolved.
 Absence of test execution alone does not call for this qualification.
 
+For internal APIs and test-framework helpers, a narrower set of accepted
+argument forms alone does not establish a compatibility defect. Require a
+concrete affected caller or an established compatibility contract, and inspect
+the exact arguments at that caller. When checked-in callers remain valid, drop
+claims based only on hypothetical external consumers or unused call forms.
+The production-evidence qualification above does not justify publishing an
+unsupported compatibility requirement.
+
 Evaluate defect claims and improvement suggestions using appropriate evidence.
 For a defect, verify the conditional trigger and consequence, distinguishing
 them from evidence of a current production occurrence. For a design or test-quality

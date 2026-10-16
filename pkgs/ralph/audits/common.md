@@ -25,6 +25,11 @@ pre-existing behavior. Do not report an unchanged pre-existing defect as
 introduced here. Preserve a supported finding even when you cannot propose a
 fix.
 
+For internal APIs and test-framework helpers, accepting fewer argument forms
+is not by itself a compatibility defect. Identify a concrete affected caller or
+an established compatibility contract. Do not invent external consumers or
+require preservation of unused call forms when checked-in callers remain valid.
+
 Within your assigned responsibility, trace changed behavior through affected
 callers and relevant reads and writes of changed state. Check where the
 required invariant is maintained and identify a reachable failure before

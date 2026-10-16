@@ -276,6 +276,9 @@ The design pass also owns missing or misleading explanations of non-obvious
 rules beside changed code. A specific maintainer misunderstanding qualifies as
 a maintenance cost without a runtime bug. The verifier checks the explanation's
 accuracy and usefulness, rejecting obvious restatements and wording preferences.
+Internal API and test-framework compatibility claims require a concrete
+affected caller or established compatibility contract. Unused argument forms
+and hypothetical external consumers do not establish a defect.
 These are prompt requirements, not mechanical proof checks.
 
 Python enforces structure, candidate accounting, allowed kinds and severities,
