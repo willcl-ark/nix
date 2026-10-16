@@ -74,6 +74,14 @@ or a concrete rationale. Flag an unsupported choice only when you can explain
 how it could materially affect users. Do not demand benchmarks for harmless
 choices or treat every judgment call as a defect.
 
+Check measurements and tradeoffs already supplied in the PR rationale before
+asking the author to revisit a default. Do not repeat an acknowledged cost or
+request more benchmarks without explaining a material gap that could change the
+decision. An improvement for common workloads with approximately neutral results
+elsewhere does not need to improve every mode. Added operations alone do not
+justify separate policies for those modes; establish why the extra complexity
+would be worthwhile.
+
 Return the discovery object in the supplied schema, including coverage and
 limitations. Use kind `design` for approach, architecture, or workflow tradeoffs
 and questions, `defect` for correctness failures, and `suggestion` for explanatory

@@ -273,6 +273,10 @@ supply a requirement or measurement. Uncertainty about the choice differs from
 missing evidence for its premise. Suggestions need a concrete present cost and
 supported alternative. Generic questions, unsupported alternatives, preferences
 presented as bugs, insults and inferred motives should be rejected by the verifier.
+Questions that only repeat an acknowledged tradeoff or request more measurements
+without identifying a material gap should also be dropped. A change need not
+improve every supported mode when the measured result in another mode is roughly
+neutral; additional mode-specific policy needs a concrete benefit.
 The design pass also owns missing or misleading explanations of non-obvious
 rules beside changed code. A specific maintainer misunderstanding qualifies as
 a maintenance cost without a runtime bug. The verifier checks the explanation's

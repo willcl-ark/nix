@@ -141,11 +141,25 @@ based only on preferences.
 Check the claimed benefit against the mechanism's actual guarantees,
 adoption requirements, exceptions, and recurring costs. Retaining the existing
 behavior is a valid alternative when the evidence supports it.
-Publish a concrete design question when its factual premise and material
-tradeoff are established, but the choice depends on a requirement or measurement
-the author must supply. Explain what answer would change the recommendation.
-Uncertainty about that choice alone is not a reason to drop it or mark it
-unresolved; use unresolved when you cannot establish the factual premise.
+Before publishing a design question, check whether the PR already acknowledges
+the tradeoff and supplies relevant measurements or rationale. Drop a question
+that merely restates that tradeoff or requests more evidence without identifying
+a material gap in the supplied evidence. A verified mechanism or increased
+operation count alone does not establish that the author needs to reconsider
+the choice. Explain the unaddressed consequence or requirement and why answering
+the question would materially improve the change.
+
+A change can improve common workloads while leaving another supported workload
+roughly neutral. Do not require a measurable gain in every mode, or recommend
+mode-specific policy without evidence that its benefit warrants the additional
+complexity.
+
+Publish a concrete design question when its factual premise and an unaddressed
+material tradeoff are established, but the choice depends on a requirement or
+measurement the author must supply. Explain what answer would change the
+recommendation. Uncertainty about that choice alone is not a reason to drop it
+or mark it unresolved; use unresolved when you cannot establish the factual
+premise.
 If a claim depends on a rapid-toggle, rapid-retry, or similar stress scenario,
 decide whether the reachable sequence has a meaningful consequence for public
 behavior or affected callers. An undocumented sequence can still expose a real
