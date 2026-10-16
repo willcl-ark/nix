@@ -1,6 +1,7 @@
 import json
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from ralph import protocol
 
@@ -12,7 +13,13 @@ class ProtocolTests(unittest.TestCase):
                                         base_files={"src/example.cpp": "old"})
         self.finding = {"kind": "suggestion", "severity": "suggestion", "path": "src/example.cpp",
                         "line": 5, "side": "head", "title": "Consolidate duplicate setup",
-                        "body": "Reuse the existing fixture while keeping the regression assertion."}
+                        "body": "Reuse the existing fixture while keeping the regression assertion.",
+                        "source_evidence": [{"path": "src/example.cpp", "line": 5,
+                                             "side": "head", "excerpt": "setup();"}]}
+        self.snapshot.checkout = "/unused"
+        reader = patch.object(protocol, "read_file", return_value="src/example.cpp (6 lines):\n5: setup();\n")
+        reader.start()
+        self.addCleanup(reader.stop)
         self.coverage = {"status": "complete", "limitations": []}
 
     def verification(self, decisions, coverage=None, concept=None):

@@ -2,7 +2,10 @@
 
 import json
 import re
+import subprocess
 from urllib.parse import urlsplit
+
+from .repository import MAX_TOOL_BYTES, read_file
 
 
 class InvalidReview(ValueError):
@@ -24,6 +27,7 @@ COVERAGE = object_schema({
 })
 LOCATION = {"path": STRING, "line": {"type": "integer"},
             "side": {"type": "string", "enum": ["head", "base"]}}
+SOURCE_EVIDENCE = object_schema({**LOCATION, "excerpt": STRING})
 CANDIDATE = object_schema({
     "kind": {"type": "string", "enum": ["defect", "design", "suggestion"]},
     **LOCATION,
@@ -34,6 +38,7 @@ FINDING = object_schema({
     "kind": CANDIDATE["properties"]["kind"],
     "severity": {"type": "string", "enum": ["critical", "major", "minor", "suggestion"]},
     **LOCATION, "title": STRING, "body": STRING,
+    "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE, "minItems": 1},
 })
 DISCOVERY_SCHEMA = object_schema({
     "coverage": COVERAGE,
@@ -179,6 +184,32 @@ def discovery(text, stage, snapshot):
               empty=("correction", "uncertainty"))
         finding["id"] = f"{stage}:{index}"
     return result
+
+
+def _source_evidence(evidence, snapshot):
+    if not isinstance(evidence, list) or not evidence:
+        raise InvalidReview("Finding must include source evidence")
+    for source in evidence:
+        _object(source, SOURCE_EVIDENCE["properties"])
+        if source["side"] not in ("head", "base"):
+            raise InvalidReview("Invalid source evidence side")
+        files = snapshot.head_files if source["side"] == "head" else snapshot.base_files
+        if not isinstance(source["path"], str) or source["path"] not in files:
+            raise InvalidReview("Source evidence must identify a tracked file")
+        if type(source["line"]) is not int or source["line"] < 1:
+            raise InvalidReview("Source evidence must identify a positive line")
+        _text(source, ("excerpt",))
+        lines = source["excerpt"].removesuffix("\n").split("\n")
+        if len(lines) > 150 or len(source["excerpt"].encode()) > MAX_TOOL_BYTES:
+            raise InvalidReview("Source evidence exceeds the file-read limit")
+        try:
+            actual = read_file(snapshot.checkout, files, source["path"], source["line"])
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise InvalidReview("Source evidence could not be read") from exc
+        expected = "".join(f"{number}: {line}\n" for number, line in
+                           enumerate(lines, source["line"]))
+        if not actual.partition("\n")[2].startswith(expected):
+            raise InvalidReview("Source evidence does not match the snapshot")
 
 
 def _concept_assessment(value):
@@ -350,6 +381,7 @@ def verification(text, candidates, snapshot, concept_assessment=None):
                 if finding["kind"] not in FINDING["properties"]["kind"]["enum"]:
                     raise InvalidReview("Invalid finding kind")
                 _text(finding, ("title", "body"))
+                _source_evidence(finding["source_evidence"], snapshot)
             except InvalidReview as exc:
                 error = str(exc)
                 decision.update(disposition="unresolved", finding=None,

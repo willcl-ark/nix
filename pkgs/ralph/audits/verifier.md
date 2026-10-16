@@ -178,5 +178,20 @@ published with an empty candidate ID list. If nothing can be published, still
 return a decision for every supplied ID, using `drop` or `unresolved` as
 appropriate. This is a verifier report for another model, not a public
 comment; do not add decorative language, an ACK, or a standalone merge verdict.
+
+Every published finding must include a nonempty `source_evidence` array. Each
+entry has `path`, `line`, `side`, and `excerpt`: the repository-relative path,
+positive starting line, `head` or `base` side, and exact contiguous full source
+lines copied without line-number prefixes. Keep each excerpt within 150 lines
+and 12,000 UTF-8 bytes, as supported by `read_file`; a final newline is optional.
+Include the decisive caller when claiming that a triggering call occurs.
+Evidence may come from an unchanged
+file even though the finding itself must anchor to changed code. Excerpts are
+checked against immutable snapshot blobs before publication; a mismatched or
+missing excerpt makes the finding unresolved. Copy the source exactly, including
+indentation and argument names. This check proves that quoted lines exist, not
+that they establish the claim. You must still verify the trigger, consequence,
+and counterevidence.
+
 A verified design finding may recommend against merging the current approach
 when its body establishes why.

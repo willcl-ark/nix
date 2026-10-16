@@ -280,8 +280,13 @@ These are prompt requirements, not mechanical proof checks.
 
 Python enforces structure, candidate accounting, allowed kinds and severities,
 nonempty required text, and locations in changed paths that exist on the specified
-head/base side with positive integer lines. The verifier must check the actual
-line and claim; Python does not check line bounds or prove factual correctness.
+head/base side with positive integer lines. Published findings also require a
+nonempty `source_evidence` array of path, starting line, head/base side, and exact
+contiguous full source lines, limited to 150 lines and 12,000 UTF-8 bytes per
+excerpt. A final newline is optional. Evidence may cite unchanged files; a claim
+about an actual triggering call must include that caller. Python checks the excerpts
+against immutable snapshot blobs and withholds mismatches. Matching source text
+does not prove the claim or its consequence; the verifier must check those.
 Malformed discovery rejects the entire stage result. A malformed published
 finding becomes unresolved while other valid findings survive. Structural or
 candidate-accounting errors reject the entire verifier response.

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from ralph import config, model, pipeline, repository
+from ralph import config, model, pipeline, protocol, repository
 
 COMPLETE = {"status": "complete", "limitations": []}
 
@@ -176,7 +176,9 @@ class PipelineTests(unittest.TestCase):
             frozenset({"src/example.cpp"}))
         self.published = {"kind": "suggestion", "severity": "suggestion", "path": "src/example.cpp", "line": 3,
                           "side": "head", "title": "Simplify fixture",
-                          "body": "Reuse the fixture while preserving the regression check."}
+                          "body": "Reuse the fixture while preserving the regression check.",
+                          "source_evidence": [{"path": "src/example.cpp", "line": 3,
+                                               "side": "head", "excerpt": "setup();"}]}
         self.debug = {}
         self.calls = []
 
@@ -221,6 +223,7 @@ class PipelineTests(unittest.TestCase):
         with patch.object(pipeline.routing, "plan_review", side_effect=self.plan), \
                 patch.object(model, "openai_review", side_effect=wrapped_reviewer), \
                 patch.object(model, "run_audit", side_effect=editor or self.edit), \
+                patch.object(protocol, "read_file", return_value="src/example.cpp (3 lines):\n3: setup();\n"), \
                 patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
             return pipeline.review_with_independent_passes(
                 "key", "PR diff", self.snapshot, self.config, self.prompts, 42, self.debug,
