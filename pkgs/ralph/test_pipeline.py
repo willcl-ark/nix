@@ -195,6 +195,12 @@ class PipelineTests(unittest.TestCase):
             with self.subTest(tier=tier):
                 self.assertEqual(pipeline.stage_settings("verifier", tier), ("high", limit))
 
+    def test_public_contract_uses_sol_with_high_reasoning_at_every_tier(self):
+        self.assertEqual(self.prompts.models["public_contract"], "gpt-6.1-sol")
+        for tier in ("routine", "standard", "sensitive"):
+            with self.subTest(tier=tier):
+                self.assertEqual(pipeline.stage_settings("public_contract", tier), ("high", 25_000))
+
     def plan(self, *args, **kwargs):
         result = {"tier": self.tier, "audits": self.audits,
                   "profiles": getattr(self, "profiles", []), "evidence": [], "missing_context": []}

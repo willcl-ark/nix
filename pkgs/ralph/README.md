@@ -180,7 +180,8 @@ discovery does not receive the archaeology output or current PR discussion.
 | adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |
 | adversarial_glm | glm-5.3 | high | 25,000 | Same tools and profiles, via PPQ |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
-| state, public_contract, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
+| public_contract | gpt-6.1-sol | high | 25,000 | Focused input and code tools |
+| state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and merge-base developer notes |
 | verifier, routine/standard | gpt-6.1-sol | high | 25,000 | Original input, candidates, concept candidate, code and research tools |
 | verifier, sensitive | gpt-6.1-sol | high | 32,000 | Original input, candidates, concept candidate, code and research tools |
@@ -280,6 +281,8 @@ Internal API and test-framework compatibility claims require a concrete
 affected caller or established compatibility contract. Unused argument forms
 and hypothetical external consumers do not establish a defect.
 These are prompt requirements, not mechanical proof checks.
+Discovery returns an empty findings array when no supported lead survives;
+rejected possibilities and self-refutations do not belong in finding records.
 
 Python enforces structure, candidate accounting, allowed kinds and severities,
 nonempty required text, and locations in changed paths that exist on the specified

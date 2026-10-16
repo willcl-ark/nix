@@ -16,6 +16,11 @@ improvements. For each lead, give a changed-file path and source line that
 supports it. Set the flag when the code or unresolved evidence raises a
 credible consensus or security concern, and clear it otherwise.
 
+Return `findings: []` when no supported finding remains. Keep rejected concerns
+and your thought process out of findings. If inspection disproves a candidate,
+omit it instead of returning a self-refuting claim or empty evidence and
+consequence fields. Finding nothing does not make coverage partial.
+
 Record each distinct, substantiated lead, including independent minor issues.
 Concentrate on your assigned responsibility. Before reporting a defect,
 establish what changed from base to head, a reachable precondition, the broken
