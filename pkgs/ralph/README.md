@@ -153,7 +153,7 @@ flowchart TD
     glm --> focused
     sensitive -->|no| focused
     focused --> order["concurrency → state → public_contract → build → tests → design"]
-    order --> verifier["Verifier: gpt-6-luna / code and research evidence"]
+    order --> verifier["Verifier: gpt-6.1-sol / code and research evidence"]
     verifier --> accepted{"Accepted findings or supported concept assessment?"}
     accepted -->|yes| collator["Collator: gpt-6-luna / verified prose only"]
     accepted -->|no| render["Python renders concept, findings and coverage limitations"]
@@ -182,8 +182,8 @@ discovery does not receive the archaeology output or current PR discussion.
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
 | state, public_contract, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and merge-base developer notes |
-| verifier, routine/standard | gpt-6-luna | low | 8,000 | Original input, candidates, concept candidate, code and research tools |
-| verifier, sensitive | gpt-6-luna | high | 25,000 | Original input, candidates, concept candidate, code and research tools |
+| verifier, routine/standard | gpt-6.1-sol | high | 25,000 | Original input, candidates, concept candidate, code and research tools |
+| verifier, sensitive | gpt-6.1-sol | high | 32,000 | Original input, candidates, concept candidate, code and research tools |
 | archaeologist | gpt-6-luna | low | 4,000 | Original input, base/head code tools, current discussion and research tools |
 | collator | gpt-6-luna | low | 6,000 | Accepted findings and conceptual assessment; no tools |
 

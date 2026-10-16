@@ -24,13 +24,13 @@ def stage_settings(name, tier):
         return "xhigh", 25_000
     if name == "adversarial_glm":
         return "high", 32_000
-    if name == "verifier" and tier == "sensitive":
-        return "high", model.MAX_VERIFIER_OUTPUT_TOKENS
+    if name == "verifier":
+        return "high", model.MAX_VERIFIER_OUTPUT_TOKENS if tier == "sensitive" else 25_000
     if name in {*ADVERSARIAL_STAGES, "script"}:
         return "high", 25_000
     if name == "concurrency":
         return "medium", 8_000
-    return "low", 8_000 if name == "verifier" else 4_000
+    return "low", 4_000
 
 
 def review_with_independent_passes(api_key, review, snapshot, bot_config,
