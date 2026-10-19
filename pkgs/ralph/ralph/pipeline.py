@@ -25,7 +25,7 @@ def stage_settings(name, tier):
     if name == "adversarial_glm":
         return "high", 32_000
     if name == "verifier":
-        return "high", model.MAX_VERIFIER_OUTPUT_TOKENS if tier == "sensitive" else 25_000
+        return "xhigh", model.MAX_VERIFIER_OUTPUT_TOKENS
     if name in {*ADVERSARIAL_STAGES, "script", "public_contract"}:
         return "high", 25_000
     if name == "concurrency":

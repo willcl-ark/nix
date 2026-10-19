@@ -188,12 +188,12 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(pipeline.stage_settings("adversarial", "sensitive"),
                          ("high", 25_000))
 
-    def test_verifier_uses_sol_with_high_reasoning_at_every_tier(self):
-        self.assertEqual(self.prompts.models["verifier"], "gpt-6.1-sol")
-        for tier, limit in (("routine", 25_000), ("standard", 25_000),
-                            ("sensitive", model.MAX_VERIFIER_OUTPUT_TOKENS)):
+    def test_verifier_uses_luna_with_xhigh_reasoning_at_every_tier(self):
+        self.assertEqual(self.prompts.models["verifier"], "gpt-6-luna")
+        for tier in ("routine", "standard", "sensitive"):
             with self.subTest(tier=tier):
-                self.assertEqual(pipeline.stage_settings("verifier", tier), ("high", limit))
+                self.assertEqual(pipeline.stage_settings("verifier", tier),
+                                 ("xhigh", model.MAX_VERIFIER_OUTPUT_TOKENS))
 
     def test_public_contract_uses_sol_with_high_reasoning_at_every_tier(self):
         self.assertEqual(self.prompts.models["public_contract"], "gpt-6.1-sol")
@@ -301,7 +301,7 @@ class PipelineTests(unittest.TestCase):
             stage = kwargs["stage_name"]
             self.calls.append((stage, kwargs["model"]))
             self.assertEqual(kwargs["reasoning_effort"],
-                             "xhigh" if stage == "design" else "high" if stage == "verifier" else "low")
+                             "xhigh" if stage in {"design", "verifier"} else "low")
             if stage == "design":
                 self.assertEqual(kwargs["max_output_tokens"], 25_000)
                 return discovery([candidate()])
@@ -317,8 +317,7 @@ class PipelineTests(unittest.TestCase):
 
         content = self.run_review(review)
         self.assertIn("Reuse the fixture", content)
-        self.assertTrue(all(value == ("gpt-6.1-sol" if name == "verifier" else "gpt-6-luna")
-                            for name, value in self.calls))
+        self.assertTrue(all(value == "gpt-6-luna" for _, value in self.calls))
         self.assertEqual([name for name, _ in self.calls], ["independent", "tests", "design", "verifier"])
         self.assertIn("Rejected claim", self.debug["stage_outputs"]["tests"])
         self.assertEqual(self.debug["coverage"]["status"], "complete")
@@ -346,9 +345,9 @@ class PipelineTests(unittest.TestCase):
         self.assertIn(("adversarial", "gpt-6.1-sol"), self.calls)
         self.assertEqual(efforts["adversarial"], "high")
         self.assertEqual(output_limits["adversarial"], 25_000)
-        self.assertEqual(efforts["verifier"], "high")
+        self.assertEqual(efforts["verifier"], "xhigh")
         self.assertEqual(output_limits["verifier"], model.MAX_VERIFIER_OUTPUT_TOKENS)
-        self.assertIn(("verifier", "gpt-6.1-sol"), self.calls)
+        self.assertIn(("verifier", "gpt-6-luna"), self.calls)
         self.assertIn("incomplete", content)
         self.assertEqual(self.debug["stages"]["design"]["turns"][0]["input_tokens"], 100)
 
@@ -539,8 +538,9 @@ class PipelineTests(unittest.TestCase):
         self.run_review(review, budget=budget)
         self.assertEqual(budget.payloads[0]["max_output_tokens"],
                          model.MAX_VERIFIER_OUTPUT_TOKENS)
-        self.assertEqual(budget.payloads[1]["max_output_tokens"], 25_000)
-        self.assertEqual(budget.payloads[2]["reasoning"]["effort"], "high")
+        self.assertEqual(budget.payloads[1]["max_output_tokens"],
+                         model.MAX_VERIFIER_OUTPUT_TOKENS)
+        self.assertEqual(budget.payloads[2]["reasoning"]["effort"], "xhigh")
         self.assertIn("independent:1", budget.payloads[2]["input"][0]["content"])
 
     def test_research_evidence_is_forwarded_and_removes_hosted_web_from_protection(self):
