@@ -180,7 +180,7 @@ discovery does not receive the archaeology output or current PR discussion.
 | adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |
 | adversarial_glm | glm-5.3 | high | 25,000 | Same tools and profiles, via PPQ |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
-| public_contract | gpt-6.1-sol | high | 25,000 | Focused input and code tools |
+| public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and merge-base developer notes |
 | verifier, all tiers | gpt-6-luna | xhigh | 128,000 | Original input, candidates, concept candidate, code and research tools |
