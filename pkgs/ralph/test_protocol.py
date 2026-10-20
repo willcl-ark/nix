@@ -108,6 +108,17 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("Review coverage was incomplete.", rendered)
         self.assertNotIn("partial review", rendered)
 
+    def test_render_collapses_limitations_as_deduplicated_bullets(self):
+        limitation = "adversarial: Pinned dependency unavailable."
+        rendered = protocol.render([], [limitation, limitation,
+                                       "verifier: Caller unavailable."])
+        self.assertIn("Review coverage was incomplete.\n\n<details>", rendered)
+        self.assertIn("<summary>Review limitations</summary>\n\n", rendered)
+        self.assertIn(f"- {limitation}\n- verifier: Caller unavailable.\n\n</details>",
+                      rendered)
+        self.assertEqual(rendered.count(limitation), 1)
+        self.assertNotIn("<details>", protocol.render([]))
+
     def test_render_groups_findings_before_design_and_alternatives(self):
         findings = [
             {**self.finding, "kind": "suggestion", "title": "General suggestion"},

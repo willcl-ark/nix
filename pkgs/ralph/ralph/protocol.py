@@ -521,5 +521,8 @@ def render(findings, limitations=(), concept_summary=None, alternatives=()):
         sections.append("I found no actionable issues in this static review." if not limitations
                         else "No verified findings are available from this review.")
     if limitations:
-        sections.append("Review coverage was incomplete. " + " ".join(dict.fromkeys(limitations)))
+        sections.append("Review coverage was incomplete.\n\n"
+                        "<details>\n<summary>Review limitations</summary>\n\n"
+                        + "\n".join(f"- {limitation}" for limitation in dict.fromkeys(limitations))
+                        + "\n\n</details>")
     return "\n\n".join(sections)
