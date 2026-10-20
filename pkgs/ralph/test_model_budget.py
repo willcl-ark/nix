@@ -70,6 +70,22 @@ class ModelBudgetTests(unittest.TestCase):
                                           "tests", budget=budget)
             self.assertEqual(budget.events[-1], ("fail", "token", expected_unknown))
 
+    def test_only_verifier_final_response_has_longer_timeout(self):
+        for stage, tool_choice, timeout in (
+                ("verifier", "none", 600),
+                ("verifier", "auto", 180),
+                ("verifier", "required", 180),
+                ("tests", "none", 180),
+                ("verifier", None, 180)):
+            with self.subTest(stage=stage, tool_choice=tool_choice):
+                data = {"model": "gpt-6-luna"}
+                if tool_choice is not None:
+                    data["tool_choice"] = tool_choice
+                with patch.object(model.urllib.request, "urlopen",
+                                  return_value=Response({})) as send:
+                    model.request_response("secret", data, stage)
+                self.assertEqual(send.call_args.kwargs["timeout"], timeout)
+
     def test_schema_effort_and_full_audit_output_are_recorded(self):
         raw = "Finding. " * 1000
         result = {"id": "response-schema", "model": "gpt-6-luna", "status": "completed",

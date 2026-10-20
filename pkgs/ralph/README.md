@@ -183,9 +183,12 @@ discovery does not receive the archaeology output or current PR discussion.
 | public_contract | gpt-6.1-sol | high | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and merge-base developer notes |
-| verifier, all tiers | gpt-6-luna | xhigh | 64,000 | Original input, candidates, concept candidate, code and research tools |
+| verifier, all tiers | gpt-6-luna | xhigh | 128,000 | Original input, candidates, concept candidate, code and research tools |
 | archaeologist | gpt-6-luna | low | 4,000 | Original input, base/head code tools, current discussion and research tools |
 | collator | gpt-6-luna | low | 6,000 | Accepted findings and conceptual assessment; no tools |
+
+Final verifier requests with tools disabled have a 600-second socket timeout.
+Other model requests retain the 180-second timeout.
 
 Code tools find paths, read head/base files, read diffs and search code. The full
 tool set also reads base history and other PR discussions. Current PR discussion

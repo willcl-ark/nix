@@ -13,7 +13,7 @@ from .spend import BudgetExceeded, web_search_calls
 
 MAX_TOOL_CALLS = 48
 MAX_OUTPUT_TOKENS = 6_000
-MAX_VERIFIER_OUTPUT_TOKENS = 64_000
+MAX_VERIFIER_OUTPUT_TOKENS = 128_000
 MAX_AUDIT_OUTPUT_TOKENS = 4_000
 MAX_AUDIT_OUTPUT_BYTES = 4_000
 MAX_COLLATOR_OUTPUT_TOKENS = 6_000
@@ -159,9 +159,11 @@ def request_response(api_key, data, stage_name, on_response=None, budget=None,
         headers={"Authorization": f"Bearer {api_key}",
                  "Content-Type": "application/json"}, method="POST",
     )
+    timeout = (600 if stage_name == "verifier" and data.get("tool_choice") == "none"
+               else 180)
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             result = json.load(response)
         if not isinstance(result, dict):
             raise ValueError("OpenAI response was not a JSON object")

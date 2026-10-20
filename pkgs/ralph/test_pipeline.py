@@ -190,6 +190,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_verifier_uses_luna_with_xhigh_reasoning_at_every_tier(self):
         self.assertEqual(self.prompts.models["verifier"], "gpt-6-luna")
+        self.assertEqual(model.MAX_VERIFIER_OUTPUT_TOKENS, 128_000)
         for tier in ("routine", "standard", "sensitive"):
             with self.subTest(tier=tier):
                 self.assertEqual(pipeline.stage_settings("verifier", tier),
