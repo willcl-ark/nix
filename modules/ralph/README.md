@@ -367,20 +367,30 @@ it started with. Frozen evaluation captures also pin both; after the manifest
 schema cutover, recapture old manifests instead of replaying them with a
 compatibility reader.
 
-Stop `ralph.service` before running the one-time database conversion against an
-existing state directory, then start it again after the conversion succeeds:
+On service startup, Ralph checks for `jobs.sqlite3` and runs the database
+conversion before starting the worker. A fresh state directory has no database
+yet and skips the conversion. An already converted database is a no-op. If
+conversion fails, the service does not start; fix the reported issue and restart
+it. The stats and followup services require Ralph, so their timers wait for this
+startup step to succeed.
+
+For a manual conversion, stop Ralph's stats and followup timers and services,
+then stop `ralph.service` and run:
 
 ```sh
 ralph --migrate-state --state-dir /var/lib/ralph
 ```
 
-It creates an exclusive mode-0600 backup at
+The conversion creates an exclusive mode-0600 backup at
 `/var/lib/ralph/jobs.sqlite3.pre-engine.bak` before converting saved results.
 Historical results retain their bodies and current-engine diagnostics, but have
 null code/config identity because those values were not recorded. Never-started
 pending jobs bind the selected engine on first claim; unfinished jobs with prior
 attempts and unknown identity fail clearly. If the backup path already exists,
-the conversion stops rather than overwrite it.
+the conversion stops rather than overwrite it. A Nix version rollback alone
+does not restore the old database format. This backup covers the jobs database
+at conversion time; after new reviews run, restoring it also requires
+reconciling later jobs, spend and followup records, and published outputs.
 
 ## Cost and routing options
 

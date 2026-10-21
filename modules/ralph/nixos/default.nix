@@ -334,6 +334,8 @@ in
 
     systemd.services.ralph-stats = lib.mkIf (cfg.reportDir != null && cfg.reportBaseUrl != null) {
       description = "Publish ralph review statistics";
+      after = [ "ralph.service" ];
+      requires = [ "ralph.service" ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
@@ -374,6 +376,7 @@ in
         "ralph.service"
       ];
       wants = [ "network-online.target" ];
+      requires = [ "ralph.service" ];
       serviceConfig = {
         Type = "oneshot";
         ExecStart = "${cfg.package}/bin/ralph-followup ${
@@ -428,6 +431,11 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      preStart = ''
+        if [ -e ${lib.escapeShellArg "${cfg.stateDir}/jobs.sqlite3"} ]; then
+          ${lib.getExe cfg.package} --state-dir ${lib.escapeShellArg cfg.stateDir} --migrate-state
+        fi
+      '';
 
       serviceConfig = {
         ExecStart = "${lib.getExe cfg.package} ${lib.escapeShellArgs args}";
