@@ -1,9 +1,48 @@
 # ralph structure
 
-The bot performs static Bitcoin Core PR reviews. It discovers candidate findings
-in independent passes, checks them against repository evidence, and publishes
-verified findings and a separately verified conceptual assessment. It does not
-build or execute PR code.
+Ralph loads a selected local review engine. The default `current` engine performs
+static Bitcoin Core PR reviews, discovers candidate findings in independent
+passes, checks them against repository evidence, and publishes verified findings
+and a separately verified conceptual assessment. It does not build or execute
+PR code. The engine owns its Markdown and structured result; other engines need
+not use the stages, diagnostics or exports described below. Operators can load
+only trusted engine modules included in the package. Engines own their output
+style and engine-specific checks; current-engine tests and diagnostics do not
+prescribe another engine's review format.
+
+## Engine boundary
+
+The host supplies a review case and bounded runtime services to the selected
+engine. It stores the engine-produced Markdown, native structured data,
+optional consumer exports, common run metrics and the engine's code/config
+identity. Native engine data remains private. Consumers use declared exports;
+an omitted export is unavailable, while an empty list is a supported empty
+result. They do not derive findings from rendered Markdown. This keeps the
+current pipeline's diagnostics available to its own reports without making
+those stages a requirement for another engine.
+
+The current engine accepts resolved prompts or prompt file/model settings and
+the current routing and blind-alternative controls. Its resolved settings are
+pinned for queued work and frozen evaluations. Changing engine code or config
+creates a new identity; publication retries reuse saved Markdown.
+
+An engine module implements two functions:
+
+```python
+configure(config_dict) -> normalized_config_dict
+run(case, runtime, normalized_config_dict) -> engine.Output
+```
+
+`engine.load(name, config)` calls `configure` and returns an object whose
+`run(case, runtime)` checks and returns an `Output`. The output carries
+`content` (engine-produced Markdown), `data` (private native data), and
+`exports` (supported consumer data); generic validation checks the envelope,
+not an engine's native schema. Native data stays private by default. The current
+report adapter explicitly selects diagnostics only for the declared `current`
+engine and native schema version 1, through
+[`trace.current_diagnostics`](ralph/trace.py).
+
+The diagrams and implementation details below describe the `current` engine.
 
 These diagrams describe the checked-in defaults. [models.json](audits/models.json)
 assigns models; callers can replace the complete map with `--models-json`.

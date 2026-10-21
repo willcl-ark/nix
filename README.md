@@ -15,7 +15,7 @@ stable named flake output.
 | `nixosModules.bitcoin-dnsseed` | `services.bitcoinDnsSeed` | Bitcoin DNS seed deployment using `dnsseedrs`, CoreDNS, DNSSEC key material, optional Tor/I2P proxies, and Caddy seed dumps. |
 | `nixosModules.bitcoin-core-guix-substitutes` | `services.bitcoinCoreGuixSubstitutes` | Bitcoin Core Guix substitute publisher with optional immutable manifest builder, signing-key publication, and Caddy wiring. |
 | `nixosModules.dnsseedrs` | `services.dnsseedrs` | Generic multi-instance dnsseedrs service module. |
-| `nixosModules.ralph` | `services.ralph` | ralph pull request reviewer with one editable comment per PR, optional full browser reports, and review statistics. |
+| `nixosModules.ralph` | `services.ralph` | Selectable-engine pull request reviewer with one editable comment per PR, optional full browser reports, and review statistics. [Engine options](modules/ralph/README.md#review-engine). |
 | `nixosModules.forgejo-site` | `services.forgejoSite` | Forgejo site deployment with Caddy, optional Anubis, sops-managed secrets, mailer settings, and initial admin bootstrap. |
 | `nixosModules.radicle-mirror` | `services.radicleMirror` | Public Radicle seed, Radicle Explorer frontend, and scheduled Bitcoin Core Git mirror. |
 | `nixosModules.stuntman` | `services.stuntman` | STUNTMAN STUN server plus the `btcpunch` UDP rendezvous helper. |
@@ -26,7 +26,7 @@ stable named flake output.
 | --- | --- |
 | `packages.<system>.cdash` | CDash build and test dashboard with locked PHP dependencies and compiled frontend assets. |
 | `packages.<system>.dnsseedrs` | Bitcoin DNS seeder built from `willcl-ark/dnsseedrs`. |
-| `packages.<system>.ralph` | ralph with budgeted code audits, conceptual PR archaeology, and frozen evaluation CLI. [Structure and review flow](pkgs/ralph/README.md). |
+| `packages.<system>.ralph` | Ralph with a selectable local review engine, budgeted current-engine audits, and frozen evaluation CLI. [Structure and review flow](pkgs/ralph/README.md). |
 
 ## Usage
 

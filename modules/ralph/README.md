@@ -3,6 +3,13 @@
 This module runs `ralph`, a webhook receiver that posts a
 first-pass review on Forgejo pull requests.
 
+The default `services.ralph.engine = "current"` selects the existing review
+pipeline. Ralph can load other trusted engine modules shipped with its package;
+each engine owns its review format and may provide optional findings or
+actionable exports. Missing exports mean that consumer is unavailable for that
+run, not that its result is empty. The detailed review behavior below describes
+the current engine only.
+
 ralph fetches the base branch and PR head into its own state directory,
 reviews the PR title, description, commit messages, and diff, and gives the
 model read-only tools for path discovery, numbered head and merge-base file
@@ -334,6 +341,46 @@ Useful defaults:
 
 Set `repositoryUrl` only when the HTML URL in Forgejo webhook payloads cannot
 be derived from `forgejoApi`.
+
+## Review engine
+
+- `services.ralph.engine = "current"`: select the current review pipeline.
+  Other names load trusted Python engine modules included in the selected
+  package. Loading an engine runs its code with the service's permissions, so
+  only use package code you trust.
+- `services.ralph.engineConfig = { }`: JSON-serializable object passed to the
+  selected engine. Ralph writes this configuration to the Nix store and pins
+  its resolved identity for queued runs. Do not put secrets in it. The current
+  engine accepts resolved `prompts`, or `prompt_file`, `audit_prompt_dir` and
+  `models_json`, plus `routing_mode` and `blind_alternatives`.
+
+The current-engine options `promptFile`, `auditPromptDir`, `modelsJson` and
+`routingMode` remain convenience defaults for the current engine. Values in
+`engineConfig` take precedence over those defaults. Setting any of these
+current-only options explicitly with a non-current engine is rejected.
+Engine-produced Markdown is the published review body. Structured data stays
+private unless an engine explicitly provides a supported export.
+
+Changing engine selection or configuration creates a distinct review
+generation. A queued run keeps the engine identity and resolved configuration
+it started with. Frozen evaluation captures also pin both; after the manifest
+schema cutover, recapture old manifests instead of replaying them with a
+compatibility reader.
+
+Stop `ralph.service` before running the one-time database conversion against an
+existing state directory, then start it again after the conversion succeeds:
+
+```sh
+ralph --migrate-state --state-dir /var/lib/ralph
+```
+
+It creates an exclusive mode-0600 backup at
+`/var/lib/ralph/jobs.sqlite3.pre-engine.bak` before converting saved results.
+Historical results retain their bodies and current-engine diagnostics, but have
+null code/config identity because those values were not recorded. Never-started
+pending jobs bind the selected engine on first claim; unfinished jobs with prior
+attempts and unknown identity fail clearly. If the backup path already exists,
+the conversion stops rather than overwrite it.
 
 ## Cost and routing options
 

@@ -9,6 +9,21 @@ tool result, so the review continues from code and the frozen input. The
 `summarize` command reads saved artifacts offline; it does not call Forgejo, Git
 remotes, or a model.
 
+Captures pin the selected engine and its resolved configuration as well as the
+repository and prompt inputs. `capture` accepts `--engine` and
+`--engine-config PATH` (a JSON object). `run` uses the captured selection by
+default; pass the same options to override it for a comparison. Current-engine
+prompt, model, routing and blind-alternative switches remain current-only
+overrides. They cannot be combined with another engine. Configuration changes
+produce a distinct effective configuration group. The capture schema has a hard
+cutover: recapture manifests created before engine identity was added. Current
+captures use manifest schema version 3.
+
+An engine owns its Markdown and structured data. Reports and other consumers
+use only exports the engine declares; an absent export is unavailable, while an
+empty supported export means no items. They do not infer findings by parsing
+review text. Other engines need not provide current-engine stage diagnostics.
+
 ```sh
 ralph-evaluate summarize ./results
 ```

@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
@@ -8,6 +9,27 @@
 let
   cfg = config.services.ralph;
   defaultPackage = pkgs.callPackage ../../../pkgs/ralph { };
+  currentEngine = cfg.engine == "current";
+  currentEngineConfigDefaults = lib.optionalAttrs currentEngine (
+    {
+      routing_mode = cfg.routingMode;
+    }
+    // lib.optionalAttrs (!(cfg.engineConfig ? prompts)) {
+      prompt_file = toString cfg.promptFile;
+      audit_prompt_dir = toString cfg.auditPromptDir;
+    }
+    // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.modelsJson != null) {
+      models_json = toString cfg.modelsJson;
+    }
+  );
+  engineConfigFile = (pkgs.formats.json { }).generate "ralph-engine-config.json" (
+    currentEngineConfigDefaults // cfg.engineConfig
+  );
+  promptOptionsExplicit =
+    options.services.ralph.promptFile.highestPrio < 1500
+    || options.services.ralph.auditPromptDir.highestPrio < 1500
+    || options.services.ralph.modelsJson.highestPrio < 1500
+    || options.services.ralph.routingMode.highestPrio < 1500;
   defaultMarker = "<!-- ralph:${cfg.repository} -->";
   commentMarker = if cfg.commentMarker == null then defaultMarker else cfg.commentMarker;
   repositoryUrl =
@@ -32,16 +54,14 @@ let
     cfg.forgejoApi
     "--comment-marker"
     commentMarker
-    "--prompt-file"
-    cfg.promptFile
-    "--audit-prompt-dir"
-    cfg.auditPromptDir
+    "--engine"
+    cfg.engine
+    "--engine-config"
+    engineConfigFile
     "--review-budget-usd"
     (toString cfg.reviewBudgetUsd)
     "--ppq-review-budget-usd"
     (toString cfg.ppqReviewBudgetUsd)
-    "--routing-mode"
-    cfg.routingMode
     "--openai-key-file"
     cfg.openaiKeyFile
     "--ppq-key-file"
@@ -57,10 +77,6 @@ let
     "--repository-url"
     cfg.repositoryUrl
   ]
-  ++ lib.optionals (cfg.modelsJson != null) [
-    "--models-json"
-    cfg.modelsJson
-  ]
   ++ lib.optionals (cfg.reportDir != null && cfg.reportBaseUrl != null) [
     "--report-dir"
     cfg.reportDir
@@ -75,6 +91,21 @@ in
 {
   options.services.ralph = {
     enable = lib.mkEnableOption "ralph pull request reviewer";
+
+    engine = lib.mkOption {
+      type = lib.types.str;
+      default = "current";
+      description = "Trusted local Ralph engine module to run. The default selects the current review pipeline.";
+    };
+
+    engineConfig = lib.mkOption {
+      type = lib.types.attrsOf lib.types.anything;
+      default = { };
+      description = ''
+        JSON-serializable configuration object passed to the selected engine.
+        For the current engine, this can pin resolved prompts and model settings.
+      '';
+    };
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -265,6 +296,10 @@ in
       {
         assertion = (cfg.reportDir == null) == (cfg.reportBaseUrl == null);
         message = "services.ralph.reportDir and reportBaseUrl must be set together.";
+      }
+      {
+        assertion = currentEngine || !promptOptionsExplicit;
+        message = "services.ralph.promptFile, auditPromptDir, modelsJson and routingMode are current-engine options.";
       }
       {
         assertion =
