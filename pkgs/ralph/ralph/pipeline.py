@@ -41,6 +41,8 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                                   routing_mode="enabled", allow_discussions=True,
                                   ppq_api_key=None, ppq_budget=None,
                                   research_evidence=None, blind_alternatives=True):
+    if ppq_budget is not None:
+        ppq_budget.exempt("adversarial_glm")
     if research_evidence is not None:
         allow_discussions = False
     stages = debug.setdefault("stages", {})
@@ -76,7 +78,7 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
             effort, output_tokens = stage_settings("verifier", plan["tier"])
             tools = model.available_tools(model.VERIFIER_TOOLS, allow_discussions,
                                           research_evidence)
-            debug["verification_budget"] = budget.protect_verifier({
+            debug["verification_budget"] = budget.protect({
                 "model": prompt_config.models["verifier"], "store": False,
                 "reasoning": {"effort": effort},
                 "instructions": prompt_config.audit_prompts["verifier"],
@@ -86,7 +88,7 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                 "max_output_tokens": output_tokens,
                 "text": {"format": {"type": "json_schema", "name": "verifier",
                                     "strict": True, "schema": protocol.VERIFIER_SCHEMA}},
-            })
+            }, exempt_stages={"verifier", "collator", "adversarial_glm"})
 
     protect_verification()
     debug["pipeline_stage"] = "routing"

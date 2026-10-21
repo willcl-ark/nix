@@ -386,11 +386,12 @@ class ModelBudgetTests(unittest.TestCase):
         budget.reserve("independent", data)
         budget.reserve("verifier", data)
         budget.reserve("collator", data)
-        self.assertEqual([call[3] for call in ledger.calls], [40_000, 0, 0])
+        self.assertEqual([call[3] for call in ledger.calls], [40_000, 40_000, 40_000])
 
-        protection = budget.protect_verifier(
+        protection = budget.protect(
             {"model": "gpt-6.1-sol", "max_output_tokens": 1,
-             "tools": [{"type": "function"}], "tool_choice": "required"})
+             "tools": [{"type": "function"}], "tool_choice": "required"},
+            exempt_stages={"verifier", "collator"})
         self.assertEqual(protection["protected_micros"], 20_000)
         self.assertEqual(protection["initial_usd"], 0.01)
         self.assertEqual(protection["continuation_usd"], 0.01)

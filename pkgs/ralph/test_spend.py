@@ -208,7 +208,7 @@ class SpendTests(unittest.TestCase):
         ledger = Ledger(self.path.with_name("protected.sqlite3"),
                         review_limit_usd=limit, input_padding_tokens=0)
         budget = RequestBudget(ledger, "pr-6")
-        protection = budget.protect_verifier(verifier)
+        protection = budget.protect(verifier, exempt_stages={"verifier"})
 
         self.assertEqual(protection["protected_micros"], floor)
         self.assertEqual(protection["initial_usd"], initial / MICRODOLLARS)
@@ -223,8 +223,8 @@ class SpendTests(unittest.TestCase):
         budget = RequestBudget(ledger, "pr-7")
         payload = {"model": "gpt-6-luna", "max_output_tokens": 8_000,
                    "input": "Candidate findings: []"}
-        luna = budget.protect_verifier(payload)["protected_micros"]
-        sol = budget.protect_verifier({**payload, "model": "gpt-6.1-sol"})[
+        luna = budget.protect(payload)["protected_micros"]
+        sol = budget.protect({**payload, "model": "gpt-6.1-sol"})[
             "protected_micros"]
         self.assertGreater(sol, luna)
 

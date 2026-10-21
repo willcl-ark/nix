@@ -355,29 +355,35 @@ class Ledger:
 
 
 class RequestBudget:
-    """Apply stage-specific headroom while sharing a review ledger."""
+    """Apply a protected request allowance while sharing a review ledger."""
 
     def __init__(self, ledger, review_id):
         self.ledger = ledger
         self.review_id = review_id
-        self.verifier_floor_micros = 0
+        self.protected_floor_micros = 0
+        self.exempt_stages = set()
 
-    def protect_verifier(self, payload):
-        """Protect the verifier's required first turn and final turn."""
+    def protect(self, payload, exempt_stages=()):
+        """Protect a configured finishing request and its final turn."""
         model = payload["model"]
         initial = self.ledger.reserve_estimate_micros(model, payload)
         continuation = self._continuation_floor_micros(payload)
-        self.verifier_floor_micros = initial + continuation
-        return {"protected_usd": self.verifier_floor_micros / MICRODOLLARS,
-                "protected_micros": self.verifier_floor_micros,
+        self.protected_floor_micros = initial + continuation
+        self.exempt_stages = set(exempt_stages)
+        return {"protected_usd": self.protected_floor_micros / MICRODOLLARS,
+                "protected_micros": self.protected_floor_micros,
                 "initial_usd": initial / MICRODOLLARS,
                 "continuation_usd": continuation / MICRODOLLARS}
 
+    def exempt(self, stage):
+        """Do not reserve review headroom for requests in this configured phase."""
+        self.exempt_stages.add(stage)
+
     def _fallback_floor_micros(self, stage):
-        if stage in {"verifier", "collator", "adversarial_glm"}:
+        if stage in self.exempt_stages:
             return 0
-        if self.verifier_floor_micros:
-            return self.verifier_floor_micros
+        if self.protected_floor_micros:
+            return self.protected_floor_micros
         limit = self.ledger.review_limit_micros
         scale = (1 if limit is None else
                  min(1, limit / (0.60 * MICRODOLLARS)))

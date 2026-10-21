@@ -284,7 +284,7 @@ class PipelineTests(unittest.TestCase):
 
         self.run_review(review, ppq_api_key="ppq-key",
                         budget=openai_budget, ppq_budget=ppq_budget)
-        ppq_budget.protect_verifier.assert_not_called()
+        ppq_budget.exempt.assert_called_once_with("adversarial_glm")
         self.assertEqual(self.debug["ppq_budget"], ppq_budget.summary.return_value)
         self.assertEqual(self.debug["budget"], openai_budget.summary.return_value)
         self.assertEqual(inputs["adversarial"][:-1], inputs["adversarial_glm"][:-1])
@@ -518,7 +518,7 @@ class PipelineTests(unittest.TestCase):
             def __init__(self):
                 self.payloads = []
 
-            def protect_verifier(self, payload):
+            def protect(self, payload, exempt_stages=()):
                 self.payloads.append(payload)
 
             def summary(self):
@@ -555,7 +555,7 @@ class PipelineTests(unittest.TestCase):
             def __init__(self):
                 self.payloads = []
 
-            def protect_verifier(self, payload):
+            def protect(self, payload, exempt_stages=()):
                 self.payloads.append(payload)
 
             def summary(self):
