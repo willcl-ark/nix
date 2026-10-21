@@ -70,9 +70,9 @@ class ModelBudgetTests(unittest.TestCase):
                                           "tests", budget=budget)
             self.assertEqual(budget.events[-1], ("fail", "token", expected_unknown))
 
-    def test_only_verifier_final_response_has_longer_timeout(self):
+    def test_request_timeout_is_supplied_by_the_caller(self):
         for stage, tool_choice, timeout in (
-                ("verifier", "none", 600),
+                ("verifier", "none", 180),
                 ("verifier", "auto", 180),
                 ("verifier", "required", 180),
                 ("tests", "none", 180),
@@ -83,8 +83,14 @@ class ModelBudgetTests(unittest.TestCase):
                     data["tool_choice"] = tool_choice
                 with patch.object(model.urllib.request, "urlopen",
                                   return_value=Response({})) as send:
-                    model.request_response("secret", data, stage)
+                    model.request_response("secret", data, stage, timeout=timeout)
                 self.assertEqual(send.call_args.kwargs["timeout"], timeout)
+
+        with patch.object(model.urllib.request, "urlopen",
+                          return_value=Response({})) as send:
+            model.request_response("secret", {"model": "gpt-6-luna"}, "verifier",
+                                   timeout=600)
+        self.assertEqual(send.call_args.kwargs["timeout"], 600)
 
     def test_schema_effort_and_full_audit_output_are_recorded(self):
         raw = "Finding. " * 1000
@@ -270,7 +276,18 @@ class ModelBudgetTests(unittest.TestCase):
         debug = {"stages": {"state": stage}, "routing": {"mode": "enabled"},
                  "coverage": {"status": "partial"}, "budget": {"unknown": 1}}
         metrics = trace.review_metrics(debug, self.prompt_config)
-        public = trace.review_trace(debug, self.prompt_config)
+        result = {
+            "schema_version": 1,
+            "engine": {"name": "current", "config": {
+                "prompts": {"instructions": self.prompt_config.instructions,
+                            "models": self.prompt_config.models}}},
+            "output": {"schema_version": 1,
+                       "data": {"schema_version": 1, **debug},
+                       "exports": {"findings": []}},
+            "run": {"status": "completed", "metrics": {}, "budget": debug["budget"],
+                    "attempt": {}},
+        }
+        public = trace.review_trace(result)
         self.assertEqual(metrics["known_usage_count"], 1)
         self.assertEqual(metrics["unknown_usage_count"], 1)
         self.assertEqual(metrics["incomplete_usage_count"], 1)

@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from ralph import model, pipeline, protocol
+from ralph import engine, model, pipeline, protocol
 import test_pipeline as fixtures
 
 
@@ -51,9 +51,12 @@ class BlindAlternativesTests(unittest.TestCase):
                 patch.object(model, "openai_review", side_effect=review), \
                 patch.object(model, "run_audit", side_effect=edit), \
                 patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
+            case = engine.ReviewCase(42, "SECRET PR TITLE AND PATCH", fixture.snapshot,
+                                     fixture.config.repository_url)
+            runtime = engine.Runtime(case=case, bot_config=fixture.config,
+                                     api_key="key", attempt=fixture.debug)
             content = pipeline.review_with_independent_passes(
-                "key", "SECRET PR TITLE AND PATCH", fixture.snapshot, fixture.config,
-                fixture.prompts, 42, fixture.debug)
+                case, runtime, fixture.prompts)
         self.assertLess(list(outputs).index("alternatives"), list(outputs).index("independent"))
         for stage in ("independent", "design"):
             self.assertNotIn(option["concept"], outputs[stage])

@@ -20,6 +20,8 @@ ARCHAEOLOGY_TOOL_LIMIT = 12
 
 
 def stage_settings(name, tier):
+    if name == "collator":
+        return "low", model.MAX_COLLATOR_OUTPUT_TOKENS
     if name == "design":
         return "xhigh", 25_000
     if name == "adversarial_glm":
@@ -35,12 +37,17 @@ def stage_settings(name, tier):
     return "low", 4_000
 
 
-def review_with_independent_passes(api_key, review, snapshot, bot_config,
-                                  prompt_config, current_pr, debug,
-                                  on_response=None, budget=None, is_current=None,
-                                  routing_mode="enabled", allow_discussions=True,
-                                  ppq_api_key=None, ppq_budget=None,
-                                  research_evidence=None, blind_alternatives=True):
+def review_with_independent_passes(case, runtime, prompt_config,
+                                  routing_mode="enabled", blind_alternatives=True):
+    review = case.review
+    snapshot = case.snapshot
+    debug = runtime.debug
+    budget = runtime.budget
+    is_current = runtime.is_current
+    ppq_api_key = runtime.ppq_api_key
+    ppq_budget = runtime.ppq_budget
+    allow_discussions = runtime.allow_discussions
+    research_evidence = case.research_evidence
     if ppq_budget is not None:
         ppq_budget.exempt("adversarial_glm")
     if research_evidence is not None:
@@ -92,8 +99,8 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
 
     protect_verification()
     debug["pipeline_stage"] = "routing"
-    plan = routing.plan_review(api_key, review, snapshot, prompt_config, debug,
-                               routing_mode, budget, is_current)
+    plan = routing.plan_review(runtime, review, snapshot, prompt_config, debug,
+                               routing_mode)
     notes = None
 
     def stage_tools(name):
@@ -124,29 +131,28 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                 extra = ({"research_evidence": research_evidence}
                          if research_evidence is not None and name in {"archaeologist", "verifier"}
                          else {})
-                answer = model.openai_review(
-                    ppq_api_key if name == "adversarial_glm" else api_key,
-                    input_text, snapshot, bot_config, prompt_config,
-                    record, current_pr=current_pr, prompt=prompt,
-                    model=stage_model,
+                answer = runtime.review(
+                    name, input_text, prompt=prompt, model_name=stage_model,
+                    record=record,
                     tools=available_tools,
                     max_tool_calls=calls,
                     max_output_tokens=output_tokens,
                     reasoning_effort=effort,
                     first_tool_required=bool(available_tools)
                     and (name in FULL_CONTEXT_STAGES or name in {"archaeologist", "alternatives"}),
-                    stage_name=name, on_response=on_response,
+                    response_schema=schema,
+                    provider="ppq" if name == "adversarial_glm" else "openai",
                     budget=ppq_budget if name == "adversarial_glm" else budget,
-                    response_schema=schema, allow_discussions=allow_discussions,
-                    is_current=is_current,
-                    **({"api_base": "https://api.ppq.ai/v1"}
-                       if name == "adversarial_glm" else {}),
-                    **extra)
+                    api_base="https://api.ppq.ai/v1" if name == "adversarial_glm"
+                    else "https://api.openai.com/v1",
+                    final_timeout=600 if name == "verifier" else 180,
+                    research_evidence=research_evidence if extra else None)
             else:
-                answer, response = model.run_audit(
-                    api_key, name, prompt, input_text, prompt_config,
-                    on_response=on_response, budget=budget,
-                    response_schema=schema, is_current=is_current, debug=record)
+                effort, output_tokens = stage_settings(name, plan["tier"])
+                answer, response = runtime.audit(
+                    name, prompt, input_text, model_name=stage_model,
+                    max_output_tokens=output_tokens, response_schema=schema,
+                    reasoning_effort=effort, debug_record=record)
                 if response["status"] != "completed":
                     raise protocol.InvalidReview("Stage response was incomplete")
             outputs[name] = answer
@@ -207,7 +213,7 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
             "patch context, and any non-discussion evidence you can inspect."
             if not allow_discussions and research_evidence is None else "")
         input_text = (
-            f"Current PR: {bot_config.repository_url}/pulls/{current_pr}\n"
+            f"Current PR: {case.repository_url}/pulls/{case.number}\n"
             f"Changed paths: {json.dumps(sorted(snapshot.changed_paths))}\n\n"
             f"{review}{unavailable}"
         )
@@ -402,11 +408,13 @@ def review_with_independent_passes(api_key, review, snapshot, bot_config,
                               "reason": "No accepted findings to edit"}
 
     debug["coverage"] = coverage.summarize(debug)
+    debug["alternatives"] = verified_alternatives
     was_edited = (stages["collator"]["status"] == "completed"
                   and not stages["collator"].get("used_verified_wording"))
     debug["finding_attribution"] = [
         {"finding_id": finding["id"],
          **{key: finding[key] for key in ("title", "path", "line", "side")},
+         "presented_body": finding["body"],
          "candidate_ids": finding_candidates[finding["id"]],
          "raised_by": sorted({candidate_sources[identifier]
                               for identifier in finding_candidates[finding["id"]]}) or ["verifier"],

@@ -321,31 +321,48 @@ def _public_concept_brief(assessment):
     return record or None
 
 
-def _public_record(number, head_sha, content, debug, prompt_config, report_id):
+def _public_record(number, result, report_id):
+    debug = trace.current_diagnostics(result)
+    engine = trace.result_engine(result)
+    findings = trace.findings_export(result)
+    metrics = trace.result_metrics(result)
     record = {
         "report_id": report_id,
         "pr": number,
-        "head": head_sha,
-        "review": content,
-        "models": dict(prompt_config.models),
-        "coverage": _public_coverage(debug.get("coverage")) or _unknown_coverage(),
-        "stages": _public_stages(debug),
-        "stage_outputs": _public_stage_outputs(debug),
-        "stage_metrics": trace.stage_metrics(debug),
-        "metrics": trace.review_metrics(debug, prompt_config),
-        "concept_assessment": _public_concept_assessment(debug),
-        "finding_attribution": _public_attribution(debug),
-        "decisions": _public_decisions(debug),
+        "head": result.get("head_sha"),
+        "review": result.get("content", ""),
+        "engine": {key: engine.get(key) for key in
+                   ("name", "code_sha256", "config_sha256")},
+        "findings_export_status": "supported" if findings is not None else "unsupported",
+        "findings": findings,
+        "actionable": ((result.get("output", {}).get("exports", {}) or {}).get("actionable")
+                       if isinstance(result.get("output"), dict) else None),
+        "metrics": metrics,
+        "budget": (result.get("run", {}).get("budget")
+                   if isinstance(result.get("run"), dict) else None),
         "notice": (
-            "Preliminary agent outputs are included for transparency and are "
-            "not verified public findings. Treat only the review text as the "
-            "published verified review."
+            "The review text is the engine's published assessment. Diagnostic "
+            "records describe model activity and do not establish correctness."
         ),
         "pricing_note": (
-            "Estimated from saved token usage where available. Unknown usage "
-            "is excluded from the subtotal."
+            "Usage counts come from the saved run record. Cost and budget details "
+            "are shown separately when available."
         ),
     }
+    if debug:
+        config = engine.get("config")
+        prompts = config.get("prompts") if isinstance(config, dict) else None
+        models = (prompts.get("models") if isinstance(prompts, dict) else None)
+        record["models"] = models if isinstance(models, dict) else None
+        record["metrics"] = trace.review_metrics(debug, trace._prompt_config(result))
+        record["metrics"].update(metrics or {})
+        record["coverage"] = _public_coverage(debug.get("coverage")) or _unknown_coverage()
+        record["stages"] = _public_stages(debug)
+        record["stage_outputs"] = _public_stage_outputs(debug)
+        record["stage_metrics"] = trace.stage_metrics(debug)
+        record["concept_assessment"] = _public_concept_assessment(debug)
+        record["finding_attribution"] = _public_attribution(debug)
+        record["decisions"] = _public_decisions(debug)
     return record
 
 
@@ -612,8 +629,8 @@ def _stage_html(name, stage, stage_output):
 
 
 def _html_report(record, json_name):
-    stages = record["stages"]
-    stage_outputs = record["stage_outputs"]
+    stages = record.get("stages", {})
+    stage_outputs = record.get("stage_outputs", {})
     stage_sections = "".join(
         _stage_html(name, stage, stage_outputs.get(name))
         for name, stage in stages.items()
@@ -623,6 +640,20 @@ def _html_report(record, json_name):
         f"<pre>{_escape(output)}</pre></details>"
         for name, output in stage_outputs.items() if name not in stages
     )
+    if "stages" in record:
+        engine_sections = f"""
+<section><h2>Concept and Approach</h2>
+{_concept_assessment_html(record.get('concept_assessment'))}</section>
+<section><h2>Coverage</h2>
+{_coverage_html(record.get('coverage'), detailed=True)}</section>
+<section><h2>Findings</h2>
+{_findings_html(record.get('finding_attribution') or [])}</section>
+<section><h2>Verifier Decisions</h2>
+{_decisions_html(record.get('decisions') or [])}</section>
+<section><h2>Agent Outputs</h2>{stage_sections}{orphan_outputs}</section>
+"""
+    else:
+        engine_sections = f"<section><h2>Findings export</h2>{_export_findings_html(record)}</section>"
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -650,37 +681,49 @@ summary {{ cursor: pointer; font-weight: 600; }}
 </header>
 <p class="notice">{_escape(record['notice'])}</p>
 <section>
-<h2>Verified Review</h2>
+<h2>Review</h2>
 <pre>{_escape(record['review'])}</pre>
 </section>
-<section>
-<h2>Concept and Approach</h2>
-{_concept_assessment_html(record.get('concept_assessment'))}
-</section>
-<section>
-<h2>Coverage</h2>
-{_coverage_html(record.get('coverage'), detailed=True)}
-</section>
-<section>
-<h2>Findings</h2>
-{_findings_html(record.get('finding_attribution') or [])}
-</section>
-<section>
-<h2>Verifier Decisions</h2>
-{_decisions_html(record.get('decisions') or [])}
-</section>
+{engine_sections}
 <section>
 <h2>Usage</h2>
-{_json_html({"metrics": record["metrics"], "stage_metrics": record["stage_metrics"]})}
+{_json_html({"metrics": record["metrics"],
+             "stage_metrics": record.get("stage_metrics"),
+             "budget": record.get("budget")})}
 <p>{_escape(record['pricing_note'])}</p>
-</section>
-<section>
-<h2>Agent Outputs</h2>
-{stage_sections}{orphan_outputs}
 </section>
 </body>
 </html>
 """
+
+
+def _export_findings_html(record):
+    findings = record.get("findings")
+    if findings is None:
+        return "<p>This engine does not provide a findings export.</p>"
+    if not findings:
+        return "<p>The supported findings export is empty.</p>"
+    rows = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        location = finding.get("path", "")
+        if finding.get("line") is not None:
+            location = f"{location}:{finding['line']}"
+        rows.append(
+            "<tr>"
+            f"<td>{_escape(finding.get('id', ''))}</td>"
+            f"<td>{_escape(finding.get('severity', 'unknown'))}</td>"
+            f"<td>{_escape(finding.get('kind', 'unknown'))}</td>"
+            f"<td>{_escape(finding.get('presented_title') or finding.get('title', ''))}</td>"
+            f"<td><code>{_escape(location)}</code></td>"
+            f"<td>{_escape(finding.get('presented_body') or finding.get('body', ''))}</td>"
+            "</tr>")
+    if not rows:
+        return "<p>The supported findings export contained no readable items.</p>"
+    return ("<table><thead><tr><th>ID</th><th>Severity</th><th>Kind</th>"
+            "<th>Title</th><th>Location</th><th>Details</th></tr></thead><tbody>"
+            + "".join(rows) + "</tbody></table>")
 
 
 def _write_public_file(path, content):
@@ -703,7 +746,7 @@ def _write_public_file(path, content):
         raise
 
 
-def save_report(report_dir, number, head_sha, content, debug, prompt_config, report_id):
+def save_report(report_dir, number, result, report_id):
     """Write a static HTML report and matching public JSON, returning the HTML name."""
     if not isinstance(report_id, str) or not REPORT_ID.fullmatch(report_id):
         raise ValueError("report_id must be a safe filename stem")
@@ -711,7 +754,7 @@ def save_report(report_dir, number, head_sha, content, debug, prompt_config, rep
     report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
     html_name = f"{report_id}.html"
     json_name = f"{report_id}.json"
-    record = _public_record(number, head_sha, content, debug or {}, prompt_config, report_id)
+    record = _public_record(number, result, report_id)
     json_text = json.dumps(record, ensure_ascii=False, indent=2)
     _write_public_file(report_dir / json_name, json_text + "\n")
     _write_public_file(report_dir / html_name, _html_report(record, json_name))

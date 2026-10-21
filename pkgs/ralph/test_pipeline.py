@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from ralph import config, model, pipeline, protocol, repository
+from ralph import config, engine, model, pipeline, protocol, repository
 
 COMPLETE = {"status": "complete", "limitations": []}
 
@@ -239,11 +239,14 @@ class PipelineTests(unittest.TestCase):
                 patch.object(model, "run_audit", side_effect=editor or self.edit), \
                 patch.object(protocol, "read_file", return_value="src/example.cpp (3 lines):\n3: setup();\n"), \
                 patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
+            case = engine.ReviewCase(42, "PR diff", self.snapshot,
+                                     self.config.repository_url, research_evidence)
+            runtime = engine.Runtime(
+                case=case, bot_config=self.config, api_key="key",
+                ppq_api_key=ppq_api_key, budget=budget, ppq_budget=ppq_budget,
+                allow_discussions=allow_discussions, attempt=self.debug)
             return pipeline.review_with_independent_passes(
-                "key", "PR diff", self.snapshot, self.config, self.prompts, 42, self.debug,
-                budget=budget, ppq_api_key=ppq_api_key, ppq_budget=ppq_budget,
-                allow_discussions=allow_discussions, research_evidence=research_evidence,
-                blind_alternatives=blind_alternatives)
+                case, runtime, self.prompts, blind_alternatives=blind_alternatives)
 
     def test_parallel_adversarial_models_share_context_and_attribute_merged_finding(self):
         self.tier, self.audits = "sensitive", []
@@ -284,7 +287,7 @@ class PipelineTests(unittest.TestCase):
 
         self.run_review(review, ppq_api_key="ppq-key",
                         budget=openai_budget, ppq_budget=ppq_budget)
-        ppq_budget.exempt.assert_called_once_with("adversarial_glm")
+        ppq_budget.protect.assert_not_called()
         self.assertEqual(self.debug["ppq_budget"], ppq_budget.summary.return_value)
         self.assertEqual(self.debug["budget"], openai_budget.summary.return_value)
         self.assertEqual(inputs["adversarial"][:-1], inputs["adversarial_glm"][:-1])
@@ -504,9 +507,12 @@ class PipelineTests(unittest.TestCase):
                 patch.object(model, "openai_review", side_effect=wrapped_reviewer), \
                 patch.object(model, "run_audit", side_effect=self.edit), \
                 patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
-            pipeline.review_with_independent_passes(
-                "key", "PR diff", self.snapshot, self.config, self.prompts, 42,
-                self.debug, allow_discussions=False)
+            case = engine.ReviewCase(42, "PR diff", self.snapshot,
+                                     self.config.repository_url)
+            runtime = engine.Runtime(case=case, bot_config=self.config,
+                                     api_key="key", allow_discussions=False,
+                                     attempt=self.debug)
+            pipeline.review_with_independent_passes(case, runtime, self.prompts)
 
         self.assertEqual(self.debug["stages"]["archaeologist"]["status"], "completed")
         self.assertIn("Discussion lookup is disabled", archaeology_inputs[0])

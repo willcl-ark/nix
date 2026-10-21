@@ -18,7 +18,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-from ralph import badge, config, forgejo, model, pipeline, repository, service, spend
+from ralph import (badge, config, current_engine, engine, forgejo, model,
+                   pipeline, repository, service, spend)
 from ralph.jobs import JobStore
 
 
@@ -33,24 +34,44 @@ class ServiceTests(unittest.TestCase):
         self.bot_config = config.BotConfig(
             "https://git.example.org/owner/repo.git", "owner/repo",
             "https://git.example.org/api/v1/repos/owner/repo")
-        self.prompt_config = config.PromptConfig("instructions", {}, {
-            name: "gpt-6-luna" for name in config.MODEL_NAMES})
+        self.prompt_config = config.PromptConfig.load()
+        self.review_engine = engine.load("current", {
+            "prompts": {"instructions": self.prompt_config.instructions,
+                        "audit_prompts": self.prompt_config.audit_prompts,
+                        "models": self.prompt_config.models},
+            "routing_mode": "enabled", "blind_alternatives": True})
 
     def enqueue(self, head="a" * 40):
-        self.jobs.enqueue(42, "master", head, "synchronize")
+        self.jobs.enqueue(42, "master", head, "synchronize",
+                          engine_identity=self.review_engine.identity)
         return self.jobs.claim()
 
     def process(self, job):
         return service.process_job(job, self.jobs, self.state_dir, "api-key",
                                    "forgejo-token", "ralph",
-                                   self.bot_config, self.prompt_config,
-                                   self.ledger)
+                                   self.bot_config, self.ledger,
+                                   self.review_engine)
+
+    def saved_result(self, content="Review content", debug=None):
+        debug = debug or {}
+        return {
+            "schema_version": 1, "engine": self.review_engine.identity,
+            "base_sha": "b" * 40, "head_sha": "a" * 40,
+            "merge_base": "b" * 40, "content": content,
+            "output": {"schema_version": 1,
+                       "data": {"schema_version": 1, **debug},
+                       "exports": current_engine.exports(debug)},
+            "run": {"review_id": "pr:42:1:1", "status": "completed",
+                    "metrics": {}, "skipped": bool(debug.get("skip")),
+                    "budget": {}, "ppq_budget": None, "attempt": debug},
+        }
 
     def post_webhook(self, store):
         secret = b"secret"
         server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
-            service.make_handler(secret, store, self.bot_config))
+            service.make_handler(secret, store, self.bot_config,
+                                 self.review_engine.identity))
         thread = threading.Thread(target=server.serve_forever,
                                   kwargs={"poll_interval": 0.01}, daemon=True)
         thread.start()
@@ -87,7 +108,8 @@ class ServiceTests(unittest.TestCase):
     def test_review_badge_tracks_latest_published_feedback(self):
         server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
-            service.make_handler(b"secret", self.jobs, self.bot_config))
+            service.make_handler(b"secret", self.jobs, self.bot_config,
+                                 self.review_engine.identity))
         thread = threading.Thread(target=server.serve_forever,
                                   kwargs={"poll_interval": 0.01}, daemon=True)
         thread.start()
@@ -126,7 +148,7 @@ class ServiceTests(unittest.TestCase):
         center = 8 * 65 + 1 + 8 * 4
         self.assertEqual(pixels[center:center + 4], bytes((128, 128, 128, 255)))
         job = self.enqueue()
-        self.jobs.save_result(job, {"debug": {"decisions": [{"disposition": "publish", "finding": {"severity": "suggestion"}}]}})
+        self.jobs.save_result(job, self.saved_result(debug={"decisions": [{"disposition": "publish", "finding": {"severity": "suggestion"}}]}))
         self.assertEqual(get(), grey)  # Saved but not published.
         self.jobs.complete(job)
         orange = get()
@@ -135,26 +157,26 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(get("/assets/owner/repo/999.png"), grey)
         job = self.enqueue("b" * 40)
         self.assertEqual(get(), grey)  # A new head invalidates the badge.
-        self.jobs.save_result(job, {"debug": {"decisions": [{"disposition": "drop", "finding": None}]}})
+        self.jobs.save_result(job, self.saved_result(debug={"decisions": [{"disposition": "drop", "finding": None}]}))
         self.jobs.complete(job)
         self.assertEqual(get(), grey)
         job = self.enqueue("c" * 40)
-        self.jobs.save_result(job, {"debug": {"decisions": [], "concept_assessment": {
+        self.jobs.save_result(job, self.saved_result(debug={"decisions": [], "concept_assessment": {
             "status": "verified", "summary": "A material concern.",
             "verification": {"disposition": "publish", "assessment": {
-                "assessment": "rework_approach"}}}}})
+                "assessment": "rework_approach"}}}}))
         self.jobs.complete(job)
         self.assertEqual(get(), orange)
         job = self.enqueue("d" * 40)
-        self.jobs.save_result(job, {"debug": {"decisions": [{"disposition": "publish", "finding": {"severity": "suggestion"}}]}})
+        self.jobs.save_result(job, self.saved_result(debug={"decisions": [{"disposition": "publish", "finding": {"severity": "suggestion"}}]}))
         self.jobs.fail(job, "Publication failed")
         self.assertEqual(get(), grey)
         job = self.enqueue("e" * 40)
-        self.jobs.save_result(job, {"debug": {"skip": "Input exceeds limit"}})
+        self.jobs.save_result(job, self.saved_result(debug={"skip": "Input exceeds limit"}))
         self.jobs.complete(job)
         self.assertEqual(get(), grey)
         job = self.enqueue("f" * 40)
-        self.jobs.save_result(job, {"debug": {"finding_attribution": []}})
+        self.jobs.save_result(job, self.saved_result(debug={"finding_attribution": []}))
         self.jobs.complete(job)
         self.assertEqual(get(), grey)  # Verification did not produce decisions.
         for path in ("/assets/other/repo/42.png", "/assets/owner/repo/0.png",
@@ -174,7 +196,8 @@ class ServiceTests(unittest.TestCase):
     def test_distinct_pr_reviews_overlap_outside_git_lock(self):
         (self.state_dir / "checkout" / ".git").mkdir(parents=True)
         for number in (42, 43):
-            self.jobs.enqueue(number, "master", "a" * 40, "synchronize")
+            self.jobs.enqueue(number, "master", "a" * 40, "synchronize",
+                              engine_identity=self.review_engine.identity)
         claimed = [self.jobs.claim(), self.jobs.claim()]
         barrier = threading.Barrier(2)
         prefixes = []
@@ -198,7 +221,7 @@ class ServiceTests(unittest.TestCase):
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review", side_effect=collect),
               patch.object(service.repository, "snapshot_repository", side_effect=snapshot),
-              patch.object(service.pipeline, "review_with_independent_passes",
+              patch.object(pipeline, "review_with_independent_passes",
                            side_effect=review),
               patch.object(service.forgejo, "publish_review",
                            return_value="published") as publish,
@@ -208,7 +231,7 @@ class ServiceTests(unittest.TestCase):
                              ["published", "published"])
         self.assertEqual(len(set(prefixes)), 2)
         self.assertEqual({call.args[1] for call in release.call_args_list}, set(prefixes))
-        self.assertEqual({call.args[3] for call in publish.call_args_list}, {42, 43})
+        self.assertEqual({call.args[2] for call in publish.call_args_list}, {42, 43})
         self.assertIsNone(self.jobs.claim())
 
     def test_publication_retry_reuses_saved_result(self):
@@ -221,16 +244,16 @@ class ServiceTests(unittest.TestCase):
                            return_value=("b" * 40, "a" * 40, "review input", None)),
               patch.object(service.repository, "snapshot_repository",
                            return_value=object()),
-              patch.object(service.pipeline, "review_with_independent_passes",
+              patch.object(pipeline, "review_with_independent_passes",
                            return_value="Review content") as review,
               patch.object(service.forgejo, "publish_review",
                            side_effect=urllib.error.URLError("connection lost"))):
             with self.assertLogs(level="ERROR"):
                 self.assertEqual(self.process(job), "retry")
             self.assertEqual(review.call_count, 1)
-            self.assertEqual(review.call_args.kwargs["budget"].review_id,
+            self.assertEqual(review.call_args.args[1].budget.review_id,
                              f'pr:42:{job["id"]}:{job["generation"]}')
-            self.assertEqual(review.call_args.kwargs["routing_mode"], "enabled")
+            self.assertEqual(review.call_args.args[3], "enabled")
 
         restarted = JobStore(self.state_dir / "jobs.sqlite3",
                              retry_base_seconds=0)
@@ -238,7 +261,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(retry_job["review_result"]["content"], "Review content")
         self.jobs = restarted
         with (patch.object(service.repository, "current_head", return_value="a" * 40),
-              patch.object(service.pipeline, "review_with_independent_passes",
+              patch.object(pipeline, "review_with_independent_passes",
                            side_effect=AssertionError("model called again")),
               patch.object(service.forgejo, "publish_review",
                            return_value="unchanged") as publish):
@@ -246,21 +269,74 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(publish.call_count, 1)
         self.assertIsNone(restarted.claim())
 
+    def test_narrative_engine_output_is_saved_and_retried_without_exposing_native_data(self):
+        identity = {"name": "narrative", "code_sha256": "c" * 64,
+                    "config_sha256": "d" * 64, "config": {}}
+        private_text = "NARRATIVE_PRIVATE_NATIVE_DATA"
+
+        class NarrativeEngine:
+            def __init__(self):
+                self.identity = identity
+                self.calls = 0
+
+            def run(self, case, runtime):
+                self.calls += 1
+                return engine.Output("Narrative review body", {
+                    "kind": "narrative-v7", "internal": private_text,
+                }, {})
+
+        narrative = NarrativeEngine()
+        self.jobs.enqueue(42, "master", "a" * 40, "synchronize",
+                          engine_identity=identity)
+        job = self.jobs.claim()
+        self.bot_config = replace(self.bot_config,
+                                  report_dir=self.state_dir / "public",
+                                  report_base_url="https://review.example.org/traces")
+        with (patch.object(service.repository, "current_head", return_value="a" * 40),
+              patch.object(service.forgejo, "find_comment", return_value=None),
+              patch.object(service.forgejo, "pull_request_context",
+                           return_value=("Title", "Description")),
+              patch.object(service.repository, "collect_review",
+                           return_value=("b" * 40, "a" * 40, "review input", None)),
+              patch.object(service.repository, "snapshot_repository",
+                           return_value=object()),
+              patch.object(service.forgejo, "publish_review",
+                           side_effect=[urllib.error.URLError("connection lost"),
+                                        "unchanged"]) as publish):
+            with self.assertLogs(level="ERROR"):
+                self.assertEqual(service.process_job(
+                    job, self.jobs, self.state_dir, "api-key", "forgejo-token",
+                    "ralph", self.bot_config, self.ledger, narrative), "retry")
+            saved = self.jobs.claim()
+            result = saved["review_result"]
+            self.assertEqual(result["engine"], identity)
+            self.assertEqual(result["content"], "Narrative review body")
+            self.assertEqual(result["output"], {
+                "schema_version": 1,
+                "data": {"kind": "narrative-v7", "internal": private_text},
+                "exports": {},
+            })
+            report = next(self.bot_config.report_dir.glob("*.html"))
+            self.assertNotIn(private_text, report.read_text(encoding="utf-8"))
+            self.assertEqual(service.process_job(
+                saved, self.jobs, self.state_dir, "api-key", "forgejo-token",
+                "ralph", self.bot_config, self.ledger, None), "unchanged")
+        self.assertEqual(narrative.calls, 1)
+        self.assertEqual(publish.call_args.args[6], "Narrative review body")
+
     def test_report_exists_before_publication_and_retry_reuses_url(self):
         self.bot_config = replace(self.bot_config,
                                   report_dir=self.state_dir / "public",
                                   report_base_url="https://review.example.org/traces")
         job = self.enqueue()
         # A durable result is enough to retry publication without another model call.
-        job["review_result"] = {
-            "base_sha": "b" * 40, "head_sha": "a" * 40,
-            "content": "Review content", "debug": {}}
+        job["review_result"] = self.saved_result()
         self.jobs.save_result(job, job["review_result"])
         urls = []
 
-        def publish(*args):
-            debug = args[-1]
-            urls.append(debug["report_url"])
+        def publish(*args, **kwargs):
+            url = kwargs["report_url"]
+            urls.append(url)
             filename = urls[-1].rsplit("/", 1)[-1]
             self.assertTrue((self.bot_config.report_dir / filename).is_file())
             if len(urls) == 1:
@@ -280,20 +356,20 @@ class ServiceTests(unittest.TestCase):
                                   report_dir=self.state_dir / "public",
                                   report_base_url="https://review.example.org/traces")
         job = self.enqueue()
-        job["review_result"] = {"base_sha": "b" * 40, "head_sha": "a" * 40,
-                                "content": "Review content", "debug": {}}
+        job["review_result"] = self.saved_result()
         with (patch.object(service.repository, "current_head", return_value="a" * 40),
               patch.object(service.report, "save_report", side_effect=OSError("disk full")),
               patch.object(service.forgejo, "publish_review", return_value="published") as publish):
             with self.assertLogs(level="WARNING"):
                 self.assertEqual(self.process(job), "published")
-        self.assertNotIn("report_url", publish.call_args.args[-1])
+        self.assertIsNone(publish.call_args.kwargs["report_url"])
 
     def test_stale_review_keeps_newer_pending_head(self):
         old = self.enqueue()
 
         def stale_review(*_args, **_kwargs):
-            self.jobs.enqueue(42, "master", "b" * 40, "synchronize")
+            self.jobs.enqueue(42, "master", "b" * 40, "synchronize",
+                              engine_identity=self.review_engine.identity)
             raise model.StaleReview("new head")
 
         with (patch.object(service.repository, "current_head", return_value="a" * 40),
@@ -304,7 +380,7 @@ class ServiceTests(unittest.TestCase):
                            return_value=("c" * 40, "a" * 40, "input", None)),
               patch.object(service.repository, "snapshot_repository",
                            return_value=object()),
-              patch.object(service.pipeline, "review_with_independent_passes",
+              patch.object(pipeline, "review_with_independent_passes",
                            side_effect=stale_review)):
             self.assertEqual(self.process(old), "stale")
         self.assertEqual(self.jobs.claim()["head"], "b" * 40)
@@ -321,7 +397,7 @@ class ServiceTests(unittest.TestCase):
                            return_value=("c" * 40, "a" * 40, "input", None)),
               patch.object(service.repository, "snapshot_repository",
                            return_value=object()),
-              patch.object(service.pipeline, "review_with_independent_passes",
+              patch.object(pipeline, "review_with_independent_passes",
                            return_value="New base review") as review,
               patch.object(service.forgejo, "publish_review",
                            return_value="updated")):
@@ -344,7 +420,8 @@ class ServiceTests(unittest.TestCase):
         old = self.enqueue()
 
         def collect(*_args, **_kwargs):
-            self.jobs.enqueue(42, "master", "c" * 40, "synchronize")
+            self.jobs.enqueue(42, "master", "c" * 40, "synchronize",
+                              engine_identity=self.review_engine.identity)
             return "d" * 40, "b" * 40, None, "PR head changed before review"
 
         with (patch.object(service.repository, "current_head", return_value="a" * 40),
@@ -366,7 +443,7 @@ class ServiceTests(unittest.TestCase):
                            return_value=("c" * 40, "a" * 40, "input", None)),
               patch.object(service.repository, "snapshot_repository",
                            return_value=object()),
-              patch.object(service.pipeline, "review_with_independent_passes",
+              patch.object(pipeline, "review_with_independent_passes",
                            side_effect=model.StaleReview("head changed"))):
             with self.assertLogs(level="ERROR"):
                 self.assertEqual(self.process(old), "retry")
@@ -380,7 +457,7 @@ class ServiceTests(unittest.TestCase):
                            return_value=("c" * 40, "a" * 40, "input", None)),
               patch.object(service.repository, "snapshot_repository",
                            return_value=object()),
-              patch.object(service.pipeline, "review_with_independent_passes",
+              patch.object(pipeline, "review_with_independent_passes",
                            return_value="Review content"),
               patch.object(service.forgejo, "publish_review", return_value="updated")):
             self.assertEqual(self.process(retry), "updated")
@@ -408,7 +485,8 @@ class ServiceTests(unittest.TestCase):
                                         (job["id"],)).fetchone()[0], "failed")
 
     def test_worker_can_stop_after_claiming_one_job(self):
-        self.jobs.enqueue(42, "master", "a" * 40, "opened")
+        self.jobs.enqueue(42, "master", "a" * 40, "opened",
+                          engine_identity=self.review_engine.identity)
         stop_event = threading.Event()
 
         def process(job, *_args):
@@ -417,8 +495,8 @@ class ServiceTests(unittest.TestCase):
 
         with patch.object(service, "process_job", side_effect=process) as called:
             service.worker(self.jobs, self.state_dir, "api-key", "forgejo-token",
-                           "ralph", self.bot_config, self.prompt_config,
-                           self.ledger, stop_event=stop_event)
+                           "ralph", self.bot_config, self.ledger,
+                           self.review_engine, stop_event=stop_event)
         self.assertEqual(called.call_count, 1)
 
     def test_worker_waits_after_claim_database_error(self):
@@ -432,13 +510,14 @@ class ServiceTests(unittest.TestCase):
               patch.object(stop_event, "wait", side_effect=stop_after_wait) as wait,
               self.assertLogs(level="ERROR")):
             service.worker(self.jobs, self.state_dir, "api-key", "forgejo-token",
-                           "ralph", self.bot_config, self.prompt_config,
-                           self.ledger, stop_event=stop_event)
+                           "ralph", self.bot_config, self.ledger,
+                           self.review_engine, stop_event=stop_event)
         self.assertEqual(claim.call_count, 1)
         wait.assert_called_once_with(1)
 
     def test_worker_survives_unexpected_processing_error(self):
-        self.jobs.enqueue(42, "master", "a" * 40, "opened")
+        self.jobs.enqueue(42, "master", "a" * 40, "opened",
+                          engine_identity=self.review_engine.identity)
         stop_event = threading.Event()
         calls = []
 
@@ -453,8 +532,8 @@ class ServiceTests(unittest.TestCase):
               patch.object(stop_event, "wait", return_value=None),
               self.assertLogs(level="ERROR")):
             service.worker(self.jobs, self.state_dir, "api-key", "forgejo-token",
-                           "ralph", self.bot_config, self.prompt_config,
-                           self.ledger, stop_event=stop_event)
+                           "ralph", self.bot_config, self.ledger,
+                           self.review_engine, stop_event=stop_event)
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1]["attempts"], 1)
         self.assertIsNone(self.jobs.claim())
@@ -474,8 +553,9 @@ class CapturingJobs:
     def __init__(self):
         self.enqueued = []
 
-    def enqueue(self, *job):
+    def enqueue(self, *job, engine_identity):
         self.enqueued.append(job)
+        self.engine_identity = engine_identity
         return True
 
 
@@ -487,6 +567,11 @@ class WebhookTests(unittest.TestCase):
             "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin",
         )
         self.prompt_config = config.PromptConfig.load()
+        self.review_engine = engine.load("current", {
+            "prompts": {"instructions": self.prompt_config.instructions,
+                        "audit_prompts": self.prompt_config.audit_prompts,
+                        "models": self.prompt_config.models},
+            "routing_mode": "enabled", "blind_alternatives": True})
 
     def snapshot(self, files=None, checkout=Path("/unused")):
         return repository.RepositorySnapshot(
@@ -498,7 +583,8 @@ class WebhookTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         state_dir = Path(directory.name)
         jobs = JobStore(state_dir / "jobs.sqlite3")
-        jobs.enqueue(42, "master", "a" * 40, "opened", force)
+        jobs.enqueue(42, "master", "a" * 40, "opened", force,
+                     engine_identity=self.review_engine.identity)
         ledger = spend.Ledger(state_dir / "spend.sqlite3")
         return jobs.claim(), jobs, state_dir, ledger
 
@@ -539,7 +625,8 @@ class WebhookTests(unittest.TestCase):
 
     def test_webhook_queues_only_authenticated_target_event(self):
         jobs = CapturingJobs()
-        server = ThreadingHTTPServer(("127.0.0.1", 0), service.make_handler(b"secret", jobs, self.bot_config))
+        server = ThreadingHTTPServer(("127.0.0.1", 0), service.make_handler(
+            b"secret", jobs, self.bot_config, self.review_engine.identity))
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
         try:
@@ -575,7 +662,8 @@ class WebhookTests(unittest.TestCase):
 
     def test_wrong_path_log_redacts_query_and_identifies_non_webhook(self):
         jobs = CapturingJobs()
-        server = ThreadingHTTPServer(("127.0.0.1", 0), service.make_handler(b"secret", jobs, self.bot_config))
+        server = ThreadingHTTPServer(("127.0.0.1", 0), service.make_handler(
+            b"secret", jobs, self.bot_config, self.review_engine.identity))
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
         try:
@@ -598,7 +686,8 @@ class WebhookTests(unittest.TestCase):
 
     def test_browser_gets_do_not_log_info(self):
         jobs = CapturingJobs()
-        server = ThreadingHTTPServer(("127.0.0.1", 0), service.make_handler(b"secret", jobs, self.bot_config))
+        server = ThreadingHTTPServer(("127.0.0.1", 0), service.make_handler(
+            b"secret", jobs, self.bot_config, self.review_engine.identity))
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
         try:
@@ -618,7 +707,9 @@ class WebhookTests(unittest.TestCase):
 
     def test_force_rechecks_same_head_and_updates_existing_comment(self):
         job, jobs, state_dir, ledger = self.queued_job(force=True)
-        existing = {"body": forgejo.review_body(self.bot_config, self.prompt_config, "b" * 40, "a" * 40, "Old review.")}
+        existing = {"body": forgejo.review_body(
+            self.bot_config, "b" * 40, "a" * 40,
+            "Old review.", engine_identity=self.review_engine.identity)}
         with patch.object(repository, "current_head", return_value="a" * 40), \
                 patch.object(forgejo, "find_comment", return_value=existing) as find, \
                 patch.object(forgejo, "pull_request_context", return_value=("Title", "Body")), \
@@ -630,15 +721,17 @@ class WebhookTests(unittest.TestCase):
                 patch.object(forgejo, "publish_review", return_value="updated") as publish:
             self.assertEqual(service.process_job(
                 job, jobs, state_dir, "openai-key", "forgejo-token", "ralph",
-                self.bot_config, self.prompt_config, ledger), "updated")
+                self.bot_config, ledger, self.review_engine), "updated")
         find.assert_not_called()
         review_model.assert_called_once()
-        self.assertEqual(review_model.call_args.args[1], "review input")
+        self.assertEqual(review_model.call_args.args[0].review, "review input")
         publish.assert_called_once()
 
     def test_repeated_head_skips_model_call(self):
         job, jobs, state_dir, ledger = self.queued_job()
-        existing = {"body": forgejo.review_body(self.bot_config, self.prompt_config, "b" * 40, "a" * 40, "Reviewed.")}
+        existing = {"body": forgejo.review_body(
+            self.bot_config, "b" * 40, "a" * 40,
+            "Reviewed.", engine_identity=self.review_engine.identity)}
         with patch.object(repository, "current_head", return_value="a" * 40), \
                 patch.object(forgejo, "find_comment", return_value=existing), \
                 patch.object(forgejo, "pull_request_context",
@@ -649,7 +742,7 @@ class WebhookTests(unittest.TestCase):
                 patch.object(pipeline, "review_with_independent_passes") as review_model:
             self.assertEqual(service.process_job(
                 job, jobs, state_dir, "openai-key", "forgejo-token", "ralph",
-                self.bot_config, self.prompt_config, ledger), "already-reviewed")
+                self.bot_config, ledger, self.review_engine), "already-reviewed")
         collect.assert_called_once()
         snapshot.assert_not_called()
         review_model.assert_not_called()

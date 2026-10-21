@@ -7,6 +7,7 @@ from .config import ADVERSARIAL_PROFILES, AUDIT_NAMES
 from .protocol import InvalidReview, STRINGS, object_schema
 from .repository import MAX_REVIEW_BYTES, is_test_path
 from .spend import BudgetExceeded
+from .model import StaleReview
 
 ROUTER_SCHEMA = object_schema({
     "tier": {"type": "string", "enum": ["routine", "standard", "sensitive"]},
@@ -142,10 +143,8 @@ def validate_plan(text, paths, floor):
     return result
 
 
-def plan_review(api_key, review, snapshot, prompt_config, debug,
-                mode="enabled", budget=None, is_current=None):
-    from . import model
-
+def plan_review(runtime, review, snapshot, prompt_config, debug,
+                mode="enabled"):
     if mode not in {"enabled", "shadow", "full"}:
         raise ValueError("Unknown routing mode")
     paths = sorted(snapshot.changed_paths)
@@ -163,17 +162,18 @@ def plan_review(api_key, review, snapshot, prompt_config, debug,
         # classify only the excerpt it happened to receive.
         router_input = json.dumps({"minimum_tier": floor, "changed_paths": paths}) + "\n" + review
         try:
-            answer, response = model.run_audit(
-                api_key, "router", prompt_config.audit_prompts["router"],
-                router_input, prompt_config, budget=budget,
-                response_schema=ROUTER_SCHEMA, is_current=is_current, debug=record)
+            answer, response = runtime.audit(
+                "router", prompt_config.audit_prompts["router"], router_input,
+                model_name=prompt_config.models["router"],
+                max_output_tokens=4_000, response_schema=ROUTER_SCHEMA,
+                debug_record=record)
             record["status"] = response["status"]
             record["raw_output"] = answer
             debug.setdefault("stage_outputs", {})["router"] = answer
             if response["status"] != "completed":
                 raise InvalidReview("Router response incomplete")
             proposed = validate_plan(answer, paths, floor)
-        except model.StaleReview:
+        except StaleReview:
             raise
         except BudgetExceeded as exc:
             record.update(status="budget_exhausted", error_type=type(exc).__name__)

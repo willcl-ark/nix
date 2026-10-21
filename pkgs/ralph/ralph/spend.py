@@ -369,7 +369,7 @@ class RequestBudget:
         initial = self.ledger.reserve_estimate_micros(model, payload)
         continuation = self._continuation_floor_micros(payload)
         self.protected_floor_micros = initial + continuation
-        self.exempt_stages = set(exempt_stages)
+        self.exempt_stages.update(exempt_stages)
         return {"protected_usd": self.protected_floor_micros / MICRODOLLARS,
                 "protected_micros": self.protected_floor_micros,
                 "initial_usd": initial / MICRODOLLARS,

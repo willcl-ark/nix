@@ -23,13 +23,19 @@ class FollowupRunnerTests(unittest.TestCase):
 
     def enqueue_complete(self, number, head, action="synchronize", result=None,
                          force=False):
-        self.jobs.enqueue(number, "master", head, action, force=force)
+        identity = {"name": "current", "code_sha256": None,
+                    "config_sha256": None, "config": None}
+        self.jobs.enqueue(number, "master", head, action, force=force,
+                          engine_identity=identity)
         job = self.jobs.claim()
         self.assertTrue(self.jobs.save_result(job, result or {
+            "schema_version": 1,
             "base_sha": "b" * 40,
             "head_sha": head,
             "content": "Review body",
-            "debug": {},
+            "engine": identity,
+            "output": {"schema_version": 1, "data": {}, "exports": {"findings": []}},
+            "run": {"status": "completed", "metrics": {}, "attempt": {}},
         }))
         self.assertTrue(self.jobs.complete(job))
         return job

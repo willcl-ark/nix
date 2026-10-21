@@ -233,6 +233,8 @@ def _top_kpis(summary):
     saved_reviews = _field(overview, "saved_reviews")
     unique_prs = _field(inventory, "unique_prs")
     findings = _field(overview, "published_findings")
+    unavailable_findings = _field(overview, "findings_unavailable_reviews", 0)
+    unavailable_diagnostics = _field(overview, "diagnostics_unavailable_reviews", 0)
     archaeology = _mapping(overview.get("archaeology"))
     addressed = _mapping(summary.get("addressed_findings"))
     addressed_counts = _mapping(addressed.get("status_counts"))
@@ -248,9 +250,13 @@ def _top_kpis(summary):
     failed = _field(inventory, "recorded_failed_attempts")
     return "".join([
         _kpi("Saved reviews", _fmt_int(saved_reviews), f"{_fmt_int(unique_prs)} unique PRs"),
-        _kpi("Verified findings", _fmt_int(findings), "Bot verified, not human confirmed"),
+        _kpi("Exported findings", _fmt_int(findings),
+             (f"{_fmt_int(unavailable_findings)} reviews lack a findings export"
+              if unavailable_findings else "Bot verified, not human confirmed")),
         _kpi("Conceptual concerns", _fmt_int(_field(archaeology, "published_concerns")),
-             f"{_fmt_int(_field(archaeology, 'research_completed'))} research runs"),
+             (f"{_fmt_int(unavailable_diagnostics)} reviews lack Ralph 1 diagnostics"
+              if unavailable_diagnostics else
+              f"{_fmt_int(_field(archaeology, 'research_completed'))} research runs")),
         _kpi("Addressed after review", _fmt_int(addressed_counts.get("addressed")),
              f"{_fmt_int(addressed_counts.get('partially_addressed'))} partial; "
              f"{_fmt_int(_field(addressed, 'evaluated_findings'))} assessed"),
@@ -394,6 +400,10 @@ def _addressed_section(summary):
         f"{_fmt_int(_field(addressed, 'source_published_findings'))} published findings "
         f"across {_fmt_int(_field(addressed, 'assessed_source_reviews'))} source reviews."
     )
+    unsupported = _field(addressed, "unsupported_exports", 0)
+    if unsupported:
+        coverage += (f" Follow-up was unavailable for {_fmt_int(unsupported)} reviews "
+                     "because their engine did not export findings.")
     table_link = (
         "<p>No addressed-finding assessments were recorded.</p>" if not findings else
         f'<p>{_internal_link("addressed/", f"View all {len(findings):,} addressed assessments")}.</p>'
@@ -493,7 +503,13 @@ def _spend_section(summary):
 def _stage_section(summary):
     stages = _list(summary.get("stages"))
     if not stages:
-        body = "<p>No agent stage statistics were recorded.</p>"
+        unavailable = _field(_mapping(summary.get("overview")),
+                             "diagnostics_unavailable_reviews", 0)
+        if unavailable:
+            body = ("<p>Current-engine stage statistics are unavailable for "
+                    f"{_fmt_int(unavailable)} reviews.</p>")
+        else:
+            body = "<p>No agent stage statistics were recorded.</p>"
     else:
         rows = []
         for stage in stages:
@@ -764,7 +780,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
             f"<td>{_escape(_field(review, 'coverage', default='unknown'))}</td>"
             f"<td>{_escape(_field(review, 'context_coverage', default='unknown'))}</td>"
             f"<td>{_escape(_field(review, 'verification_status', default='unknown'))}</td>"
-            f"<td>{_fmt_int(findings.get('saved'))} / {_fmt_int(findings.get('published'))}</td>"
+            f"<td>{'unsupported' if findings.get('export_status') == 'unsupported' else _fmt_int(findings.get('saved')) + ' / ' + _fmt_int(findings.get('published'))}</td>"
             f"<td>{concept_status}</td>"
             f"<td>{_fmt_int(_field(ledger, 'request_count'))}</td>"
             f"<td>{_fmt_int(_field(review, 'recorded_failed_attempts'))}</td>"
@@ -816,8 +832,11 @@ def _time_series(summary):
         records.append({
             "period": period,
             "reviews": max(0, int(_number(_field(record, "reviews")) or 0)),
-            "verified_reviews": max(0, int(_number(_field(record, "verified_reviews")) or 0)),
-            "findings": max(0, int(_number(_field(record, "findings")) or 0)),
+            "verified_reviews": (max(0, int(_number(_field(record, "verified_reviews"))))
+                                 if _number(_field(record, "verified_reviews")) is not None
+                                 else None),
+            "findings": (max(0, int(_number(_field(record, "findings"))))
+                         if _number(_field(record, "findings")) is not None else None),
             "addressed": max(0, int(_number(_field(record, "addressed")) or 0)),
         })
     return sorted(records, key=lambda item: item["period"])
@@ -830,23 +849,34 @@ def _chart_svg(chart_id, title, description, records, field):
     right = 12
     top = 12
     bottom = 30
-    values = [_number(record.get(field)) or 0 for record in records]
-    max_value = max(values) or 1
+    values = [_number(record.get(field)) for record in records]
+    max_value = max((value for value in values if value is not None), default=0) or 1
     x_span = width - left - right
     y_span = height - top - bottom
-    if len(records) == 1:
-        points = [(left + x_span / 2, top + y_span * (1 - values[0] / max_value))]
-    else:
-        points = [
-            (left + x_span * index / (len(records) - 1),
-             top + y_span * (1 - value / max_value))
-            for index, value in enumerate(values)
-        ]
-    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    points = []
+    for index, value in enumerate(values):
+        if value is None:
+            points.append(None)
+            continue
+        x = (left + x_span / 2 if len(records) == 1 else
+             left + x_span * index / (len(records) - 1))
+        points.append((x, top + y_span * (1 - value / max_value)))
+    segments = []
+    segment = []
+    for point in points + [None]:
+        if point is None:
+            if len(segment) > 1:
+                segments.append(" ".join(f"{x:.1f},{y:.1f}" for x, y in segment))
+            segment = []
+        else:
+            segment.append(point)
+    lines = "".join(f'<polyline class="chart-line" points="{segment}"></polyline>'
+                    for segment in segments)
     circles = "".join(
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3"><title>{_escape(record["period"])}: '
-        f'{_fmt_int(record.get(field))}</title></circle>'
-        for (x, y), record in zip(points, records)
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3"><title>{_escape(records[index]["period"])}: '
+        f'{_fmt_int(records[index].get(field))}</title></circle>'
+        for index, point in enumerate(points) if point is not None
+        for x, y in (point,)
     )
     first = records[0]["period"]
     last = records[-1]["period"]
@@ -860,11 +890,11 @@ def _chart_svg(chart_id, title, description, records, field):
         f'<desc id="{desc_id}">{_escape(description)}</desc>'
         f'<line class="chart-axis" x1="{left}" y1="{top + y_span}" x2="{width - right}" y2="{top + y_span}"></line>'
         f'<line class="chart-axis" x1="{left}" y1="{top}" x2="{left}" y2="{top + y_span}"></line>'
-        f'<polyline class="chart-line" points="{line}"></polyline>'
-        f'{circles}'
-        f'<text x="{left}" y="{height - 10}">{_escape(first)}</text>'
-        f'<text x="{width - right}" y="{height - 10}" text-anchor="end">{_escape(last)}</text>'
-        f'<text x="{left - 6}" y="{top + 4}" text-anchor="end">{_fmt_int(max_value)}</text>'
+        + lines
+        + f'{circles}'
+        + f'<text x="{left}" y="{height - 10}">{_escape(first)}</text>'
+        + f'<text x="{width - right}" y="{height - 10}" text-anchor="end">{_escape(last)}</text>'
+        + f'<text x="{left - 6}" y="{top + 4}" text-anchor="end">{_fmt_int(max_value)}</text>'
         '<text x="28" y="105" text-anchor="end">0</text>'
         '</svg>'
         '</figure>'
@@ -899,9 +929,9 @@ def _charts_section(summary):
         )
     charts = [
         ("reviews", "Reviews", "Saved reviews by month.", "reviews"),
-        ("verified-reviews", "Verifier-completed reviews",
-         "Reviews whose verifier pass completed by month.", "verified_reviews"),
-        ("findings", "Verified findings", "Published verified findings by month.", "findings"),
+        ("verified-reviews", "Current-engine verified reviews",
+         "Current-engine reviews whose verifier pass completed by month.", "verified_reviews"),
+        ("findings", "Exported findings", "Findings from supported engine exports by month.", "findings"),
         ("addressed", "Addressed findings by PR head commit date",
          "Addressed findings by month, based on the assessed PR head commit date.", "addressed"),
     ]

@@ -2,6 +2,7 @@
 import json
 import os
 import time
+from types import SimpleNamespace
 
 from .spend import price_usd
 from .config import AUDIT_NAMES
@@ -54,6 +55,58 @@ def _stage_turn_metrics(stage):
 def finding_attribution(debug):
     attribution = debug.get("finding_attribution") or []
     return list(attribution) if isinstance(attribution, list) else []
+
+
+def current_diagnostics(result):
+    """Return current-engine diagnostics only when their schema is declared."""
+    if not isinstance(result, dict):
+        return {}
+    engine = result.get("engine")
+    if not isinstance(engine, dict) or engine.get("name") != "current":
+        return {}
+    output = result.get("output")
+    if (isinstance(output, dict)
+            and type(output.get("schema_version")) is int
+            and output["schema_version"] == 1):
+        data = output.get("data")
+        if (isinstance(data, dict)
+                and type(data.get("schema_version")) is int
+                and data["schema_version"] == 1):
+            return data
+    run = result.get("run")
+    attempt = run.get("attempt") if isinstance(run, dict) else None
+    debug = attempt
+    if (isinstance(debug, dict) and type(debug.get("schema_version")) is int
+            and debug["schema_version"] == 1):
+        return debug
+    return {}
+
+
+def findings_export(result):
+    """Return exported findings, or None when the engine does not support them."""
+    if (not isinstance(result, dict)
+            or type(result.get("schema_version")) is not int
+            or result["schema_version"] != 1):
+        return None
+    output = result.get("output")
+    if (not isinstance(output, dict)
+            or type(output.get("schema_version")) is not int
+            or output["schema_version"] != 1):
+        return None
+    exports = output.get("exports")
+    findings = exports.get("findings") if isinstance(exports, dict) else None
+    return findings if isinstance(findings, list) else None
+
+
+def result_metrics(result):
+    run = result.get("run") if isinstance(result, dict) else None
+    metrics = run.get("metrics") if isinstance(run, dict) else None
+    return metrics if isinstance(metrics, dict) else None
+
+
+def result_engine(result):
+    engine = result.get("engine") if isinstance(result, dict) else None
+    return engine if isinstance(engine, dict) else {}
 
 
 def concept_assessment(debug):
@@ -161,11 +214,15 @@ def stage_metrics(debug):
     return {name: metrics[name] for name in sorted(metrics)}
 
 
-def review_metrics(debug, prompt_config):
-    stages = debug.get("stages", {})
-    turns = [(turn, stage.get("model")) for stage in stages.values()
-             for turn in stage.get("turns", [])]
-    tools = [tool for stage in stages.values() for tool in stage.get("tools", [])]
+def request_metrics(records):
+    """Summarize model and tool records without relying on engine stage names."""
+    if isinstance(records, dict):
+        records = records.values()
+    records = list(records or [])
+    turns = [(turn, record.get("model")) for record in records
+             if isinstance(record, dict) for turn in record.get("turns", [])]
+    tools = [tool for record in records if isinstance(record, dict)
+             for tool in record.get("tools", [])]
     priced = []
     unknown_usage = 0
     incomplete_usage = 0
@@ -184,11 +241,8 @@ def review_metrics(debug, prompt_config):
         if isinstance(turn.get("elapsed_seconds"), (int, float)):
             total_seconds += turn["elapsed_seconds"]
     model_turns = [turn for turn, _ in turns if "request_bytes" in turn]
-    metrics = {"model_turns": len(turns),
+    return {"model_turns": len(turns),
                "tool_calls": len(tools),
-               "audit_calls": sum(name in AUDIT_NAMES
-                                  and stage.get("status") != "skipped"
-                                  for name, stage in stages.items()),
                "estimated_cost_usd": (float(sum(priced)) if priced else 0),
                "known_usage_count": len(priced),
                "unknown_usage_count": unknown_usage,
@@ -198,16 +252,36 @@ def review_metrics(debug, prompt_config):
                "total_output_tokens": output_tokens,
                "total_model_seconds": round(total_seconds, 2),
                "model_responses": len(model_turns)}
+
+
+def review_metrics(debug, prompt_config):
+    stages = debug.get("stages", {})
+    metrics = request_metrics(stages)
+    metrics["audit_calls"] = sum(name in AUDIT_NAMES
+                                 and stage.get("status") != "skipped"
+                                 for name, stage in stages.items())
     return metrics
 
-def review_trace(debug, prompt_config):
-    prompt = prompt_config.instructions
-    metrics = review_metrics(debug, prompt_config)
-    trace = {"models": prompt_config.models, "endpoint": "/v1/responses", "store": False,
-             "instructions": debug.get("instructions", prompt),
-             "input": "PR text, patch, and commits omitted from public debug output",
-             "stages": _public_value(debug.get("stages", {})),
-             "budget": debug.get("budget")}
+def review_trace(result):
+    debug = current_diagnostics(result)
+    engine = result_engine(result)
+    run = result.get("run") if isinstance(result, dict) else {}
+    findings = findings_export(result)
+    trace = {
+        "engine": {key: engine.get(key) for key in
+                   ("name", "code_sha256", "config_sha256")},
+        "status": run.get("status") if isinstance(run, dict) else None,
+        "metrics": result_metrics(result),
+        "findings_export_status": "supported" if findings is not None else "unsupported",
+        "findings": findings,
+    }
+    if not debug:
+        return trace
+    trace.update({"endpoint": "/v1/responses", "store": False,
+                  "instructions": debug.get("instructions"),
+                  "input": "PR text, patch, and commits omitted from public debug output",
+                  "stages": _public_value(debug.get("stages", {})),
+                  "budget": run.get("budget") if isinstance(run, dict) else None})
     attribution = finding_attribution(debug)
     if attribution:
         trace["finding_attribution"] = attribution
@@ -236,7 +310,7 @@ def review_trace(debug, prompt_config):
         trace["pipeline_stage"] = debug["pipeline_stage"]
     if "decisions" in debug:
         trace["decisions"] = debug["decisions"]
-    trace.update(metrics)
+    trace.update(review_metrics(debug, _prompt_config(result)))
     trace["pricing_note"] = ("Estimated from token usage and hosted web searches at configured rates. "
                              "Unknown usage is excluded from this subtotal; the budget "
                              "includes uncertain reservations. Missing cache-write "
@@ -244,20 +318,24 @@ def review_trace(debug, prompt_config):
     return trace
 
 
-def save_review_trace(state_dir, number, head_sha, content, debug, prompt_config):
+def _prompt_config(result):
+    config = result_engine(result).get("config")
+    prompts = config.get("prompts") if isinstance(config, dict) else None
+    if not isinstance(prompts, dict):
+        return SimpleNamespace(models={}, instructions="")
+    models = prompts.get("models")
+    instructions = prompts.get("instructions", "")
+    if not isinstance(models, dict):
+        models = {}
+    return SimpleNamespace(models=models, instructions=instructions)
+
+
+def save_review_trace(state_dir, number, result):
     trace_dir = state_dir / "review-traces"
     trace_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    head_sha = result.get("head_sha", "unknown")
     path = trace_dir / f"{number}-{head_sha}-{time.time_ns()}.json"
-    record = {"pr": number, "head": head_sha, "review": content,
-              "stage_outputs": debug.get("stage_outputs", {}),
-              "stages": debug.get("stages", {}),
-              "budget": debug.get("budget"),
-              "ppq_budget": debug.get("ppq_budget"),
-              "candidate_sources": debug.get("candidate_sources", {}),
-              "decisions": debug.get("decisions", []),
-              "concept_assessment": debug.get("concept_assessment", {}),
-              "finding_attribution": debug.get("finding_attribution", []),
-              "trace": review_trace(debug, prompt_config)}
+    record = {**result, "pr": number, "trace": review_trace(result)}
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as file:
         json.dump(record, file, ensure_ascii=False, indent=2)

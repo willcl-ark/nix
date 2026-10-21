@@ -5,7 +5,7 @@ import json
 import re
 from datetime import datetime, timezone
 
-from . import model, repository
+from . import model, repository, trace
 
 
 MAX_CANDIDATES = 12
@@ -71,36 +71,21 @@ def _base(job):
     return result.get("base_sha") or job.get("base_ref")
 
 
-def _decision_findings(debug):
-    result = {}
-    index = 1
-    for decision in debug.get("decisions") or []:
-        if not isinstance(decision, dict) or decision.get("disposition") != "publish":
-            continue
-        finding = decision.get("finding")
-        if isinstance(finding, dict):
-            result[f"finding:{index}"] = finding
-            index += 1
-    return result
-
-
 def _published_findings(job):
     result = job.get("review_result") or {}
-    debug = result.get("debug") if isinstance(result, dict) else {}
-    if not isinstance(debug, dict):
-        return []
-    decisions = _decision_findings(debug)
+    exported = trace.findings_export(result)
+    if exported is None:
+        return None
     findings = []
-    for attribution in debug.get("finding_attribution") or []:
-        if not isinstance(attribution, dict):
+    for item in exported:
+        if not isinstance(item, dict):
             continue
-        finding_id = attribution.get("finding_id")
+        finding_id = item.get("id")
         if not isinstance(finding_id, str) or not finding_id:
             continue
-        decision = decisions.get(finding_id, {})
-        title = attribution.get("title") or decision.get("title")
-        path = attribution.get("path") or decision.get("path")
-        line = attribution.get("line") or decision.get("line") or 1
+        title = item.get("presented_title") or item.get("title")
+        path = item.get("path")
+        line = item.get("line") or 1
         if not isinstance(title, str) or not isinstance(path, str):
             continue
         if type(line) is not int or line < 1:
@@ -112,7 +97,7 @@ def _published_findings(job):
             "title": title,
             "path": path,
             "line": line,
-            "body": decision.get("body", ""),
+            "body": item.get("body", ""),
             "source_head": _head(job) or "",
         }
         finding["fingerprint"] = _fingerprint(finding)
@@ -123,7 +108,7 @@ def _published_findings(job):
 def _source_findings(history):
     sources = {}
     for job in history:
-        for finding in _published_findings(job):
+        for finding in _published_findings(job) or []:
             sources[(finding["source_job_id"], finding["source_generation"],
                      finding["finding_id"])] = finding
     return sources
@@ -188,7 +173,7 @@ def _apply_assessment(active, resolved_fingerprints, assessment, sources):
 
 def _add_published(active, resolved_fingerprints, job):
     active_fingerprints = {finding["fingerprint"] for finding in active.values()}
-    for finding in _published_findings(job):
+    for finding in _published_findings(job) or []:
         key = (finding["source_job_id"], finding["source_generation"],
                finding["finding_id"])
         fingerprint = finding["fingerprint"]
@@ -363,6 +348,10 @@ def assess_completed_review(api_key, checkout, current_job, history,
     new_head = _head(current_job)
     if assessed_from_head == new_head:
         record.update(status="skipped", reason="same_head",
+                      old_head=assessed_from_head, new_head=new_head)
+        return record
+    if _published_findings(history[0]) is None:
+        record.update(status="skipped", reason="findings_export_unsupported",
                       old_head=assessed_from_head, new_head=new_head)
         return record
     candidates = _candidate_findings(history, prior_assessments)

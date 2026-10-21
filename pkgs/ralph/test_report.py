@@ -163,9 +163,21 @@ class ReportTests(unittest.TestCase):
         }
 
     def save(self, directory, debug=None, content="Verified review text."):
+        debug = debug or self.debug()
+        result = {
+            "schema_version": 1,
+            "head_sha": "a" * 40,
+            "content": content,
+            "engine": {"name": "current", "config": {
+                "prompts": {"instructions": "",
+                            "models": self.prompt_config.models}}},
+            "output": {"schema_version": 1,
+                        "data": {"schema_version": 1, **debug},
+                        "exports": {"findings": []}},
+            "run": {"status": "completed", "metrics": {}, "attempt": {}},
+        }
         return report.save_report(
-            Path(directory), 123, "a" * 40, content, debug or self.debug(),
-            self.prompt_config, "123-abcdef"
+            Path(directory), 123, result, "123-abcdef"
         )
 
     def test_report_keeps_full_stage_replies_untruncated(self):
@@ -404,7 +416,7 @@ class ReportTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "safe filename"):
-                report.save_report(directory, 1, "h", "content", {}, self.prompt_config, "../bad")
+                report.save_report(directory, 1, {}, "../bad")
 
     def test_writes_use_temp_file_then_atomic_replace(self):
         calls = []

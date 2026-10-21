@@ -9,6 +9,9 @@ from unittest.mock import patch
 
 from ralph import jobs
 
+ENGINE = {"name": "current", "code_sha256": "a" * 64,
+          "config_sha256": "b" * 64, "config": {}}
+
 class JobStoreTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -17,7 +20,8 @@ class JobStoreTests(unittest.TestCase):
         self.store = jobs.JobStore(self.path)
 
     def enqueue(self, head="a" * 40, *, force=False):
-        return self.store.enqueue(42, "master", head, "synchronize", force)
+        return self.store.enqueue(42, "master", head, "synchronize", force,
+                                  engine_identity=ENGINE)
 
     def row(self, job):
         with closing(sqlite3.connect(self.path)) as db:
@@ -35,7 +39,13 @@ class JobStoreTests(unittest.TestCase):
                          (42, "a" * 40, 1))
         self.assertTrue(reopened.complete(job))
         self.assertFalse(reopened.enqueue(42, "master", "a" * 40,
-                                          "synchronize"))
+                                          "synchronize", engine_identity=ENGINE))
+        alternate = {**ENGINE, "name": "narrative", "config_sha256": "c" * 64}
+        self.assertTrue(reopened.enqueue(42, "master", "a" * 40,
+                                         "synchronize", engine_identity=alternate))
+        alternate_job = reopened.claim()
+        self.assertEqual((alternate_job["generation"],
+                          alternate_job["engine_identity"]), (2, alternate))
 
     def test_pending_head_coalesces_and_force_promotes_same_head(self):
         self.enqueue()
@@ -51,13 +61,13 @@ class JobStoreTests(unittest.TestCase):
     def test_base_change_with_same_head_starts_new_generation(self):
         self.enqueue()
         self.assertTrue(self.store.enqueue(42, "release", "a" * 40,
-                                           "edited"))
+                                           "edited", engine_identity=ENGINE))
         first = self.store.claim()
         self.assertEqual((first["base_ref"], first["generation"]),
                          ("release", 2))
         self.assertTrue(self.store.complete(first))
         self.assertTrue(self.store.enqueue(42, "master", "a" * 40,
-                                           "edited"))
+                                           "edited", engine_identity=ENGINE))
         second = self.store.claim()
         self.assertEqual((second["base_ref"], second["generation"]),
                          ("master", 3))
@@ -111,7 +121,7 @@ class JobStoreTests(unittest.TestCase):
 
     def test_recover_releases_multiple_running_claims(self):
         self.enqueue()
-        self.store.enqueue(43, "master", "b" * 40, "opened")
+        self.store.enqueue(43, "master", "b" * 40, "opened", engine_identity=ENGINE)
         first = self.store.claim()
         second = self.store.claim()
         self.assertEqual({first["number"], second["number"]}, {42, 43})
@@ -169,7 +179,7 @@ class JobStoreTests(unittest.TestCase):
 
     def test_simultaneous_claims_get_distinct_jobs_once(self):
         self.enqueue()
-        self.store.enqueue(43, "master", "b" * 40, "opened")
+        self.store.enqueue(43, "master", "b" * 40, "opened", engine_identity=ENGINE)
         with ThreadPoolExecutor(max_workers=8) as pool:
             claims = list(pool.map(lambda _: self.store.claim(), range(8)))
         self.assertEqual({claim["number"] for claim in claims if claim},
@@ -180,7 +190,7 @@ class JobStoreTests(unittest.TestCase):
         self.enqueue()
         first = self.store.claim()
         self.enqueue("b" * 40)
-        self.store.enqueue(43, "master", "c" * 40, "opened")
+        self.store.enqueue(43, "master", "c" * 40, "opened", engine_identity=ENGINE)
 
         second = self.store.claim()
         self.assertEqual(second["number"], 43)
@@ -193,7 +203,7 @@ class JobStoreTests(unittest.TestCase):
         running = self.store.claim()
         result = {"content": "Saved review"}
         self.assertTrue(self.store.save_result(running, result))
-        self.store.enqueue(43, "master", "b" * 40, "opened")
+        self.store.enqueue(43, "master", "b" * 40, "opened", engine_identity=ENGINE)
         with closing(sqlite3.connect(self.path)) as db:
             db.execute("DROP INDEX jobs_one_running_per_pr")
             db.execute("CREATE UNIQUE INDEX jobs_one_running "

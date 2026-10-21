@@ -477,7 +477,7 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("research complete; no concern", html)
         self.assertIn("Shared findings are credited to each contributing agent", html)
         self.assertIn("Paired model reviews", html)
-        self.assertIn("Verifier-completed reviews", html)
+        self.assertIn("Current-engine verified reviews", html)
         self.assertIn("Addressed findings follow the commit date of the PR head", html)
         self.assertIn("Addressed findings by PR head commit date", html)
         self.assertIn("Undated records are excluded: 1 reviews, 1 addressed findings.", html)
@@ -612,7 +612,9 @@ class StatsPageTests(unittest.TestCase):
             report_dir = state_dir / "reports"
             jobs = JobStore(state_dir / "jobs.sqlite3", max_attempts=2,
                             retry_base_seconds=0)
-            jobs.enqueue(42, "master", "a" * 40, "synchronize")
+            jobs.enqueue(42, "master", "a" * 40, "synchronize",
+                         engine_identity={"name": "current", "code_sha256": None,
+                                          "config_sha256": None, "config": None})
             job = jobs.claim()
             result = self.collector_result()
             self.assertTrue(jobs.save_result(job, result))
@@ -671,11 +673,7 @@ class StatsPageTests(unittest.TestCase):
         })
 
     def collector_result(self):
-        return {
-            "base_sha": "b" * 40,
-            "head_sha": "a" * 40,
-            "content": "PRIVATE review body must not leak",
-            "debug": {
+        debug = {
                 "coverage": {"status": "complete", "limitations": []},
                 "candidate_sources": {
                     "independent:1": "independent",
@@ -727,7 +725,26 @@ class StatsPageTests(unittest.TestCase):
                         "tools": [],
                     },
                 },
-            },
+        }
+        finding = debug["decisions"][0]["finding"]
+        return {
+            "schema_version": 1,
+            "base_sha": "b" * 40,
+            "head_sha": "a" * 40,
+            "content": "PRIVATE review body must not leak",
+            "engine": {"name": "current", "code_sha256": None,
+                       "config_sha256": None, "config": None},
+            "output": {"schema_version": 1,
+                       "data": {"schema_version": 1, **debug},
+                       "exports": {"findings": [{
+                           "id": "finding:1", **finding,
+                           "presented_title": finding["title"],
+                           "presented_body": finding["body"],
+                           "raised_by": ["independent", "adversarial", "adversarial_glm"],
+                           "verified_by": "verifier",
+                       }]}},
+            "run": {"status": "completed", "metrics": {}, "attempt": {},
+                    "skipped": False},
         }
 
 

@@ -24,15 +24,37 @@ def response(text):
 
 
 def completed_job(job_id, generation, head, debug, content="Review."):
+    attribution = debug.get("finding_attribution", [])
+    decisions = [decision.get("finding") or {} for decision in debug.get("decisions", [])
+                 if decision.get("disposition") == "publish"]
+    findings = []
+    for index, item in enumerate(attribution):
+        finding = decisions[index] if index < len(decisions) else {}
+        findings.append({
+            "id": item["finding_id"],
+            "kind": finding.get("kind", "defect"),
+            "severity": finding.get("severity", "major"),
+            "path": item.get("path") or finding.get("path"),
+            "line": item.get("line") or finding.get("line"),
+            "side": item.get("side") or finding.get("side"),
+            "title": finding.get("title") or item.get("title", ""),
+            "body": finding.get("body", ""),
+            "presented_title": item.get("title") or finding.get("title", ""),
+            "presented_body": finding.get("body", ""),
+        })
     return {
         "id": job_id,
         "number": 42,
         "generation": generation,
         "head": head,
         "review_result": {
+            "schema_version": 1,
             "head_sha": head,
             "content": content,
-            "debug": debug,
+            "engine": {"name": "current"},
+            "output": {"schema_version": 1, "data": {"schema_version": 1, **debug},
+                        "exports": {"findings": findings}},
+            "run": {"status": "completed", "metrics": {}, "attempt": {}},
         },
     }
 
@@ -226,6 +248,16 @@ class FollowupTests(unittest.TestCase):
                 prior, self.prompt_config, self.budget)
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(result["reason"], "no_previous_findings")
+        request.assert_not_called()
+
+        unsupported = completed_job(3, 3, OLD_HEAD, {})
+        del unsupported["review_result"]["output"]["exports"]["findings"]
+        with patch.object(followup.model, "request_response") as request:
+            result = followup.assess_completed_review(
+                "api-key", Path("/checkout"), self.current, [unsupported], {},
+                self.prompt_config, self.budget)
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "findings_export_unsupported")
         request.assert_not_called()
 
     def test_first_assessment_uses_latest_review_without_historical_backfill(self):

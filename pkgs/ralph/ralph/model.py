@@ -149,7 +149,8 @@ class StaleReview(Exception):
 
 
 def request_response(api_key, data, stage_name, on_response=None, budget=None,
-                     is_current=None, api_base="https://api.openai.com/v1"):
+                     is_current=None, api_base="https://api.openai.com/v1",
+                     timeout=180):
     if is_current is not None and not is_current():
         raise StaleReview("review head changed before model request")
     payload = json.dumps(data).encode()
@@ -159,8 +160,6 @@ def request_response(api_key, data, stage_name, on_response=None, budget=None,
         headers={"Authorization": f"Bearer {api_key}",
                  "Content-Type": "application/json"}, method="POST",
     )
-    timeout = (600 if stage_name == "verifier" and data.get("tool_choice") == "none"
-               else 180)
     started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -247,9 +246,11 @@ def hosted_search_outputs(result):
 
 def run_audit(api_key, name, prompt, review, prompt_config, notes="", on_response=None,
               budget=None, response_schema=None, reasoning_effort="low",
-              is_current=None, debug=None):
-    model = prompt_config.models[name]
-    output_tokens = (MAX_COLLATOR_OUTPUT_TOKENS if name == "collator"
+              is_current=None, debug=None, model_name=None,
+              max_output_tokens=None):
+    model = model_name or prompt_config.models[name]
+    output_tokens = (max_output_tokens if max_output_tokens is not None else
+                     MAX_COLLATOR_OUTPUT_TOKENS if name == "collator"
                      else MAX_AUDIT_OUTPUT_TOKENS)
     input_text = review + ("\n\nMerge-base doc/developer-notes.md:\n" + notes
                            if name == "developer_notes" else "")
@@ -307,7 +308,7 @@ def openai_review(api_key, review, snapshot, bot_config, prompt_config, debug=No
                   on_response=None, budget=None, response_schema=None,
                   reasoning_effort="low", allow_discussions=True,
                   is_current=None, api_base="https://api.openai.com/v1",
-                  research_evidence=None):
+                  research_evidence=None, timeout=180, final_timeout=180):
     prompt = prompt_config.instructions if prompt is None else prompt
     model = prompt_config.models["independent"] if model is None else model
     tools = available_tools(TOOLS if tools is None else tools,
@@ -358,6 +359,7 @@ def openai_review(api_key, review, snapshot, bot_config, prompt_config, debug=No
         try:
             result, payload, elapsed = request_response(
                 api_key, data, stage_name, on_response, budget, is_current,
+                timeout=(final_timeout if tool_choice == "none" else timeout),
                 **request_options)
         except StaleReview:
             if stage_debug is not None:
@@ -382,7 +384,7 @@ def openai_review(api_key, review, snapshot, bot_config, prompt_config, debug=No
             try:
                 result, payload, elapsed = request_response(
                     api_key, data, stage_name, on_response, budget, is_current,
-                    **request_options)
+                    timeout=final_timeout, **request_options)
             except StaleReview:
                 if stage_debug is not None:
                     stage_debug.update(status="stale", error="StaleReview")

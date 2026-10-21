@@ -14,6 +14,20 @@ class TraceAttributionTests(unittest.TestCase):
             models={"independent": "gpt-6-luna", "verifier": "gpt-6-luna",
                     "collator": "gpt-6-luna"})
 
+    def result(self, debug, head="a" * 40, content="Review."):
+        return {
+            "schema_version": 1,
+            "head_sha": head,
+            "content": content,
+            "engine": {"name": "current", "config": {
+                "prompts": {"instructions": self.prompt_config.instructions,
+                            "models": self.prompt_config.models}}},
+            "output": {"schema_version": 1,
+                        "data": {"schema_version": 1, **debug},
+                        "exports": {"findings": []}},
+            "run": {"status": "completed", "metrics": {}, "attempt": {}},
+        }
+
     def test_favorable_public_assessment_is_not_counted_as_a_concern(self):
         debug = {
             "concept_assessment": {
@@ -124,10 +138,10 @@ class TraceAttributionTests(unittest.TestCase):
         }
 
         with tempfile.TemporaryDirectory() as directory:
-            filename = report.save_report(Path(directory), 42, "a" * 40,
-                                          "Review.", debug, self.prompt_config, "42-run")
+            filename = report.save_report(Path(directory), 42,
+                                          self.result(debug), "42-run")
             rendered = (Path(directory) / filename).read_text()
-        public = trace.review_trace(debug, self.prompt_config)
+        public = trace.review_trace(self.result(debug))
 
         self.assertIsNone(public["finding_attribution"][0]["edited_by"])
         self.assertIn("<td>independent:1</td><td>verifier</td><td></td>", rendered)
@@ -143,7 +157,7 @@ class TraceAttributionTests(unittest.TestCase):
                                        "turns": [], "tools": []}},
         }
 
-        public = trace.review_trace(debug, self.prompt_config)
+        public = trace.review_trace(self.result(debug))
 
         self.assertNotIn("finding_attribution", public)
         self.assertEqual(
@@ -209,8 +223,8 @@ class TraceAttributionTests(unittest.TestCase):
         }
 
         with tempfile.TemporaryDirectory() as directory:
-            filename = report.save_report(Path(directory), 42, "a" * 40,
-                                          "Review.", debug, self.prompt_config, "42-run")
+            filename = report.save_report(Path(directory), 42,
+                                          self.result(debug), "42-run")
             rendered = (Path(directory) / filename).read_text()
 
         table = rendered.split("<table>", 1)[1].split("</table>", 1)[0]
@@ -220,7 +234,7 @@ class TraceAttributionTests(unittest.TestCase):
         self.assertIn("agent&lt;one&gt;", table)
         self.assertNotIn("<script>alert", table)
 
-    def test_private_trace_keeps_top_level_attribution_inputs(self):
+    def test_private_trace_preserves_the_schema_versioned_envelope(self):
         debug = {
             "candidate_sources": {"independent:1": "independent"},
             "decisions": [{"candidate_ids": ["independent:1"], "disposition": "drop",
@@ -230,16 +244,21 @@ class TraceAttributionTests(unittest.TestCase):
         }
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = trace.save_review_trace(Path(tmp), 123, "head", "review", debug,
-                                           self.prompt_config)
+            result = self.result(debug, head="head", content="review")
+            result.update(base_sha="base", merge_base_sha="merge-base")
+            result["engine"] = {"name": "narrative", "code_sha256": None,
+                                "config_sha256": None, "config": None}
+            result["output"] = {"schema_version": 7,
+                                "data": {"schema_version": 9, "native": "data"},
+                                "exports": {"custom": ["native export"]}}
+            result["run"]["attempt"] = {"partial": "attempt data"}
+            path = trace.save_review_trace(Path(tmp), 123, result)
             record = json.loads(path.read_text(encoding="utf-8"))
 
-        self.assertEqual(record["candidate_sources"], debug["candidate_sources"])
-        self.assertEqual(record["decisions"], debug["decisions"])
-        self.assertEqual(record["finding_attribution"], [])
+        self.assertEqual(record, {**result, "pr": 123, "trace": trace.review_trace(result)})
 
     def test_public_trace_omits_stale_global_token_limits(self):
-        public = trace.review_trace({"stages": {}}, self.prompt_config)
+        public = trace.review_trace(self.result({"stages": {}}))
 
         self.assertNotIn("max_output_tokens", public)
         self.assertNotIn("verifier_max_output_tokens", public)

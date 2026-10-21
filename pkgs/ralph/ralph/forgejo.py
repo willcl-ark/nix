@@ -424,11 +424,22 @@ def find_comment(bot_config, token, number, bot_login):
         raise ValueError("Review marker belongs to another user")
     return None
 
-def review_body(bot_config, prompt_config, base_sha, head_sha, content, debug=None):
-    report_link = (f"\n[Full review report](<{debug['report_url']}>)\n"
-                   if debug is not None and debug.get("report_url") else "")
+def engine_marker(engine_identity):
+    if engine_identity is None:
+        return None
+    name = engine_identity.get("name") or "unknown"
+    code = engine_identity.get("code_sha256") or "unknown"
+    config = engine_identity.get("config_sha256") or "unknown"
+    return f"<!-- ralph-engine:{name}:{code}:{config} -->"
+
+
+def review_body(bot_config, base_sha, head_sha, content,
+                *, report_url=None, engine_identity=None):
+    report_link = f"\n[Full review report](<{report_url}>)\n" if report_url else ""
+    marker = engine_marker(engine_identity)
+    identity_marker = f"{marker}\n" if marker else ""
     return (f"{bot_config.comment_marker}\n"
-            f"Base: `{base_sha}`  \nHead: `{head_sha}`\n\n"
+            f"{identity_marker}Base: `{base_sha}`  \nHead: `{head_sha}`\n\n"
             f"{content.strip()}\n"
             f"{report_link}")
 
@@ -436,8 +447,20 @@ def comment_matches_head(comment, head_sha):
     return (comment is not None
             and f"Head: `{head_sha}`" in comment.get("body", "").splitlines()[:5])
 
-def publish_review(bot_config, prompt_config, token, number, bot_login, base_sha, head_sha, content, debug=None):
-    body = review_body(bot_config, prompt_config, base_sha, head_sha, content, debug)
+
+def comment_matches_engine(comment, base_sha, head_sha, engine_identity):
+    if comment is None:
+        return False
+    expected = engine_marker(engine_identity)
+    lines = [line.strip() for line in comment.get("body", "").splitlines()[:5]]
+    return (expected in lines
+            and f"Base: `{base_sha}`" in lines
+            and f"Head: `{head_sha}`" in lines)
+
+def publish_review(bot_config, token, number, bot_login, base_sha, head_sha,
+                   content, *, engine_identity=None, report_url=None):
+    body = review_body(bot_config, base_sha, head_sha, content,
+                       report_url=report_url, engine_identity=engine_identity)
     comment = find_comment(bot_config, token, number, bot_login)
     # Check as close as possible to publication, after paginating old comments.
     if current_head(bot_config, number) != head_sha:

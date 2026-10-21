@@ -44,12 +44,29 @@ class FollowupIntegrationTests(unittest.TestCase):
             }
 
             def complete(head, debug):
-                jobs.enqueue(42, "master", head, "synchronize")
+                identity = {"name": "current", "code_sha256": None,
+                            "config_sha256": None, "config": None}
+                jobs.enqueue(42, "master", head, "synchronize",
+                             engine_identity=identity)
                 job = jobs.claim()
+                exports = []
+                for attribution in debug.get("finding_attribution", []):
+                    finding = next((decision["finding"] for decision in
+                                    debug.get("decisions", [])
+                                    if decision.get("disposition") == "publish"), {})
+                    exports.append({"id": attribution["finding_id"], **finding,
+                                    "presented_title": attribution.get("title", finding.get("title")),
+                                    "presented_body": finding.get("body", "")})
                 jobs.save_result(job, {
+                    "schema_version": 1,
                     "base_sha": old_head, "head_sha": head,
                     "content": "Reject a zero divisor." if debug else "No issues.",
-                    "debug": debug,
+                    "engine": identity,
+                    "output": {"schema_version": 1,
+                               "data": {"schema_version": 1, **debug},
+                               "exports": {"findings": exports}},
+                    "run": {"status": "completed", "metrics": {},
+                            "attempt": {}, "skipped": False},
                 })
                 jobs.complete(job)
                 return job

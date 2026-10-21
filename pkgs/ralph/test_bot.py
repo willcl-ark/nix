@@ -27,6 +27,22 @@ class BotTests(unittest.TestCase):
             checkout, "b" * 40, "a" * 40, "b" * 40,
             files or {}, {}, frozenset())
 
+    def review_result(self, debug, *, head_sha="a" * 40, content="Public comment",
+                      exports=None):
+        return {
+            "schema_version": 1,
+            "engine": {"name": "current", "code_sha256": "c" * 64,
+                       "config_sha256": "d" * 64,
+                       "config": {"models": self.prompt_config.models}},
+            "base_sha": "b" * 40,
+            "head_sha": head_sha,
+            "content": content,
+            "output": {"schema_version": 1,
+                       "data": {"schema_version": 1, **debug},
+                       "exports": exports or {}},
+            "run": {"status": "completed", "metrics": {}, "attempt": {}},
+        }
+
 
     def test_config_derives_repository_url_and_default_marker(self):
         self.assertEqual(self.bot_config.repository_url, "https://git.fish.foo/bitcoin/bitcoin")
@@ -43,10 +59,8 @@ class BotTests(unittest.TestCase):
 
     def test_review_comment_links_to_full_report_and_keeps_commit_header(self):
         url = "https://review.example.org/traces/42-run.html"
-        body = forgejo.review_body(self.bot_config, self.prompt_config,
-                                   "b" * 40, "a" * 40, "Review text.",
-                                   {"report_url": url,
-                                    "stage_outputs": {"tests": "Preliminary candidate"}})
+        body = forgejo.review_body(self.bot_config, "b" * 40, "a" * 40,
+                                   "Review text.", report_url=url)
         self.assertIn(f"[Full review report](<{url}>)", body)
         self.assertIn(f"Head: `{'a' * 40}`", body.splitlines()[:5])
         self.assertNotIn("Review debug", body)
@@ -652,8 +666,8 @@ class BotTests(unittest.TestCase):
             "review_input_sha256": debug["review_input_sha256"],
             "stages": {"independent": debug},
         }
-        body = forgejo.review_body(self.bot_config, self.prompt_config, "b" * 40,
-                                   "a" * 40, "No findings.", review_debug)
+        body = forgejo.review_body(self.bot_config, "b" * 40,
+                                   "a" * 40, "No findings.")
         self.assertNotIn("Review debug", body)
         self.assertNotIn("review_input_sha256", body)
         self.assertNotIn("1: full context", body)
@@ -671,9 +685,11 @@ class BotTests(unittest.TestCase):
                                 "output_bytes": 19, "output_sha256": "a" * 64}],
                      "raw_output": "No findings."}},
                  "stage_outputs": {"tests": "</pre><script>alert(1)</script>"}}
-        body = forgejo.review_body(self.bot_config, self.prompt_config, "b" * 40, "a" * 40, "Review text.", debug)
+        body = forgejo.review_body(self.bot_config, "b" * 40, "a" * 40,
+                                   "Review text.")
         metrics = trace.review_metrics(debug, self.prompt_config)
-        public_trace = trace.review_trace(debug, self.prompt_config)
+        result = self.review_result(debug)
+        public_trace = trace.review_trace(result)
         self.assertEqual(metrics["estimated_cost_usd"], 0.000011)
         self.assertEqual(metrics["total_input_tokens"], 100)
         self.assertEqual(metrics["total_output_tokens"], 5)
@@ -690,11 +706,12 @@ class BotTests(unittest.TestCase):
             debug = {"stages": {"tests": {"model": "gpt-6-luna", "turns": [],
                                              "tools": [], "raw_output": output}},
                      "stage_outputs": {"tests": output, "verifier": "DROP weak claim"}}
-            path = trace.save_review_trace(state_dir, 34486, "a" * 40, "Public comment", debug, self.prompt_config)
+            result = self.review_result(debug, content="Public comment")
+            path = trace.save_review_trace(state_dir, 34486, result)
             saved = json.loads(path.read_text())
-            self.assertEqual(saved["stages"]["tests"]["raw_output"], output)
-            self.assertEqual(saved["stage_outputs"]["tests"], output)
-            self.assertEqual(saved["review"], "Public comment")
+            self.assertEqual(saved["output"]["data"]["stages"]["tests"]["raw_output"], output)
+            self.assertEqual(saved["output"]["data"]["stage_outputs"]["tests"], output)
+            self.assertEqual(saved["content"], "Public comment")
             self.assertTrue(saved["trace"]["stage_outputs"]["tests"]["truncated"])
             self.assertLessEqual(len(saved["trace"]["stage_outputs"]["tests"]["text"].encode()),
                                  trace.MAX_PUBLIC_STAGE_OUTPUT_BYTES)
@@ -738,7 +755,7 @@ class BotTests(unittest.TestCase):
     def test_review_body_starts_with_commit_ids(self):
         base = "b" * 40
         head = "a" * 40
-        body = forgejo.review_body(self.bot_config, self.prompt_config, base, head, "No findings.")
+        body = forgejo.review_body(self.bot_config, base, head, "No findings.")
         self.assertTrue(body.startswith(
             f"{self.bot_config.comment_marker}\nBase: `{base}`  \nHead: `{head}`\n\n"))
         self.assertNotIn("First-pass review", body)
@@ -839,9 +856,9 @@ class BotTests(unittest.TestCase):
         with patch.object(forgejo, "forgejo_request", side_effect=request), \
                 patch.object(forgejo, "current_head", return_value="a" * 40):
             args = ("token", 42, "ralph", "b" * 40, "a" * 40)
-            self.assertEqual(forgejo.publish_review(self.bot_config, self.prompt_config, *args, "First review."), "created")
-            self.assertEqual(forgejo.publish_review(self.bot_config, self.prompt_config, *args, "First review."), "unchanged")
-            self.assertEqual(forgejo.publish_review(self.bot_config, self.prompt_config, *args, "Updated review."), "updated")
+            self.assertEqual(forgejo.publish_review(self.bot_config, *args, "First review."), "created")
+            self.assertEqual(forgejo.publish_review(self.bot_config, *args, "First review."), "unchanged")
+            self.assertEqual(forgejo.publish_review(self.bot_config, *args, "Updated review."), "updated")
         self.assertEqual([method for _, method, _ in calls if method != "GET"],
                          ["POST", "PATCH"])
         self.assertEqual(comments[-1]["id"], 2)
@@ -886,7 +903,7 @@ class BotTests(unittest.TestCase):
 
         with patch.object(forgejo, "forgejo_request", side_effect=request), \
                 patch.object(forgejo, "current_head", return_value="a" * 40):
-            self.assertEqual(forgejo.publish_review(self.bot_config, self.prompt_config, "token", 42, "ralph",
+            self.assertEqual(forgejo.publish_review(self.bot_config, "token", 42, "ralph",
                                                 "b" * 40, "a" * 40, "Review"),
                              "updated")
         self.assertIn(("/issues/comments/73", "PATCH"), calls)
@@ -902,7 +919,7 @@ class BotTests(unittest.TestCase):
 
         with patch.object(forgejo, "forgejo_request", side_effect=request), \
                 patch.object(forgejo, "current_head", return_value="c" * 40):
-            self.assertEqual(forgejo.publish_review(self.bot_config, self.prompt_config, "token", 42, "ralph",
+            self.assertEqual(forgejo.publish_review(self.bot_config, "token", 42, "ralph",
                                                 "b" * 40, "a" * 40, "Review"),
                              "stale")
         self.assertTrue(all(method == "GET" for _, method in calls))

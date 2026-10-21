@@ -14,7 +14,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import badge, config, forgejo, model, pipeline, report, repository, spend, trace
+from . import badge, config, engine, forgejo, model, report, repository, spend, trace
 from .jobs import JobStore
 from .repository import BRANCH, SHA
 
@@ -61,33 +61,55 @@ def parse_event(bot_config, event, payload):
         base_ref = f"sha:{historical_base}"
     return number, base_ref, head_sha, payload["action"], force
 
-def requeue_latest_head(jobs, bot_config, number, base_ref, expected_head, action, force):
+def requeue_latest_head(jobs, bot_config, number, base_ref, expected_head, action,
+                        engine_identity, force):
     latest_head = repository.current_head(bot_config, number)
     if latest_head == expected_head:
         return
     logging.info("review stale head pr=%d expected=%s latest=%s; requeueing",
                  number, short_sha(expected_head), short_sha(latest_head))
-    jobs.enqueue(number, base_ref, latest_head, action, force)
+    jobs.enqueue(number, base_ref, latest_head, action, force,
+                 engine_identity=engine_identity)
 
 def short_sha(sha):
     return sha[:12]
 
+
+def _budget_summary(budget, attempt, name):
+    if budget is None:
+        return None
+    try:
+        return budget.summary()
+    except sqlite3.Error:
+        return attempt.get(name)
+
 def metric_value(value):
     return "unknown" if value is None else value
 
-def log_review_outcome(number, action, head_sha, outcome, started, debug, prompt_config,
+
+def _read_engine_config(path, parser):
+    if path is None:
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        parser.error(f"could not read engine configuration: {exc}")
+    if not isinstance(value, dict):
+        parser.error("engine configuration must be a JSON object")
+    return value
+
+def log_review_outcome(number, action, head_sha, outcome, started, debug, metrics,
                        level=logging.INFO, stage=None, error_type=None,
                        http_status=None, http_host=None):
-    metrics = trace.review_metrics(debug, prompt_config)
     message = ("review outcome pr=%d action=%s head=%s outcome=%s "
-               "elapsed_seconds=%.2f model_turns=%d audit_calls=%d tool_calls=%d "
+               "elapsed_seconds=%.2f model_turns=%s tool_calls=%s "
                "input_tokens=%s output_tokens=%s estimated_usd=%s")
     values = [number, action, short_sha(head_sha), outcome,
-              time.monotonic() - started, metrics["model_turns"],
-              metrics["audit_calls"], metrics["tool_calls"],
-              metric_value(metrics["total_input_tokens"]),
-              metric_value(metrics["total_output_tokens"]),
-              metric_value(metrics["estimated_cost_usd"])]
+              time.monotonic() - started, metric_value(metrics.get("model_turns")),
+              metric_value(metrics.get("tool_calls")),
+              metric_value(metrics.get("total_input_tokens")),
+              metric_value(metrics.get("total_output_tokens")),
+              metric_value(metrics.get("estimated_cost_usd"))]
     if stage is not None:
         message += " stage=%s error_type=%s http_status=%s http_host=%s"
         values.extend([stage, error_type, metric_value(http_status),
@@ -102,8 +124,8 @@ def retryable_error(exc):
 
 
 def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
-                bot_config, prompt_config, ledger, routing_mode="enabled",
-                allow_discussions=True, ppq_api_key=None, ppq_ledger=None):
+                bot_config, ledger, review_engine, allow_discussions=True,
+                ppq_api_key=None, ppq_ledger=None):
     number = job["number"]
     base_ref = job["base_ref"]
     expected_head = job["head"]
@@ -114,9 +136,18 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
     started = time.monotonic()
     debug = {}
     content = ""
+    output = None
+    result_record = None
+    engine_identity = (review_engine.identity if review_engine is not None
+                       else job["engine_identity"])
     stage = "precheck"
     outcome = "failed"
     failure = None
+    runtime = None
+    run_status = "failed"
+    base_sha = None
+    head_sha = expected_head
+    merge_base = None
     budget = spend.RequestBudget(
         ledger, review_id=f'pr:{number}:{job["id"]}:{job["generation"]}')
 
@@ -133,6 +164,10 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
                          short_sha(expected_head), force)
             saved = job["review_result"]
             if saved is None:
+                if review_engine is None:
+                    raise ValueError("queued review engine is unavailable")
+                if job["engine_identity"] != engine_identity:
+                    raise ValueError("queued engine identity no longer matches this worker")
                 if not is_current():
                     raise model.StaleReview("PR head changed")
                 comment = (None if force else forgejo.find_comment(
@@ -147,35 +182,61 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
                         bot_config, ref_prefix=ref_prefix)
                     if head_sha != expected_head:
                         if jobs.is_current(job):
-                            jobs.enqueue(number, base_ref, head_sha, action, force)
+                            jobs.enqueue(number, base_ref, head_sha, action, force,
+                                         engine_identity=engine_identity)
                         raise model.StaleReview("PR head changed during fetch")
-                    if (forgejo.comment_matches_head(comment, head_sha)
-                            and f"Base: `{base_sha}`" in [line.strip() for line in comment["body"].splitlines()[:5]]):
+                    if forgejo.comment_matches_engine(comment, base_sha, head_sha,
+                                                       engine_identity):
                         jobs.complete(job)
                         outcome = "already-reviewed"
                         return outcome
                     snapshot = (None if skip else repository.snapshot_repository(
                         checkout, base_sha, head_sha))
+                    merge_base = getattr(snapshot, "merge_base", None)
                 debug = {"skip": skip} if skip else {}
                 stage = "model"
-                content = (f"Skipped: {skip}" if skip else
-                           pipeline.review_with_independent_passes(
-                               api_key, review, snapshot, bot_config, prompt_config,
-                               number, debug, budget=budget, is_current=is_current,
-                               routing_mode=routing_mode,
-                               allow_discussions=allow_discussions, ppq_api_key=ppq_api_key,
-                               ppq_budget=ppq_budget))
-                debug["budget"] = budget.summary()
-                saved = {"base_sha": base_sha, "head_sha": head_sha,
-                         "content": content, "debug": debug}
+                if skip:
+                    output = engine.Output(f"Skipped: {skip}", {}, {})
+                else:
+                    case = engine.ReviewCase(number, review, snapshot,
+                                             bot_config.repository_url or "", None)
+                    runtime = engine.Runtime(
+                        case=case, bot_config=bot_config, api_key=api_key,
+                        ppq_api_key=ppq_api_key, budget=budget,
+                        ppq_budget=ppq_budget, is_current=is_current,
+                        allow_discussions=allow_discussions, attempt=debug)
+                    output = review_engine.run(case, runtime)
+                debug = runtime.attempt if runtime else debug
+                content = output.content
+                run_status = "completed"
+                saved = {
+                    "schema_version": 1,
+                    "engine": engine_identity,
+                    "base_sha": base_sha,
+                    "head_sha": head_sha,
+                    "merge_base": getattr(snapshot, "merge_base", None),
+                    "content": content,
+                    "output": {"schema_version": output.schema_version,
+                               "data": output.data, "exports": output.exports},
+                    "run": {"review_id": budget.review_id, "status": "completed",
+                            "metrics": runtime.metrics() if runtime else {},
+                            "skipped": bool(skip),
+                            "budget": budget.summary(),
+                            "ppq_budget": (ppq_budget.summary()
+                                           if ppq_budget is not None else None),
+                            "attempt": debug},
+                }
                 if not jobs.save_result(job, saved):
                     outcome = "superseded"
                     return outcome
             else:
+                result_record = saved
+                engine_identity = saved["engine"]
                 base_sha = saved["base_sha"]
                 head_sha = saved["head_sha"]
                 content = saved["content"]
-                debug = saved["debug"]
+                debug = saved["run"]["attempt"]
+            result_record = saved
             if not is_current():
                 raise model.StaleReview("PR head changed before publication")
             if bot_config.report_dir is not None:
@@ -183,21 +244,23 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
                 report_id = f'{number}-{head_sha}-{job["id"]}-{job["generation"]}'
                 try:
                     filename = report.save_report(
-                        bot_config.report_dir, number, head_sha, content, debug,
-                        prompt_config, report_id)
-                    debug["report_url"] = f"{bot_config.report_base_url}/{filename}"
+                        bot_config.report_dir, number, result_record, report_id)
+                    result_record["run"]["report_url"] = (
+                        f"{bot_config.report_base_url}/{filename}")
                 except OSError as exc:
-                    debug.pop("report_url", None)
+                    result_record["run"].pop("report_url", None)
                     logging.warning("Could not save public review report for PR %d: %s",
                                     number, type(exc).__name__)
             stage = "publish"
-            result = forgejo.publish_review(bot_config, prompt_config, forgejo_token,
+            result = forgejo.publish_review(bot_config, forgejo_token,
                                             number, bot_login, base_sha, head_sha,
-                                            content, debug)
+                                            content,
+                                            engine_identity=engine_identity,
+                                            report_url=result_record["run"].get("report_url"))
             if result == "stale":
                 if jobs.is_current(job):
                     requeue_latest_head(jobs, bot_config, number, base_ref,
-                                        head_sha, action, force)
+                                        head_sha, action, engine_identity, force)
                 jobs.supersede(job)
             else:
                 jobs.complete(job)
@@ -207,9 +270,10 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
             stage = "stale"
             if jobs.is_current(job):
                 requeue_latest_head(jobs, bot_config, number, base_ref,
-                                    expected_head, action, force)
+                                    expected_head, action, engine_identity, force)
             jobs.supersede(job)
             outcome = "stale"
+            run_status = "cancelled"
             return outcome
     except Exception as exc:
         failure = exc
@@ -226,16 +290,26 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
             except (OSError, subprocess.SubprocessError) as exc:
                 logging.warning("Could not release review refs for PR %d: %s",
                                 number, type(exc).__name__)
-        if debug and "budget" not in debug:
+        if runtime is not None and job["review_result"] is None:
             try:
-                debug["budget"] = budget.summary()
-            except sqlite3.Error as exc:
-                logging.error("Could not read review spend summary: %s",
-                              type(exc).__name__)
-        if debug and job["review_result"] is None:
-            try:
-                trace.save_review_trace(state_dir, number, expected_head,
-                                        content, debug, prompt_config)
+                if result_record is None:
+                    result_record = {
+                        "schema_version": 1, "engine": engine_identity,
+                        "base_sha": base_sha, "head_sha": head_sha,
+                        "merge_base": merge_base, "content": content or None,
+                        "output": (None if output is None else {
+                            "schema_version": output.schema_version,
+                            "data": output.data, "exports": output.exports}),
+                        "run": {"review_id": budget.review_id,
+                                "status": run_status,
+                                "metrics": runtime.metrics() if runtime else {},
+                                "skipped": False,
+                                "budget": _budget_summary(budget, debug, "budget"),
+                                "ppq_budget": _budget_summary(ppq_budget, debug,
+                                                              "ppq_budget"),
+                                "attempt": debug},
+                    }
+                trace.save_review_trace(state_dir, number, result_record)
             except (OSError, TypeError, ValueError) as exc:
                 logging.warning("Could not save private review trace for PR %d: %s",
                                 number, type(exc).__name__)
@@ -243,7 +317,7 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
         http_host = (urllib.parse.urlsplit(failure.url or "").hostname
                      if isinstance(failure, urllib.error.HTTPError) else None)
         log_review_outcome(number, action, expected_head, outcome, started,
-                           debug, prompt_config,
+                           debug, runtime.metrics() if runtime else {},
                            logging.ERROR if failure else logging.INFO,
                            debug.get("pipeline_stage", stage) if failure else None,
                            type(failure).__name__ if failure else None,
@@ -261,8 +335,8 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
 
 
 def worker(jobs, state_dir, api_key, forgejo_token, bot_login, bot_config,
-           prompt_config, ledger, routing_mode="enabled", allow_discussions=True,
-           stop_event=None, ppq_api_key=None, ppq_ledger=None):
+           ledger, review_engine, allow_discussions=True, stop_event=None,
+           ppq_api_key=None, ppq_ledger=None):
     stop_event = stop_event or threading.Event()
     while not stop_event.is_set():
         try:
@@ -275,11 +349,22 @@ def worker(jobs, state_dir, api_key, forgejo_token, bot_login, bot_config,
             stop_event.wait(1)
             continue
         try:
+            if job["engine_identity"] is None:
+                if job["attempts"] != 0 or not jobs.bind_engine(job, review_engine.identity):
+                    raise ValueError("unfinished legacy job has unknown engine identity")
+            pinned = job["engine_identity"]
+            if job["review_result"] is None:
+                if not isinstance(pinned, dict) or pinned.get("name") == "unknown":
+                    raise ValueError("unfinished legacy job has unknown engine identity")
+                job_engine = engine.load(pinned["name"], pinned.get("config"),
+                                         configured=True)
+                if job_engine.identity != pinned:
+                    raise ValueError("queued engine code or configuration changed")
+            else:
+                job_engine = None
             process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
-                        bot_config, prompt_config, ledger, routing_mode,
-                        allow_discussions,
-                        **({"ppq_api_key": ppq_api_key, "ppq_ledger": ppq_ledger}
-                           if ppq_api_key is not None else {}))
+                        bot_config, ledger, job_engine, allow_discussions,
+                        ppq_api_key, ppq_ledger)
         except Exception as exc:
             logging.exception("Review worker failed unexpectedly for PR %d", job["number"])
             try:
@@ -291,7 +376,7 @@ def worker(jobs, state_dir, api_key, forgejo_token, bot_login, bot_config,
                 logging.exception("Could not record failed review for PR %d", job["number"])
             stop_event.wait(1)
 
-def make_handler(secret, jobs, bot_config):
+def make_handler(secret, jobs, bot_config, engine_identity=None):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             request_path = urllib.parse.urlsplit(self.path).path
@@ -307,7 +392,7 @@ def make_handler(secret, jobs, bot_config):
                 logging.exception("Could not read review badge status")
                 self.send_error(503)
                 return
-            debug = result.get("debug", {}) if result else {}
+            debug = trace.current_diagnostics(result) if result else {}
             if result is None or debug.get("skip") or "decisions" not in debug:
                 image = badge.GREY
             elif (any(decision.get("disposition") == "publish"
@@ -354,7 +439,8 @@ def make_handler(secret, jobs, bot_config):
             if job:
                 number, base_ref, head_sha, action, force = job
                 try:
-                    queued = jobs.enqueue(number, base_ref, head_sha, action, force)
+                    queued = jobs.enqueue(number, base_ref, head_sha, action,
+                                          force, engine_identity=engine_identity)
                 except Exception:
                     logging.exception("Could not persist webhook job for PR %d", number)
                     self.send_error(503)
@@ -377,46 +463,81 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--workers", type=int, default=3,
                         help="Maximum concurrent pull request reviews")
-    parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--state-dir", type=Path)
+    parser.add_argument("--migrate-state", action="store_true",
+                        help="Back up and convert the existing job database once")
+    parser.add_argument("--engine", default="current",
+                        help="Review engine name (default: current)")
+    parser.add_argument("--engine-config", type=Path,
+                        help="JSON configuration object for the selected engine")
     parser.add_argument("--report-dir", type=Path,
                         help="Public directory for static HTML and JSON review reports")
     parser.add_argument("--report-base-url",
                         help="Public HTTP URL serving the report directory")
-    parser.add_argument("--origin", required=True,
+    parser.add_argument("--origin",
                         help="Git remote URL used to fetch the base branch and PR heads")
-    parser.add_argument("--repository", required=True,
+    parser.add_argument("--repository",
                         help="Forgejo repository full name, such as owner/repo")
-    parser.add_argument("--forgejo-api", required=True,
+    parser.add_argument("--forgejo-api",
                         help="Forgejo repository API URL, ending in /api/v1/repos/owner/repo")
     parser.add_argument("--repository-url",
                         help="Expected repository HTML URL from webhook payloads")
     parser.add_argument("--comment-marker",
                         help="Hidden marker used to find the bot's editable comment")
-    parser.add_argument("--openai-key-file", type=Path, required=True)
-    parser.add_argument("--ppq-key-file", type=Path, required=True)
-    parser.add_argument("--webhook-secret-file", type=Path, required=True)
-    parser.add_argument("--forgejo-token-file", type=Path, required=True)
-    parser.add_argument("--bot-login", required=True)
-    parser.add_argument("--prompt-file", type=Path, default=config.DEFAULT_PROMPT_FILE,
+    parser.add_argument("--openai-key-file", type=Path)
+    parser.add_argument("--ppq-key-file", type=Path)
+    parser.add_argument("--webhook-secret-file", type=Path)
+    parser.add_argument("--forgejo-token-file", type=Path)
+    parser.add_argument("--bot-login")
+    parser.add_argument("--prompt-file", type=Path,
                         help="Markdown file containing the review prompt")
-    parser.add_argument("--audit-prompt-dir", type=Path, default=config.DEFAULT_AUDIT_DIR,
+    parser.add_argument("--audit-prompt-dir", type=Path,
                         help="Directory containing the focused Luna audit prompts")
     parser.add_argument("--models-json", type=Path,
                         help="JSON model routing for each review stage")
     parser.add_argument("--review-budget-usd", type=float, default=1.00)
     parser.add_argument("--ppq-review-budget-usd", type=float, default=0.50)
     parser.add_argument("--monthly-budget-usd", type=float)
-    parser.add_argument("--routing-mode", choices=("enabled", "shadow", "full"),
-                        default="enabled")
+    parser.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
     args = parser.parse_args()
+    if args.migrate_state:
+        if args.state_dir is None:
+            parser.error("--state-dir is required with --migrate-state")
+        from .jobs import migrate_state
+        try:
+            migrated = migrate_state(args.state_dir / "jobs.sqlite3")
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            parser.error(f"could not migrate job database: {exc}")
+        print("job database migrated" if migrated else "job database already migrated")
+        return 0
+    required = ("state_dir", "origin", "repository", "forgejo_api",
+                "openai_key_file", "ppq_key_file", "webhook_secret_file",
+                "forgejo_token_file", "bot_login")
+    missing = [f"--{name.replace('_', '-')}" for name in required
+               if getattr(args, name) is None]
+    if missing:
+        parser.error("required options: " + ", ".join(missing))
     if args.workers < 1:
         parser.error("workers must be positive")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     bot_config = config.BotConfig(args.origin, args.repository, args.forgejo_api,
                                   args.repository_url, args.comment_marker,
                                   args.report_dir, args.report_base_url)
-    prompt_config = config.PromptConfig.load(args.prompt_file, args.audit_prompt_dir,
-                                             args.models_json)
+    current_only = (args.prompt_file is not None or args.audit_prompt_dir is not None
+                    or args.models_json is not None or args.routing_mode is not None)
+    if args.engine != "current" and current_only:
+        parser.error("prompt, model, and routing options apply only to --engine current")
+    engine_config = _read_engine_config(args.engine_config, parser)
+    engine_config.update({key: value for key, value in {
+        "prompt_file": args.prompt_file,
+        "audit_prompt_dir": args.audit_prompt_dir,
+        "models_json": args.models_json,
+        "routing_mode": args.routing_mode,
+    }.items() if value is not None})
+    try:
+        review_engine = engine.load(args.engine, engine_config)
+    except (ImportError, TypeError, ValueError) as exc:
+        parser.error(f"could not load review engine: {exc}")
     api_key = args.openai_key_file.read_text().strip()
     ppq_api_key = args.ppq_key_file.read_text().strip()
     secret = args.webhook_secret_file.read_bytes().strip()
@@ -425,7 +546,10 @@ def main():
         parser.error("secret files must not be empty")
     args.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     args.state_dir.chmod(0o700)
-    jobs = JobStore(args.state_dir / "jobs.sqlite3")
+    try:
+        jobs = JobStore(args.state_dir / "jobs.sqlite3")
+    except RuntimeError as exc:
+        parser.error(str(exc))
     recovered = jobs.recover()
     ledger = spend.Ledger(args.state_dir / "spend.sqlite3",
                           review_limit_usd=args.review_budget_usd,
@@ -436,9 +560,10 @@ def main():
     for index in range(args.workers):
         threading.Thread(target=worker, name=f"review-{index + 1}",
                          args=(jobs, args.state_dir, api_key, forgejo_token,
-                               args.bot_login, bot_config, prompt_config, ledger,
-                               args.routing_mode),
+                               args.bot_login, bot_config, ledger, review_engine),
                          kwargs={"ppq_api_key": ppq_api_key, "ppq_ledger": ppq_ledger},
                          daemon=True).start()
-    server = ThreadingHTTPServer((args.listen, args.port), make_handler(secret, jobs, bot_config))
+    server = ThreadingHTTPServer((args.listen, args.port),
+                                 make_handler(secret, jobs, bot_config,
+                                              review_engine.identity))
     server.serve_forever()

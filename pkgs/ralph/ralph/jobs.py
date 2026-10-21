@@ -1,6 +1,7 @@
 """Durable work queue for pull request reviews."""
 
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -26,6 +27,7 @@ class JobStore:
                     head TEXT NOT NULL,
                     action TEXT NOT NULL,
                     force INTEGER NOT NULL,
+                    engine_identity TEXT NOT NULL,
                     status TEXT NOT NULL,
                     attempts INTEGER NOT NULL DEFAULT 0,
                     next_attempt REAL NOT NULL DEFAULT 0,
@@ -35,6 +37,11 @@ class JobStore:
                     UNIQUE(number, generation)
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
+            if "engine_identity" not in columns:
+                raise RuntimeError(
+                    "job database needs explicit engine migration; "
+                    "run ralph --state-dir DIR --migrate-state")
             db.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_pending_per_pr
                     ON jobs(number) WHERE status = 'pending'
@@ -70,15 +77,18 @@ class JobStore:
         job["force"] = bool(job["force"])
         job["review_result"] = (json.loads(job["review_result"])
                                 if job["review_result"] is not None else None)
+        job["engine_identity"] = (json.loads(job["engine_identity"])
+                                  if job["engine_identity"] is not None else None)
         return job
 
-    def enqueue(self, number, base_ref, head, action, force=False):
+    def enqueue(self, number, base_ref, head, action, force=False, *, engine_identity):
         """Store a webhook event before acknowledging it.
 
         A pending event for this PR is replaced by the latest event. An event
         with an already queued or finished head is ignored unless forced.
         """
         with self._connection(write=True) as db:
+            identity = json.dumps(engine_identity, sort_keys=True)
             pending = db.execute(
                 "SELECT * FROM jobs WHERE number = ? AND status = 'pending'",
                 (number,)).fetchone()
@@ -86,7 +96,8 @@ class JobStore:
                 "SELECT * FROM jobs WHERE number = ? ORDER BY generation DESC LIMIT 1",
                 (number,)).fetchone()
             if pending:
-                if pending["head"] == head and pending["base_ref"] == base_ref:
+                if (pending["head"] == head and pending["base_ref"] == base_ref
+                        and pending["engine_identity"] == identity):
                     if force and not pending["force"]:
                         db.execute("UPDATE jobs SET force = 1 WHERE id = ?",
                                    (pending["id"],))
@@ -95,14 +106,16 @@ class JobStore:
                 generation = latest["generation"] + 1
                 db.execute("""
                     UPDATE jobs SET generation = ?, base_ref = ?, head = ?,
-                        action = ?, force = ?, attempts = 0, error = NULL
+                        action = ?, force = ?, engine_identity = ?,
+                        attempts = 0, error = NULL
                     WHERE id = ?
-                """, (generation, base_ref, head, action, int(force),
+                """, (generation, base_ref, head, action, int(force), identity,
                       pending["id"]))
                 return True
 
             if (latest and latest["head"] == head
-                    and latest["base_ref"] == base_ref and not force):
+                    and latest["base_ref"] == base_ref
+                    and latest["engine_identity"] == identity and not force):
                 return False
             if latest and latest["status"] == "retry":
                 db.execute("""
@@ -112,9 +125,9 @@ class JobStore:
             generation = latest["generation"] + 1 if latest else 1
             db.execute("""
                 INSERT INTO jobs (number, generation, base_ref, head, action,
-                                  force, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending')
-            """, (number, generation, base_ref, head, action, int(force)))
+                                  force, engine_identity, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+            """, (number, generation, base_ref, head, action, int(force), identity))
             return True
 
     def recover(self):
@@ -184,6 +197,20 @@ class JobStore:
             """, (payload, job["id"], job["token"]))
             return cursor.rowcount == 1
 
+    def bind_engine(self, job, identity):
+        """Pin a migrated, never-started pending job on its first claim."""
+        encoded = json.dumps(identity, sort_keys=True)
+        with self._connection(write=True) as db:
+            cursor = db.execute("""
+                UPDATE jobs SET engine_identity = ?
+                WHERE id = ? AND token = ? AND status = 'running'
+                    AND engine_identity IS NULL AND attempts = 0
+            """, (encoded, job["id"], job["token"]))
+            if cursor.rowcount != 1:
+                return False
+            job["engine_identity"] = identity
+            return True
+
     def complete(self, job):
         return self._finish(job, "complete")
 
@@ -242,3 +269,74 @@ class JobStore:
                     error = ?, token = NULL WHERE id = ?
             """, (status, attempts, next_attempt, str(error), row["id"]))
             return status
+
+
+def migrate_state(path):
+    """Back up and convert pre-engine saved results once, before service startup."""
+    path = str(path)
+    backup_path = f"{path}.pre-engine.bak"
+    with sqlite3.connect(path, timeout=30) as source:
+        columns = {row[1] for row in source.execute("PRAGMA table_info(jobs)")}
+        if "engine_identity" in columns:
+            return False
+        if not columns:
+            raise ValueError("job database does not contain a jobs table")
+        if os.path.exists(backup_path):
+            raise FileExistsError(f"Migration backup already exists: {backup_path}")
+        fd = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+        try:
+            with sqlite3.connect(backup_path) as backup:
+                source.backup(backup)
+        except BaseException:
+            os.unlink(backup_path)
+            raise
+
+    from .current_engine import exports as current_exports
+    from .trace import review_metrics
+
+    db = sqlite3.connect(path, timeout=30, isolation_level=None)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("ALTER TABLE jobs ADD COLUMN engine_identity TEXT")
+        rows = db.execute("SELECT id, number, generation, status, attempts, "
+                          "review_result FROM jobs").fetchall()
+        for job_id, number, generation, status, attempts, raw_result in rows:
+            identity = ({"name": "current", "code_sha256": None,
+                         "config_sha256": None, "config": None}
+                        if raw_result is not None else
+                        {"name": "unknown", "code_sha256": None,
+                         "config_sha256": None, "config": None}
+                        if status in {"running", "retry"} or attempts else None)
+            result = None
+            if raw_result is not None:
+                old = json.loads(raw_result)
+                debug = old.get("debug", {})
+                result = {
+                    "schema_version": 1,
+                    "engine": identity,
+                    "base_sha": old["base_sha"],
+                    "head_sha": old["head_sha"],
+                    "merge_base": None,
+                    "content": old["content"],
+                    "output": {"schema_version": 1,
+                               "data": {"schema_version": 1, **debug},
+                               "exports": current_exports(debug)},
+                    "run": {"review_id": f"pr:{number}:{job_id}:{generation}",
+                            "status": "completed", "skipped": bool(debug.get("skip")),
+                            "metrics": review_metrics(debug, None),
+                            "budget": debug.get("budget"),
+                            "ppq_budget": debug.get("ppq_budget"),
+                            "attempt": debug},
+                }
+            db.execute("""
+                UPDATE jobs SET engine_identity = ?, review_result = ? WHERE id = ?
+                """, (json.dumps(identity, sort_keys=True) if identity is not None else None,
+                  json.dumps(result) if result is not None else None, job_id))
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return True

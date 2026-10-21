@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ralph import stats
+from ralph import trace
 from ralph.jobs import JobStore
 
 
@@ -22,10 +23,49 @@ class StatsTests(unittest.TestCase):
                              max_attempts=2, retry_base_seconds=0)
 
     def enqueue(self, number, head):
-        self.jobs.enqueue(number, "master", head, "synchronize")
+        self.jobs.enqueue(number, "master", head, "synchronize",
+                          engine_identity={"name": "current", "code_sha256": None,
+                                           "config_sha256": None, "config": None})
         return self.jobs.claim()
 
     def save_complete(self, job, result):
+        if result.get("schema_version") != 1:
+            debug = result.pop("debug", {})
+            attribution = debug.get("finding_attribution", [])
+            published = [decision.get("finding") or {}
+                         for decision in debug.get("decisions", [])
+                         if decision.get("disposition") == "publish"]
+            exported = []
+            for index, finding in enumerate(published, 1):
+                item = next((row for row in attribution
+                             if row.get("finding_id") == f"finding:{index}"), {})
+                exported.append({
+                    "id": item.get("finding_id", f"finding:{index}"),
+                    **{key: finding[key] for key in
+                       ("kind", "severity", "path", "line", "side", "title", "body")
+                       if key in finding},
+                    "presented_title": item.get("title", finding.get("title", "")),
+                    "presented_body": finding.get("body", ""),
+                    **{key: item[key] for key in
+                       ("raised_by", "raised_by_models", "verified_by",
+                        "verified_by_model", "edited_by", "edited_by_model")
+                       if key in item},
+                })
+            result = {
+                "schema_version": 1,
+                "base_sha": result.get("base_sha"),
+                "head_sha": result.get("head_sha"),
+                "content": result.get("content", ""),
+                "engine": {"name": "current", "code_sha256": None,
+                           "config_sha256": None, "config": None},
+                "output": {"schema_version": 1,
+                           "data": {"schema_version": 1, **debug},
+                           "exports": {"findings": exported}},
+                "run": {"status": "completed",
+                        "metrics": trace.review_metrics(debug, None),
+                        "budget": debug.get("budget"), "attempt": {},
+                        "skipped": bool(debug.get("skip"))},
+            }
         self.assertTrue(self.jobs.save_result(job, result))
         self.assertTrue(self.jobs.complete(job))
 
@@ -236,10 +276,10 @@ class StatsTests(unittest.TestCase):
         with sqlite3.connect(self.state_dir / "jobs.sqlite3") as db:
             db.execute(
                 "INSERT INTO jobs (number, generation, base_ref, head, action, "
-                "force, status, attempts, review_result) "
-                "VALUES (45, 1, 'master', ?, 'synchronize', 0, "
+                "force, engine_identity, status, attempts, review_result) "
+                "VALUES (45, 1, 'master', ?, 'synchronize', 0, ?, "
                 "'complete', 0, ?)",
-                ("f" * 40, "{not json}"))
+                ("f" * 40, json.dumps({"name": "current"}), "{not json}"))
 
         self.report_dir.mkdir()
         report_name = f'42-{"a" * 40}-{reviewed["id"]}-{reviewed["generation"]}.html'
@@ -421,6 +461,24 @@ class StatsTests(unittest.TestCase):
                 },
             },
         })
+        self.jobs.enqueue(61, "master", "c" * 40, "synchronize",
+                          engine_identity={"name": "narrative"})
+        unsupported = self.jobs.claim()
+        self.save_complete(unsupported, {
+            "schema_version": 1,
+            "base_sha": "b" * 40,
+            "head_sha": "c" * 40,
+            "content": "Narrative review.",
+            "engine": {"name": "narrative", "code_sha256": None,
+                       "config_sha256": None, "config": None},
+            "output": {"schema_version": 1, "data": {}, "exports": {}},
+            "run": {"status": "completed", "metrics": {}, "attempt": {},
+                    "skipped": False},
+        })
+        self.create_followups([(unsupported["id"], {
+            "status": "skipped", "reason": "findings_export_unsupported",
+            "findings": [],
+        })])
 
         summary = stats.collect_stats(self.state_dir, self.report_dir)
         stage = next(item for item in summary["stages"]
@@ -429,9 +487,15 @@ class StatsTests(unittest.TestCase):
                       if item["job_id"] == job["id"])
 
         self.assertEqual(summary["overview"]["saved_findings"], 1)
+        self.assertEqual(summary["overview"]["findings_unavailable_reviews"], 1)
+        self.assertEqual(
+            summary["addressed_findings"]["unsupported_exports"], 1)
+        unsupported_review = next(item for item in summary["reviews"]
+                                  if item["job_id"] == unsupported["id"])
+        self.assertIsNone(unsupported_review["findings"]["saved"])
         self.assertEqual(summary["overview"]["coverage"]["complete"], 1)
-        self.assertEqual(summary["overview"]["context_coverage"]["unknown"], 1)
-        self.assertEqual(summary["overview"]["verification_status"]["unknown"], 1)
+        self.assertEqual(summary["overview"]["context_coverage"]["unknown"], 2)
+        self.assertEqual(summary["overview"]["verification_status"]["unknown"], 2)
         self.assertEqual(summary["overview"]["attribution_coverage"]["missing"], 1)
         self.assertEqual(stage["selected_candidate_findings"], 1)
         self.assertEqual(stage["accepted_findings"], 0)
@@ -444,7 +508,7 @@ class StatsTests(unittest.TestCase):
         self.assertIsNone(
             summary["distributions"]["saved_review_known_cost_micros"]["median"])
         self.assertEqual(
-            summary["distributions"]["saved_review_cost_missing_ledger_count"], 1)
+            summary["distributions"]["saved_review_cost_missing_ledger_count"], 2)
 
     def test_addressed_findings_are_deduped_and_validated(self):
         source = self.enqueue(80, "a" * 40)

@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ralph import config, routing
+from ralph import config, engine, routing
 from ralph.protocol import InvalidReview
 from ralph.repository import MAX_REVIEW_BYTES
 from ralph.spend import BudgetExceeded
@@ -21,6 +21,11 @@ def route(tier="routine", audits=(), profiles=(), evidence=("Router evidence",),
 
 
 class RoutingTests(unittest.TestCase):
+    def runtime(self):
+        case = SimpleNamespace(snapshot=None, number=1)
+        bot_config = SimpleNamespace()
+        return engine.Runtime(case=case, bot_config=bot_config, api_key="key")
+
     def test_script_specialist_requires_semantic_selection(self):
         for path in ("src/policy/policy.cpp", "src/script/interpreter.cpp",
                      "src/primitives/transaction.h", "src/validation.cpp",
@@ -42,7 +47,7 @@ class RoutingTests(unittest.TestCase):
     def test_explicit_full_review_includes_script_specialist(self):
         debug = {}
         with patch("ralph.model.run_audit") as run:
-            plan = routing.plan_review("key", "Patch", self.snapshot("src/util/time.cpp"),
+            plan = routing.plan_review(self.runtime(), "Patch", self.snapshot("src/util/time.cpp"),
                                        self.prompt_config(), debug, mode="full")
         run.assert_not_called()
         self.assertIn("script", plan["audits"])
@@ -51,7 +56,7 @@ class RoutingTests(unittest.TestCase):
         debug = {}
         with patch("ralph.model.run_audit",
                    return_value=(route(), {"status": "completed"})):
-            plan = routing.plan_review("key", "Patch", self.snapshot("src/util/time.cpp"),
+            plan = routing.plan_review(self.runtime(), "Patch", self.snapshot("src/util/time.cpp"),
                                        self.prompt_config(), debug, mode="shadow")
         self.assertNotIn("script", debug["routing"]["proposed"]["audits"])
         self.assertIn("script", plan["audits"])
@@ -74,7 +79,7 @@ class RoutingTests(unittest.TestCase):
         debug = {}
         with patch("ralph.model.run_audit",
                    return_value=(route(), {"status": "completed"})) as run:
-            plan = routing.plan_review("key", "Patch:\n+validation", snapshot,
+            plan = routing.plan_review(self.runtime(), "Patch:\n+validation", snapshot,
                                        self.prompt_config(), debug)
         self.assertEqual(run.call_count, 1)
         self.assertEqual(plan["tier"], "sensitive")
@@ -88,14 +93,14 @@ class RoutingTests(unittest.TestCase):
         review = f"Patch exceeds {MAX_REVIEW_BYTES} input bytes. Use read_diff"
         debug = {}
         with patch("ralph.model.run_audit") as run:
-            plan = routing.plan_review("key", review, snapshot, prompt_config, debug)
+            plan = routing.plan_review(self.runtime(), review, snapshot, prompt_config, debug)
         run.assert_not_called()
         self.assertEqual(plan, routing.full_plan("Initial patch is incomplete"))
 
         debug = {}
         with patch("ralph.model.run_audit",
                    return_value=('{"tier": "routine"}', {"status": "completed"})):
-            plan = routing.plan_review("key", "Patch:\n+change", snapshot, prompt_config, debug)
+            plan = routing.plan_review(self.runtime(), "Patch:\n+change", snapshot, prompt_config, debug)
         self.assertEqual(plan["audits"], [name for name in config.AUDIT_NAMES if name != "script"])
         self.assertEqual(plan["profiles"], list(config.ADVERSARIAL_PROFILES))
         self.assertEqual(debug["stages"]["router"]["status"], "failed")
@@ -109,7 +114,7 @@ class RoutingTests(unittest.TestCase):
         with patch("ralph.model.run_audit",
                    side_effect=BudgetExceeded("review spend limit would be exceeded")) as run:
             with self.assertRaises(BudgetExceeded):
-                routing.plan_review("key", "Patch:\n+change", self.snapshot("src/example.cpp"),
+                routing.plan_review(self.runtime(), "Patch:\n+change", self.snapshot("src/example.cpp"),
                                     self.prompt_config(), debug)
         self.assertEqual(run.call_count, 1)
         self.assertEqual(debug["stages"]["router"]["status"], "budget_exhausted")

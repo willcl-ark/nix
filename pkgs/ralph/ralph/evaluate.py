@@ -14,10 +14,10 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, forgejo, pipeline, repository, research, spend, stats, stats_page, trace
+from . import config, engine, forgejo, repository, research, spend, stats, stats_page, trace
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def private_dir(path):
@@ -40,6 +40,15 @@ def read_secret(path, name):
     value = path.read_text(encoding="utf-8").strip()
     if not value:
         raise ValueError(f"{name} file must not be empty")
+    return value
+
+
+def read_engine_config(path):
+    if path is None:
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("Engine configuration must be a JSON object")
     return value
 
 
@@ -129,8 +138,8 @@ def pull_request_details(bot_config, token, number):
     return details
 
 
-def capture_case(forgejo_token, checkout, output_dir, number, bot_config, prompt_config,
-                 research_requests=None, research_cutoff=None):
+def capture_case(forgejo_token, checkout, output_dir, number, bot_config,
+                 review_engine, research_requests=None, research_cutoff=None):
     """Make one private manifest with complete local Git objects."""
     output_dir = private_dir(output_dir)
     checkout = checkout.resolve()
@@ -169,7 +178,7 @@ def capture_case(forgejo_token, checkout, output_dir, number, bot_config, prompt
         research_evidence = research.capture(
             bot_config, number, research_requests, discussion_cutoff, captured_at)
         frozen_config = {"bot": asdict(bot_config),
-                         "prompts": asdict(prompt_config)}
+                         "engine": review_engine.identity}
         manifest = {
             "schema_version": SCHEMA_VERSION,
             "case_id": case_id,
@@ -206,38 +215,24 @@ def capture_case(forgejo_token, checkout, output_dir, number, bot_config, prompt
         raise
 
 
-def prompt_override(frozen, prompt_file=None, audit_dir=None, models_json=None):
-    instructions = (config.load_prompt_file(prompt_file) if prompt_file
-                    else frozen.instructions)
-    prompts = dict(frozen.audit_prompts)
-    if audit_dir:
-        prompts = {name: config.load_prompt_file(audit_dir / f"{name}.md")
-                   for name in config.PROMPT_NAMES}
-    elif set(prompts) != set(config.PROMPT_NAMES):
-        raise ValueError("Frozen prompt names do not match current prompt profiles; "
-                         "pass --audit-prompt-dir with a complete replacement")
-    if any(not prompt.strip() for prompt in prompts.values()):
-        raise ValueError("audit prompt files must not be empty")
-    models = (json.loads(models_json.read_text(encoding="utf-8"))
-              if models_json else dict(frozen.models))
-    if not models_json and set(models) != set(config.MODEL_NAMES):
-        raise ValueError("Frozen model names do not match current review stages; "
-                         "pass --models-json with a complete replacement")
-    models = config.validate_models(models)
-    return config.PromptConfig(instructions, prompts, models)
-
-
-def run_case(manifest_path, api_key, output_dir, ledger, routing_mode="enabled",
+def run_case(manifest_path, api_key, output_dir, ledger, routing_mode=None,
              prompt_file=None, audit_dir=None, models_json=None, labels=None,
-             ppq_api_key=None, ppq_ledger=None, blind_alternatives=True):
+             ppq_api_key=None, ppq_ledger=None, blind_alternatives=None,
+             engine_name=None, engine_config=None):
     """Replay a captured case without Forgejo or remote Git reads."""
     output_dir = private_dir(output_dir)
-    debug = {}
-    artifact = {"manifest": str(manifest_path.resolve()), "status": "failed",
+    artifact = {"manifest": str(manifest_path.resolve()),
                 "started_at": datetime.now(timezone.utc).isoformat()}
-    config_hash = "unknown"
+    engine_identity = {"name": None, "code_sha256": None,
+                       "config_sha256": None, "config": None}
     case_id = "unknown"
     budget = None
+    ppq_budget = None
+    attempt = {}
+    runtime = None
+    output = None
+    review_id = None
+    base_sha = head_sha = merge_base = None
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if manifest.get("schema_version") != SCHEMA_VERSION:
@@ -255,30 +250,59 @@ def run_case(manifest_path, api_key, output_dir, ledger, routing_mode="enabled",
         if digest(research_evidence) != manifest.get("research_evidence_sha256"):
             raise ValueError("Frozen research evidence hash mismatch")
         bot_config = config.BotConfig(**frozen_config["bot"])
-        frozen_prompts = config.PromptConfig(**frozen_config["prompts"])
-        prompt_config = prompt_override(frozen_prompts, prompt_file, audit_dir, models_json)
+        captured_engine = frozen_config["engine"]
+        selected_name = engine_name or captured_engine["name"]
+        explicit_engine_config = engine_config is not None
+        selected_config = (engine_config if explicit_engine_config else
+                           captured_engine["config"] if selected_name == captured_engine["name"]
+                           else {})
+        selected_config = dict(selected_config or {})
+        current_only = (prompt_file is not None or audit_dir is not None
+                        or models_json is not None or routing_mode is not None
+                        or blind_alternatives is not None)
+        if selected_name != "current" and current_only:
+            raise ValueError("prompt, model, routing, and alternatives options apply only to current")
+        if selected_name == "current":
+            selected_config.update({key: value for key, value in {
+                "prompt_file": prompt_file,
+                "audit_prompt_dir": audit_dir,
+                "models_json": models_json,
+            }.items() if value is not None})
+            if routing_mode is not None:
+                selected_config["routing_mode"] = routing_mode
+            selected_config.setdefault("routing_mode", "enabled")
+            if blind_alternatives is not None:
+                selected_config["blind_alternatives"] = blind_alternatives
+            selected_config.setdefault("blind_alternatives", True)
+        use_captured_config = (not explicit_engine_config
+                               and selected_name == captured_engine["name"]
+                               and not current_only)
+        loaded_engine = engine.load(selected_name, selected_config,
+                                    configured=use_captured_config)
+        engine_identity = loaded_engine.identity
         code_hash = source_code_sha256()
         review_limit = getattr(ledger, "review_limit_micros", None)
         monthly_limit = getattr(ledger, "monthly_limit_micros", None)
         ppq_limit = getattr(ppq_ledger, "review_limit_micros", None)
         effective_config = {
-            "bot": asdict(bot_config), "prompts": asdict(prompt_config),
-            "routing_mode": routing_mode,
+            "bot": asdict(bot_config), "engine": engine_identity,
             "ppq_review_budget_usd": None if ppq_limit is None else ppq_limit / 1_000_000,
             "review_budget_usd": None if review_limit is None else review_limit / 1_000_000,
             "monthly_budget_usd": None if monthly_limit is None else monthly_limit / 1_000_000,
             "research_evidence_sha256": manifest["research_evidence_sha256"],
-            "blind_alternatives": bool(blind_alternatives),
             "source_code_sha256": code_hash,
         }
-        config_hash = digest(effective_config)
         artifact["effective_config"] = effective_config
+        artifact["effective_config_sha256"] = digest(effective_config)
         artifact["source_code_sha256"] = code_hash
         artifact["capture_code_sha256"] = manifest["source_code_sha256"]
         artifact["code_changed_since_capture"] = code_hash != manifest["source_code_sha256"]
+        artifact["engine_code_changed_since_capture"] = (
+            engine_identity["code_sha256"] != captured_engine["code_sha256"])
         artifact["research_evidence_inventory"] = research.inventory(research_evidence)
         checkout = Path(manifest["checkout"])
         base_sha, head_sha = manifest["base_sha"], manifest["head_sha"]
+        merge_base = manifest["merge_base"]
         review = manifest["review_input"]
         if hashlib.sha256(review.encode()).hexdigest() != manifest["review_input_sha256"]:
             raise ValueError("Frozen review input hash mismatch")
@@ -293,41 +317,58 @@ def run_case(manifest_path, api_key, output_dir, ledger, routing_mode="enabled",
             ppq_budget = (spend.RequestBudget(ppq_ledger, review_id)
                           if ppq_ledger is not None else None)
             artifact["review_id"] = review_id
-            review_kwargs = {
-                "budget": budget,
-                "routing_mode": routing_mode,
-                "allow_discussions": False,
-                "ppq_api_key": ppq_api_key,
-                "ppq_budget": ppq_budget,
-                "research_evidence": research_evidence,
-                "blind_alternatives": bool(blind_alternatives),
-            }
-            content = pipeline.review_with_independent_passes(
-                api_key, review, snapshot, bot_config, prompt_config,
-                manifest["pr"], debug, **review_kwargs)
-        artifact.update({
-            "status": "completed", "case_id": case_id, "pr": manifest["pr"],
-            "base_sha": base_sha, "head_sha": head_sha,
-            "merge_base": snapshot.merge_base,
-            "review_input_sha256": manifest["review_input_sha256"],
-            "final_comment": forgejo.review_body(bot_config, prompt_config,
-                                                   base_sha, head_sha, content, debug),
-            "stage_outputs": debug.get("stage_outputs", {}),
-        })
+            case = engine.ReviewCase(manifest["pr"], review, snapshot,
+                                     bot_config.repository_url or "",
+                                     research_evidence)
+            runtime = engine.Runtime(
+                case=case, bot_config=bot_config, api_key=api_key,
+                ppq_api_key=ppq_api_key, budget=budget, ppq_budget=ppq_budget,
+                allow_discussions=False, attempt=attempt)
+            output = loaded_engine.run(case, runtime)
+            attempt = runtime.attempt
+            artifact.update({
+                "schema_version": 1, "case_id": case_id, "pr": manifest["pr"],
+                "engine": engine_identity, "base_sha": base_sha,
+                "head_sha": head_sha, "merge_base": snapshot.merge_base,
+                "content": output.content,
+                "output": {"schema_version": output.schema_version,
+                           "data": output.data, "exports": output.exports},
+                "run": {"review_id": review_id, "status": "completed",
+                        "metrics": runtime.metrics(), "budget": budget.summary(),
+                        "ppq_budget": (ppq_budget.summary()
+                                       if ppq_budget is not None else None),
+                        "attempt": attempt},
+                "review_input_sha256": manifest["review_input_sha256"],
+            })
     except Exception as exc:
         artifact["error"] = {"type": type(exc).__name__, "message": str(exc)}
     finally:
         artifact["finished_at"] = datetime.now(timezone.utc).isoformat()
-        artifact["effective_config_sha256"] = config_hash
-        artifact["raw_debug"] = debug
+        if "run" not in artifact:
+            artifact.update({
+                "schema_version": 1, "engine": engine_identity,
+                "base_sha": base_sha, "head_sha": head_sha,
+                "merge_base": merge_base, "content": None, "output": None,
+                "run": {"review_id": review_id, "status": "failed",
+                        "metrics": runtime.metrics() if runtime else {},
+                        "budget": None, "ppq_budget": None,
+                        "attempt": attempt},
+            })
         if budget is not None:
             try:
-                artifact["budget"] = budget.summary()
+                artifact["run"]["budget"] = budget.summary()
             except Exception as exc:
-                artifact["budget"] = debug.get("budget")
+                artifact["run"]["budget"] = attempt.get("budget")
                 artifact["budget_error"] = type(exc).__name__
+        if ppq_budget is not None:
+            try:
+                artifact["run"]["ppq_budget"] = ppq_budget.summary()
+            except Exception as exc:
+                artifact["run"]["ppq_budget"] = attempt.get("ppq_budget")
+                artifact["ppq_budget_error"] = type(exc).__name__
         if isinstance(labels, dict) and case_id in labels:
             artifact["expected_findings"] = labels[case_id]
+        config_hash = artifact.get("effective_config_sha256", "unknown")
         path = output_dir / f"run-{case_id}-{timestamp()}-{uuid.uuid4().hex}-{config_hash[:12]}.json"
         write_private_json(path, artifact)
     return path
@@ -386,15 +427,26 @@ def _run_has_budget_exhaustion(artifact):
     error = artifact.get("error") or {}
     if error.get("type") == "BudgetExceeded":
         return True
-    stages = ((artifact.get("raw_debug") or {}).get("stages") or {})
+    debug = trace.current_diagnostics(artifact)
+    stages = debug.get("stages") or {}
     return any(stage.get("status") == "budget_exhausted"
                for stage in stages.values() if isinstance(stage, dict))
 
 
 def _run_has_partial_coverage(artifact):
-    debug = artifact.get("raw_debug") or {}
+    debug = trace.current_diagnostics(artifact)
     coverage = debug.get("coverage") or {}
     return coverage.get("status") in {"partial", "failed"}
+
+
+def _summary_group_key(artifact):
+    key = artifact.get("effective_config_sha256")
+    if isinstance(key, str) and key:
+        return key
+    config = artifact.get("effective_config")
+    if not isinstance(config, dict):
+        config = {"engine": trace.result_engine(artifact)}
+    return digest(config)
 
 
 def _new_summary_group():
@@ -407,6 +459,8 @@ def _new_summary_group():
         "labels_present": 0,
         "decision_counts": Counter(),
         "accepted_findings": 0,
+        "findings_export_status_counts": Counter(),
+        "current_diagnostics_status_counts": Counter(),
         "archaeology_research_completed": 0,
         "published_conceptual_concerns": 0,
         "conceptual_concern_status_counts": Counter(),
@@ -559,6 +613,8 @@ def _add_stage_metrics(group, debug):
 def _finalize_group(group):
     runs = group["runs"]
     completed = group["completed"]
+    accepted_findings = (None if group["findings_export_status_counts"]["unsupported"]
+                         else group["accepted_findings"])
     stage_metrics = {}
     for name, metrics in sorted(group["stage_metrics"].items()):
         stage_runs = metrics["runs"]
@@ -601,30 +657,44 @@ def _finalize_group(group):
         "runs": runs,
         "completed": completed,
         "failed": group["failed"],
-        "partial_coverage": group["partial_coverage"],
+        "partial_coverage": (group["partial_coverage"]
+                             if group["current_diagnostics_status_counts"]["supported"]
+                             else None),
         "budget_exhausted": group["budget_exhausted"],
         "labels_present": group["labels_present"],
         "unknown_usage_runs": group["unknown_usage_runs"],
         "unknown_usage_turns": group["unknown_usage_turns"],
         "incomplete_usage_runs": group["incomplete_usage_runs"],
         "incomplete_usage_turns": group["incomplete_usage_turns"],
-        "max_output_token_incomplete_turns": group["max_output_token_incomplete_turns"],
+        "max_output_token_incomplete_turns": (
+            group["max_output_token_incomplete_turns"]
+            if group["current_diagnostics_status_counts"]["supported"] else None),
         "decision_counts": {
             "published": group["decision_counts"]["publish"],
             "dropped": group["decision_counts"]["drop"],
             "unresolved": group["decision_counts"]["unresolved"],
-        },
-        "accepted_findings": group["accepted_findings"],
-        "archaeology_research_completed": group["archaeology_research_completed"],
-        "published_conceptual_concerns": group["published_conceptual_concerns"],
-        "conceptual_concern_status_counts": dict(sorted(
-            group["conceptual_concern_status_counts"].items())),
-        "would_stop": would_stop,
+        } if group["current_diagnostics_status_counts"]["supported"] else None,
+        "accepted_findings": accepted_findings,
+        "findings_export_status_counts": dict(sorted(
+            group["findings_export_status_counts"].items())),
+        "current_diagnostics_status_counts": dict(sorted(
+            group["current_diagnostics_status_counts"].items())),
+        "archaeology_research_completed": (
+            group["archaeology_research_completed"]
+            if group["current_diagnostics_status_counts"]["supported"] else None),
+        "published_conceptual_concerns": (
+            group["published_conceptual_concerns"]
+            if group["current_diagnostics_status_counts"]["supported"] else None),
+        "conceptual_concern_status_counts": (
+            dict(sorted(group["conceptual_concern_status_counts"].items()))
+            if group["current_diagnostics_status_counts"]["supported"] else None),
+        "would_stop": (would_stop if group["current_diagnostics_status_counts"]["supported"]
+                       else None),
         "cost_usd": {
             **_series(group["known_costs"]),
             "known_per_accepted_finding": _rounded(
-                sum(group["known_costs"]) / group["accepted_findings"]
-                if group["accepted_findings"] else None),
+                sum(group["known_costs"]) / accepted_findings
+                if accepted_findings else None),
         },
         "wall_seconds": _series(group["wall_seconds"]),
         "stage_metrics": stage_metrics,
@@ -637,10 +707,11 @@ def summarize_runs(paths):
     for path in _run_paths(paths):
         artifact = json.loads(path.read_text(encoding="utf-8"))
         artifacts += 1
-        key = artifact.get("effective_config_sha256") or "unknown"
+        key = _summary_group_key(artifact)
         group = groups[key]
         group["runs"] += 1
-        if artifact.get("status") == "completed":
+        run = artifact.get("run") or {}
+        if run.get("status") == "completed":
             group["completed"] += 1
         else:
             group["failed"] += 1
@@ -650,25 +721,31 @@ def summarize_runs(paths):
             group["budget_exhausted"] += 1
         if "expected_findings" in artifact:
             group["labels_present"] += 1
-        debug = artifact.get("raw_debug") or {}
-        metrics = trace.review_metrics(debug, None)
-        run_cost = metrics["estimated_cost_usd"]
+        debug = trace.current_diagnostics(artifact)
+        group["current_diagnostics_status_counts"][
+            "supported" if debug else "unsupported"] += 1
+        metrics = trace.result_metrics(artifact) or {}
+        run_cost = metrics.get("estimated_cost_usd", 0.0)
         group["known_costs"].append(run_cost)
-        if metrics["unknown_usage_count"]:
+        if metrics.get("unknown_usage_count", 0):
             group["unknown_usage_runs"] += 1
-        group["unknown_usage_turns"] += metrics["unknown_usage_count"]
-        if metrics["incomplete_usage_count"]:
+        group["unknown_usage_turns"] += metrics.get("unknown_usage_count", 0)
+        if metrics.get("incomplete_usage_count", 0):
             group["incomplete_usage_runs"] += 1
-        group["incomplete_usage_turns"] += metrics["incomplete_usage_count"]
+        group["incomplete_usage_turns"] += metrics.get("incomplete_usage_count", 0)
         wall = _iso_seconds(artifact.get("started_at"), artifact.get("finished_at"))
         if wall is not None:
             group["wall_seconds"].append(wall)
+        findings = trace.findings_export(artifact)
+        if findings is None:
+            group["findings_export_status_counts"]["unsupported"] += 1
+        else:
+            group["findings_export_status_counts"]["supported"] += 1
+            group["accepted_findings"] += len(findings)
         decisions = [decision for decision in debug.get("decisions", [])
                      if isinstance(decision, dict)]
         group["decision_counts"].update(
             decision.get("disposition", "unknown") for decision in decisions)
-        group["accepted_findings"] += sum(
-            decision.get("disposition") == "publish" for decision in decisions)
         assessment = trace.concept_assessment(debug)
         if trace.published_concept_concern(debug):
             group["published_conceptual_concerns"] += 1
@@ -679,8 +756,9 @@ def summarize_runs(paths):
                and stage.get("status") == "completed"
                for name, stage in (debug.get("stages") or {}).items()):
             group["archaeology_research_completed"] += 1
-        _add_stage_metrics(group, debug)
-        _add_would_stop_metrics(group, debug)
+        if debug:
+            _add_stage_metrics(group, debug)
+            _add_would_stop_metrics(group, debug)
     return {
         "schema_version": 1,
         "run_artifacts": artifacts,
@@ -711,8 +789,10 @@ def main(argv=None):
     capture.add_argument("--output-dir", type=Path, required=True)
     add_config_args(capture)
     capture.add_argument("--forgejo-token-file", type=Path, required=True)
-    capture.add_argument("--prompt-file", type=Path, default=config.DEFAULT_PROMPT_FILE)
-    capture.add_argument("--audit-prompt-dir", type=Path, default=config.DEFAULT_AUDIT_DIR)
+    capture.add_argument("--engine", default="current")
+    capture.add_argument("--engine-config", type=Path)
+    capture.add_argument("--prompt-file", type=Path)
+    capture.add_argument("--audit-prompt-dir", type=Path)
     capture.add_argument("--models-json", type=Path)
     capture.add_argument("--research-cutoff",
                          help="ISO timestamp cutoff for captured discussion evidence")
@@ -725,13 +805,14 @@ def main(argv=None):
     run.add_argument("--output-dir", type=Path, required=True)
     run.add_argument("--openai-key-file", type=Path, required=True)
     run.add_argument("--ppq-key-file", type=Path, required=True)
+    run.add_argument("--engine")
+    run.add_argument("--engine-config", type=Path)
     run.add_argument("--prompt-file", type=Path)
     run.add_argument("--audit-prompt-dir", type=Path)
     run.add_argument("--models-json", type=Path)
-    run.add_argument("--routing-mode", choices=("enabled", "shadow", "full"),
-                     default="enabled")
+    run.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
     run.add_argument("--blind-alternatives", action=argparse.BooleanOptionalAction,
-                     default=True,
+                     default=None,
                      help="Run the eval-only blind alternatives experiment")
     run.add_argument("--review-budget-usd", type=float, default=1.00)
     run.add_argument("--ppq-review-budget-usd", type=float, default=0.50)
@@ -756,14 +837,26 @@ def main(argv=None):
     if args.command == "capture":
         bot_config = config.BotConfig(args.origin, args.repository, args.forgejo_api,
                                       args.repository_url, args.comment_marker)
-        prompt_config = config.PromptConfig.load(args.prompt_file, args.audit_prompt_dir,
-                                                 args.models_json)
+        current_only = (args.prompt_file is not None or args.audit_prompt_dir is not None
+                        or args.models_json is not None)
+        if args.engine != "current" and current_only:
+            parser.error("prompt and model options apply only to --engine current")
+        try:
+            engine_config = read_engine_config(args.engine_config)
+            engine_config.update({key: value for key, value in {
+                "prompt_file": args.prompt_file,
+                "audit_prompt_dir": args.audit_prompt_dir,
+                "models_json": args.models_json,
+            }.items() if value is not None})
+            review_engine = engine.load(args.engine, engine_config)
+        except (OSError, json.JSONDecodeError, ImportError, TypeError, ValueError) as exc:
+            parser.error(f"could not configure review engine: {exc}")
         token = read_secret(args.forgejo_token_file, "Forgejo token")
         requests = _research_requests(args.research_requests_json)
         checkout = args.state_dir / "evaluation-checkout"
         for number in args.prs:
             print(capture_case(token, checkout, args.output_dir, number,
-                               bot_config, prompt_config, requests,
+                               bot_config, review_engine, requests,
                                args.research_cutoff))
         return 0
     if args.command == "spend":
@@ -790,15 +883,21 @@ def main(argv=None):
                              review_limit_usd=args.ppq_review_budget_usd)
     labels = (json.loads(args.labels_json.read_text(encoding="utf-8"))
               if args.labels_json else {})
+    try:
+        engine_config = read_engine_config(args.engine_config)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        parser.error(f"could not read engine configuration: {exc}")
     result = 0
     for manifest in args.manifests:
         path = run_case(manifest, api_key, args.output_dir, ledger,
                         args.routing_mode, args.prompt_file, args.audit_prompt_dir,
                         args.models_json, labels, ppq_api_key=ppq_api_key,
                         ppq_ledger=ppq_ledger,
-                        blind_alternatives=args.blind_alternatives)
+                        blind_alternatives=args.blind_alternatives,
+                        engine_name=args.engine,
+                        engine_config=(engine_config if args.engine_config else None))
         print(path)
-        if json.loads(path.read_text(encoding="utf-8"))["status"] != "completed":
+        if json.loads(path.read_text(encoding="utf-8"))["run"]["status"] != "completed":
             result = 1
     return result
 
