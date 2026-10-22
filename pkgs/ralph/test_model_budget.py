@@ -113,6 +113,31 @@ class ModelBudgetTests(unittest.TestCase):
         self.assertEqual(record["raw_output"], raw)
         self.assertEqual(debug["raw_output"], raw)
 
+    def test_gemini_forced_inspection_defers_structured_output(self):
+        schema = {"type": "object", "properties": {}}
+        results = [
+            {"id": "tool", "status": "completed", "output": [{
+                "type": "function_call", "call_id": "call-1", "name": "read_file",
+                "arguments": '{"path":"src/a.cpp","start_line":1}'}]},
+            {"id": "final", "status": "completed", "output": [{
+                "type": "message", "content": [{"type": "output_text", "text": "{}"}]}]},
+        ]
+        for model_name in ("google/gemini-4-argon", "deepseek/deepseek-v4-pro-0813"):
+            with self.subTest(model=model_name), patch.object(
+                    model.urllib.request, "urlopen",
+                    side_effect=[Response(item) for item in results]) as send, patch.object(
+                    model, "read_file", return_value="1: evidence"):
+                self.assertEqual(model.openai_review(
+                    "secret", "patch", self.snapshot, SimpleNamespace(), self.prompt_config,
+                    model=model_name, response_schema=schema,
+                    api_base="https://api.ppq.ai/v1"), "{}")
+                first, final = [json.loads(call.args[0].data)
+                                for call in send.call_args_list]
+                self.assertEqual(first["tool_choice"], "required")
+                self.assertEqual("text" in first, model_name != "google/gemini-4-argon")
+                self.assertEqual(final["tool_choice"], "auto")
+                self.assertEqual(final["text"]["format"]["schema"], schema)
+
     def test_discussions_can_be_hidden_and_unadvertised_calls_are_rejected(self):
         call = {"type": "function_call", "call_id": "call-1",
                 "name": "search_discussions", "arguments": '{"query":"x"}'}

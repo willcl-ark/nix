@@ -350,7 +350,10 @@ def openai_review(api_key, review, snapshot, bot_config, prompt_config, debug=No
                 MAX_WEB_SEARCH_CALLS_PER_RESPONSE, max(1, max_tool_calls - calls_used))
             data["max_tool_calls"] = per_response_search_limit
             data["include"] = ["web_search_call.action.sources"]
-        if response_schema is not None:
+        # Gemini rejects a JSON response format with a forced tool call.
+        # The first turn must inspect code; subsequent turns enforce the schema.
+        if response_schema is not None and not (
+                model == "google/gemini-4-argon" and tool_choice == "required"):
             data["text"] = {"format": {"type": "json_schema",
                                         "name": stage_name, "strict": True,
                                         "schema": response_schema}}
