@@ -17,7 +17,8 @@ from .spend import SNAPSHOT_MODEL
 
 
 MICRODOLLARS = Decimal("1000000")
-LEDGERS = (("openai", "spend.sqlite3"), ("glm", "ppq-spend.sqlite3"))
+LEDGERS = (("openai", "spend.sqlite3"), ("ppq", "ppq-spend.sqlite3"))
+ADVERSARIAL_STAGES = ("adversarial", "adversarial_deepseek", "adversarial_gemini")
 PUBLIC_LIMITATION_NOTES = [
     "Monthly trend uses ledger request accounting month.",
     "Model seconds are summed model turn elapsed_seconds, not wall time.",
@@ -66,7 +67,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "followup_assessments": followups_missing,
             "followup_ledger": followup_ledger_missing,
             "openai_ledger": ledger_missing["openai"],
-            "glm_ledger": ledger_missing["glm"],
+            "ppq_ledger": ledger_missing["ppq"],
             "report_dir": report_dir_missing,
         },
     }
@@ -104,7 +105,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
     second_values = []
     concept_citation_values = []
     concept_alternative_values = []
-    paired = _new_paired_summary()
+    paired = _new_adversarial_comparison()
     requests_by_review = defaultdict(list)
     configured_stage_models = {}
     for request in requests:
@@ -169,7 +170,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             if routing.get("selected_tier"):
                 routing_tiers[routing["selected_tier"]] += 1
             if debug:
-                _add_paired_summary(paired, debug, review_requests)
+                _add_adversarial_comparison(paired, debug, review_requests)
             if review_requests:
                 cost_values.append(ledger_totals["known_cost_micros"])
                 reserved_values.append(ledger_totals["reserved_micros"])
@@ -276,7 +277,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "saved_review_conceptual_concern_alternatives": _distribution(
                 concept_alternative_values),
         },
-        "paired_sol_glm": paired,
+        "adversarial_comparison": paired,
         "time_series": time_series,
         "time_series_undated": time_series_undated,
         "time_series_notes": [
@@ -1265,32 +1266,32 @@ def _stage_leaderboard(stages):
     ), reverse=True)
 
 
-def _new_paired_summary():
+def _new_adversarial_comparison():
     return {
-        "completed_pairs": 0,
-        "sole_accepted": {"adversarial": 0, "adversarial_glm": 0},
-        "shared_accepted": {"adversarial": 0, "adversarial_glm": 0},
-        "known_cost_micros": {"adversarial": 0, "adversarial_glm": 0},
-        "reserved_micros": {"adversarial": 0, "adversarial_glm": 0},
-        "note": "Observed paired completed reviews only; this is not causal recall.",
+        "completed_reviews": 0,
+        "sole_accepted": dict.fromkeys(ADVERSARIAL_STAGES, 0),
+        "shared_accepted": dict.fromkeys(ADVERSARIAL_STAGES, 0),
+        "known_cost_micros": dict.fromkeys(ADVERSARIAL_STAGES, 0),
+        "reserved_micros": dict.fromkeys(ADVERSARIAL_STAGES, 0),
+        "note": "Observed reviews with all three adversarial stages completed only; this is not causal recall.",
     }
 
 
-def _add_paired_summary(paired, debug, requests):
+def _add_adversarial_comparison(paired, debug, requests):
     stages = debug.get("stages") or {}
     if not all(isinstance(stages.get(name), dict)
                and stages[name].get("status") == "completed"
-               for name in ("adversarial", "adversarial_glm")):
+               for name in ADVERSARIAL_STAGES):
         return
     metrics = trace.stage_metrics(debug)
-    paired["completed_pairs"] += 1
-    for name in ("adversarial", "adversarial_glm"):
+    paired["completed_reviews"] += 1
+    for name in ADVERSARIAL_STAGES:
         paired["sole_accepted"][name] += metrics.get(name, {}).get(
             "sole_source_findings", 0)
         paired["shared_accepted"][name] += metrics.get(name, {}).get(
             "shared_findings", 0)
     for request in requests:
-        if request["stage"] in ("adversarial", "adversarial_glm"):
+        if request["stage"] in ADVERSARIAL_STAGES:
             paired["known_cost_micros"][request["stage"]] += request["cost_micros"]
             if request["status"] in RESERVED_STATUSES:
                 paired["reserved_micros"][request["stage"]] += request["reserved_micros"]

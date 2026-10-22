@@ -375,8 +375,34 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(review["archaeology"]["status"], "verified")
         self.assertEqual(review["archaeology"]["citation_count"], 1)
         self.assertEqual(review["archaeology"]["alternative_count"], 1)
-        self.assertEqual(summary["paired_sol_glm"]["completed_pairs"], 1)
-        self.assertEqual(summary["paired_sol_glm"]["shared_accepted"]["adversarial_glm"], 1)
+        self.assertEqual(summary["adversarial_comparison"]["completed_reviews"], 0)
+
+    def test_adversarial_comparison_requires_all_three_completed_stages(self):
+        comparison = stats._new_adversarial_comparison()
+        debug = {"stages": {name: {"status": "completed"}
+                            for name in stats.ADVERSARIAL_STAGES}}
+        requests = [{"stage": name, "cost_micros": 100,
+                     "status": "reserved", "reserved_micros": 200}
+                    for name in stats.ADVERSARIAL_STAGES]
+        requests.append({"stage": "adversarial_glm", "cost_micros": 999,
+                         "status": "reserved", "reserved_micros": 999})
+        metrics = {name: {"sole_source_findings": index,
+                          "shared_findings": 1}
+                   for index, name in enumerate(stats.ADVERSARIAL_STAGES, 1)}
+        with patch.object(trace, "stage_metrics", return_value=metrics):
+            stats._add_adversarial_comparison(comparison, debug, requests)
+            debug["stages"]["adversarial_gemini"]["status"] = "failed"
+            stats._add_adversarial_comparison(comparison, debug, requests)
+        self.assertEqual(comparison["completed_reviews"], 1)
+        self.assertEqual(comparison["sole_accepted"], {
+            "adversarial": 1, "adversarial_deepseek": 2,
+            "adversarial_gemini": 3})
+        self.assertEqual(comparison["shared_accepted"],
+                         dict.fromkeys(stats.ADVERSARIAL_STAGES, 1))
+        self.assertEqual(comparison["known_cost_micros"],
+                         dict.fromkeys(stats.ADVERSARIAL_STAGES, 100))
+        self.assertEqual(comparison["reserved_micros"],
+                         dict.fromkeys(stats.ADVERSARIAL_STAGES, 200))
 
     def test_missing_history_does_not_create_databases_and_uses_readonly_uri(self):
         empty = self.state_dir / "empty"
@@ -423,9 +449,9 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(
             summary["spend"]["current_month"]["providers"]["openai"][
                 "known_cost_micros"], 10)
-        self.assertNotIn("glm", summary["spend"]["current_month"]["providers"])
+        self.assertNotIn("ppq", summary["spend"]["current_month"]["providers"])
         self.assertEqual(
-            summary["spend"]["lifetime"]["providers"]["glm"]["known_cost_micros"],
+            summary["spend"]["lifetime"]["providers"]["ppq"]["known_cost_micros"],
             20)
 
     def test_old_publish_decisions_without_attribution_do_not_credit_agents(self):

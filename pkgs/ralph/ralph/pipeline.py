@@ -8,12 +8,13 @@ from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
 from .repository import audit_developer_notes, focused_review_input
 from .spend import BudgetExceeded
 
-# Domain stages spend the review budget in a predictable order; the two
+# Domain stages spend the review budget in a predictable order; the three
 # adversarial models review the same evidence concurrently.
 # Domain correctness precedes design; verification retains protected headroom.
 DISCOVERY_ORDER = ("script", "adversarial", "concurrency", "state", "public_contract",
                    "build", "tests", "dead_code", "design")
-ADVERSARIAL_STAGES = ("adversarial", "adversarial_glm")
+PPQ_ADVERSARIAL_STAGES = ("adversarial_deepseek", "adversarial_gemini")
+ADVERSARIAL_STAGES = ("adversarial", *PPQ_ADVERSARIAL_STAGES)
 FULL_CONTEXT_STAGES = {"script", "dead_code", "independent", *ADVERSARIAL_STAGES, "verifier"}
 DISCOVERY_TOOL_LIMITS = {"routine": 12, "standard": 24, "sensitive": 48}
 ARCHAEOLOGY_TOOL_LIMIT = 12
@@ -24,7 +25,7 @@ def stage_settings(name, tier):
         return "low", model.MAX_COLLATOR_OUTPUT_TOKENS
     if name == "design":
         return "xhigh", 25_000
-    if name == "adversarial_glm":
+    if name in PPQ_ADVERSARIAL_STAGES:
         return "high", 32_000
     if name == "verifier":
         return "xhigh", model.MAX_VERIFIER_OUTPUT_TOKENS
@@ -49,7 +50,8 @@ def review_with_independent_passes(case, runtime, prompt_config,
     allow_discussions = runtime.allow_discussions
     research_evidence = case.research_evidence
     if ppq_budget is not None:
-        ppq_budget.exempt("adversarial_glm")
+        for stage in PPQ_ADVERSARIAL_STAGES:
+            ppq_budget.exempt(stage)
     if research_evidence is not None:
         allow_discussions = False
     stages = debug.setdefault("stages", {})
@@ -95,7 +97,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
                 "max_output_tokens": output_tokens,
                 "text": {"format": {"type": "json_schema", "name": "verifier",
                                     "strict": True, "schema": protocol.VERIFIER_SCHEMA}},
-            }, exempt_stages={"verifier", "collator", "adversarial_glm"})
+            }, exempt_stages={"verifier", "collator", *PPQ_ADVERSARIAL_STAGES})
 
     protect_verification()
     debug["pipeline_stage"] = "routing"
@@ -141,9 +143,9 @@ def review_with_independent_passes(case, runtime, prompt_config,
                     first_tool_required=bool(available_tools)
                     and (name in FULL_CONTEXT_STAGES or name in {"archaeologist", "alternatives"}),
                     response_schema=schema,
-                    provider="ppq" if name == "adversarial_glm" else "openai",
-                    budget=ppq_budget if name == "adversarial_glm" else budget,
-                    api_base="https://api.ppq.ai/v1" if name == "adversarial_glm"
+                    provider="ppq" if name in PPQ_ADVERSARIAL_STAGES else "openai",
+                    budget=ppq_budget if name in PPQ_ADVERSARIAL_STAGES else budget,
+                    api_base="https://api.ppq.ai/v1" if name in PPQ_ADVERSARIAL_STAGES
                     else "https://api.openai.com/v1",
                     final_timeout=600 if name == "verifier" else 180,
                     research_evidence=research_evidence if extra else None)
@@ -173,7 +175,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
         nonlocal notes
         prompt = (prompt_config.instructions if name == "independent"
                   else prompt_config.audit_prompts[
-                      "adversarial" if name == "adversarial_glm" else name])
+                      "adversarial" if name in PPQ_ADVERSARIAL_STAGES else name])
         if name in ADVERSARIAL_STAGES:
             prompt += "\n\n" + "\n\n".join(
                 prompt_config.audit_prompts[profile] for profile in plan["profiles"])
@@ -293,7 +295,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
         protect_verification()
         if name == "adversarial" and ppq_api_key:
             debug["pipeline_stage"] = "adversarial"
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=len(ADVERSARIAL_STAGES)) as executor:
                 futures = {stage: executor.submit(discover, stage)
                            for stage in ADVERSARIAL_STAGES}
                 results = {stage: future.result() for stage, future in futures.items()}
@@ -311,11 +313,11 @@ def review_with_independent_passes(case, runtime, prompt_config,
                     "evidence": plan["evidence"] + [f"{name} requested sensitive review"]}
             debug["routing"]["selected"] = plan
             debug["routing"]["escalated_by"] = name
-    for name in (*DISCOVERY_ORDER, "adversarial_glm"):
+    for name in (*DISCOVERY_ORDER, *PPQ_ADVERSARIAL_STAGES):
         if name not in completed:
             stages[name] = {"model": prompt_config.models[name], "status": "skipped",
                             "turns": [], "tools": []}
-            if name == "adversarial_glm" and not ppq_api_key:
+            if name in PPQ_ADVERSARIAL_STAGES and not ppq_api_key:
                 stages[name]["reason"] = "PPQ API key is not configured"
 
     protect_verification()

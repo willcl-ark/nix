@@ -60,8 +60,6 @@ let
     engineConfigFile
     "--review-budget-usd"
     (toString cfg.reviewBudgetUsd)
-    "--ppq-review-budget-usd"
-    (toString cfg.ppqReviewBudgetUsd)
     "--openai-key-file"
     cfg.openaiKeyFile
     "--ppq-key-file"
@@ -82,6 +80,10 @@ let
     cfg.reportDir
     "--report-base-url"
     cfg.reportBaseUrl
+  ]
+  ++ lib.optionals (cfg.ppqReviewBudgetUsd != null) [
+    "--ppq-review-budget-usd"
+    (toString cfg.ppqReviewBudgetUsd)
   ]
   ++ lib.optionals (cfg.monthlyBudgetUsd != null) [
     "--monthly-budget-usd"
@@ -183,9 +185,9 @@ in
     };
 
     ppqReviewBudgetUsd = lib.mkOption {
-      type = lib.types.addCheck lib.types.number (value: value > 0);
-      default = 0.50;
-      description = "Separate per-review spending ceiling in USD for the PPQ GLM pass.";
+      type = lib.types.nullOr (lib.types.addCheck lib.types.number (value: value > 0));
+      default = null;
+      description = "Optional per-review spending ceiling in USD shared by the PPQ adversarial passes.";
     };
 
     followupBudgetUsd = lib.mkOption {
@@ -255,7 +257,7 @@ in
 
     ppqKeyFile = lib.mkOption {
       type = lib.types.str;
-      description = "Path to a file containing the PPQ API key for GLM adversarial review.";
+      description = "Path to a file containing the PPQ API key for DeepSeek and Gemini adversarial reviews.";
     };
 
     webhookSecretFile = lib.mkOption {

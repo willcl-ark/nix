@@ -12,7 +12,7 @@ DEFAULT_PROMPT_FILE = Path(__file__).resolve().parent.parent / "prompt.md"
 DEFAULT_AUDIT_DIR = Path(__file__).resolve().parent.parent / "audits"
 AUDIT_NAMES = ("script", "concurrency", "state", "public_contract", "tests", "dead_code", "design", "build")
 ADVERSARIAL_PROFILES = ("consensus", "wallet", "p2p")
-MODEL_NAMES = ("router", "independent", "adversarial", "adversarial_glm",
+MODEL_NAMES = ("router", "independent", "adversarial", "adversarial_deepseek", "adversarial_gemini",
                *AUDIT_NAMES, "archaeologist", "verifier", "collator",
                "addressed_findings")
 PROMPT_NAMES = ("common", "router", "adversarial", *ADVERSARIAL_PROFILES,

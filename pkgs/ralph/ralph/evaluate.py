@@ -815,7 +815,7 @@ def main(argv=None):
                      default=None,
                      help="Run the eval-only blind alternatives experiment")
     run.add_argument("--review-budget-usd", type=float, default=1.00)
-    run.add_argument("--ppq-review-budget-usd", type=float, default=0.50)
+    run.add_argument("--ppq-review-budget-usd", type=float)
     run.add_argument("--monthly-budget-usd", type=float)
     run.add_argument("--labels-json", type=Path,
                      help="Optional local labels keyed by case ID; never sent to models")

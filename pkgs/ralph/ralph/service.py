@@ -496,7 +496,7 @@ def main():
     parser.add_argument("--models-json", type=Path,
                         help="JSON model routing for each review stage")
     parser.add_argument("--review-budget-usd", type=float, default=1.00)
-    parser.add_argument("--ppq-review-budget-usd", type=float, default=0.50)
+    parser.add_argument("--ppq-review-budget-usd", type=float)
     parser.add_argument("--monthly-budget-usd", type=float)
     parser.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
     args = parser.parse_args()

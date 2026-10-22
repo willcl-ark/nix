@@ -38,7 +38,7 @@ class StatsPageTests(unittest.TestCase):
                     "followup_assessments": False,
                     "followup_ledger": False,
                     "openai_ledger": False,
-                    "glm_ledger": False,
+                    "ppq_ledger": False,
                     "report_dir": False,
                 },
             },
@@ -101,13 +101,13 @@ class StatsPageTests(unittest.TestCase):
                 "saved_review_conceptual_concern_alternatives": {
                     "count": 0, "median": None, "p90": None, "max": None},
             },
-            "paired_sol_glm": {
-                "completed_pairs": 0,
-                "sole_accepted": {"adversarial": 0, "adversarial_glm": 0},
-                "shared_accepted": {"adversarial": 0, "adversarial_glm": 0},
-                "known_cost_micros": {"adversarial": 0, "adversarial_glm": 0},
-                "reserved_micros": {"adversarial": 0, "adversarial_glm": 0},
-                "note": "Observed paired completed reviews only; this is not causal recall.",
+            "adversarial_comparison": {
+                "completed_reviews": 0,
+                "sole_accepted": {"adversarial": 0, "adversarial_deepseek": 0, "adversarial_gemini": 0},
+                "shared_accepted": {"adversarial": 0, "adversarial_deepseek": 0, "adversarial_gemini": 0},
+                "known_cost_micros": {"adversarial": 0, "adversarial_deepseek": 0, "adversarial_gemini": 0},
+                "reserved_micros": {"adversarial": 0, "adversarial_deepseek": 0, "adversarial_gemini": 0},
+                "note": "Observed reviews with all three adversarial stages completed only; this is not causal recall.",
             },
             "recent_reviews": [],
             "reviews": [],
@@ -172,7 +172,7 @@ class StatsPageTests(unittest.TestCase):
                     "openai": self.request_totals(request_count=4, known_cost_micros=1_000_000,
                                                   reserved_micros=100_000,
                                                   unknown_cost_request_count=1),
-                    "glm": self.request_totals(request_count=3, known_cost_micros=234_000,
+                    "ppq": self.request_totals(request_count=3, known_cost_micros=234_000,
                                                reserved_micros=200_000),
                 },
             },
@@ -182,7 +182,7 @@ class StatsPageTests(unittest.TestCase):
             "providers": [
                 {"provider": "openai", **self.request_totals(request_count=4,
                                                              known_cost_micros=1_000_000)},
-                {"provider": "glm", **self.request_totals(request_count=3,
+                {"provider": "ppq", **self.request_totals(request_count=3,
                                                           known_cost_micros=234_000)},
             ],
             "models": [{
@@ -333,13 +333,13 @@ class StatsPageTests(unittest.TestCase):
             "saved_review_conceptual_concern_alternatives": {
                 "count": 1, "median": 3, "p90": 3, "max": 3},
         }
-        summary["paired_sol_glm"] = {
-            "completed_pairs": 2,
-            "sole_accepted": {"adversarial": 1, "adversarial_glm": 1},
-            "shared_accepted": {"adversarial": 1, "adversarial_glm": 0},
-            "known_cost_micros": {"adversarial": 1_000_000, "adversarial_glm": 234_000},
-            "reserved_micros": {"adversarial": 100_000, "adversarial_glm": 200_000},
-            "note": "Observed paired completed reviews only; this is not causal recall.",
+        summary["adversarial_comparison"] = {
+            "completed_reviews": 2,
+            "sole_accepted": {"adversarial": 1, "adversarial_deepseek": 1, "adversarial_gemini": 2},
+            "shared_accepted": {"adversarial": 1, "adversarial_deepseek": 0, "adversarial_gemini": 1},
+            "known_cost_micros": {"adversarial": 1_000_000, "adversarial_deepseek": 234_000, "adversarial_gemini": 300_000},
+            "reserved_micros": {"adversarial": 100_000, "adversarial_deepseek": 200_000, "adversarial_gemini": 0},
+            "note": "Observed reviews with all three adversarial stages completed only; this is not causal recall.",
         }
         summary["reviews"] = [
             {
@@ -476,7 +476,9 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("Median citations: 2.0; median alternatives: 3.0.", html)
         self.assertIn("research complete; no concern", html)
         self.assertIn("Shared findings are credited to each contributing agent", html)
-        self.assertIn("Paired model reviews", html)
+        self.assertIn("Adversarial model comparison", html)
+        self.assertIn("adversarial_deepseek", html)
+        self.assertIn("adversarial_gemini", html)
         self.assertIn("Current-engine verified reviews", html)
         self.assertIn("Addressed findings follow the commit date of the PR head", html)
         self.assertIn("Addressed findings by PR head commit date", html)

@@ -15,6 +15,10 @@ FINAL_TOOL_OUTPUT_HEADROOM_TOKENS = 13_000
 WEB_SEARCH_CALL_MICROS = 10_000
 WEB_SEARCH_TOOL_TYPES = {"web_search"}
 RATES = {
+    "deepseek/deepseek-v4-pro-0813": (Decimal("0.6963"), Decimal("0.02321"),
+                                      Decimal("0.6963"), Decimal("2.0889")),
+    "google/gemini-4-argon": (Decimal("1"), Decimal("0.05"),
+                               Decimal("0.09375"), Decimal("5")),
     "glm-5.3": (Decimal("1.477"), Decimal("1.477"),
                 Decimal("1.477"), Decimal("4.642")),
     "gpt-6-luna": (Decimal("0.1"), Decimal("0.01"),
@@ -74,13 +78,16 @@ def price_usd(model, usage):
     if rates is None or values is None:
         return None
     input_tokens, cached_tokens, cache_write_tokens, output_tokens = values
+    input_rate, cached_rate, write_rate, output_rate = rates
     if cache_write_tokens is None:
-        # Treat every uncached input token as a cache write, the highest input rate.
+        # Use the higher input rate when cache-write usage is unknown.
+        write_rate = max(input_rate, write_rate)
         cache_write_tokens = input_tokens - cached_tokens
-    multiplier = (Decimal(2) if model not in {"glm-5.3", "z-ai/glm-5.3"}
+    multiplier = (Decimal(2) if model not in {"glm-5.3", "z-ai/glm-5.3",
+                                             "deepseek/deepseek-v4-pro-0813",
+                                             "google/gemini-4-argon"}
                   and input_tokens > THRESHOLD_TOKENS
                   else Decimal(1))
-    input_rate, cached_rate, write_rate, output_rate = rates
     if multiplier == 2:
         output_rate *= Decimal("1.5")
     web_search_calls = usage.get("web_search_calls", 0)
@@ -210,7 +217,9 @@ class Ledger:
         # of the eventual invoice amount.
         input_tokens = (self._payload_bytes(payload) + self.input_padding_tokens
                         + extra_input_tokens)
-        multiplier = (Decimal(2) if model not in {"glm-5.3", "z-ai/glm-5.3"}
+        multiplier = (Decimal(2) if model not in {"glm-5.3", "z-ai/glm-5.3",
+                                             "deepseek/deepseek-v4-pro-0813",
+                                             "google/gemini-4-argon"}
                       and input_tokens > THRESHOLD_TOKENS else Decimal(1))
         input_rate = max(rates[:3]) * multiplier
         output_rate = rates[3] * (Decimal("1.5") if multiplier == 2 else Decimal(1))

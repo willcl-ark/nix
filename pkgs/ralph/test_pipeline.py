@@ -215,8 +215,8 @@ class PipelineTests(unittest.TestCase):
         self.debug = {}
         self.calls = []
 
-    def test_adversarial_glm_has_extra_output_headroom(self):
-        self.assertEqual(pipeline.stage_settings("adversarial_glm", "sensitive"),
+    def test_adversarial_deepseek_has_extra_output_headroom(self):
+        self.assertEqual(pipeline.stage_settings("adversarial_deepseek", "sensitive"),
                          ("high", 32_000))
         self.assertEqual(pipeline.stage_settings("adversarial", "sensitive"),
                          ("high", 25_000))
@@ -288,18 +288,19 @@ class PipelineTests(unittest.TestCase):
         ppq_budget = Mock()
         openai_budget.summary.return_value = {"limit_usd": "1", "provider": "openai"}
         ppq_budget.summary.return_value = {"limit_usd": "1", "provider": "ppq"}
-        rendezvous = Barrier(2)
+        rendezvous = Barrier(3)
         inputs = {}
+        candidate_ids = [f"{stage}:1" for stage in pipeline.ADVERSARIAL_STAGES]
 
         def review(*args, **kwargs):
             stage = kwargs["stage_name"]
             if stage in pipeline.ADVERSARIAL_STAGES:
                 inputs[stage] = (args[1], kwargs["prompt"], kwargs["tools"],
                                  kwargs["reasoning_effort"], kwargs["max_output_tokens"])
-                if stage == "adversarial_glm":
+                if stage in pipeline.PPQ_ADVERSARIAL_STAGES:
                     self.assertIs(kwargs["budget"], ppq_budget)
                     self.assertEqual(args[0], "ppq-key")
-                    self.assertEqual(kwargs["model"], "glm-5.3")
+                    self.assertEqual(kwargs["model"], self.prompts.models[stage])
                     self.assertEqual(kwargs["api_base"], "https://api.ppq.ai/v1")
                 else:
                     self.assertIs(kwargs["budget"], openai_budget)
@@ -311,9 +312,9 @@ class PipelineTests(unittest.TestCase):
                 candidates = json.loads(args[1].split("Verification input:\n")[1])[
                     "candidate_findings"]
                 self.assertEqual([item["id"] for item in candidates],
-                                 ["adversarial:1", "adversarial_glm:1"])
+                                 candidate_ids)
                 return verification([
-                    {"candidate_ids": ["adversarial:1", "adversarial_glm:1"],
+                    {"candidate_ids": candidate_ids,
                      "disposition": "publish", "reason": "Shared finding",
                      "finding": self.published}])
             return discovery()
@@ -323,13 +324,18 @@ class PipelineTests(unittest.TestCase):
         ppq_budget.protect.assert_not_called()
         self.assertEqual(self.debug["ppq_budget"], ppq_budget.summary.return_value)
         self.assertEqual(self.debug["budget"], openai_budget.summary.return_value)
-        self.assertEqual(inputs["adversarial"][:-1], inputs["adversarial_glm"][:-1])
+        self.assertEqual(inputs["adversarial"][:-1], inputs["adversarial_deepseek"][:-1])
+        self.assertEqual(inputs["adversarial"][:-1], inputs["adversarial_gemini"][:-1])
+        self.assertEqual(inputs["adversarial_gemini"][-1], 32_000)
+        self.assertEqual(self.debug["stages"]["adversarial_gemini"]["status"], "completed")
         self.assertEqual(inputs["adversarial"][-1], 25_000)
-        self.assertEqual(inputs["adversarial_glm"][-1], 32_000)
+        self.assertEqual(inputs["adversarial_deepseek"][-1], 32_000)
         finding = self.debug["finding_attribution"][0]
-        self.assertEqual(finding["raised_by"], ["adversarial", "adversarial_glm"])
-        self.assertEqual(finding["raised_by_models"], ["glm-5.3", "gpt-6.1-sol"])
-        self.assertEqual(self.debug["stages"]["adversarial_glm"]["status"], "completed")
+        self.assertEqual(finding["raised_by"], ["adversarial", "adversarial_deepseek", "adversarial_gemini"])
+        self.assertEqual(finding["raised_by_models"],
+                         sorted(self.prompts.models[stage]
+                                for stage in pipeline.ADVERSARIAL_STAGES))
+        self.assertEqual(self.debug["stages"]["adversarial_deepseek"]["status"], "completed")
 
     def test_routine_review_keeps_luna_editor_and_sends_only_accepted_findings(self):
         self.tier, self.audits = "standard", ["tests", "design"]

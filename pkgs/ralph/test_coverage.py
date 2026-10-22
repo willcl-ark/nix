@@ -21,18 +21,18 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("Linked discussion", result["context"]["limitations"][0])
 
     def test_failure_identifies_stage_and_reason(self):
-        result = self.summarize(adversarial_glm={"status": "failed", "error_type": "HTTPError"})
+        result = self.summarize(adversarial_deepseek={"status": "failed", "error_type": "HTTPError"})
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["verification"]["status"], "complete")
-        self.assertEqual(result["limitations"], ["adversarial_glm: Model API request failed."])
-        result = self.summarize(adversarial_glm={
+        self.assertEqual(result["limitations"], ["adversarial_deepseek: Model API request failed."])
+        result = self.summarize(adversarial_deepseek={
             "status": "failed", "error_type": "ValueError",
             "max_output_tokens": 25_000,
             "turns": [{"status": "incomplete",
                        "incomplete_reason": "max_output_tokens"}],
         })
         self.assertEqual(result["limitations"], [
-            "adversarial_glm: Model response reached its 25,000-token output limit."])
+            "adversarial_deepseek: Model response reached its 25,000-token output limit."])
         result = self.summarize(verifier={"status": "invalid", "validation_error": "Unknown candidate ID"})
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["verification"]["status"], "failed")
@@ -43,7 +43,7 @@ class CoverageTests(unittest.TestCase):
                        "No builds, tests, or sanitizers were run; this is a static review.",
                        "Static review only; no builds or test runs were performed, which is expected for this review."]:
             with self.subTest(reason=reason):
-                result = self.summarize(adversarial_glm=completed("partial", [reason]))
+                result = self.summarize(adversarial_deepseek=completed("partial", [reason]))
                 self.assertEqual(result["status"], "complete")
                 self.assertEqual(result["notes"], [reason])
 
@@ -52,12 +52,12 @@ class CoverageTests(unittest.TestCase):
                         ["Static review only; no builds or tests were run. Caller was not inspected."],
                         ["Compiler behavior of the new flag was not verified."]]:
             with self.subTest(reasons=reasons):
-                result = self.summarize(adversarial_glm=completed("partial", reasons))
+                result = self.summarize(adversarial_deepseek=completed("partial", reasons))
                 self.assertEqual(result["status"], "partial")
                 self.assertIn(reasons[-1], result["limitations"][-1])
 
     def test_undocumented_partial_and_missing_stages_are_not_complete(self):
-        result = self.summarize(adversarial_glm=completed("partial"))
+        result = self.summarize(adversarial_deepseek=completed("partial"))
         self.assertEqual(result["status"], "partial")
         self.assertIn("without identifying", result["limitations"][0])
         self.assertEqual(coverage.summarize({})["status"], "unknown")
@@ -76,5 +76,5 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("Caller guard", result["verification"]["limitations"][0])
 
     def test_skipped_stages_do_not_reduce_coverage(self):
-        result = self.summarize(adversarial_glm={"status": "skipped"})
+        result = self.summarize(adversarial_deepseek={"status": "skipped"})
         self.assertEqual(result["status"], "complete")

@@ -88,6 +88,25 @@ class SpendTests(unittest.TestCase):
                          int(price_usd("glm-5.3", {"input_tokens": expected_input,
                              "output_tokens": 1_000_000}) * MICRODOLLARS))
 
+    def test_ppq_adversarial_rates_and_long_context_estimates(self):
+        usage = {"input_tokens": 1_000_000,
+                 "input_tokens_details": {"cached_tokens": 100_000,
+                                          "cache_write_tokens": 100_000},
+                 "output_tokens": 1_000_000}
+        for model, expected in (("deepseek/deepseek-v4-pro-0813", "2.717891"),
+                                ("google/gemini-4-argon", "5.814375")):
+            with self.subTest(model=model):
+                self.assertTrue(supports_model(model))
+                self.assertEqual(str(price_usd(model, usage)), expected)
+                ledger = Ledger(self.path, review_limit_usd=10, input_padding_tokens=0)
+                payload = {"max_output_tokens": 1_000_000}
+                expected_input = ledger._payload_bytes(payload) + 1_000_000
+                estimate = ledger.reserve_estimate_micros(
+                    model, payload, extra_input_tokens=1_000_000)
+                self.assertEqual(estimate, int(price_usd(model, {
+                    "input_tokens": expected_input, "output_tokens": 1_000_000,
+                }) * MICRODOLLARS))
+
     def test_missing_usage_is_unknown_and_missing_cache_writes_is_conservative(self):
         self.assertIsNone(price_usd("gpt-6-luna", {"input_tokens": 10}))
         usage = {"input_tokens": 1_000_000, "output_tokens": 0,

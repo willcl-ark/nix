@@ -188,9 +188,11 @@ flowchart TD
     independent --> sensitive{"Sensitive tier?"}
     sensitive -->|yes| pair["Concurrent adversarial passes: same evidence and profiles"]
     pair --> sol["adversarial: gpt-6.1-sol / OpenAI"]
-    pair --> glm["adversarial_glm: glm-5.3 / PPQ"]
+    pair --> deepseek["adversarial_deepseek: DeepSeek V4 Pro 0813 / PPQ"]
+    pair --> gemini["adversarial_gemini: Gemini 4 Argon / PPQ"]
     sol --> focused["Selected focused audits, sequential"]
-    glm --> focused
+    deepseek --> focused
+    gemini --> focused
     sensitive -->|no| focused
     focused --> order["concurrency → state → public_contract → build → tests → dead_code → design"]
     order --> verifier["Verifier: gpt-6-luna / code and research evidence"]
@@ -201,7 +203,7 @@ flowchart TD
 ```
 
 Skipped audits do not make model calls. Escalation can add pending stages during
-discovery. Sol and GLM run concurrently when a PPQ key is supplied; without that
+discovery. Sol, DeepSeek and Gemini run concurrently when a PPQ key is supplied; without that
 key, the Python pipeline runs Sol alone. The service CLI requires both keys.
 The selected script specialist runs immediately after routing, before advisory
 research and overview. The archaeologist follows it, before other code discovery. Its assessment
@@ -218,7 +220,8 @@ discovery does not receive the archaeology output or current PR discussion.
 | independent | gpt-6-luna | low | 4,000 | Full tool set |
 | script | gpt-6.1-sol | high | 25,000 | Original input; code and base history, no discussion or web tools |
 | adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |
-| adversarial_glm | glm-5.3 | high | 25,000 | Same tools and profiles, via PPQ |
+| adversarial_deepseek | deepseek/deepseek-v4-pro-0813 | high | 32,000 | Same tools and profiles, via PPQ |
+| adversarial_gemini | google/gemini-4-argon | high | 32,000 | Same tools and profiles, via PPQ |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
 | dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
@@ -240,7 +243,7 @@ research call is missing from the frozen manifest, the tool returns an
 unavailable-evidence message and the model continues from code and frozen input.
 
 Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensitive.
-The script and dead-code specialists, both adversarial passes and verification allow 48. History and discussion
+The script and dead-code specialists, all three adversarial passes and verification allow 48. History and discussion
 sublimits are eight each per tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit and are capped at
 two per response. Search fees and evidence-token headroom are reserved in the
@@ -316,7 +319,7 @@ flowchart TD
     group -->|"Unknown, repeated or omitted candidate IDs"| invalid["Reject whole verifier response; publish no findings"]
 ```
 
-Candidate findings are leads, not votes. Agreement between Sol, GLM and focused
+Candidate findings are leads, not votes. Agreement between Sol, DeepSeek, Gemini and focused
 reviewers gives a claim no extra weight. A defect needs a reachable trigger and
 consequence, checked against the strongest code-based reason it might be false.
 Static proof can suffice; running a reproduction is not required. Defect

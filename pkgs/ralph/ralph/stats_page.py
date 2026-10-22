@@ -625,12 +625,12 @@ def _leaderboard_section(summary):
 
 
 def _paired_section(summary):
-    paired = _mapping(summary.get("paired_sol_glm"))
+    paired = _mapping(summary.get("adversarial_comparison"))
     names = sorted(set(_mapping(paired.get("sole_accepted")))
                    | set(_mapping(paired.get("shared_accepted")))
                    | set(_mapping(paired.get("known_cost_micros"))))
     if not names:
-        body = "<p>No paired Sol/GLM comparison was recorded.</p>"
+        body = "<p>No three-model adversarial comparison was recorded.</p>"
     else:
         rows = []
         sole = _mapping(paired.get("sole_accepted"))
@@ -651,11 +651,11 @@ def _paired_section(summary):
             "<th>Shared accepted</th><th>Known cost</th><th>Reserved</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>"
         )
-    note = _field(paired, "note", default="Observed completed pairs only; this is not recall or causality.")
+    note = _field(paired, "note", default="Observed reviews with all three adversarial stages completed only; this is not recall or causality.")
     return (
-        '<section id="paired"><h2>Paired model reviews</h2>'
+        '<section id="paired"><h2>Adversarial model comparison</h2>'
         + _section_note(note)
-        + f'<p>Completed pairs: {_fmt_int(_field(paired, "completed_pairs"))}</p>'
+        + f'<p>Completed reviews: {_fmt_int(_field(paired, "completed_reviews"))}</p>'
         + body
         + '</section>'
     )

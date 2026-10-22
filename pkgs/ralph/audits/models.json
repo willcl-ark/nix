@@ -1,7 +1,8 @@
 {
   "script": "gpt-6.1-sol",
   "adversarial": "gpt-6.1-sol",
-  "adversarial_glm": "glm-5.3",
+  "adversarial_deepseek": "deepseek/deepseek-v4-pro-0813",
+  "adversarial_gemini": "google/gemini-4-argon",
   "build": "gpt-6-luna",
   "archaeologist": "gpt-6-luna",
   "collator": "gpt-6-luna",
