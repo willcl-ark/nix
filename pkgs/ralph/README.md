@@ -371,11 +371,16 @@ optional alternative. Design kind determines its own section. A useful
 alternative can be published even when the PR's overall approach is sound.
 The comment contains the commit header, verified review and optional report link.
 Reports expose stage replies, dispositions and attribution. Statistics distinguish
-sole and shared accepted findings. Expand a stage to see its candidate titles,
-PRs, verifier decisions, accepted attribution, and links to the review reports.
+sole and shared accepted findings across five views: Overview, Agents, Reviews,
+Outcomes, and Usage. Overview shows the leaderboard and matched adversarial
+comparison; Agents links to a separate page for each stage and configured model.
+Each agent page shows its execution and coverage counts, spend, and a full-width
+candidate list with search, disposition filters, and pagination. Candidate rows
+include PRs, verifier decisions, accepted attribution, and review report links.
 Multiple candidates can merge into one accepted finding. Verifier acceptance
-is not human validation or a measurement of recall. They also summarize later best-effort automated
-checks of whether follow-up PR updates addressed earlier Ralph findings, keyed
+is not human validation or a measurement of recall. Reviews lists saved reviews;
+Usage contains spend and routing diagnostics. Outcomes summarizes best-effort
+automated checks of whether follow-up PR updates addressed earlier findings, keyed
 by the original finding ID and head-to-head comparison. Those follow-up checks
 are read from their own assessment database and spend ledger, so their budget is
 reported separately from review cost. These checks are not a causal claim.

@@ -1,5 +1,6 @@
 """Static public production statistics dashboard."""
 
+import hashlib
 import html
 import json
 from datetime import datetime, timezone
@@ -225,47 +226,19 @@ def _kpi(label, value, detail=""):
 
 
 def _top_kpis(summary):
-    inventory = _mapping(summary.get("inventory"))
     overview = _mapping(summary.get("overview"))
-    spend = _mapping(summary.get("spend"))
-    month = _mapping(spend.get("current_month"))
-    lifetime = _mapping(spend.get("lifetime"))
-    saved_reviews = _field(overview, "saved_reviews")
-    unique_prs = _field(inventory, "unique_prs")
-    findings = _field(overview, "published_findings")
-    unavailable_findings = _field(overview, "findings_unavailable_reviews", 0)
-    unavailable_diagnostics = _field(overview, "diagnostics_unavailable_reviews", 0)
-    archaeology = _mapping(overview.get("archaeology"))
-    addressed = _mapping(summary.get("addressed_findings"))
-    addressed_counts = _mapping(addressed.get("status_counts"))
-    known = _field(month, "known_cost_micros")
-    reserved = _field(month, "reserved_micros")
-    review_costs = _mapping(_mapping(summary.get("distributions")).get(
-        "saved_review_known_cost_micros"))
-    median_review_cost = _field(review_costs, "median")
-    review_cost_count = _field(review_costs, "count")
-    provider_count = len(_mapping(month.get("providers")))
-    request_count = _field(lifetime, "request_count")
-    jobs = _field(inventory, "jobs_total")
-    failed = _field(inventory, "recorded_failed_attempts")
+    inventory = _mapping(summary.get("inventory"))
+    month = _mapping(_mapping(summary.get("spend")).get("current_month"))
+    counts = _mapping(_mapping(summary.get("addressed_findings")).get("status_counts"))
     return "".join([
-        _kpi("Saved reviews", _fmt_int(saved_reviews), f"{_fmt_int(unique_prs)} unique PRs"),
-        _kpi("Exported findings", _fmt_int(findings),
-             (f"{_fmt_int(unavailable_findings)} reviews lack a findings export"
-              if unavailable_findings else "Bot verified, not human confirmed")),
-        _kpi("Conceptual concerns", _fmt_int(_field(archaeology, "published_concerns")),
-             (f"{_fmt_int(unavailable_diagnostics)} reviews lack Ralph 1 diagnostics"
-              if unavailable_diagnostics else
-              f"{_fmt_int(_field(archaeology, 'research_completed'))} research runs")),
-        _kpi("Addressed after review", _fmt_int(addressed_counts.get("addressed")),
-             f"{_fmt_int(addressed_counts.get('partially_addressed'))} partial; "
-             f"{_fmt_int(_field(addressed, 'evaluated_findings'))} assessed"),
-        _kpi("Current month spend", _fmt_money_micros(known),
-             f"{_fmt_money_micros(reserved)} reserved, {provider_count} providers"),
-        _kpi("Median review cost", _fmt_money_micros(median_review_cost),
-             f"matched saved-review cohort: {_fmt_int(review_cost_count)}"),
-        _kpi("API attempts", _fmt_int(request_count),
-             f"{_fmt_int(jobs)} review jobs; {_fmt_int(failed)} failed/retry attempts"),
+        _kpi("Saved reviews", _fmt_int(overview.get("saved_reviews")),
+             f"{_fmt_int(inventory.get('unique_prs'))} unique PRs"),
+        _kpi("Accepted findings", _fmt_int(overview.get("published_findings")),
+             "Bot verified; not human confirmed"),
+        _kpi("Addressed after review", _fmt_int(counts.get("addressed")),
+             f"{_fmt_int(counts.get('partially_addressed'))} partially addressed"),
+        _kpi("This month", _fmt_money_micros(month.get("known_cost_micros")),
+             f"{_fmt_money_micros(month.get('reserved_micros'))} reserved"),
     ])
 
 
@@ -353,37 +326,24 @@ def _addressed_findings(summary):
 
 def _addressed_table(findings, repository_url, report_base_url):
     if not findings:
-        return "<p>No addressed-finding assessments were recorded.</p>"
+        return '<p>No addressed-finding assessments were recorded.</p>'
     rows = []
     for finding in findings:
-        source_name = _field(finding, "source_report_name")
-        if not (isinstance(source_name, str)
-                and report.REPORT_ID.fullmatch(source_name)
-                and source_name.endswith(".html")):
-            source_name = None
-        finding_label = _field(finding, "title", default=None) or _field(
-            finding, "finding_id", default="unknown")
-        path = _field(finding, "path", default=None)
-        location = "" if path is None else f"<br><span class=\"note\">{_escape(path)}</span>"
-        rows.append(
-            "<tr>"
-            f"<td>{_pr_link(finding, repository_url)}</td>"
-            f"<td>{_report_name_link(source_name, report_base_url, 'source report')}</td>"
-            f"<td>{_compare_link(finding, repository_url)}</td>"
-            f"<td>{_escape(finding_label)}{location}</td>"
-            f"<td>{_escape(_field(finding, 'status', default='unclear'))}</td>"
-            f"<td>{_escape(_field(finding, 'reason', default=''))}</td>"
-            f"<td>{_escape(_field(finding, 'evidence', default=''))}</td>"
-            f"<td>{_escape(_field(finding, 'assessed_at', default='N/A'))}<br>"
-            f"<span class=\"note\">{_escape(_field(finding, 'model', default='unknown'))}</span></td>"
-            "</tr>"
-        )
-    return (
-        "<table><thead><tr><th>PR</th><th>Original review</th><th>Comparison</th>"
-        "<th>Finding</th><th>Status</th><th>Rationale</th><th>Evidence</th>"
-        "<th>Checked</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-    )
+        source_name = _safe_report_name({'report_name': finding.get('source_report_name')})
+        title = _escape(finding.get('title') or finding.get('finding_id', 'unknown'))
+        title += '<span class="subline">' + _escape(finding.get('path', '')) + '</span>'
+        status = finding.get('status', 'unclear')
+        detail = ('<details><summary>Assessment</summary><p>' + _escape(finding.get('reason', ''))
+                  + '</p><p>' + _escape(finding.get('evidence', '')) + '</p><p>'
+                  + _report_name_link(source_name, report_base_url, 'Source report') + ' · '
+                  + _compare_link(finding, repository_url) + '</p><p class="note">'
+                  + _escape(finding.get('assessed_at', 'N/A')) + ' · '
+                  + _escape(finding.get('model', 'unknown')) + '</p></details>')
+        row = _cells([_pr_link(finding, repository_url), title, _escape(status), detail])
+        rows.append(row.replace('<tr>', f'<tr data-filter="{_escape(status)}">', 1))
+    return _interactive_table(['PR', 'Finding', 'Outcome', 'Evidence'], rows, 'outcomes',
+                             [(v, v.replace('_', ' ').capitalize()) for v in
+                              ('addressed', 'partially_addressed', 'still_present', 'unclear')])
 
 
 def _addressed_section(summary):
@@ -404,10 +364,6 @@ def _addressed_section(summary):
     if unsupported:
         coverage += (f" Follow-up was unavailable for {_fmt_int(unsupported)} reviews "
                      "because their engine did not export findings.")
-    table_link = (
-        "<p>No addressed-finding assessments were recorded.</p>" if not findings else
-        f'<p>{_internal_link("addressed/", f"View all {len(findings):,} addressed assessments")}.</p>'
-    )
     return (
         '<section id="addressed"><h2>Addressed after review</h2>'
         + _section_note(_field(
@@ -424,7 +380,6 @@ def _addressed_section(summary):
         + f"known, {_fmt_money_micros(_field(spend, 'reserved_micros'))} reserved, "
         + f"{_fmt_int(_field(spend, 'request_count'))} attempts.</p>"
         + "</div></div>"
-        + table_link
         + '</section>'
     )
 
@@ -500,156 +455,114 @@ def _spend_section(summary):
     )
 
 
+def _stage_filename(stage):
+    identity = json.dumps([stage.get("stage"), stage.get("configured_model")], ensure_ascii=True)
+    return "agent-" + hashlib.sha256(identity.encode()).hexdigest()[:20] + ".html"
+
+
+def _stage_label(stage, prefix=""):
+    return (_link(prefix + _stage_filename(stage), stage.get("stage", "unknown"))
+            + '<span class="subline">'
+            + _escape(stage.get("configured_model", "unknown")) + '</span>')
+
+
+def _data_table(headers, rows):
+    numeric = {'Accepted', 'Unique', 'Shared', 'Completion', 'Cost', 'Cost / accepted', 'Executed', 'Failed', 'Findings',
+               'Sole accepted', 'Shared accepted', 'Known cost', 'Reserved'}
+    return ('<table><thead><tr>' + ''.join(
+        '<th scope="col"' + (' class="numeric"' if h in numeric else '') + f'>{_escape(h)}</th>' for h in headers)
+            + '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table>')
+
+
+def _cells(values):
+    return '<tr>' + ''.join(
+        ('<td class="numeric">' if value and '<' not in value
+         and (value[0].isdigit() or value[0] == '$' or value == 'N/A') else '<td>')
+        + value + '</td>' for value in values) + '</tr>'
+
+
+def _interactive_table(headers, rows, label, filters=()):
+    options = ''.join(f'<option value="{_escape(value)}">{_escape(text)}</option>'
+                      for value, text in filters)
+    select = ('<label>Show <select data-filter><option value="">All</option>'
+              + options + '</select></label>') if filters else ''
+    return ('<div class="data-list"><div class="list-controls" hidden>'
+            f'<label>Search { _escape(label)} <input type="search" data-search></label>'
+            + select + '</div>' + _data_table(headers, rows)
+            + '<div class="pagination" hidden><button type="button" data-prev>Previous</button>'
+            + '<span data-page role="status" aria-live="polite"></span>'
+            + '<button type="button" data-next>Next</button></div></div>')
+
+
 def _stage_findings_details(stage, repository_url, report_base_url):
     findings = [item for item in _list(stage.get("findings")) if isinstance(item, dict)]
     if not findings:
-        return ""
+        return '<p>No candidate findings were recorded for this agent.</p>'
     rows = []
-    for finding in findings:
-        accepted = ("Accepted, " + str(finding.get("attribution") or "unknown")
-                    if finding.get("accepted") else "Not accepted")
-        rows.append(
-            "<tr>"
-            f"<td>{_pr_link(finding, repository_url)}</td>"
-            f"<td>{_escape(_field(finding, 'candidate_id', default='unknown'))}</td>"
-            f"<td>{_escape(_field(finding, 'title', default='unknown'))}</td>"
-            f"<td>{_escape(_field(finding, 'disposition', default='undisposed'))}</td>"
-            f"<td>{_escape(accepted)}</td>"
-            f"<td>{_report_link(finding, report_base_url)}</td></tr>"
-        )
-    return (
-        f"<details><summary>View {len(findings):,} candidates</summary>"
-        "<p>Candidate rows can merge into one accepted finding. Publish is the verifier "
-        "decision; accepted attribution is recorded separately.</p>"
-        "<table><thead><tr><th>PR</th><th>Candidate</th><th>Finding</th>"
-        "<th>Verifier decision</th><th>Attribution</th><th>Report</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table></details>"
-    )
+    for finding in sorted(findings, key=_review_sort_key, reverse=True):
+        decision = finding.get("disposition", "undisposed")
+        accepted = finding.get("accepted")
+        group = 'accepted' if accepted else decision
+        attribution = ('Accepted, ' + str(finding.get('attribution') or 'unknown')
+                       if accepted else 'Not accepted')
+        title = _escape(finding.get('title', 'unknown'))
+        location = ':'.join(str(finding[k]) for k in ('path', 'line') if finding.get(k) is not None)
+        title += '<span class="subline">' + _escape(location) + '</span>'
+        title += '<span class="subline">' + _escape(finding.get('candidate_id', 'unknown')) + '</span>'
+        row = _cells([_pr_link(finding, repository_url), title, _escape(decision),
+                      _escape(attribution), _report_link(finding, report_base_url)])
+        rows.append(row.replace('<tr>', f'<tr data-filter="{_escape(group)}">', 1))
+    return ('<p class="note">Candidate rows can merge into one accepted finding. Publish is the verifier '
+            'decision; accepted attribution is recorded separately.</p>'
+            + _interactive_table(['PR', 'Finding', 'Verifier decision', 'Attribution', 'Report'],
+                                 rows, 'findings', [('accepted', 'Accepted'), ('drop', 'Dropped'),
+                                 ('unresolved', 'Unresolved'), ('undisposed', 'Unassessed'),
+                                 ('publish', 'Published without accepted attribution')]))
 
 
 def _stage_section(summary, repository_url, report_base_url):
-    stages = _list(summary.get("stages"))
-    if not stages:
-        unavailable = _field(_mapping(summary.get("overview")),
-                             "diagnostics_unavailable_reviews", 0)
-        if unavailable:
-            body = ("<p>Current-engine stage statistics are unavailable for "
-                    f"{_fmt_int(unavailable)} reviews.</p>")
-        else:
-            body = "<p>No agent stage statistics were recorded.</p>"
-    else:
-        rows = []
-        for stage in stages:
-            candidates = _mapping(stage.get("candidate_counts"))
-            ledger = _mapping(stage.get("ledger"))
-            statuses = _mapping(stage.get("status_counts"))
-            status_text = ", ".join(
-                f"{_escape(status)}: {_fmt_int(count)}"
-                for status, count in sorted(statuses.items())
-            )
-            coverage_text = ", ".join(
-                f"{_escape(status)}: {_fmt_int(count)}"
-                for status, count in sorted(_mapping(stage.get("coverage_counts")).items())
-            )
-            candidate_denominator = _candidate_denominator(candidates)
-            rows.append(
-                "<tr>"
-                f"<td>{_escape(_field(stage, 'stage', default='unknown'))}"
-                f"{_stage_findings_details(stage, repository_url, report_base_url)}</td>"
-                f"<td>{_escape(_field(stage, 'configured_model', default='unknown'))}</td>"
-                f"<td>{_fmt_int(_field(stage, 'executed_runs'))}</td>"
-                f"<td>{_fmt_int(_field(stage, 'saved_result_runs'))}</td>"
-                f"<td>{status_text}</td>"
-                f"<td>{coverage_text}</td>"
-                f"<td>{_fmt_int(_field(stage, 'conceptual_concerns'))}</td>"
-                f"<td>{_fmt_int(_field(stage, 'accepted_findings'))}</td>"
-                f"<td>{_fmt_int(_field(stage, 'sole_source_findings'))}</td>"
-                f"<td>{_fmt_int(_field(stage, 'shared_findings'))}</td>"
-                f"<td>{_fmt_int(candidates.get('publish'))} / {_fmt_int(candidates.get('drop'))} / "
-                f"{_fmt_int(candidates.get('unresolved'))} / {_fmt_int(candidates.get('undisposed'))}</td>"
-                f"<td>{_fmt_percent(candidates.get('publish'), candidate_denominator)}</td>"
-                f"<td>{_fmt_decimal(_field(stage, 'accepted_per_executed_run'), 3)}</td>"
-                f"<td>{_fmt_int(_field(ledger, 'request_count'))}</td>"
-                f"<td>{_fmt_money_micros(_field(ledger, 'known_cost_micros'))}</td>"
-                f"<td>{_fmt_money_micros(_field(stage, 'known_cost_per_accepted_finding_micros'))}</td>"
-                "</tr>"
-            )
-        body = (
-            "<table><thead><tr><th>Stage</th><th>Configured model</th><th>Executed runs</th>"
-            "<th>Saved runs</th><th>Status counts</th><th>Coverage counts</th>"
-            "<th>Conceptual concerns</th>"
-            "<th>Accepted</th><th>Sole</th><th>Shared</th>"
-            "<th>Publish / drop / unresolved / undisposed</th><th>Selected among assessed</th>"
-            "<th>Accepted findings/run</th><th>Attempts</th>"
-            "<th>Known cost</th><th>Cost/accepted</th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>"
-        )
-    return (
-        '<section id="stages"><h2>Agent stages</h2>'
-        + _section_note(
-            "Opportunities and accepted findings describe observed attribution in saved review results. "
-            "Conceptual concerns are counted separately from findings. Cost comes from ledger stage and model attempts, including reruns. Selected rates use publish, drop and unresolved candidates; unassessed candidates are excluded."
-        )
-        + body
-        + '</section>'
-    )
+    stages = [stage for stage in _list(summary.get("stages")) if isinstance(stage, dict)]
+    rows = []
+    for stage in stages:
+        statuses = _mapping(stage.get('status_counts'))
+        ledger = _mapping(stage.get('ledger'))
+        rows.append(_cells([
+            _stage_label(stage), _fmt_int(stage.get('executed_runs')),
+            _fmt_percent(statuses.get('completed', 0), stage.get('executed_runs')),
+            _fmt_int(statuses.get('failed', 0)), _fmt_int(stage.get('accepted_findings')),
+            _fmt_money_micros(ledger.get('known_cost_micros')),
+        ]))
+    return ('<section><h2>All agents</h2><p class="note">Choose an agent to inspect its findings, '
+            'coverage and usage. Completion is completed stages divided by executed runs; '
+            'skipped stages are excluded.</p>'
+            + (_interactive_table(['Agent / model', 'Executed', 'Completion', 'Failed', 'Accepted', 'Cost'],
+                                  rows, 'agents') if rows else '<p>No agent stage statistics were recorded.</p>')
+            + '</section>')
 
 
 def _leaderboard_section(summary):
-    leaders = [item for item in _list(summary.get("stage_model_leaderboard"))
-               if isinstance(item, dict)]
-    stage_details = {
-        (_field(stage, "stage"), _field(stage, "configured_model")): stage
-        for stage in _list(summary.get("stages")) if isinstance(stage, dict)
-    }
-    if not leaders:
-        body = "<p>No accepted finding leaderboard was recorded.</p>"
-    else:
-        rows = []
-        for leader in leaders:
-            key = (_field(leader, "stage"), _field(leader, "configured_model"))
-            details = _mapping(stage_details.get(key))
-            candidates = _mapping(details.get("candidate_counts"))
-            executed = _field(leader, "executed_runs")
-            accepted = _field(leader, "accepted_findings")
-            candidate_denominator = _candidate_denominator(candidates)
-            rows.append(
-                "<tr>"
-                f"<td>{_escape(_field(leader, 'stage', default='unknown'))}</td>"
-                f"<td>{_escape(_field(leader, 'configured_model', default='unknown'))}</td>"
-                f"<td>{_fmt_int(accepted)}</td>"
-                f"<td>{_fmt_int(_field(leader, 'sole_source_findings'))}</td>"
-                f"<td>{_fmt_int(_field(leader, 'shared_findings'))}</td>"
-                f"<td>{_fmt_int(executed)}</td>"
-                f"<td>{_fmt_int(_field(leader, 'selected_candidate_findings'))} / "
-                f"{_fmt_int(candidates.get('drop'))} / {_fmt_int(candidates.get('unresolved'))} / "
-                f"{_fmt_int(candidates.get('undisposed'))}</td>"
-                f"<td>{_fmt_percent(_field(leader, 'selected_candidate_findings'), candidate_denominator)}</td>"
-                f"<td>{_fmt_decimal((_number(accepted) / _number(executed)) if _number(accepted) is not None and _number(executed) else None, 3)}</td>"
-                f"<td>{_fmt_int(_field(leader, 'request_count'))}</td>"
-                f"<td>{_fmt_money_micros(_field(leader, 'known_cost_micros'))}</td>"
-                f"<td>{_fmt_money_micros(_field(leader, 'reserved_micros'))}</td>"
-                f"<td>{_fmt_money_micros(_field(leader, 'known_cost_per_accepted_finding_micros'))}</td>"
-                "</tr>"
-            )
-        body = (
-            "<table><thead><tr><th>Stage</th><th>Configured model</th>"
-            "<th>Accepted findings</th><th>Sole</th><th>Shared</th><th>Executed runs</th>"
-            "<th>Selected / dropped / unresolved / undisposed</th><th>Selected among assessed</th>"
-            "<th>Accepted findings/run</th><th>Attempts</th><th>Ledger cost</th>"
-            "<th>Reserved</th><th>Cost/accepted</th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>"
-        )
-    return (
-        '<section id="leaderboard"><h2>Accepted finding leaderboard</h2>'
-        + _section_note(
-            "Ranked by verifier-accepted final findings. Shared findings are credited to each "
-            "contributing agent, so row totals can overlap. Cost includes ledger retries and "
-            "is grouped by stage and configured model. Selected rates exclude unassessed candidates."
-        )
-        + body
-        + '</section>'
-    )
+    leaders = [item for item in _list(summary.get("stage_model_leaderboard")) if isinstance(item, dict)]
+    stages = {(stage.get('stage'), stage.get('configured_model')): stage
+              for stage in _list(summary.get('stages')) if isinstance(stage, dict)}
+    rows = []
+    for leader in leaders:
+        stage = stages.get((leader.get('stage'), leader.get('configured_model')))
+        statuses = _mapping(stage.get('status_counts')) if stage else {}
+        label = (_stage_label(leader, 'agents/') if stage else
+                 _escape(leader.get('stage', 'unknown')))
+        rows.append(_cells([label, _fmt_int(leader.get('accepted_findings')),
+                           _fmt_int(leader.get('sole_source_findings')),
+                           _fmt_int(leader.get('shared_findings')),
+                           _fmt_percent(statuses.get('completed', 0) if stage else None, _field(stage, 'executed_runs')),
+                           _fmt_money_micros(leader.get('known_cost_micros')),
+                           _fmt_money_micros(leader.get('known_cost_per_accepted_finding_micros'))]))
+    return ('<section id="leaderboard"><h2>Agent leaderboard</h2>'
+            '<p class="note">Ranked by verifier-accepted findings across saved reviews. Unique means '
+            'one contributing agent; shared findings count for each contributor. Different agents '
+            'may review different PRs. Cost includes retries.</p>'
+            + (_data_table(['Agent / model', 'Accepted', 'Unique', 'Shared', 'Completion', 'Cost', 'Cost / accepted'], rows)
+               if rows else '<p>No accepted finding leaderboard was recorded.</p>')
+            + '<p>' + _internal_link('agents/', 'Explore all agents →') + '</p></section>')
 
 
 def _paired_section(summary):
@@ -665,20 +578,13 @@ def _paired_section(summary):
         shared = _mapping(paired.get("shared_accepted"))
         cost = _mapping(paired.get("known_cost_micros"))
         for name in names:
-            rows.append(
-                "<tr>"
-                f"<td>{_escape(name)}</td>"
-                f"<td>{_fmt_int(sole.get(name))}</td>"
-                f"<td>{_fmt_int(shared.get(name))}</td>"
-                f"<td>{_fmt_money_micros(cost.get(name))}</td>"
-                f"<td>{_fmt_money_micros(_mapping(paired.get('reserved_micros')).get(name))}</td>"
-                "</tr>"
-            )
-        body = (
-            "<table><thead><tr><th>Model group</th><th>Sole accepted</th>"
-            "<th>Shared accepted</th><th>Known cost</th><th>Reserved</th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>"
-        )
+            rows.append(_cells([
+                _escape(name), _fmt_int(sole.get(name)), _fmt_int(shared.get(name)),
+                _fmt_money_micros(cost.get(name)),
+                _fmt_money_micros(_mapping(paired.get('reserved_micros')).get(name)),
+            ]))
+        body = _data_table(['Model group', 'Sole accepted', 'Shared accepted',
+                            'Known cost', 'Reserved'], rows)
     note = _field(paired, "note", default="Observed reviews with all three adversarial stages completed only; this is not recall or causality.")
     return (
         '<section id="paired"><h2>Adversarial model comparison</h2>'
@@ -782,66 +688,35 @@ def _sorted_reviews(summary):
 
 def _reviews_table(reviews, repository_url, report_base_url):
     if not reviews:
-        return "<p>No saved reviews were recorded.</p>"
+        return '<p>No saved reviews were recorded.</p>'
     rows = []
     for review in reviews:
-        findings = _mapping(review.get("findings"))
-        archaeology = _mapping(review.get("archaeology"))
-        ledger = _mapping(review.get("ledger"))
-        if archaeology.get("published_concern"):
-            concept_status = (
-                f"{_escape(_field(archaeology, 'status', default='unknown'))} "
-                f"({_fmt_int(_field(archaeology, 'citation_count'))} citations, "
-                f"{_fmt_int(_field(archaeology, 'alternative_count'))} alternatives)"
-            )
-        elif archaeology.get("research_completed"):
-            concept_status = "research complete; no concern"
-        else:
-            concept_status = "N/A"
-        rows.append(
-            "<tr>"
-            f"<td>{_fmt_int(_field(review, 'job_id'))}</td>"
-            f"<td>{_pr_link(review, repository_url)}</td>"
-            f"<td>{_fmt_int(_field(review, 'generation'))}</td>"
-            f"<td>{_report_link(review, report_base_url)}</td>"
-            f"<td>{_escape(_field(review, 'status', default='saved'))}</td>"
-            f"<td>{_escape(_field(review, 'coverage', default='unknown'))}</td>"
-            f"<td>{_escape(_field(review, 'context_coverage', default='unknown'))}</td>"
-            f"<td>{_escape(_field(review, 'verification_status', default='unknown'))}</td>"
-            f"<td>{'unsupported' if findings.get('export_status') == 'unsupported' else _fmt_int(findings.get('saved')) + ' / ' + _fmt_int(findings.get('published'))}</td>"
-            f"<td>{concept_status}</td>"
-            f"<td>{_fmt_int(_field(ledger, 'request_count'))}</td>"
-            f"<td>{_fmt_int(_field(review, 'recorded_failed_attempts'))}</td>"
-            f"<td>{_fmt_money_micros(_field(ledger, 'known_cost_micros'))}</td>"
-            f"<td>{_fmt_money_micros(_field(ledger, 'reserved_micros'))}</td>"
-            "</tr>"
-        )
-    return (
-        "<table><thead><tr><th>Job</th><th>PR</th><th>Generation</th><th>Report</th>"
-        "<th>Status</th><th>Code review</th><th>Historical context</th>"
-        "<th>Verification</th><th>Findings saved/published</th>"
-        "<th>Concept</th><th>Attempts</th><th>Failed/retries</th><th>Known cost</th><th>Reserved</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-    )
-
-
-def _reviews_section(summary, repository_url, report_base_url):
-    reviews = _sorted_reviews(summary)
-    preview = reviews[:20]
-    if reviews:
-        shown = len(preview)
-        note = (
-            f"<p>Showing the latest {shown:,} of {len(reviews):,} saved reviews. "
-            f'{_internal_link("reviews/", "View all reviews")}.</p>'
-        )
-    else:
-        note = ""
-    return (
-        '<section id="reviews"><h2>Latest reviews</h2>'
-        + note
-        + _reviews_table(preview, repository_url, report_base_url)
-        + '</section>'
-    )
+        findings = _mapping(review.get('findings'))
+        ledger = _mapping(review.get('ledger'))
+        archaeology = _mapping(review.get('archaeology'))
+        detail = _key_value_table({
+            'Generation': review.get('generation', 'N/A'),
+            'Historical context': review.get('context_coverage', 'unknown'),
+            'Verification': review.get('verification_status', 'unknown'),
+            'Saved findings': findings.get('saved', 'N/A'),
+            'Concept': archaeology.get('status', 'N/A'),
+            'Concept published': archaeology.get('published_concern', False),
+            'Research complete': archaeology.get('research_completed', False),
+            'Citations': archaeology.get('citation_count', 'N/A'),
+            'Alternatives': archaeology.get('alternative_count', 'N/A'),
+            'API attempts': ledger.get('request_count', 'N/A'),
+            'Failed/retries': review.get('recorded_failed_attempts', 'N/A'),
+            'Reserved': _fmt_money_micros(ledger.get('reserved_micros')),
+        })
+        rows.append(_cells([
+            _pr_link(review, repository_url) + '<span class="subline">Job '
+            + _fmt_int(review.get('job_id')) + '</span>',
+            _escape(review.get('status', 'saved')), _escape(review.get('coverage', 'unknown')),
+            'unsupported' if findings.get('export_status') == 'unsupported' else _fmt_int(findings.get('published')),
+            _fmt_money_micros(ledger.get('known_cost_micros')), _report_link(review, report_base_url),
+            '<details><summary>Details</summary>' + detail + '</details>',
+        ]))
+    return _interactive_table(['Review', 'Status', 'Coverage', 'Findings', 'Cost', 'Report', 'Details'], rows, 'reviews')
 
 
 def _valid_period(value):
@@ -980,163 +855,261 @@ def _charts_section(summary):
 
 def _style():
     return """
-body { margin: 0; color: #1d2733; background: #f7f8fb; font: 16px/1.5 system-ui, sans-serif; }
-a { color: #0f5f8c; }
-header { background: #16202c; color: #fff; padding: 2rem max(1rem, calc((100vw - 76rem) / 2)); }
-main { max-width: 76rem; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
-h1 { margin: 0 0 .4rem; font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1; }
-h2 { margin-top: 2rem; font-size: 1.45rem; }
-h3 { margin: 1rem 0 .5rem; font-size: 1rem; }
-nav { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
-nav a, .download { color: #fff; border: 1px solid rgb(255 255 255 / 35%); border-radius: 6px; padding: .35rem .55rem; text-decoration: none; }
-.summary { max-width: 58rem; font-size: 1.1rem; color: #dbeafe; }
-.meta { color: #aebecd; }
-.preview { display: inline-block; color: #111827; background: #fef3c7; border-radius: 6px; padding: .35rem .55rem; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .75rem; margin-top: -1.2rem; }
-.card { background: #fff; border: 1px solid #d8dee8; border-radius: 8px; padding: 1rem; box-shadow: 0 2px 12px rgb(22 32 44 / 7%); }
-.kpi-label { color: #526170; font-size: .84rem; text-transform: uppercase; letter-spacing: .04em; }
-.kpi-value { font-size: 1.75rem; font-weight: 750; margin-top: .2rem; }
-.kpi-detail, .note { color: #5b6876; }
-.big { font-size: 1.7rem; font-weight: 750; margin: .25rem 0 .75rem; }
-section { background: #fff; border: 1px solid #d8dee8; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
-.split { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 1rem; }
-.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
-.chart { margin: 0; border: 1px solid #e3e7ee; border-radius: 8px; padding: .75rem; }
-.chart figcaption { font-weight: 700; margin-bottom: .4rem; }
-.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
-.chart text { fill: #5b6876; font-size: 10px; }
-.chart-axis { stroke: #cad2dd; stroke-width: 1; }
-.chart-line { fill: none; stroke: #0f766e; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.chart circle { fill: #0f5f8c; }
+* { box-sizing: border-box; }
+body { margin: 0; color: #243247; background: #f4f6f9; font: 15px/1.55 system-ui, sans-serif; }
+a { color: #126576; text-underline-offset: .18em; }
+a:hover { color: #084752; }
+header { background: #142536; color: #fff; padding: 1.4rem max(1.2rem, calc((100vw - 90rem) / 2)); }
+header a { color: #c6d5e1; }
+.brand { font-size: 1.35rem; font-weight: 750; text-decoration: none; color: #fff; }
+.header-top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+nav { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: 1.2rem; }
+nav a { text-decoration: none; padding: .55rem .9rem; border-radius: .4rem; }
+nav a:hover, nav a[aria-current] { background: #294155; color: #fff; }
+main { max-width: 90rem; margin: auto; padding: 2rem 1.2rem 3rem; }
+h1 { font-size: 2rem; margin: 0; letter-spacing: -.035em; }
+h2 { font-size: 1.2rem; margin: 0 0 .7rem; }
+h3 { font-size: 1rem; }
+p { margin: .6rem 0 1rem; }
+.subtitle, .note, .subline, .kpi-detail { color: #64748b; }
+.subline { display: block; font-size: .8rem; margin-top: .25rem; overflow-wrap: anywhere; }
+.subtitle { margin-bottom: 1.6rem; }
+.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.card, section { background: #fff; border: 1px solid #dfe6ee; border-radius: .65rem; padding: 1.35rem; }
+section { margin-top: 1.25rem; }
+.card { border-top: 3px solid #207d84; }
+.kpi-label { color: #526170; font-size: .8rem; }
+.kpi-value, .big { font-size: 1.8rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.kpi-detail { font-size: .85rem; }
+.split { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.25rem; }
+.split > section { min-width: 0; }
 .table-wrap { overflow-x: auto; }
-table { border-collapse: collapse; min-width: 44rem; width: 100%; }
-th, td { border-bottom: 1px solid #e3e7ee; padding: .5rem .55rem; text-align: left; vertical-align: top; }
-th { color: #425060; background: #f0f3f7; font-size: .85rem; }
-.bar-row { display: grid; grid-template-columns: 6rem minmax(8rem, 1fr) 16rem; gap: .65rem; align-items: center; margin: .45rem 0; }
-.bar-track { height: .75rem; background: #e7ebf0; border-radius: 999px; overflow: hidden; }
-.bar-fill { height: 100%; background: linear-gradient(90deg, #0f766e, #2f80ed); }
-details { border-top: 1px solid #e3e7ee; padding: .8rem 0; }
-summary { cursor: pointer; font-weight: 700; }
-@media (max-width: 700px) {
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { padding: .85rem .65rem; border-bottom: 1px solid #e8edf2; text-align: left; vertical-align: top; }
+th { font-size: .75rem; font-weight: 650; color: #64748b; background: #f7f9fb; white-space: nowrap; }
+tbody tr:last-child > td { border-bottom: 0; }
+tbody tr:hover { background: #fbfcfd; }
+td { font-variant-numeric: tabular-nums; }
+.numeric { text-align: right; white-space: nowrap; }
+td:first-child { min-width: 5rem; }
+.key-values { display: grid; grid-template-columns: minmax(8rem, 1fr) 1fr; gap: .6rem 1rem; margin: .5rem 0; min-width: 15rem; }
+.key-values dt { color: #64748b; }
+.key-values dd { margin: 0; overflow-wrap: anywhere; }
+details { margin: .2rem 0; }
+summary { cursor: pointer; color: #126576; font-weight: 600; }
+details[open] > summary { margin-bottom: .75rem; }
+.list-controls, .pagination { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; margin: 1rem 0; }
+.list-controls label { display: flex; flex-direction: column; gap: .35rem; font-size: .8rem; color: #526170; }
+input, select, button { font: inherit; padding: .5rem .7rem; border: 1px solid #cbd5e1; background: #fff; color: #243247; border-radius: .35rem; }
+input { width: min(23rem, 100%); }
+button { cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+a:focus-visible, summary:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #2b9dad; outline-offset: 3px; }
+.pagination { justify-content: flex-end; font-size: .85rem; }
+[hidden] { display: none !important; }
+footer { max-width: 90rem; margin: auto; padding: 0 1.2rem 2rem; color: #64748b; font-size: .8rem; }
+.preview { background: #fef3c7; color: #624500; padding: .5rem; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.chart { margin: 0; padding: .75rem; }
+.chart figcaption { font-weight: 600; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart text { fill: #64748b; font-size: 10px; }
+.chart-axis { stroke: #cbd5e1; }
+.chart-line { fill: none; stroke: #167780; stroke-width: 3; }
+.chart circle { fill: #167780; }
+.bar-row { display: grid; grid-template-columns: 6rem 1fr 16rem; gap: .65rem; align-items: center; margin: .6rem 0; }
+.bar-track { height: .55rem; background: #e7ebf0; border-radius: 1rem; overflow: hidden; }
+.bar-fill { height: 100%; background: #207d84; }
+@media (max-width: 750px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main { padding: 1.2rem .8rem; }
+  section, .card { padding: 1rem; }
+  nav { gap: 0; }
+  nav a { padding: .5rem .65rem; }
   .bar-row { grid-template-columns: 1fr; gap: .2rem; }
-  header { padding-top: 1.4rem; }
+  .header-top { align-items: start; }
 }
 """
 
 
+def _script():
+    return """
+document.querySelectorAll('.data-list').forEach(list => {
+  const rows = [...list.querySelector('tbody').children];
+  const search = list.querySelector('[data-search]');
+  const filter = list.querySelector('select[data-filter]');
+  const previous = list.querySelector('[data-prev]');
+  const next = list.querySelector('[data-next]');
+  const status = list.querySelector('[data-page]');
+  const searchable = rows.map(row => row.textContent.toLocaleLowerCase());
+  const size = 25;
+  let page = 0;
+  function render() {
+    const query = search.value.trim().toLocaleLowerCase();
+    const matches = rows.filter((row, index) => searchable[index].includes(query)
+      && (!filter || !filter.value || row.dataset.filter === filter.value));
+    page = Math.min(page, Math.max(0, Math.ceil(matches.length / size) - 1));
+    rows.forEach(row => { row.hidden = true; });
+    matches.slice(page * size, (page + 1) * size).forEach(row => { row.hidden = false; });
+    status.textContent = matches.length
+      ? `${page * size + 1}–${Math.min((page + 1) * size, matches.length)} of ${matches.length}`
+      : 'No matching results';
+    previous.disabled = page === 0;
+    next.disabled = (page + 1) * size >= matches.length;
+  }
+  search.addEventListener('input', () => { page = 0; render(); });
+  if (filter) filter.addEventListener('change', () => { page = 0; render(); });
+  previous.addEventListener('click', () => { page--; render(); });
+  next.addEventListener('click', () => { page++; render(); });
+  list.querySelector('.list-controls').hidden = false;
+  list.querySelector('.pagination').hidden = false;
+  render();
+});
+"""
+
+
 def _wrap_tables(html_text):
-    return html_text.replace("<table>", '<div class="table-wrap"><table>').replace("</table>", "</table></div>")
+    return html_text.replace("<table>", '<div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable data table"><table>').replace("</table>", "</table></div>")
 
 
-def _header(summary, page_prefix=""):
-    generated_at = _generated_at(summary)
-    preview_notice = _field(summary, "preview_notice", default="")
-    preview_html = f'<p class="preview">{_escape(preview_notice)}</p>' if preview_notice else ""
-    overview_link = f'<a href="{page_prefix}index.html">Overview</a>' if page_prefix else ""
-    def anchor(fragment):
-        return f"{page_prefix}index.html{fragment}" if page_prefix else fragment
-    return f"""<header>
-<h1>ralph stats</h1>
-{preview_html}
-<p class="summary">{_escape(_analysis(summary))}</p>
-<p class="meta">Generated {_escape(generated_at)}. {_escape(_source_status(summary))}</p>
-<nav>
-{overview_link}
-<a href="{anchor("#leaderboard")}">Leaderboard</a>
-<a href="{anchor("#concepts")}">Concepts</a>
-<a href="{anchor("#addressed")}">Addressed</a>
-<a href="{anchor("#spend")}">Spend</a>
-<a href="{anchor("#stages")}">Agent stages</a>
-<a href="{anchor("#paired")}">Paired models</a>
-<a href="{anchor("#models")}">Models</a>
-<a href="{anchor("#routing")}">Routing</a>
-<a href="{page_prefix}reviews/">Reviews</a>
-<a href="{page_prefix}addressed/">Addressed details</a>
-<a class="download" href="{page_prefix}stats.json" download>Download JSON</a>
-</nav>
-</header>"""
+def _header(summary, page_prefix="", active="Overview"):
+    links = [('index.html', 'Overview'), ('agents/', 'Agents'), ('reviews/', 'Reviews'),
+             ('addressed/', 'Outcomes'), ('usage/', 'Usage')]
+    nav = ''.join(f'<a href="{page_prefix}{path}"'
+                  + (' aria-current="page"' if label == active else '')
+                  + f'>{label}</a>' for path, label in links)
+    preview = _field(summary, 'preview_notice', '')
+    return ('<header><div class="header-top">'
+            + _internal_link(page_prefix + 'index.html', 'ralph / stats').replace('<a ', '<a class="brand" ', 1)
+            + f'<a href="{page_prefix}stats.json" download>Download JSON</a></div>'
+            + (f'<p class="preview">{_escape(preview)}</p>' if preview else '')
+            + '<nav aria-label="Statistics">' + nav + '</nav></header>')
 
 
-def _page(title, summary, body, page_prefix=""):
+def _page(title, summary, body, page_prefix="", active="Overview"):
     return _wrap_tables(f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{_escape(title)}</title>
-<style>{_style()}</style>
-</head>
-<body>
-{_header(summary, page_prefix)}
-<main>
-{body}
-</main>
-</body>
-</html>
+<title>{_escape(title)} · ralph stats</title><style>{_style()}</style></head>
+<body>{_header(summary, page_prefix, active)}<main>{body}</main>
+<footer>Generated {_escape(_generated_at(summary))}. {_escape(_source_status(summary))}</footer>
+<script src="{page_prefix}stats.js" defer></script></body></html>
 """)
 
 
+def _key_value_table(values):
+    return '<dl class="key-values">' + ''.join(
+        f'<dt>{_escape(key)}</dt><dd>{_escape(value)}</dd>' for key, value in values.items()) + '</dl>'
+
+
 def _html(summary, repository_url, report_base_url):
-    limitations = _mapping(summary.get("limitations"))
-    notes = "".join(f"<li>{_escape(note)}</li>" for note in _list(limitations.get("notes")))
-    body = f"""
-<div class="cards">{_top_kpis(summary)}</div>
-{_leaderboard_section(summary)}
-{_concept_section(summary)}
-{_addressed_section(summary)}
-{_paired_section(summary)}
-<section id="coverage"><h2>Coverage snapshot</h2>
-{_section_note("Code review coverage excludes advisory historical context. Historical context and verification are counted as separate dimensions; bot verification is not human confirmation.")}
-{_coverage_table(summary)}
-</section>
-{_spend_section(summary)}
-{_stage_section(summary, repository_url, report_base_url)}
-{_model_section(summary)}
-{_routing_section(summary)}
-{_distribution_section(summary)}
-{_reviews_section(summary, repository_url, report_base_url)}
-{_charts_section(summary)}
-<section id="limits"><h2>Limitations</h2>
-<ul>{notes or '<li>No limitations were recorded.</li>'}</ul>
-</section>
-"""
-    return _page("ralph stats", summary, body)
+    body = ('<h1>Overview</h1><p class="subtitle">Review activity and agent performance at a glance.</p>'
+            + f'<div class="cards">{_top_kpis(summary)}</div>'
+            + _leaderboard_section(summary) + _paired_section(summary))
+    return _page('Overview', summary, body)
+
+
+def _agents_html(summary, repository_url, report_base_url):
+    body = ('<h1>Agents</h1><p class="subtitle">Findings and reliability by stage and configured model.</p>'
+            + _stage_section(summary, repository_url, report_base_url)
+            + '<section><h2>Coverage snapshot</h2>'
+            + _section_note('Code review, historical context and verification are separate dimensions. '
+                            'Complete is a reported coverage status, not a guarantee of exhaustive review.')
+            + _coverage_table(summary) + '</section>')
+    return _page('Agents', summary, body, '../', 'Agents')
+
+
+def _stage_html(summary, stage, repository_url, report_base_url):
+    ledger = _mapping(stage.get('ledger'))
+    candidates = _mapping(stage.get('candidate_counts'))
+    statuses = _mapping(stage.get('status_counts'))
+    body = ('<p>' + _internal_link('index.html', '← All agents') + '</p><h1>'
+            + _escape(stage.get('stage', 'unknown')) + '</h1><p class="subtitle">'
+            + _escape(stage.get('configured_model', 'unknown')) + '</p>'
+            + '<div class="cards">'
+            + _kpi('Accepted findings', _fmt_int(stage.get('accepted_findings')),
+                   f"{_fmt_int(stage.get('sole_source_findings'))} unique; {_fmt_int(stage.get('shared_findings'))} shared")
+            + _kpi('Completion', _fmt_percent(statuses.get('completed', 0), stage.get('executed_runs')),
+                   f"{_fmt_int(stage.get('executed_runs'))} executed runs; skipped excluded")
+            + _kpi('Known cost', _fmt_money_micros(ledger.get('known_cost_micros')), 'Includes reruns and retries')
+            + _kpi('Cost / accepted', _fmt_money_micros(stage.get('known_cost_per_accepted_finding_micros')))
+            + '</div><section><h2>Candidate findings</h2>'
+            + _stage_findings_details(stage, repository_url, report_base_url) + '</section>'
+            + '<div class="split"><section><h2>Run status</h2>'
+            + _key_value_table({k: _fmt_int(v) for k, v in statuses.items()})
+            + _key_value_table({'Saved runs': _fmt_int(stage.get('saved_result_runs')),
+                                'Executed runs': _fmt_int(stage.get('executed_runs'))}) + '</section>'
+            + '<section><h2>Reported coverage</h2>'
+            + _key_value_table({k: _fmt_int(v) for k, v in _mapping(stage.get('coverage_counts')).items()})
+            + '</section><section><h2>Candidate decisions</h2>'
+            + _key_value_table({k: _fmt_int(v) for k, v in candidates.items()})
+            + _key_value_table({'Selected among assessed': _fmt_percent(candidates.get('publish'), _candidate_denominator(candidates)),
+                                'Accepted / executed run': _fmt_decimal(stage.get('accepted_per_executed_run'), 3),
+                                'Conceptual concerns': _fmt_int(stage.get('conceptual_concerns'))})
+            + '<p class="note">Selection uses publish, drop and unresolved candidates; unassessed candidates are excluded.</p></section>'
+            + '<section><h2>Usage</h2>'
+            + _key_value_table({'API attempts': _fmt_int(ledger.get('request_count')),
+                                'Known cost': _fmt_money_micros(ledger.get('known_cost_micros')),
+                                'Reserved': _fmt_money_micros(ledger.get('reserved_micros')),
+                                'Unknown-cost attempts': _fmt_int(ledger.get('unknown_cost_request_count'))})
+            + '</section></div>')
+    return _page(str(stage.get('stage', 'Agent')), summary, body, '../', 'Agents')
 
 
 def _reviews_html(summary, repository_url, report_base_url):
-    reviews = _sorted_reviews(summary)
-    body = (
-        '<section id="reviews"><h2>All reviews</h2>'
-        f'<p>{_internal_link("../index.html#reviews", "Back to latest reviews")}.</p>'
-        + _reviews_table(reviews, repository_url, report_base_url)
-        + '</section>'
-    )
-    return _page("ralph review stats", summary, body, "../")
+    body = ('<h1>Reviews</h1><p class="subtitle">Search saved reviews by PR, job or review status. Newest first.</p>'
+            + '<section><h2>Saved reviews</h2>'
+            + _reviews_table(_sorted_reviews(summary), repository_url, report_base_url) + '</section>')
+    return _page('Reviews', summary, body, '../', 'Reviews')
 
 
 def _addressed_html(summary, repository_url, report_base_url):
-    findings = _addressed_findings(summary)
-    body = (
-        '<section id="addressed-details"><h2>Addressed assessment details</h2>'
-        f'<p>{_internal_link("../index.html#addressed", "Back to addressed summary")}.</p>'
-        + _addressed_table(findings, repository_url, report_base_url)
-        + '</section>'
-    )
-    return _page("ralph addressed stats", summary, body, "../")
+    body = ('<h1>Outcomes</h1><p class="subtitle">What happened to findings after review.</p>'
+            + _addressed_section(summary)
+            + '<section><h2>Finding assessments</h2>'
+            + _addressed_table(_addressed_findings(summary), repository_url, report_base_url) + '</section>'
+            + _concept_section(summary))
+    return _page('Outcomes', summary, body, '../', 'Outcomes')
+
+
+def _usage_html(summary):
+    limitations = _mapping(summary.get('limitations'))
+    notes = ''.join(f'<li>{_escape(note)}</li>' for note in _list(limitations.get('notes')))
+    overview = _mapping(summary.get('overview'))
+    costs = _mapping(_mapping(summary.get('distributions')).get('saved_review_known_cost_micros'))
+    body = ('<h1>Usage</h1><p class="subtitle">Spend, request accounting and operational diagnostics.</p>'
+            + '<div class="cards">' + _kpi('Median review cost', _fmt_money_micros(costs.get('median')),
+                f"Matched saved-review cohort: {_fmt_int(costs.get('count'))}") + '</div>'
+            + _spend_section(summary) + _model_section(summary)
+            + '<details><summary>Routing and review distributions</summary>'
+            + _routing_section(summary) + _distribution_section(summary) + '</details>'
+            + _charts_section(summary)
+            + '<section><h2>Accounting and limitations</h2>'
+            + '<p>' + _escape(_analysis(summary)) + '</p>'
+            + _key_value_table({'Reviews without findings export': _fmt_int(overview.get('findings_unavailable_reviews')),
+                                'Reviews without stage diagnostics': _fmt_int(overview.get('diagnostics_unavailable_reviews'))})
+            + '<ul>' + (notes or '<li>No limitations were recorded.</li>') + '</ul></section>')
+    return _page('Usage', summary, body, '../', 'Usage')
 
 
 def save_stats(output_dir: Path, summary: dict, repository_url: str, report_base_url: str):
-    """Write a static HTML dashboard and matching public JSON."""
+    """Write the five public statistics views, agent details and matching JSON."""
     output_dir = Path(output_dir)
     output_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
-    (output_dir / "reviews").mkdir(mode=0o755, exist_ok=True)
-    (output_dir / "addressed").mkdir(mode=0o755, exist_ok=True)
     json_text = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
-    report._write_public_file(output_dir / "stats.json", json_text + "\n")
-    report._write_public_file(output_dir / "index.html", _html(summary, repository_url, report_base_url))
-    report._write_public_file(
-        output_dir / "reviews" / "index.html",
-        _reviews_html(summary, repository_url, report_base_url))
-    report._write_public_file(
-        output_dir / "addressed" / "index.html",
-        _addressed_html(summary, repository_url, report_base_url))
+    report._write_public_file(output_dir / 'stats.json', json_text + '\n')
+    report._write_public_file(output_dir / 'stats.js', _script())
+    pages = {
+        'index.html': _html(summary, repository_url, report_base_url),
+        'agents/index.html': _agents_html(summary, repository_url, report_base_url),
+        'reviews/index.html': _reviews_html(summary, repository_url, report_base_url),
+        'addressed/index.html': _addressed_html(summary, repository_url, report_base_url),
+        'usage/index.html': _usage_html(summary),
+    }
+    for stage in _list(summary.get('stages')):
+        if isinstance(stage, dict):
+            pages['agents/' + _stage_filename(stage)] = _stage_html(summary, stage, repository_url, report_base_url)
+    for name, content in pages.items():
+        target = output_dir / name
+        target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        report._write_public_file(target, content)

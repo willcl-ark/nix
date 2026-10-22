@@ -1,4 +1,6 @@
 import json
+from html.parser import HTMLParser
+from urllib.parse import unquote, urlsplit
 import sqlite3
 import tempfile
 import unittest
@@ -9,6 +11,28 @@ from ralph import stats, stats_page
 from ralph.jobs import JobStore
 
 
+class LinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+        self.scripts = []
+        self.table_depth = 0
+        self.max_table_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "table":
+            self.table_depth += 1
+            self.max_table_depth = max(self.max_table_depth, self.table_depth)
+        if tag == "a":
+            self.links.extend(value for name, value in attrs if name == "href")
+        elif tag == "script":
+            self.scripts.extend(value for name, value in attrs if name == "src")
+
+    def handle_endtag(self, tag):
+        if tag == "table":
+            self.table_depth -= 1
+
+
 class StatsPageTests(unittest.TestCase):
     def save(self, summary, repository_url="https://code.example.org/org/repo",
              report_base_url="https://reports.example.org/reviews"):
@@ -17,6 +41,14 @@ class StatsPageTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         return root, (root / "index.html").read_text(), json.loads((root / "stats.json").read_text())
+
+    def pages(self, root):
+        return {str(path.relative_to(root)): path.read_text()
+                for path in root.rglob("*.html")}
+
+    def agent_pages(self, root):
+        return {path: page for path, page in self.pages(root).items()
+                if path.startswith("agents/") and path != "agents/index.html"}
 
     def test_stage_candidate_details_escape_and_link_metadata(self):
         summary = self.empty_summary()
@@ -31,19 +63,35 @@ class StatsPageTests(unittest.TestCase):
                 {"number": 43, "candidate_id": "adversarial_gemini:2",
                  "title": "Unverified claim", "disposition": "unresolved",
                  "accepted": False, "report_name": "javascript:alert(1)"},
+                {"number": 44, "candidate_id": "adversarial_gemini:3",
+                 "title": "Published without attribution", "disposition": "publish",
+                 "accepted": False},
             ],
         }]
-        _, page, exported = self.save(summary)
-        self.assertIn("<details><summary>View 2 candidates</summary>", page)
+        root, overview, exported = self.save(summary)
+        pages = self.agent_pages(root)
+        self.assertEqual(len(pages), 1)
+        page = next(iter(pages.values()))
+        self.assertNotIn("Unverified claim", overview)
+        self.assertNotIn("View 2 candidates", overview)
         self.assertIn("&lt;script&gt;alert(&quot;candidate&quot;)&lt;/script&gt;", page)
         self.assertNotIn('<script>alert("candidate")', page)
         self.assertIn("https://code.example.org/org/repo/pulls/42", page)
         self.assertIn("https://reports.example.org/reviews/" + report_name, page)
-        self.assertIn("Accepted, shared", page)
-        self.assertIn("Not accepted", page)
+        self.assertIn("shared", page)
         self.assertIn("unresolved", page)
         self.assertNotIn('href="javascript:', page)
-        self.assertEqual(len(exported["stages"][0]["findings"]), 2)
+        self.assertIn('type="search"', page)
+        self.assertIn("<select", page)
+        self.assertIn("Previous", page)
+        self.assertIn("Next", page)
+        parser = LinkParser()
+        parser.feed(page)
+        self.assertEqual(parser.max_table_depth, 1)
+        self.assertEqual(len(exported["stages"][0]["findings"]), 3)
+        self.assertIn('<tr data-filter="accepted">', page)
+        self.assertIn('<tr data-filter="publish">', page)
+        self.assertIn('<tr data-filter="unresolved">', page)
 
     def empty_summary(self):
         return {
@@ -452,68 +500,81 @@ class StatsPageTests(unittest.TestCase):
 
     def test_empty_stats_render_stable_public_files(self):
         root, html, public = self.save(self.empty_summary())
-
-        self.assertTrue((root / "index.html").is_file())
-        self.assertTrue((root / "reviews" / "index.html").is_file())
-        self.assertTrue((root / "addressed" / "index.html").is_file())
-        self.assertTrue((root / "stats.json").is_file())
-        self.assertEqual((root / "index.html").stat().st_mode & 0o777, 0o644)
-        self.assertEqual((root / "reviews" / "index.html").stat().st_mode & 0o777, 0o644)
-        self.assertEqual((root / "addressed" / "index.html").stat().st_mode & 0o777, 0o644)
-        self.assertEqual((root / "stats.json").stat().st_mode & 0o777, 0o644)
+        expected = {"index.html", "agents/index.html", "reviews/index.html",
+                    "addressed/index.html", "usage/index.html"}
+        self.assertEqual(set(self.pages(root)), expected)
+        for name in expected | {"stats.json", "stats.js"}:
+            self.assertEqual((root / name).stat().st_mode & 0o777, 0o644)
         self.assertEqual(public["overview"]["saved_reviews"], 0)
-        self.assertIn("No saved reviews are in this summary yet.", html)
         self.assertIn("Datasets present: 6/6. Missing: none.", html)
-        self.assertIn("No review timestamp history is available yet.", html)
+
+    def test_navigation_resolves_from_every_page_and_models_have_distinct_pages(self):
+        summary = self.rich_summary()
+        summary["stages"].append({**summary["stages"][0],
+                                  "configured_model": "another/model"})
+        root, _, _ = self.save(summary)
+        agents = self.agent_pages(root)
+        self.assertEqual(len(agents), 3)
+        self.assertEqual(sum("another/model" in page for page in agents.values()), 1)
+        for name, page in self.pages(root).items():
+            parser = LinkParser()
+            parser.feed(page)
+            for label in ("Overview", "Agents", "Reviews", "Outcomes", "Usage"):
+                self.assertIn(label, page)
+            for href in parser.links + parser.scripts:
+                parsed = urlsplit(href)
+                if parsed.scheme or parsed.netloc or not parsed.path:
+                    continue
+                target = (root / name).parent / unquote(parsed.path)
+                if parsed.path.endswith("/"):
+                    target /= "index.html"
+                self.assertTrue(target.is_file(), (name, href))
 
     def test_script_stage_displays_statuses_findings_and_cost(self):
         summary = self.rich_summary()
         stage = summary["stages"][0]
         stage["stage"] = "script"
-        stage["configured_model"] = "gpt-6.1-sol"
         stage["status_counts"] = {
             "completed": 3, "skipped": 3, "budget_exhausted": 1}
         stage["coverage_counts"] = {"complete": 2, "partial": 1, "unknown": 4}
         stage["accepted_findings"] = 7
         stage["ledger"]["known_cost_micros"] = 250000
-        _, html, public = self.save(summary)
-        section = html.split('<section id="stages">', 1)[1].split('</section>', 1)[0]
-        self.assertIn("<td>script</td><td>gpt-6.1-sol</td>", section)
-        self.assertIn("budget_exhausted: 1, completed: 3, skipped: 3", section)
-        self.assertIn("complete: 2, partial: 1, unknown: 4", section)
-        self.assertIn("<td>7</td>", section)
-        self.assertIn("$0.25", section)
+        root, _, public = self.save(summary)
+        page = next(page for page in self.agent_pages(root).values()
+                    if "script" in page and "budget_exhausted" in page)
+        for value in ("budget_exhausted", "completed", "skipped", "partial", "$0.25"):
+            self.assertIn(value, page)
         self.assertEqual(public["stages"][0]["status_counts"], stage["status_counts"])
         self.assertEqual(public["stages"][0]["coverage_counts"], stage["coverage_counts"])
 
-    def test_useful_sections_put_leaderboard_before_cost_tables(self):
-        _, html, _ = self.save(self.rich_summary())
+    def test_completion_excludes_skips_and_handles_all_failed_runs(self):
+        summary = self.rich_summary()
+        stage = summary["stages"][0]
+        stage.update(executed_runs=4, saved_result_runs=7,
+                     status_counts={"completed": 3, "failed": 1, "skipped": 3})
+        root, overview, _ = self.save(summary)
+        self.assertIn("75.0%", overview)
+        self.assertIn("75.0%", (root / "agents/index.html").read_text())
+        stage["status_counts"] = {"failed": 4, "skipped": 3}
+        root, overview, _ = self.save(summary)
+        self.assertIn("0.0%", overview)
+        self.assertIn("0.0%", (root / "agents/index.html").read_text())
 
-        self.assertLess(html.index('class="cards"'), html.index('id="leaderboard"'))
-        self.assertLess(html.index('id="leaderboard"'), html.index('id="concepts"'))
-        self.assertLess(html.index('id="concepts"'), html.index('id="addressed"'))
-        self.assertLess(html.index('id="addressed"'), html.index('id="paired"'))
-        self.assertLess(html.index('id="paired"'), html.index('id="spend"'))
-        self.assertIn("Accepted finding leaderboard", html)
-        self.assertIn("Conceptual concerns", html)
-        self.assertIn("Addressed after review", html)
-        self.assertIn("2 assessed findings from 3 published findings", html)
-        self.assertIn("Assessment spend: $0.05 known, $0.01 reserved, 2 attempts.", html)
-        self.assertIn("View all 1 addressed assessments", html)
-        self.assertIn("Median citations: 2.0; median alternatives: 3.0.", html)
-        self.assertIn("research complete; no concern", html)
-        self.assertIn("Shared findings are credited to each contributing agent", html)
-        self.assertIn("Adversarial model comparison", html)
-        self.assertIn("adversarial_deepseek", html)
-        self.assertIn("adversarial_gemini", html)
-        self.assertIn("Current-engine verified reviews", html)
-        self.assertIn("Addressed findings follow the commit date of the PR head", html)
-        self.assertIn("Addressed findings by PR head commit date", html)
-        self.assertIn("Undated records are excluded: 1 reviews, 1 addressed findings.", html)
-        self.assertEqual(html.count("<svg"), 4)
-        self.assertEqual(html.count('role="img"'), 4)
-        self.assertIn(".charts", html)
-        self.assertNotIn("The follow-up adds the missing guard.", html)
+    def test_views_separate_summary_from_diagnostics_and_outcomes(self):
+        root, overview, _ = self.save(self.rich_summary())
+        pages = self.pages(root)
+        self.assertIn("leaderboard", overview.lower())
+        self.assertIn("Adversarial", overview)
+        self.assertIn("adversarial_deepseek", overview)
+        self.assertIn("adversarial_gemini", overview)
+        self.assertNotIn("The follow-up adds the missing guard.", overview)
+        self.assertNotIn('id="spend"', overview)
+        self.assertNotIn('id="reviews"', overview)
+        self.assertIn("The follow-up adds the missing guard.", pages["addressed/index.html"])
+        self.assertIn("$0.05", pages["addressed/index.html"])
+        self.assertIn("$0.01", pages["addressed/index.html"])
+        self.assertIn("2026-09", pages["usage/index.html"])
+        self.assertIn("cheap", pages["usage/index.html"])
 
     def test_hostile_markup_is_escaped_and_not_used_as_links(self):
         summary = self.rich_summary()
@@ -559,81 +620,57 @@ class StatsPageTests(unittest.TestCase):
         root, html, _ = self.save(summary, repository_url="javascript:alert(1)",
                                   report_base_url="https://reports.example.org/reviews?x=<script>")
         addressed_html = (root / "addressed" / "index.html").read_text()
-        all_html = html + addressed_html
+        all_html = "".join(self.pages(root).values())
 
-        self.assertNotIn("<script", all_html)
+        self.assertNotIn("<script>alert", all_html)
         self.assertNotIn("javascript:alert", all_html)
         self.assertNotIn("../bad", all_html)
         self.assertIn("&lt;script&gt;x&lt;/script&gt;", all_html)
         self.assertIn("&lt;/td&gt;&lt;script&gt;alert(&#x27;stage&#x27;)&lt;/script&gt;", all_html)
-        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", all_html)
         self.assertIn("&lt;/td&gt;&lt;script&gt;alert(&#x27;finding&#x27;)&lt;/script&gt;", addressed_html)
         self.assertIn("&lt;script&gt;alert(&#x27;evidence&#x27;)&lt;/script&gt;", addressed_html)
-        self.assertIn("&lt;script&gt;alert(&#x27;note&#x27;)&lt;/script&gt;", html)
+        self.assertIn("&lt;script&gt;alert(&#x27;note&#x27;)&lt;/script&gt;", all_html)
 
     def test_report_and_pr_links_are_constructed_from_safe_parts(self):
         root, html, _ = self.save(self.rich_summary())
         addressed_html = (root / "addressed" / "index.html").read_text()
         reviews_html = (root / "reviews" / "index.html").read_text()
-
-        self.assertIn('href="https://code.example.org/org/repo/pulls/9"', html)
+        self.assertIn('href="https://code.example.org/org/repo/pulls/9"', reviews_html)
         self.assertIn('href="https://code.example.org/org/repo/compare/'
                       + "a" * 40 + ".." + "b" * 40 + '"', addressed_html)
-        self.assertIn('href="https://reports.example.org/reviews/9-feedface.html"', html)
-        self.assertIn('href="https://reports.example.org/reviews/7-deadbeef.html"', reviews_html)
-        self.assertIn('href="https://reports.example.org/reviews/7-deadbeef.html">source report</a>', addressed_html)
-        self.assertIn('href="reviews/"', html)
-        self.assertIn('href="addressed/"', html)
-        self.assertIn('href="../index.html#reviews"', reviews_html)
-        self.assertIn('href="../index.html#addressed"', addressed_html)
+        self.assertIn('href="https://reports.example.org/reviews/9-feedface.html"', reviews_html)
+        self.assertIn('href="https://reports.example.org/reviews/7-deadbeef.html">Source report</a>', addressed_html)
         self.assertIn('href="../stats.json" download', reviews_html)
-        self.assertIn("The follow-up adds the missing guard.", addressed_html)
-        reviews = html[html.index('id="reviews"'):]
-        self.assertLess(reviews.index("#9"), reviews.index("#7"))
+        self.assertLess(reviews_html.index("#9"), reviews_html.index("#7"))
 
-    def test_overview_limits_reviews_preview_and_standalone_pages_are_complete(self):
+    def test_all_reviews_are_available_on_searchable_reviews_view(self):
         summary = self.rich_summary()
         template = summary["reviews"][0]
-        summary["reviews"] = []
-        for number in range(1, 26):
-            review = {
-                **template,
-                "job_id": number,
-                "number": number,
-                "report_name": f"{number}-deadbeef.html",
-            }
-            summary["reviews"].append(review)
-
+        summary["reviews"] = [dict(template, job_id=number, number=number,
+                                   report_name=f"{number}-deadbeef.html")
+                              for number in range(1, 76)]
         root, html, _ = self.save(summary)
         reviews_html = (root / "reviews" / "index.html").read_text()
-        overview_reviews = html[html.index('id="reviews"'):html.index("</section>", html.index('id="reviews"'))]
-        full_reviews = reviews_html[
-            reviews_html.index('id="reviews"'):reviews_html.index("</section>", reviews_html.index('id="reviews"'))]
-
-        self.assertEqual(overview_reviews.count("<tr>") - 1, 20)
-        self.assertEqual(full_reviews.count("<tr>") - 1, 25)
-        self.assertIn("Showing the latest 20 of 25 saved reviews.", overview_reviews)
-        self.assertIn('href="reviews/"', overview_reviews)
+        for number in range(1, 76):
+            self.assertIn(f"/pulls/{number}\"", reviews_html)
+        self.assertIn('type="search"', reviews_html)
+        self.assertIn("Previous", reviews_html)
+        self.assertIn("Next", reviews_html)
+        self.assertNotIn("/pulls/75", html)
 
     def test_displayed_formulas_match_schema_values(self):
-        _, html, _ = self.save(self.rich_summary())
-
-        self.assertIn("$1.23", html)
-        self.assertIn("Median review cost", html)
-        self.assertIn("matched saved-review cohort: 2", html)
-        self.assertIn("<td>addressed</td><td>1</td>", html)
-        self.assertIn("1 partial; 2 assessed", html)
-        self.assertIn("<td>wallet</td><td>gpt-6.1-sol</td><td>3</td>", html)
-        self.assertIn("$0.40", html)
-        self.assertIn("60.0%", html)
-        self.assertIn("<td>1.500</td>", html)
-        self.assertIn("9 API request attempts for 3 review jobs", html)
-        self.assertIn("Selected / dropped / unresolved / undisposed", html)
-        self.assertIn("Code review coverage excludes advisory historical context.", html)
-        self.assertIn(
-            "<th>Status</th><th>Code review</th><th>Historical context</th><th>Verification</th>",
-            html)
-        self.assertIn("<td>failed</td><td>0</td><td>0</td><td>1</td>", html)
+        root, overview, _ = self.save(self.rich_summary())
+        pages = self.pages(root)
+        all_html = "".join(pages.values())
+        self.assertIn("$1.23", overview)
+        self.assertIn("$0.40", overview)
+        self.assertIn("60.0%", all_html)
+        self.assertIn("$1.20", all_html)
+        self.assertIn("$0.10", all_html)
+        self.assertIn("Historical context", all_html)
+        self.assertIn("Verification", all_html)
+        self.assertIn("Median review cost", all_html)
 
     def test_collect_stats_output_renders_with_nested_schema(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -668,9 +705,11 @@ class StatsPageTests(unittest.TestCase):
             root, html, public = self.save(summary)
 
         self.assertEqual(public["reviews"][0]["report_name"], report_name)
-        self.assertIn("adversarial_glm</td><td>glm-5.3", html)
-        self.assertIn("Findings saved/published", html)
-        self.assertIn('href="https://reports.example.org/reviews/' + report_name + '"', html)
+        all_html = "".join(self.pages(root).values())
+        self.assertIn("adversarial_glm", all_html)
+        self.assertIn("glm-5.3", all_html)
+        self.assertIn('href="https://reports.example.org/reviews/' + report_name + '"', all_html)
+        self.assertNotIn("PRIVATE", all_html)
         self.assertTrue((root / "index.html").is_file())
 
     def create_ledger(self, path, rows):
