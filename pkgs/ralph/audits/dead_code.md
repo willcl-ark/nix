@@ -32,6 +32,12 @@ code dead. Do not invent external consumers for internal helpers, but do not
 treat a documented external entry point as dead solely because this repository
 has no caller.
 
+For each new or changed conditional, carry the conditions established by its
+callers and enclosing guards into the branch. A function being used does not
+establish that every branch inside it is reachable. Check redundant precondition
+guards separately, and distinguish checks protecting an established API contract
+from checks justified only by hypothetical future callers.
+
 For an unreachable branch, establish the controlling invariant and check all
 relevant callers. For an unread value or dead store, check evaluation side
 effects, object lifetime and destructor behavior, synchronization, and required
