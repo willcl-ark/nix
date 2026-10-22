@@ -118,6 +118,13 @@ and why it preserves required behavior. Do not reject a supported suggestion
 merely because the current implementation is correct. Do not promote a design
 preference to a bug. Reject unsupported alternatives and generic questions.
 
+For a dead-code removal suggestion, verify that the PR introduced the unused
+code or removed its last use, including in unchanged files. Check indirect uses,
+supported build configurations, and side effects before accepting deletion.
+Confirmed unused code is a concrete maintenance cost without a runtime failure.
+Anchor an orphaned helper to the changed caller or registration that orphaned
+it, and include source evidence for the definition and responsible change.
+
 For an explanatory-comment suggestion, the concrete maintenance cost can be a
 misleading explanation or missing non-obvious rationale at the changed code.
 Verify the identified misunderstanding and whether the proposed explanation,

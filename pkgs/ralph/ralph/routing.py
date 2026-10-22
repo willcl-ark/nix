@@ -76,6 +76,8 @@ def domain_profiles(paths):
 
 def domain_audits(paths):
     audits = set()
+    if any(not _doc_path(path) or BUILD.search(path) for path in paths):
+        audits.add("dead_code")
     if any(is_test_path(path) or _production_path(path) for path in paths):
         audits.add("tests")
     if any(_production_path(path) for path in paths):

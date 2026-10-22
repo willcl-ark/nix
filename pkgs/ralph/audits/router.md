@@ -26,6 +26,11 @@ shared test harness, coverage policy, or fixture shape in a way worth reviewing.
 Select every audit that fits; the tier does not replace relevant specialist
 coverage.
 
+Select `dead_code` for changes to production code, tests, scripts, or build
+wiring, including removals and mechanical refactors. These can introduce unused
+code or remove the last use of existing code in an unchanged file. Skip it for
+ordinary documentation-only changes.
+
 Select `script` only when changed production behavior materially affects script
 execution or flags, signature hashing or verification, witness/annex handling,
 spend-type standardness, or transaction validity and constraints such as

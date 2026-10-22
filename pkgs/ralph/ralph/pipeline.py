@@ -12,9 +12,9 @@ from .spend import BudgetExceeded
 # adversarial models review the same evidence concurrently.
 # Domain correctness precedes design; verification retains protected headroom.
 DISCOVERY_ORDER = ("script", "adversarial", "concurrency", "state", "public_contract",
-                   "build", "tests", "design")
+                   "build", "tests", "dead_code", "design")
 ADVERSARIAL_STAGES = ("adversarial", "adversarial_glm")
-FULL_CONTEXT_STAGES = {"script", "independent", *ADVERSARIAL_STAGES, "verifier"}
+FULL_CONTEXT_STAGES = {"script", "dead_code", "independent", *ADVERSARIAL_STAGES, "verifier"}
 DISCOVERY_TOOL_LIMITS = {"routine": 12, "standard": 24, "sensitive": 48}
 ARCHAEOLOGY_TOOL_LIMIT = 12
 
@@ -32,7 +32,7 @@ def stage_settings(name, tier):
         return "low", 25_000
     if name in {*ADVERSARIAL_STAGES, "script"}:
         return "high", 25_000
-    if name == "concurrency":
+    if name in {"concurrency", "dead_code"}:
         return "medium", 8_000
     return "low", 4_000
 
@@ -110,7 +110,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
                  else model.TOOLS if name in FULL_CONTEXT_STAGES
                  else model.FOCUSED_TOOLS)
         evidence = research_evidence if name in {"archaeologist", "verifier"} else None
-        return model.available_tools(tools, allow_discussions and name != "script", evidence)
+        return model.available_tools(tools, allow_discussions and name not in {"script", "dead_code"}, evidence)
 
     def run_stage(name, input_text, prompt, schema, *, tools=True):
         if name not in ADVERSARIAL_STAGES:
@@ -124,7 +124,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
         try:
             if tools:
                 calls = (ARCHAEOLOGY_TOOL_LIMIT if name in {"archaeologist", "alternatives"}
-                         else 48 if name in {*ADVERSARIAL_STAGES, "script", "verifier"}
+                         else 48 if name in {*ADVERSARIAL_STAGES, "script", "dead_code", "verifier"}
                          else DISCOVERY_TOOL_LIMITS[plan["tier"]])
                 effort, output_tokens = stage_settings(name, plan["tier"])
                 available_tools = stage_tools(name)

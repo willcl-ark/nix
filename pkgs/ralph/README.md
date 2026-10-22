@@ -126,6 +126,7 @@ Profiles extend the adversarial prompt; they are not separate model calls.
 | Changed paths, excluding tests where stated | Mandatory coverage / tier floor |
 | --- | --- |
 | Documentation or tests only | Routine floor; tests audit for test changes |
+| Any non-documentation path, including tests and recognized build files | dead_code audit |
 | Production code, excluding docs, tests and recognized build paths | Standard floor; tests and design audits |
 | Consensus, validation, script, chainstate, serialization and related paths | Sensitive; consensus profile |
 | Wallet paths | Sensitive; wallet profile |
@@ -191,7 +192,7 @@ flowchart TD
     sol --> focused["Selected focused audits, sequential"]
     glm --> focused
     sensitive -->|no| focused
-    focused --> order["concurrency → state → public_contract → build → tests → design"]
+    focused --> order["concurrency → state → public_contract → build → tests → dead_code → design"]
     order --> verifier["Verifier: gpt-6-luna / code and research evidence"]
     verifier --> accepted{"Accepted findings or supported concept assessment?"}
     accepted -->|yes| collator["Collator: gpt-6-luna / verified prose only"]
@@ -219,6 +220,7 @@ discovery does not receive the archaeology output or current PR discussion.
 | adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |
 | adversarial_glm | glm-5.3 | high | 25,000 | Same tools and profiles, via PPQ |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
+| dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and merge-base developer notes |
@@ -238,15 +240,28 @@ research call is missing from the frozen manifest, the tool returns an
 unavailable-evidence message and the model continues from code and frozen input.
 
 Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensitive.
-The script specialist, both adversarial passes and verification allow 48. History and discussion
+The script and dead-code specialists, both adversarial passes and verification allow 48. History and discussion
 sublimits are eight each per tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit and are capped at
 two per response. Search fees and evidence-token headroom are reserved in the
 existing OpenAI allowance; opening or finding text within a page is not a paid
 search action. The early concept stage spends from the same capped review
 allowance, does not estimate savings and never stops later code stages.
-Script, independent, adversarial and verifier stages require a first inspection. At
+Script, dead_code, independent, adversarial and verifier stages require a first inspection. At
 limits, a final turn uses collected evidence and must preserve uncertainty.
+
+The [dead-code audit](audits/dead_code.md) runs on production, test, script and
+build changes, including deletions and mechanical refactors. Ordinary docs-only
+changes skip it unless routing requests it. It checks both new unused code and
+existing code orphaned by the PR, following removed references into unchanged
+files. Literal base/head searches and caller inspection must account for
+indirect uses, supported configurations, external contracts and side effects
+before recommending deletion. Findings use the normal suggestion and verifier
+flow; no runtime failure is required for a proven safe removal. Its 48-call
+limit allows reference tracing even on routine PRs and shares the existing
+spending ceiling. These settings have not been tuned against live reviews.
+Custom prompt directories need `dead_code.md`, and complete custom model maps
+must include `dead_code`.
 
 OpenAI's default estimated review allowance is USD 1.00; PPQ has a separate
 USD 0.50 allowance. Routing and discovery protect OpenAI verifier headroom,

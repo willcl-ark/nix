@@ -6,6 +6,7 @@
   "archaeologist": "gpt-6-luna",
   "collator": "gpt-6-luna",
   "concurrency": "gpt-6-luna",
+  "dead_code": "gpt-6-luna",
   "design": "gpt-6-luna",
   "independent": "gpt-6-luna",
   "public_contract": "gpt-6.1-sol",

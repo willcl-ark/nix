@@ -74,6 +74,15 @@ Design owns architecture, simplicity and applicable merge-base developer notes;
 there is no separate developer-notes stage. Pure test changes can take the
 routine route when the router establishes that deeper checks are unnecessary.
 
+The Luna `dead_code` audit runs on code, test, script and build changes,
+including deletions and refactors. It finds new unused code and existing code
+whose last use the PR removes, including definitions in unchanged files.
+Ordinary docs-only changes skip it unless routing requests it. It uses medium
+reasoning, 8,000 tokens per response and up to 48 base/head code and history
+inspections under the existing review budget. It checks indirect uses, supported
+configurations and side effects before proposing removal. Candidates pass
+through the normal verifier.
+
 The design audit also weighs practical benefit against recurring contributor
 work, maintenance, confusion and reviewer attention, even when the code is
 correct. It compares the claimed outcome with what the mechanism guarantees.
@@ -406,12 +415,12 @@ reconciling later jobs, spend and followup records, and published outputs.
 - `routingMode = "full"`: request every audit without calling the router.
 - `modelsJson = null`: optional per-stage replacement for the model map.
   The map must include router, independent, script, adversarial, adversarial_glm, concurrency, state,
-  public_contract, tests, design, build, archaeologist, verifier and collator.
+  public_contract, tests, dead_code, design, build, archaeologist, verifier and collator.
   Prices must also be supported by ralph's ledger.
 
-Custom prompt directories must include `consensus.md`, `wallet.md`, `p2p.md`,
+Custom prompt directories must include `dead_code.md`, `consensus.md`, `wallet.md`, `p2p.md`,
 `concurrency.md`, `build.md` and `archaeologist.md`. Custom model maps must
-include `archaeologist`; old complete maps are rejected.
+include `dead_code` and `archaeologist`; old complete maps are rejected.
 Update custom prompt/model configurations together. Unsupported model names
 are rejected when configuration loads. The existing verifier model override
 can be used for controlled Sol comparisons while the default stays on Luna.

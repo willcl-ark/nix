@@ -65,6 +65,39 @@ def candidate(title="Simplify fixture"):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_dead_code_inspects_base_and_head_and_sends_removals_for_verification(self):
+        for tier in ("routine", "standard", "sensitive"):
+            with self.subTest(tier=tier):
+                self.tier, self.audits = tier, ["dead_code"]
+
+                def review(*args, **kwargs):
+                    stage = kwargs["stage_name"]
+                    if stage == "dead_code":
+                        self.assertEqual(args[1], "PR diff")
+                        self.assertEqual(kwargs["model"], "gpt-6-luna")
+                        self.assertEqual(kwargs["reasoning_effort"], "medium")
+                        self.assertEqual(kwargs["max_output_tokens"], 8_000)
+                        self.assertEqual(kwargs["max_tool_calls"], 48)
+                        self.assertTrue(kwargs["first_tool_required"])
+                        names = {tool.get("name") for tool in kwargs["tools"]}
+                        self.assertTrue({"read_file", "read_base_file", "read_diff",
+                                         "search_code", "search_base_code",
+                                         "find_paths", "find_base_paths"} <= names)
+                        self.assertFalse(names & model.LIVE_RESEARCH_TOOL_NAMES)
+                        self.assertFalse(any(tool["type"] in model.WEB_SEARCH_TOOL_TYPES
+                                             for tool in kwargs["tools"]))
+                        return discovery([candidate("Remove unused helper")])
+                    if stage == "verifier":
+                        payload = json.loads(args[1].split("Verification input:\n")[1])
+                        self.assertEqual(payload["candidate_findings"][0]["id"], "dead_code:1")
+                        return verification([{"candidate_ids": ["dead_code:1"],
+                                              "disposition": "publish", "reason": "Unused",
+                                              "finding": self.published}])
+                    return discovery()
+
+                self.run_review(review)
+                self.assertEqual(self.debug["finding_attribution"][0]["raised_by"], ["dead_code"])
+
     def test_script_runs_before_advisory_work_with_required_code_inspection(self):
         self.tier, self.audits = "sensitive", ["script"]
         self.record_archaeologist_call = True

@@ -21,6 +21,17 @@ def route(tier="routine", audits=(), profiles=(), evidence=("Router evidence",),
 
 
 class RoutingTests(unittest.TestCase):
+    def test_dead_code_covers_code_tests_and_builds_but_not_ordinary_docs(self):
+        for path in ("src/util/time.cpp", "src/util/time.h", "test/functional/example.py",
+                     "src/test/example_tests.cpp", "contrib/example.py",
+                     "CMakeLists.txt", "src/CMakeLists.txt", "cmake/example.cmake",
+                     "depends/packages/example.mk"):
+            with self.subTest(path=path):
+                plan = routing.validate_plan(route(), {path}, "routine")
+                self.assertIn("dead_code", plan["audits"])
+        plan = routing.validate_plan(route(), {"README.md", "doc/example.rst"}, "routine")
+        self.assertNotIn("dead_code", plan["audits"])
+
     def runtime(self):
         case = SimpleNamespace(snapshot=None, number=1)
         bot_config = SimpleNamespace()
@@ -84,7 +95,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         self.assertEqual(plan["tier"], "sensitive")
         self.assertEqual(plan["profiles"], ["consensus"])
-        self.assertEqual(set(plan["audits"]), {"tests", "design"})
+        self.assertEqual(set(plan["audits"]), {"tests", "dead_code", "design"})
         self.assertNotIn("state", plan["audits"])
 
     def test_full_fallback_for_incomplete_patch_router_failure_and_missing_context(self):
@@ -146,22 +157,22 @@ class RoutingTests(unittest.TestCase):
 
         plan = routing.validate_plan(route(), {"src/sync.h"}, "routine")
         self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(plan["audits"], ["concurrency", "tests", "design"])
+        self.assertEqual(plan["audits"], ["concurrency", "tests", "dead_code", "design"])
         self.assertEqual(plan["profiles"], [])
 
         plan = routing.validate_plan(route(), {"src/validationinterface.cpp"}, "routine")
-        self.assertEqual(plan["audits"], ["concurrency", "tests", "design"])
+        self.assertEqual(plan["audits"], ["concurrency", "tests", "dead_code", "design"])
 
     def test_test_only_changes_are_routine_tests_unless_router_adds_design(self):
         paths = {"src/test/validation_tests.cpp"}
         self.assertEqual(routing.minimum_tier(paths), "routine")
         plan = routing.validate_plan(route(), paths, "routine")
         self.assertEqual(plan["tier"], "routine")
-        self.assertEqual(plan["audits"], ["tests"])
+        self.assertEqual(plan["audits"], ["tests", "dead_code"])
         self.assertEqual(plan["profiles"], [])
 
         plan = routing.validate_plan(route(audits=("design",)), paths, "routine")
-        self.assertEqual(plan["audits"], ["tests", "design"])
+        self.assertEqual(plan["audits"], ["tests", "dead_code", "design"])
 
     def test_invalid_schema_rejects_old_or_unknown_route_objects(self):
         with self.assertRaisesRegex(InvalidReview, "Invalid routing fields"):
@@ -182,7 +193,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(plan["tier"], "sensitive")
         self.assertEqual(plan["profiles"], ["consensus", "p2p"])
         self.assertEqual(set(plan["audits"]),
-                         {"state", "public_contract", "tests", "design", "build"})
+                         {"state", "public_contract", "tests", "dead_code", "design", "build"})
 
     def test_public_contract_domains_and_build_only_floor(self):
         for path in ("src/httprpc.cpp", "src/httpserver.cpp", "src/rest.cpp",
@@ -195,12 +206,12 @@ class RoutingTests(unittest.TestCase):
 
         plan = routing.validate_plan(route(), {"depends/packages/libevent.mk"}, "routine")
         self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(plan["audits"], ["build"])
+        self.assertEqual(plan["audits"], ["dead_code", "build"])
         self.assertEqual(plan["profiles"], [])
 
         plan = routing.validate_plan(route(audits=("tests",)),
                                      {"depends/packages/libevent.mk"}, "routine")
-        self.assertEqual(plan["audits"], ["tests", "build"])
+        self.assertEqual(plan["audits"], ["tests", "dead_code", "build"])
 
     def test_profiles_force_sensitive_tier(self):
         plan = routing.validate_plan(route(profiles=("wallet",)), {"src/util/time.cpp"},
