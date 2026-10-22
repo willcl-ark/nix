@@ -18,6 +18,33 @@ class StatsPageTests(unittest.TestCase):
         root = Path(directory.name)
         return root, (root / "index.html").read_text(), json.loads((root / "stats.json").read_text())
 
+    def test_stage_candidate_details_escape_and_link_metadata(self):
+        summary = self.empty_summary()
+        report_name = "42-" + "a" * 40 + "-1.html"
+        summary["stages"] = [{
+            "stage": "adversarial_gemini", "configured_model": "google/gemini-4-argon",
+            "findings": [
+                {"number": 42, "candidate_id": "adversarial_gemini:1",
+                 "title": '<script>alert("candidate")</script>',
+                 "disposition": "publish", "accepted": True,
+                 "attribution": "shared", "report_name": report_name},
+                {"number": 43, "candidate_id": "adversarial_gemini:2",
+                 "title": "Unverified claim", "disposition": "unresolved",
+                 "accepted": False, "report_name": "javascript:alert(1)"},
+            ],
+        }]
+        _, page, exported = self.save(summary)
+        self.assertIn("<details><summary>View 2 candidates</summary>", page)
+        self.assertIn("&lt;script&gt;alert(&quot;candidate&quot;)&lt;/script&gt;", page)
+        self.assertNotIn('<script>alert("candidate")', page)
+        self.assertIn("https://code.example.org/org/repo/pulls/42", page)
+        self.assertIn("https://reports.example.org/reviews/" + report_name, page)
+        self.assertIn("Accepted, shared", page)
+        self.assertIn("Not accepted", page)
+        self.assertIn("unresolved", page)
+        self.assertNotIn('href="javascript:', page)
+        self.assertEqual(len(exported["stages"][0]["findings"]), 2)
+
     def empty_summary(self):
         return {
             "generated_at": "2026-10-01T00:00:00Z",

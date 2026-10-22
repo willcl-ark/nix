@@ -500,7 +500,34 @@ def _spend_section(summary):
     )
 
 
-def _stage_section(summary):
+def _stage_findings_details(stage, repository_url, report_base_url):
+    findings = [item for item in _list(stage.get("findings")) if isinstance(item, dict)]
+    if not findings:
+        return ""
+    rows = []
+    for finding in findings:
+        accepted = ("Accepted, " + str(finding.get("attribution") or "unknown")
+                    if finding.get("accepted") else "Not accepted")
+        rows.append(
+            "<tr>"
+            f"<td>{_pr_link(finding, repository_url)}</td>"
+            f"<td>{_escape(_field(finding, 'candidate_id', default='unknown'))}</td>"
+            f"<td>{_escape(_field(finding, 'title', default='unknown'))}</td>"
+            f"<td>{_escape(_field(finding, 'disposition', default='undisposed'))}</td>"
+            f"<td>{_escape(accepted)}</td>"
+            f"<td>{_report_link(finding, report_base_url)}</td></tr>"
+        )
+    return (
+        f"<details><summary>View {len(findings):,} candidates</summary>"
+        "<p>Candidate rows can merge into one accepted finding. Publish is the verifier "
+        "decision; accepted attribution is recorded separately.</p>"
+        "<table><thead><tr><th>PR</th><th>Candidate</th><th>Finding</th>"
+        "<th>Verifier decision</th><th>Attribution</th><th>Report</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></details>"
+    )
+
+
+def _stage_section(summary, repository_url, report_base_url):
     stages = _list(summary.get("stages"))
     if not stages:
         unavailable = _field(_mapping(summary.get("overview")),
@@ -527,7 +554,8 @@ def _stage_section(summary):
             candidate_denominator = _candidate_denominator(candidates)
             rows.append(
                 "<tr>"
-                f"<td>{_escape(_field(stage, 'stage', default='unknown'))}</td>"
+                f"<td>{_escape(_field(stage, 'stage', default='unknown'))}"
+                f"{_stage_findings_details(stage, repository_url, report_base_url)}</td>"
                 f"<td>{_escape(_field(stage, 'configured_model', default='unknown'))}</td>"
                 f"<td>{_fmt_int(_field(stage, 'executed_runs'))}</td>"
                 f"<td>{_fmt_int(_field(stage, 'saved_result_runs'))}</td>"
@@ -1062,7 +1090,7 @@ def _html(summary, repository_url, report_base_url):
 {_coverage_table(summary)}
 </section>
 {_spend_section(summary)}
-{_stage_section(summary)}
+{_stage_section(summary, repository_url, report_base_url)}
 {_model_section(summary)}
 {_routing_section(summary)}
 {_distribution_section(summary)}

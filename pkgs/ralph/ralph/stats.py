@@ -166,7 +166,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             if exported_findings is not None:
                 _add_finding_counts(overview, findings)
             if debug:
-                _add_stage_results(stages, debug)
+                _add_stage_results(stages, debug, row, report_name)
             if routing.get("selected_tier"):
                 routing_tiers[routing["selected_tier"]] += 1
             if debug:
@@ -1107,6 +1107,7 @@ def _new_stage():
         "candidate_counts": Counter(
             {"publish": 0, "drop": 0, "unresolved": 0, "undisposed": 0}),
         "accepted_findings": 0,
+        "findings": [],
         "concept_stage": False,
         "conceptual_concerns": 0,
         "sole_source_findings": 0,
@@ -1135,7 +1136,46 @@ def _configured_stage_models(review_id, debug):
     return models
 
 
-def _add_stage_results(stages, debug):
+def _stage_findings(debug, name, stage, row, report_name):
+    """Export candidate metadata only; model output and evidence stay in traces."""
+    sources = debug.get("candidate_sources") or {}
+    try:
+        output = json.loads(stage.get("raw_output") or "{}")
+    except (TypeError, ValueError):
+        output = {}
+    originals = output.get("findings", []) if isinstance(output, dict) else []
+    originals = originals if isinstance(originals, list) else []
+    attribution = trace.finding_attribution(debug)
+    records = []
+    for identifier, source in sorted(sources.items()):
+        if source != name:
+            continue
+        decision = next((item for item in debug.get("decisions", [])
+                         if isinstance(item, dict)
+                         and identifier in (item.get("candidate_ids") or [])), {})
+        accepted = next((item for item in attribution if isinstance(item, dict)
+                         and identifier in (item.get("candidate_ids") or [])), {})
+        original = next((item for index, item in enumerate(originals, 1)
+                         if f"{name}:{index}" == identifier and isinstance(item, dict)), {})
+        finding = accepted or decision.get("finding") or original
+        disposition = decision.get("disposition", "undisposed")
+        records.append({
+            "number": row["number"], "job_id": row["id"],
+            "candidate_id": identifier,
+            "title": finding.get("title") or identifier,
+            "path": finding.get("path"), "line": finding.get("line"),
+            "disposition": disposition if disposition in
+                {"publish", "drop", "unresolved"} else "undisposed",
+            "accepted": bool(accepted),
+            "attribution": ("shared" if len(set(accepted.get("raised_by") or [])) > 1
+                            else "sole") if accepted else None,
+            "finding_id": accepted.get("finding_id"),
+            "report_name": report_name,
+        })
+    return records
+
+
+def _add_stage_results(stages, debug, row, report_name):
     metrics = trace.stage_metrics(debug)
     attribution_known = bool(trace.finding_attribution(debug))
     has_publish = any(isinstance(decision, dict)
@@ -1149,6 +1189,7 @@ def _add_stage_results(stages, debug):
         record = stages[_stage_key(name, model)]
         record["stage"] = name
         record["configured_model"] = model
+        record["findings"].extend(_stage_findings(debug, name, stage, row, report_name))
         stage_metrics = metrics.get(name, {})
         record["concept_stage"] = bool(stage_metrics.get("concept_stage"))
         record["conceptual_concerns"] += stage_metrics.get("conceptual_concerns", 0)
@@ -1211,6 +1252,7 @@ def _stage_records(stages):
             "coverage_counts": dict(sorted(record["coverage_counts"].items())),
             "candidate_counts": dict(sorted(record["candidate_counts"].items())),
             "accepted_findings": accepted,
+            "findings": record["findings"],
             "concept_stage": record["concept_stage"],
             "conceptual_concerns": record["conceptual_concerns"],
             "selected_candidate_findings": (

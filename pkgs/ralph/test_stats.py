@@ -69,6 +69,38 @@ class StatsTests(unittest.TestCase):
         self.assertTrue(self.jobs.save_result(job, result))
         self.assertTrue(self.jobs.complete(job))
 
+    def test_stage_candidates_include_merged_and_unaccepted_findings(self):
+        result = self.result()
+        debug = result["debug"]
+        debug["candidate_sources"]["independent:3"] = "independent"
+        debug["stages"]["independent"]["raw_output"] = json.dumps({"findings": [
+            {"title": "Original title", "claim": "PRIVATE claim"},
+            {"title": "Dropped candidate", "evidence": "PRIVATE evidence"},
+            {"title": "Unassessed candidate"},
+        ]})
+        self.save_complete(self.enqueue(42, "a" * 40), result)
+        summary = stats.collect_stats(self.state_dir, self.report_dir)
+        stage = next(item for item in summary["stages"] if item["stage"] == "independent")
+        findings = stage["findings"]
+        self.assertEqual(len(findings), 3)
+        self.assertEqual(findings[0]["title"], "Merged finding")
+        self.assertEqual(findings[0]["disposition"], "publish")
+        self.assertTrue(findings[0]["accepted"])
+        self.assertEqual(findings[0]["attribution"], "shared")
+        self.assertEqual(findings[1]["title"], "Dropped candidate")
+        self.assertEqual(findings[1]["disposition"], "drop")
+        self.assertFalse(findings[1]["accepted"])
+        self.assertIsNone(findings[1]["attribution"])
+        self.assertEqual(findings[2]["disposition"], "undisposed")
+        self.assertEqual(findings[0]["number"], 42)
+        self.assertNotIn("PRIVATE", json.dumps(findings))
+        glm = next(item for item in summary["stages"]
+                   if item["stage"] == "adversarial_glm")
+        self.assertEqual(glm["findings"][0]["finding_id"], findings[0]["finding_id"])
+        self.assertEqual(glm["findings"][1]["disposition"], "unresolved")
+        self.assertEqual(stats._stage_findings({}, "independent", {},
+                                             {"number": 42, "id": 1}, None), [])
+
     def result(self, head="a" * 40):
         return {
             "base_sha": "b" * 40,
