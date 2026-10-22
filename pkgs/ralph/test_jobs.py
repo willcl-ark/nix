@@ -110,6 +110,28 @@ class JobStoreTests(unittest.TestCase):
         self.assertIsNone(restarted.retry(old, "stale"))
         self.assertTrue(restarted.complete(new))
 
+    def test_bind_engine_updates_unfinished_retry_only_for_current_claim(self):
+        self.store = jobs.JobStore(self.path, retry_base_seconds=0)
+        self.enqueue()
+        interrupted = self.store.claim()
+        self.store.retry(interrupted, "temporary failure")
+        current = self.store.claim()
+        updated = {**ENGINE, "code_sha256": "c" * 64,
+                   "config_sha256": "d" * 64, "config": {"updated": True}}
+        self.assertFalse(self.store.bind_engine(interrupted, updated))
+        self.assertEqual(current["engine_identity"], ENGINE)
+        self.assertTrue(self.store.bind_engine(current, updated))
+        self.assertEqual(current["engine_identity"], updated)
+        self.assertTrue(self.store.save_result(current, {"engine": updated}))
+        self.assertFalse(self.store.bind_engine(current, ENGINE))
+        self.assertEqual(current["engine_identity"], updated)
+        restarted = jobs.JobStore(self.path)
+        restarted.recover()
+        saved = restarted.claim()
+        self.assertEqual(saved["engine_identity"], updated)
+        self.assertEqual(saved["review_result"], {"engine": updated})
+        self.assertFalse(restarted.bind_engine(saved, ENGINE))
+
     def test_recover_skips_older_claim_when_new_head_is_pending(self):
         self.enqueue()
         old = self.store.claim()

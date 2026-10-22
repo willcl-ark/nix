@@ -23,8 +23,10 @@ those stages a requirement for another engine.
 
 The current engine accepts resolved prompts or prompt file/model settings and
 the current routing and blind-alternative controls. Its resolved settings are
-pinned for queued work and frozen evaluations. Changing engine code or config
-creates a new identity; publication retries reuse saved Markdown.
+fixed for frozen evaluations. Unfinished queued reviews use the currently
+configured engine and settings when claimed, including after upgrades. Each
+run records its actual engine identity; publication retries reuse the saved
+result and its original identity.
 
 An engine module implements two functions:
 

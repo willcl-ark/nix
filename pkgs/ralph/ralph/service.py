@@ -349,17 +349,10 @@ def worker(jobs, state_dir, api_key, forgejo_token, bot_login, bot_config,
             stop_event.wait(1)
             continue
         try:
-            if job["engine_identity"] is None:
-                if job["attempts"] != 0 or not jobs.bind_engine(job, review_engine.identity):
-                    raise ValueError("unfinished legacy job has unknown engine identity")
-            pinned = job["engine_identity"]
             if job["review_result"] is None:
-                if not isinstance(pinned, dict) or pinned.get("name") == "unknown":
-                    raise ValueError("unfinished legacy job has unknown engine identity")
-                job_engine = engine.load(pinned["name"], pinned.get("config"),
-                                         configured=True)
-                if job_engine.identity != pinned:
-                    raise ValueError("queued engine code or configuration changed")
+                if not jobs.bind_engine(job, review_engine.identity):
+                    continue
+                job_engine = review_engine
             else:
                 job_engine = None
             process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,

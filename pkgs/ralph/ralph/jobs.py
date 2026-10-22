@@ -198,13 +198,13 @@ class JobStore:
             return cursor.rowcount == 1
 
     def bind_engine(self, job, identity):
-        """Pin a migrated, never-started pending job on its first claim."""
+        """Bind an unfinished claimed review to the engine that will run it."""
         encoded = json.dumps(identity, sort_keys=True)
         with self._connection(write=True) as db:
             cursor = db.execute("""
                 UPDATE jobs SET engine_identity = ?
                 WHERE id = ? AND token = ? AND status = 'running'
-                    AND engine_identity IS NULL AND attempts = 0
+                    AND review_result IS NULL
             """, (encoded, job["id"], job["token"]))
             if cursor.rowcount != 1:
                 return False

@@ -499,6 +499,86 @@ class ServiceTests(unittest.TestCase):
                            self.review_engine, stop_event=stop_event)
         self.assertEqual(called.call_count, 1)
 
+    def test_worker_restarts_unfinished_review_with_current_engine(self):
+        previous = {**self.review_engine.identity, "code_sha256": "old code",
+                    "config_sha256": "old configuration", "config": {}}
+        self.jobs.enqueue(42, "master", "a" * 40, "opened",
+                          engine_identity=previous)
+        interrupted = self.jobs.claim()
+        self.assertEqual(self.jobs.recover(), 1)
+        stop_event = threading.Event()
+
+        def review(*_args):
+            with closing(sqlite3.connect(self.state_dir / "jobs.sqlite3")) as db:
+                stored = json.loads(db.execute(
+                    "SELECT engine_identity FROM jobs WHERE id = ?",
+                    (interrupted["id"],)).fetchone()[0])
+            self.assertEqual(stored, self.review_engine.identity)
+            return "Updated review"
+
+        def publish(*_args, **_kwargs):
+            stop_event.set()
+            return "unchanged"
+
+        with (patch.object(service.repository, "current_head", return_value="a" * 40),
+              patch.object(service.forgejo, "find_comment", return_value=None),
+              patch.object(service.forgejo, "pull_request_context",
+                           return_value=("Title", "Description")),
+              patch.object(service.repository, "collect_review",
+                           return_value=("b" * 40, "a" * 40, "review input", None)),
+              patch.object(service.repository, "snapshot_repository",
+                           return_value=object()),
+              patch.object(pipeline, "review_with_independent_passes",
+                           side_effect=review) as reviewed,
+              patch.object(service.forgejo, "publish_review", side_effect=publish),
+              patch.object(stop_event, "wait", side_effect=lambda _: stop_event.set())):
+            service.worker(self.jobs, self.state_dir, "api-key", "forgejo-token",
+                           "ralph", self.bot_config, self.ledger,
+                           self.review_engine, stop_event=stop_event)
+        reviewed.assert_called_once()
+        self.assertEqual(reviewed.call_args.args[3], "enabled")
+        saved = self.jobs.latest_completed_result(42)
+        self.assertEqual(saved["content"], "Updated review")
+        self.assertEqual(saved["engine"], self.review_engine.identity)
+        with closing(sqlite3.connect(self.state_dir / "jobs.sqlite3")) as db:
+            stored = json.loads(db.execute(
+                "SELECT engine_identity FROM jobs WHERE id = ?",
+                (interrupted["id"],)).fetchone()[0])
+        self.assertEqual(stored, self.review_engine.identity)
+        self.assertFalse(self.jobs.complete(interrupted))
+
+    def test_worker_retries_saved_publication_with_original_engine_identity(self):
+        previous = {**self.review_engine.identity, "code_sha256": "old code",
+                    "config_sha256": "old configuration", "config": {}}
+        saved = {**self.saved_result(), "engine": previous}
+        self.jobs.enqueue(42, "master", "a" * 40, "opened",
+                          engine_identity=previous)
+        interrupted = self.jobs.claim()
+        self.assertTrue(self.jobs.save_result(interrupted, saved))
+        self.assertEqual(self.jobs.recover(), 1)
+        stop_event = threading.Event()
+
+        def publish(*_args, **_kwargs):
+            stop_event.set()
+            return "unchanged"
+
+        with (patch.object(service.repository, "current_head", return_value="a" * 40),
+              patch.object(service.engine, "load",
+                           side_effect=AssertionError("old engine loaded")),
+              patch.object(pipeline, "review_with_independent_passes",
+                           side_effect=AssertionError("model called again")),
+              patch.object(self.jobs, "bind_engine",
+                           side_effect=AssertionError("saved identity changed")),
+              patch.object(service.forgejo, "publish_review",
+                           side_effect=publish) as published,
+              patch.object(stop_event, "wait", side_effect=lambda _: stop_event.set())):
+            service.worker(self.jobs, self.state_dir, "api-key", "forgejo-token",
+                           "ralph", self.bot_config, self.ledger,
+                           self.review_engine, stop_event=stop_event)
+        published.assert_called_once()
+        self.assertEqual(published.call_args.kwargs["engine_identity"], previous)
+        self.assertEqual(self.jobs.latest_completed_result(42), saved)
+
     def test_worker_waits_after_claim_database_error(self):
         stop_event = threading.Event()
 
