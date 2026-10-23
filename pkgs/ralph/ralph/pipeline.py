@@ -2,6 +2,7 @@
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 from . import coverage, model, protocol, routing
 from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
@@ -38,6 +39,115 @@ def stage_settings(name, tier):
     return "low", 4_000
 
 
+@dataclass
+class VerifiedReview:
+    findings: list
+    candidate_ids: dict
+    concept: dict | None
+    alternatives: list
+
+
+def _record_validation_failure(record, error):
+    if record["status"] == "completed":
+        record.update(status="invalid", error_type=type(error).__name__)
+    if isinstance(error, protocol.InvalidReview):
+        record["validation_error"] = str(error)
+
+
+def _verify_candidates(run_stage, input_text, prompt_config, candidates, snapshot,
+                       concept_candidate, debug):
+    stages = debug["stages"]
+    verified_concept = None
+    verified_alternatives = []
+    accepted = []
+    finding_candidates = {}
+    try:
+        verified = run_stage(
+            "verifier", input_text,
+            prompt_config.audit_prompts["verifier"], protocol.VERIFIER_SCHEMA)
+        result, accepted = protocol.verification(verified, candidates, snapshot,
+                                                 concept_candidate)
+        stages["verifier"]["coverage"] = result["coverage"]
+        debug["decisions"] = result["decisions"]
+        previous_concept = debug.get("concept_assessment", {})
+        concept_status = ("verified" if result["concept"]["disposition"] == "publish"
+                          else result["concept"]["disposition"])
+        if concept_candidate is None and previous_concept.get("status") in {"skipped", "failed"}:
+            concept_status = previous_concept["status"]
+        debug["concept_assessment"] = {
+            **previous_concept,
+            "status": concept_status,
+            "verification": result["concept"],
+        }
+        if result["concept_validation_error"]:
+            stages["verifier"]["concept_validation_error"] = result["concept_validation_error"]
+        if result["alternatives_validation_error"]:
+            stages["verifier"]["alternatives_validation_error"] = (
+                result["alternatives_validation_error"])
+        verified_alternatives = result["alternatives"]
+        verified_concept = (result["concept"]["assessment"]
+                            if result["concept"]["disposition"] == "publish"
+                            else None)
+        published = [decision for decision in result["decisions"]
+                     if decision["disposition"] == "publish"]
+        finding_candidates = {finding["id"]: decision["candidate_ids"]
+                              for finding, decision in zip(accepted, published)}
+        if result["validation_errors"]:
+            stages["verifier"]["validation_errors"] = result["validation_errors"]
+    except model.StaleReview:
+        raise
+    except Exception as exc:
+        _record_validation_failure(stages["verifier"], exc)
+    return VerifiedReview(accepted, finding_candidates, verified_concept,
+                          verified_alternatives)
+
+
+def _edit_findings(run_stage, prompt_config, verified, debug):
+    stages = debug["stages"]
+    accepted = verified.findings
+    verified_concept = verified.concept
+    concept_summary = None
+    # The editor sees only accepted findings. A failed editor can use the
+    # verifier's own wording, without discarding paid verification work.
+    findings = accepted
+    if accepted or verified_concept is not None:
+        try:
+            edited = run_stage("collator", json.dumps({
+                                   "findings": accepted,
+                                   "concept_assessment": verified_concept,
+                               }),
+                               prompt_config.audit_prompts["collator"],
+                               protocol.COLLATOR_SCHEMA, tools=False)
+            findings, concept_summary = protocol.collation(
+                edited, accepted, verified_concept)
+            if concept_summary is not None:
+                debug["concept_assessment"] = {
+                    **debug.get("concept_assessment", {}),
+                    "status": "verified",
+                    "summary": concept_summary,
+                    "edited_by": "collator",
+                }
+        except model.StaleReview:
+            raise
+        except Exception as exc:
+            _record_validation_failure(stages["collator"], exc)
+            stages["collator"]["used_verified_wording"] = True
+            concept_summary = protocol.concept_summary(
+                verified_concept, debug["concept_assessment"]["verification"]["reason"])
+            if concept_summary is not None:
+                debug["concept_assessment"] = {
+                    **debug.get("concept_assessment", {}),
+                    "status": "verified",
+                    "summary": concept_summary,
+                    "used_verified_wording": True,
+                }
+    else:
+        stages["collator"] = {"model": prompt_config.models["collator"],
+                              "status": "skipped", "turns": [], "tools": [],
+                              "reason": "No accepted findings to edit"}
+    return findings, concept_summary
+
+
 def review_with_independent_passes(case, runtime, prompt_config,
                                   routing_mode="enabled", blind_alternatives=True,
                                   archaeology=False):
@@ -63,9 +173,6 @@ def review_with_independent_passes(case, runtime, prompt_config,
     candidate_sources = debug.setdefault("candidate_sources", {})
     concept_candidate = None
     alternatives_candidate = None
-    verified_concept = None
-    verified_alternatives = []
-    concept_summary = None
     research_inventory = (model.research.inventory(research_evidence)
                           if research_evidence is not None else None)
     plan = {"tier": "sensitive"}
@@ -199,10 +306,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
             raise
         except Exception as exc:
             record = stages[name]
-            if record["status"] == "completed":
-                record.update(status="invalid", error_type=type(exc).__name__)
-            if isinstance(exc, protocol.InvalidReview):
-                record["validation_error"] = str(exc)
+            _record_validation_failure(record, exc)
             return None
 
     def collect(name, result):
@@ -236,10 +340,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
             raise
         except Exception as exc:
             record = stages["archaeologist"]
-            if record["status"] == "completed":
-                record.update(status="invalid", error_type=type(exc).__name__)
-            if isinstance(exc, protocol.InvalidReview):
-                record["validation_error"] = str(exc)
+            _record_validation_failure(record, exc)
             debug["concept_assessment"] = {
                 "status": "failed",
                 "error_type": type(exc).__name__,
@@ -332,90 +433,11 @@ def review_with_independent_passes(case, runtime, prompt_config,
 
     if is_current is not None and not is_current():
         raise model.StaleReview()
-    accepted = []
-    finding_candidates = {}
-    try:
-        verified = run_stage(
-            "verifier", verifier_input(),
-            prompt_config.audit_prompts["verifier"], protocol.VERIFIER_SCHEMA)
-        result, accepted = protocol.verification(verified, candidates, snapshot,
-                                                 concept_candidate)
-        stages["verifier"]["coverage"] = result["coverage"]
-        debug["decisions"] = result["decisions"]
-        previous_concept = debug.get("concept_assessment", {})
-        concept_status = ("verified" if result["concept"]["disposition"] == "publish"
-                          else result["concept"]["disposition"])
-        if concept_candidate is None and previous_concept.get("status") in {"skipped", "failed"}:
-            concept_status = previous_concept["status"]
-        debug["concept_assessment"] = {
-            **previous_concept,
-            "status": concept_status,
-            "verification": result["concept"],
-        }
-        if result["concept_validation_error"]:
-            stages["verifier"]["concept_validation_error"] = result["concept_validation_error"]
-        if result["alternatives_validation_error"]:
-            stages["verifier"]["alternatives_validation_error"] = (
-                result["alternatives_validation_error"])
-        verified_alternatives = result["alternatives"]
-        verified_concept = (result["concept"]["assessment"]
-                            if result["concept"]["disposition"] == "publish"
-                            else None)
-        published = [decision for decision in result["decisions"]
-                     if decision["disposition"] == "publish"]
-        finding_candidates = {finding["id"]: decision["candidate_ids"]
-                              for finding, decision in zip(accepted, published)}
-        if result["validation_errors"]:
-            stages["verifier"]["validation_errors"] = result["validation_errors"]
-    except model.StaleReview:
-        raise
-    except Exception as exc:
-        if stages["verifier"]["status"] == "completed":
-            stages["verifier"].update(status="invalid", error_type=type(exc).__name__)
-        if isinstance(exc, protocol.InvalidReview):
-            stages["verifier"]["validation_error"] = str(exc)
-
-    # The editor sees only accepted findings. A failed editor can use the
-    # verifier's own wording, without discarding paid verification work.
-    findings = accepted
-    if accepted or verified_concept is not None:
-        try:
-            edited = run_stage("collator", json.dumps({
-                                   "findings": accepted,
-                                   "concept_assessment": verified_concept,
-                               }),
-                               prompt_config.audit_prompts["collator"],
-                               protocol.COLLATOR_SCHEMA, tools=False)
-            findings, concept_summary = protocol.collation(
-                edited, accepted, verified_concept)
-            if concept_summary is not None:
-                debug["concept_assessment"] = {
-                    **debug.get("concept_assessment", {}),
-                    "status": "verified",
-                    "summary": concept_summary,
-                    "edited_by": "collator",
-                }
-        except model.StaleReview:
-            raise
-        except Exception as exc:
-            if stages["collator"]["status"] == "completed":
-                stages["collator"].update(status="invalid", error_type=type(exc).__name__)
-            if isinstance(exc, protocol.InvalidReview):
-                stages["collator"]["validation_error"] = str(exc)
-            stages["collator"]["used_verified_wording"] = True
-            concept_summary = protocol.concept_summary(
-                verified_concept, debug["concept_assessment"]["verification"]["reason"])
-            if concept_summary is not None:
-                debug["concept_assessment"] = {
-                    **debug.get("concept_assessment", {}),
-                    "status": "verified",
-                    "summary": concept_summary,
-                    "used_verified_wording": True,
-                }
-    else:
-        stages["collator"] = {"model": prompt_config.models["collator"],
-                              "status": "skipped", "turns": [], "tools": [],
-                              "reason": "No accepted findings to edit"}
+    verified = _verify_candidates(run_stage, verifier_input(), prompt_config,
+                                  candidates, snapshot, concept_candidate, debug)
+    findings, concept_summary = _edit_findings(run_stage, prompt_config, verified, debug)
+    finding_candidates = verified.candidate_ids
+    verified_alternatives = verified.alternatives
 
     debug["coverage"] = coverage.summarize(debug)
     debug["alternatives"] = verified_alternatives
