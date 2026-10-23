@@ -219,24 +219,20 @@ class PipelineTests(unittest.TestCase):
         self.calls = []
 
     def test_adversarial_deepseek_has_extra_output_headroom(self):
-        self.assertEqual(pipeline.stage_settings("adversarial_deepseek", "sensitive"),
+        self.assertEqual(pipeline.stage_settings("adversarial_deepseek"),
                          ("high", 32_000))
-        self.assertEqual(pipeline.stage_settings("adversarial", "sensitive"),
+        self.assertEqual(pipeline.stage_settings("adversarial"),
                          ("high", 25_000))
 
-    def test_verifier_uses_luna_with_xhigh_reasoning_at_every_tier(self):
+    def test_verifier_uses_luna_with_xhigh_reasoning(self):
         self.assertEqual(self.prompts.models["verifier"], "gpt-6-luna")
         self.assertEqual(model.MAX_VERIFIER_OUTPUT_TOKENS, 128_000)
-        for tier in ("routine", "standard", "sensitive"):
-            with self.subTest(tier=tier):
-                self.assertEqual(pipeline.stage_settings("verifier", tier),
-                                 ("xhigh", model.MAX_VERIFIER_OUTPUT_TOKENS))
+        self.assertEqual(pipeline.stage_settings("verifier"),
+                         ("xhigh", model.MAX_VERIFIER_OUTPUT_TOKENS))
 
-    def test_public_contract_uses_sol_with_low_reasoning_at_every_tier(self):
+    def test_public_contract_uses_sol_with_low_reasoning(self):
         self.assertEqual(self.prompts.models["public_contract"], "gpt-6.1-sol")
-        for tier in ("routine", "standard", "sensitive"):
-            with self.subTest(tier=tier):
-                self.assertEqual(pipeline.stage_settings("public_contract", tier), ("low", 25_000))
+        self.assertEqual(pipeline.stage_settings("public_contract"), ("low", 25_000))
 
     def plan(self, *args, **kwargs):
         result = {"tier": self.tier, "audits": self.audits,

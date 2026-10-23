@@ -21,7 +21,7 @@ DISCOVERY_TOOL_LIMITS = {"routine": 12, "standard": 24, "sensitive": 48}
 ARCHAEOLOGY_TOOL_LIMIT = 12
 
 
-def stage_settings(name, tier):
+def stage_settings(name):
     if name == "collator":
         return "low", model.MAX_COLLATOR_OUTPUT_TOKENS
     if name == "design":
@@ -37,6 +37,74 @@ def stage_settings(name, tier):
     if name in {"concurrency", "dead_code"}:
         return "medium", 8_000
     return "low", 4_000
+
+
+def _stage_tools(name, runtime):
+    research_evidence = runtime.case.research_evidence
+    discussion_lookup = runtime.discussion_lookup if research_evidence is None else None
+    allow_web_search = runtime.allow_web_search and research_evidence is None
+    tools = (model.BASE_TOOLS if name == "alternatives"
+             else model.ARCHAEOLOGY_TOOLS if name == "archaeologist"
+             else model.VERIFIER_TOOLS if name == "verifier"
+             else model.TOOLS if name in FULL_CONTEXT_STAGES
+             else model.FOCUSED_TOOLS)
+    evidence = research_evidence if name in {"archaeologist", "verifier"} else None
+    return model.available_tools(
+        tools, discussion_lookup if name not in {"script", "dead_code"} else None,
+        evidence, allow_web_search)
+
+
+def _run_stage(runtime, prompt_config, plan, name, input_text, prompt, schema, *, tools=True):
+    debug = runtime.debug
+    stages = debug["stages"]
+    outputs = debug["stage_outputs"]
+    if name not in ADVERSARIAL_STAGES:
+        debug["pipeline_stage"] = name
+    stage_model = prompt_config.models["archaeologist" if name == "alternatives" else name]
+    record = {"model": stage_model, "status": "running",
+              "turns": [], "tools": []}
+    stages[name] = record
+    if name in ADVERSARIAL_STAGES:
+        record["profiles"] = list(plan["profiles"])
+    try:
+        effort, output_tokens = stage_settings(name)
+        if tools:
+            calls = (ARCHAEOLOGY_TOOL_LIMIT if name in {"archaeologist", "alternatives"}
+                     else 48 if name in {*ADVERSARIAL_STAGES, "script", "dead_code", "verifier"}
+                     else DISCOVERY_TOOL_LIMITS[plan["tier"]])
+            available_tools = _stage_tools(name, runtime)
+            answer = runtime.review(
+                name, input_text, prompt=prompt, model_name=stage_model,
+                record=record,
+                tools=available_tools,
+                max_tool_calls=calls,
+                max_output_tokens=output_tokens,
+                reasoning_effort=effort,
+                first_tool_required=bool(available_tools)
+                and (name in FULL_CONTEXT_STAGES or name in {"archaeologist", "alternatives"}),
+                response_schema=schema,
+                provider="ppq" if name in PPQ_ADVERSARIAL_STAGES else "openai",
+                final_timeout=600 if name == "verifier" else 180)
+        else:
+            answer, response = runtime.audit(
+                name, prompt, input_text, model_name=stage_model,
+                max_output_tokens=output_tokens, response_schema=schema,
+                reasoning_effort=effort, debug_record=record)
+            if response["status"] != "completed":
+                raise protocol.InvalidReview("Stage response was incomplete")
+        outputs[name] = answer
+        record["raw_output"] = answer
+        record["status"] = "completed"
+        return answer
+    except model.StaleReview:
+        record["status"] = "stale"
+        raise
+    except Exception as exc:
+        record["status"] = "budget_exhausted" if isinstance(exc, BudgetExceeded) else "failed"
+        record["error_type"] = type(exc).__name__
+        if record.get("raw_output"):
+            outputs[name] = record["raw_output"]
+        raise
 
 
 @dataclass
@@ -187,17 +255,12 @@ def review_with_independent_passes(case, runtime, prompt_config,
     is_current = runtime.is_current
     ppq_api_key = runtime.ppq_api_key
     ppq_budget = runtime.ppq_budget
-    discussion_lookup = runtime.discussion_lookup
-    allow_web_search = runtime.allow_web_search
     research_evidence = case.research_evidence
     if ppq_budget is not None:
         for stage in PPQ_ADVERSARIAL_STAGES:
             ppq_budget.exempt(stage)
-    if research_evidence is not None:
-        discussion_lookup = None
-        allow_web_search = False
     stages = debug.setdefault("stages", {})
-    outputs = debug.setdefault("stage_outputs", {})
+    debug.setdefault("stage_outputs", {})
     candidates = []
     candidate_sources = debug.setdefault("candidate_sources", {})
     concept_candidate = None
@@ -223,9 +286,8 @@ def review_with_independent_passes(case, runtime, prompt_config,
 
     def protect_verification():
         if budget is not None:
-            effort, output_tokens = stage_settings("verifier", plan["tier"])
-            tools = model.available_tools(model.VERIFIER_TOOLS, discussion_lookup,
-                                          research_evidence, allow_web_search)
+            effort, output_tokens = stage_settings("verifier")
+            tools = _stage_tools("verifier", runtime)
             debug["verification_budget"] = budget.protect({
                 "model": prompt_config.models["verifier"], "store": False,
                 "reasoning": {"effort": effort},
@@ -244,73 +306,10 @@ def review_with_independent_passes(case, runtime, prompt_config,
                                routing_mode)
     notes = None
 
-    def stage_tools(name):
-        tools = (model.BASE_TOOLS if name == "alternatives"
-                 else model.ARCHAEOLOGY_TOOLS if name == "archaeologist"
-                 else model.VERIFIER_TOOLS if name == "verifier"
-                 else model.TOOLS if name in FULL_CONTEXT_STAGES
-                 else model.FOCUSED_TOOLS)
-        evidence = research_evidence if name in {"archaeologist", "verifier"} else None
-        return model.available_tools(
-            tools, discussion_lookup if name not in {"script", "dead_code"} else None,
-            evidence, allow_web_search)
-
     def run_stage(name, input_text, prompt, schema, *, tools=True):
-        if name not in ADVERSARIAL_STAGES:
-            debug["pipeline_stage"] = name
-        stage_model = prompt_config.models["archaeologist" if name == "alternatives" else name]
-        record = {"model": stage_model, "status": "running",
-                  "turns": [], "tools": []}
-        stages[name] = record
-        if name in ADVERSARIAL_STAGES:
-            record["profiles"] = list(plan["profiles"])
-        try:
-            if tools:
-                calls = (ARCHAEOLOGY_TOOL_LIMIT if name in {"archaeologist", "alternatives"}
-                         else 48 if name in {*ADVERSARIAL_STAGES, "script", "dead_code", "verifier"}
-                         else DISCOVERY_TOOL_LIMITS[plan["tier"]])
-                effort, output_tokens = stage_settings(name, plan["tier"])
-                available_tools = stage_tools(name)
-                extra = ({"research_evidence": research_evidence}
-                         if research_evidence is not None and name in {"archaeologist", "verifier"}
-                         else {})
-                answer = runtime.review(
-                    name, input_text, prompt=prompt, model_name=stage_model,
-                    record=record,
-                    tools=available_tools,
-                    max_tool_calls=calls,
-                    max_output_tokens=output_tokens,
-                    reasoning_effort=effort,
-                    first_tool_required=bool(available_tools)
-                    and (name in FULL_CONTEXT_STAGES or name in {"archaeologist", "alternatives"}),
-                    response_schema=schema,
-                    provider="ppq" if name in PPQ_ADVERSARIAL_STAGES else "openai",
-                    budget=ppq_budget if name in PPQ_ADVERSARIAL_STAGES else budget,
-                    api_base="https://api.ppq.ai/v1" if name in PPQ_ADVERSARIAL_STAGES
-                    else "https://api.openai.com/v1",
-                    final_timeout=600 if name == "verifier" else 180,
-                    research_evidence=research_evidence if extra else None)
-            else:
-                effort, output_tokens = stage_settings(name, plan["tier"])
-                answer, response = runtime.audit(
-                    name, prompt, input_text, model_name=stage_model,
-                    max_output_tokens=output_tokens, response_schema=schema,
-                    reasoning_effort=effort, debug_record=record)
-                if response["status"] != "completed":
-                    raise protocol.InvalidReview("Stage response was incomplete")
-            outputs[name] = answer
-            record["raw_output"] = answer
-            record["status"] = "completed"
-            return answer
-        except model.StaleReview:
-            record["status"] = "stale"
-            raise
-        except Exception as exc:
-            record["status"] = "budget_exhausted" if isinstance(exc, BudgetExceeded) else "failed"
-            record["error_type"] = type(exc).__name__
-            if record.get("raw_output"):
-                outputs[name] = record["raw_output"]
-            raise
+        # Read the current plan after any discovery-driven escalation.
+        return _run_stage(runtime, prompt_config, plan, name, input_text, prompt,
+                          schema, tools=tools)
 
     def discover(name):
         nonlocal notes
