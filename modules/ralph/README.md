@@ -1,10 +1,14 @@
 # ralph
 
-This module runs `ralph`, a webhook receiver that posts a
+This module runs `ralph-service`, a webhook receiver that posts a
 first-pass review on Forgejo pull requests.
 
 The default `services.ralph.engine = "current"` selects the existing review
-pipeline. Ralph can load other trusted engine modules shipped with its package;
+pipeline. The module defaults to the `ralph-service` companion package, which
+imports the core review runner. The standalone `ralph` binary now reviews local
+committed changes and accepts no daemon flags. Explicit package overrides must
+select `packages.<system>.ralph-service`. Ralph can load other trusted engine
+modules shipped with its package;
 each engine owns its review format and may provide optional findings or
 actionable exports. Missing exports mean that consumer is unavailable for that
 run, not that its result is empty. The detailed review behavior below describes
@@ -342,10 +346,15 @@ Useful defaults:
 - `services.ralph.stateDir = "/var/lib/ralph"`
 - `services.ralph.commentMarker = null`, which uses
   `<!-- ralph:${repository} -->`
-- `services.ralph.promptFile =
-  "${services.ralph.package}/share/ralph/prompt.md"`
-- `services.ralph.auditPromptDir =
-  "${services.ralph.package}/share/ralph/audits"`
+- `services.ralph.promptFile = null`
+- `services.ralph.auditPromptDir = null`
+- `services.ralph.followupPromptFile = null`
+- `services.ralph.followupModel = null`
+
+Unset main-review prompt overrides resolve inside the imported core package.
+Follow-up resolves its own bundled prompt and model independently. Set
+`followupPromptFile` and `followupModel` to customize follow-up; main-review
+`promptFile`, `auditPromptDir` and `modelsJson` never affect it.
 
 Set `repositoryUrl` only when the HTML URL in Forgejo webhook payloads cannot
 be derived from `forgejoApi`.
@@ -358,9 +367,11 @@ be derived from `forgejoApi`.
   only use package code you trust.
 - `services.ralph.engineConfig = { }`: JSON-serializable object passed to the
   selected engine. Ralph writes this configuration to the Nix store and pins
-  its resolved identity for queued runs. Do not put secrets in it. The current
-  engine accepts resolved `prompts`, or `prompt_file`, `audit_prompt_dir` and
-  `models_json`, plus `routing_mode` and `blind_alternatives`.
+  its resolved identity for each run when claimed. Do not put secrets in it.
+  The current engine accepts resolved `prompts`, or `prompt_file`,
+  `audit_prompt_dir` and `models_json`, plus `routing_mode`, `archaeology` and
+  `blind_alternatives`.
+  The service enables archaeology for PR context with discussion access.
 
 The current-engine options `promptFile`, `auditPromptDir`, `modelsJson` and
 `routingMode` remain convenience defaults for the current engine. Values in
@@ -369,11 +380,11 @@ current-only options explicitly with a non-current engine is rejected.
 Engine-produced Markdown is the published review body. Structured data stays
 private unless an engine explicitly provides a supported export.
 
-Changing engine selection or configuration creates a distinct review
-generation. A queued run keeps the engine identity and resolved configuration
-it started with. Frozen evaluation captures also pin both; after the manifest
-schema cutover, recapture old manifests instead of replaying them with a
-compatibility reader.
+Unfinished jobs bind the currently configured engine and resolved settings when
+claimed, including retries and jobs recovered after restart. Each attempt records
+its actual identity. Saved results keep their original identity and only retry
+publication. Frozen evaluation captures pin code and resolved settings too;
+recapture old manifests after a schema cutover.
 
 On service startup, Ralph checks for `jobs.sqlite3` and runs the database
 conversion before starting the worker. A fresh state directory has no database
@@ -386,15 +397,15 @@ For a manual conversion, stop Ralph's stats and followup timers and services,
 then stop `ralph.service` and run:
 
 ```sh
-ralph --migrate-state --state-dir /var/lib/ralph
+ralph-service --migrate-state --state-dir /var/lib/ralph
 ```
 
 The conversion creates an exclusive mode-0600 backup at
 `/var/lib/ralph/jobs.sqlite3.pre-engine.bak` before converting saved results.
 Historical results retain their bodies and current-engine diagnostics, but have
 null code/config identity because those values were not recorded. Never-started
-pending jobs bind the selected engine on first claim; unfinished jobs with prior
-attempts and unknown identity fail clearly. If the backup path already exists,
+pending jobs and recovered unfinished attempts bind the current engine when
+claimed. If the backup path already exists,
 the conversion stops rather than overwrite it. A Nix version rollback alone
 does not restore the old database format. This backup covers the jobs database
 at conversion time; after new reviews run, restoring it also requires
@@ -416,6 +427,13 @@ reconciling later jobs, spend and followup records, and published outputs.
   The map must include router, independent, script, adversarial, adversarial_deepseek, adversarial_gemini, concurrency, state,
   public_contract, tests, dead_code, design, build, archaeologist, verifier and collator.
   Prices must also be supported by ralph's ledger.
+
+Custom main-review model maps must remove `addressed_findings`. Follow-up now
+uses its own prompt and model, configured with `followupPromptFile` and
+`followupModel`. Main-review audit directories no longer require
+`addressed_findings.md`. Change these configurations together with the companion
+package, retaining all existing state and follow-up initialization metadata.
+The package split adds no database migration.
 
 Custom prompt directories must include `dead_code.md`, `consensus.md`, `wallet.md`, `p2p.md`,
 `concurrency.md`, `build.md` and `archaeologist.md`. Custom model maps must
@@ -443,7 +461,7 @@ usage_complete is false when any reported count or response is missing.
 
 ## Frozen prompt and routing experiments
 
-The package installs `ralph-evaluate` for capture, replay, spend
+The companion package installs `ralph-evaluate` for capture, replay, spend
 inspection and offline summaries.
 Capture performs Forgejo/Git reads but makes no model calls:
 

@@ -1,18 +1,75 @@
-# ralph structure
+# ralph local review
 
 Ralph loads a selected local review engine. The default `current` engine performs
-static Bitcoin Core PR reviews, discovers candidate findings in independent
-passes, checks them against repository evidence, and publishes verified findings
+static reviews of committed Bitcoin Core changes, discovers candidate findings in independent
+passes, checks them against repository evidence, and returns verified findings
 and a separately verified conceptual assessment. It does not build or execute
-PR code. The engine owns its Markdown and structured result; other engines need
+reviewed code. The engine owns its Markdown and structured result; other engines need
 not use the stages, diagnostics or exports described below. Operators can load
 only trusted engine modules included in the package. Engines own their output
 style and engine-specific checks; current-engine tests and diagnostics do not
 prescribe another engine's review format.
 
+
+`packages.<system>.ralph` installs only the `ralph` review command. The
+[companion package](../ralph-service/README.md) supplies the webhook service,
+frozen evaluator, reports, statistics and follow-up scheduler.
+
+```sh
+ralph review topic /path/to/repo \
+  --base refs/remotes/origin/master \
+  --openai-key-file /path/to/openai-key \
+  --output /tmp/topic-review.json
+
+ralph review 'HEAD^..HEAD' /path/to/repo \
+  --openai-key-file /path/to/openai-key
+```
+
+Branch mode requires an explicit `--base` and compares the unique merge base
+with the target. An explicit `BASE..HEAD` range compares those exact committed
+trees, including diverged endpoints. Both endpoints are required. Working-tree
+and index changes, root commits, and triple-dot shorthand are unsupported.
+Ralph resolves revisions once, pins their objects until the run finishes, and
+reads blobs without checkout or index changes. It never fetches Git objects or
+calls a forge. Missing objects or history fail before model requests.
+
+Stdout contains review Markdown. Progress and errors go to stderr. `--output`
+writes a private versioned JSON artifact containing engine identity, base/head,
+merge base, actual diff base, native data, supported exports, usage and status.
+PPQ credentials are optional for local review. Supplying `--ppq-key-file` also
+requires an explicit `--ppq-review-budget-usd` allowance. The OpenAI default is
+USD 1.00. Use `--help` for budget and trusted local engine options.
+
+Archaeology defaults off for local changes. `--context FILE` can supply versioned
+review context and optional source metadata, for example:
+
+```json
+{
+  "schema_version": 1,
+  "title": "Review title",
+  "rationale": "Problem and intended change",
+  "source": {
+    "kind": "pull_request",
+    "url": "https://git.example.org/owner/repo/pulls/123",
+    "number": 123
+  }
+}
+```
+
+The `source` field is optional. A PR source records its actual URL and number. `--research-evidence FILE` supplies captured discussion evidence;
+core never retrieves discussions itself. `--archaeology auto|on|off` resolves to
+a boolean before engine identity is recorded. Forced enabling requires usable
+PR context and discussion evidence. Disabled archaeology and blind alternatives
+make no model requests and do not reduce ordinary code coverage. Hosted web
+permission is separate from discussion access.
+
+Custom main-review model maps must remove `addressed_findings`, and custom audit
+directories no longer need `addressed_findings.md`. Follow-up prompt and model
+settings belong to the companion and are configured separately.
+
 ## Engine boundary
 
-The host supplies a review case and bounded runtime services to the selected
+The CLI or companion supplies a review case and bounded runtime services to the selected
 engine. It stores the engine-produced Markdown, native structured data,
 optional consumer exports, common run metrics and the engine's code/config
 identity. Native engine data remains private. Consumers use declared exports;
@@ -21,12 +78,10 @@ result. They do not derive findings from rendered Markdown. This keeps the
 current pipeline's diagnostics available to its own reports without making
 those stages a requirement for another engine.
 
-The current engine accepts resolved prompts or prompt file/model settings and
-the current routing and blind-alternative controls. Its resolved settings are
-fixed for frozen evaluations. Unfinished queued reviews use the currently
-configured engine and settings when claimed, including after upgrades. Each
-run records its actual engine identity; publication retries reuse the saved
-result and its original identity.
+The current engine accepts resolved prompts or prompt file/model settings,
+routing, archaeology and blind-alternative controls. Its resolved settings are
+fixed for frozen evaluations. Core and engine code determine engine identity;
+companion-only website and webhook changes do not change it.
 
 An engine module implements two functions:
 
@@ -51,43 +106,6 @@ assigns models; callers can replace the complete map with `--models-json`.
 The [NixOS module documentation](../../modules/ralph/README.md)
 covers deployment and options. Mermaid diagrams render in supporting Markdown
 viewers; their source remains readable in a plain text editor.
-
-## Service and review lifecycle
-
-```mermaid
-flowchart TD
-    event["Forgejo PR opened, reopened or synchronized"] --> webhook["Webhook server: validate signature and repository"]
-    webhook --> queue["Durable SQLite queue: coalesce newer heads"]
-    queue --> workers["Review workers: default 3 concurrent PRs"]
-    workers --> collect["Fetch current branch or pinned historical base and collect merge-base/head snapshot"]
-    collect --> existing{"Same base and head already reviewed?"}
-    existing -->|yes| done["Complete without model calls"]
-    existing -->|no| pipeline["Route, assess concept, discover, verify and edit"]
-    pipeline --> saved["Save result before publication"]
-    saved --> report["Optional public HTML and JSON report"]
-    report --> publish["Create or update one bot comment per PR"]
-    pipeline --> trace["Private trace: outputs, tools, usage and attribution"]
-    saved --> stats["Static statistics from jobs and spend ledgers"]
-    workers --> stale["Changed head: supersede and enqueue latest head"]
-```
-
-Only one attempt runs per PR. Fetch and snapshot preparation share a Git lock;
-model calls run outside it. Each attempt pins its Git objects with separate refs.
-Head checks prevent stale reviews from being published. Publication retries reuse
-saved results rather than paying for another review. Transient transport failures
-have bounded job retries. Oversized inputs use a changed-file manifest and diff
-tools; if the PR prelude and manifest still exceed 200,000 bytes, review is skipped.
-
-Sources: [service.py](ralph/service.py),
-[jobs.py](ralph/jobs.py), [repository.py](ralph/repository.py).
-
-The HTTP listener also serves per-PR PNG status dots at
-`/assets/<owner>/<repo>/<pr>.png`. They are Bitcoin orange (`#f7931a`) when the
-latest queued generation has published findings or a conceptual concern,
-including feedback from partial reviews. All other results are grey. Neither
-colour indicates approval or a pass/fail verdict. Status comes from the existing
-job store without model or Forgejo API calls. See the module documentation for
-proxy setup.
 
 ## Audit selection
 
@@ -169,7 +187,7 @@ not other findings or review discussion. Code tools inspect base/head, diffs,
 callers and tests; history tools settle specific contracts. It must inspect code
 before finishing and prioritize material functions over reporting them unread.
 
-When selected it runs before concept research and other discovery, sharing the
+When selected it runs before any enabled concept research and other discovery, sharing the
 existing OpenAI budget and protecting verifier headroom and its own final turn.
 It has no additional spending allowance; inadequate review or monthly budget
 still produces an explicit incomplete stage. Candidates go through the existing
@@ -184,9 +202,11 @@ Custom model maps must include `script`; there is no fallback to an old map.
 flowchart TD
     route["Router: gpt-6-luna"] --> script{"Script specialist selected?"}
     script -->|yes| expert["script: gpt-6.1-sol / code and history"]
-    expert --> archaeology["Archaeologist: gpt-6-luna / review input, code and research"]
-    script -->|no| archaeology
-    archaeology --> independent["Independent overview: gpt-6-luna"]
+    expert --> history{"Archaeology enabled?"}
+    script -->|no| history
+    history -->|yes| archaeology["Archaeologist: gpt-6-luna / review input, code and research"]
+    history -->|no| independent["Independent overview: gpt-6-luna"]
+    archaeology --> independent
     independent --> sensitive{"Sensitive tier?"}
     sensitive -->|yes| pair["Concurrent adversarial passes: same evidence and profiles"]
     pair --> sol["adversarial: gpt-6.1-sol / OpenAI"]
@@ -206,13 +226,14 @@ flowchart TD
 
 Skipped audits do not make model calls. Escalation can add pending stages during
 discovery. Sol, DeepSeek and Gemini run concurrently when a PPQ key is supplied; without that
-key, the Python pipeline runs Sol alone. The service CLI requires both keys.
-The selected script specialist runs immediately after routing, before advisory
-research and overview. The archaeologist follows it, before other code discovery. Its assessment
-is advisory only: negative, failed or incomplete concept research never skips an
-independent, adversarial or focused code stage selected for the review.
+key, the Python pipeline runs Sol alone. The companion service CLI requires both keys.
+The selected script specialist runs immediately after routing. When archaeology
+is enabled, the archaeologist follows it before other code discovery. Otherwise
+review proceeds directly to the independent overview. Its assessment is advisory
+only: negative, failed or incomplete concept research never skips an independent,
+adversarial or focused code stage selected for the review.
 Reviewers do not see other discovery passes' candidates. The verifier sees the
-pooled candidates, original review input, archaeology candidate, and named
+pooled candidates, original review input, any archaeology candidate, and named
 inspection gaps from incomplete discovery. Code
 discovery does not receive the archaeology output or current PR discussion.
 
@@ -237,7 +258,8 @@ Final verifier requests with tools disabled have a 600-second socket timeout.
 Other model requests retain the 180-second timeout.
 
 Code tools find paths, read head/base files, read diffs and search code. The full
-tool set also reads base history and other PR discussions. Current PR discussion
+tool set also reads base history and, when the caller supplies a discussion
+reader or frozen evidence, other PR discussions. Current PR discussion
 is excluded from code discovery. The archaeologist and verifier can read current
 discussion and original upstream review threads. Frozen evaluations replay only
 captured research evidence and disable live discussion or web fallback. If a
@@ -268,8 +290,8 @@ spending ceiling. These settings have not been tuned against live reviews.
 Custom prompt directories need `dead_code.md`, and complete custom model maps
 must include `dead_code`.
 
-OpenAI's default estimated review allowance is USD 1.00; PPQ has a separate
-USD 0.50 allowance. Routing and discovery protect OpenAI verifier headroom,
+OpenAI's default estimated review allowance is USD 1.00. Local PPQ use requires
+an explicit separate allowance; the companion service can leave it uncapped. Routing and discovery protect OpenAI verifier headroom,
 refreshed as candidates accumulate. Admission checks also protect a final model
 response after inspection. Budget limits can still prevent completion, including
 through competing workers' monthly spending. Failed discovery becomes a coverage
@@ -292,7 +314,7 @@ Sources: [pipeline.py](ralph/pipeline.py),
 
 ```mermaid
 flowchart TD
-    archaeology["Archaeologist: sourced concept candidate"] --> conceptcheck["Verifier checks historical claims and technical premises"]
+    archaeology["When enabled: archaeologist sourced concept candidate"] --> conceptcheck["Verifier checks historical claims and technical premises"]
     conceptcheck --> conceptdecision{"Supported conceptual assessment?"}
     conceptdecision -->|yes| concept["Separate assessment: no severity or code location"]
     conceptdecision -->|no| withheld["Withhold assessment; retain valid findings"]
@@ -371,8 +393,9 @@ Rendering groups findings first, with critical, major, minor, then suggestions.
 Design and approach feedback follows, then at most one independently verified
 optional alternative. Design kind determines its own section. A useful
 alternative can be published even when the PR's overall approach is sound.
-The comment contains the commit header, verified review and optional report link.
-Reports expose stage replies, dispositions and attribution. Statistics distinguish
+The companion adds the commit header and optional report link when publishing
+a comment. Its reports expose stage replies, dispositions and attribution. Its
+statistics distinguish
 sole and shared accepted findings across five views: Overview, Agents, Reviews,
 Outcomes, and Usage. Overview shows the leaderboard and matched adversarial
 comparison; Agents links to a separate page for each stage and configured model.
@@ -390,12 +413,14 @@ Profiles within one adversarial call get no separate causal credit.
 
 Sources: [protocol.py](ralph/protocol.py),
 [verifier prompt](audits/verifier.md), [collator prompt](audits/collator.md),
-[report.py](ralph/report.py), [stats.py](ralph/stats.py).
+[companion report.py](../ralph-service/ralph_service/report.py),
+[companion stats.py](../ralph-service/ralph_service/stats.py).
 
 ## Concept and history
 
-The archaeologist receives the full review input plus base/head code tools. It
-runs after routing and any selected script review, before independent discovery. It researches whether the
+When enabled, the archaeologist receives the full review input plus base/head
+code tools. It runs after routing and any selected script review, before
+independent discovery. It researches whether the
 proposed goal and approach are worth pursuing, while code review continues no
 matter what it recommends. It establishes the problem, the cost of doing
 nothing, the benefit delivered by the submitted proposal, and relevant prior

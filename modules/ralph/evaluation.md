@@ -1,5 +1,9 @@
 # Frozen review evaluation
 
+`ralph-evaluate` is installed by `packages.<system>.ralph-service`, alongside
+the webhook service and follow-up command. It imports the same core runner as
+the standalone `ralph review` command.
+
 The frozen runner is for local comparison of review configurations. Capture
 stores the PR text, Git object IDs, prompt/model configuration, bounded current
 discussion, optional prior discussion calls, and hashes. Replay reads those
@@ -17,7 +21,11 @@ prompt, model, routing and blind-alternative switches remain current-only
 overrides. They cannot be combined with another engine. Configuration changes
 produce a distinct effective configuration group. The capture schema has a hard
 cutover: recapture manifests created before engine identity was added. Current
-captures use manifest schema version 3.
+captures use manifest schema version 4. Recapture pre-split manifests. Core and
+engine hashes are separate from companion presentation code, and captures record
+the resolved archaeology setting. Frozen evidence never falls back to live reads.
+Custom main-review model maps must remove `addressed_findings`; follow-up prompt
+and model overrides are separate companion settings.
 
 An engine owns its Markdown and structured data. Reports and other consumers
 use only exports the engine declares; an absent export is unavailable, while an
