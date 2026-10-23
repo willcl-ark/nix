@@ -110,6 +110,14 @@ Format the repo with:
 nix fmt
 ```
 
+Format and lint Python with the flake's pinned Ruff version:
+
+```sh
+nix develop
+ruff format .
+ruff check .
+```
+
 Inspect the public flake API with:
 
 ```sh

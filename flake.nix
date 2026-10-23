@@ -25,6 +25,12 @@
 
       nixosModules = import ./modules;
 
+      devShells = forAllSystems (system: {
+        default = nixpkgs.legacyPackages.${system}.mkShell {
+          packages = [ nixpkgs.legacyPackages.${system}.ruff ];
+        };
+      });
+
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-tree);
     };
 }
