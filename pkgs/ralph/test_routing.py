@@ -99,7 +99,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_full_fallback_for_incomplete_patch_router_failure_and_missing_context(self):
         prompt_config = self.prompt_config()
-        snapshot = self.snapshot("src/example.cpp")
+        snapshot = self.snapshot("src/rpc/misc.cpp", "ci/test/00_setup_env.sh")
         review = f"Patch exceeds {MAX_REVIEW_BYTES} input bytes. Use read_diff"
         debug = {}
         with patch("ralph.model.run_audit") as run:
@@ -107,13 +107,16 @@ class RoutingTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(plan, routing.full_plan("Initial patch is incomplete"))
 
-        debug = {}
-        with patch("ralph.model.run_audit",
-                   return_value=('{"tier": "routine"}', {"status": "completed"})):
-            plan = routing.plan_review(self.runtime(), "Patch:\n+change", snapshot, prompt_config, debug)
-        self.assertEqual(plan["audits"], [name for name in config.AUDIT_NAMES if name != "script"])
-        self.assertEqual(plan["profiles"], list(config.ADVERSARIAL_PROFILES))
-        self.assertEqual(debug["stages"]["router"]["status"], "failed")
+        for answer, status in (('{"tier": "routine"}', "completed"), (route(), "incomplete")):
+            with self.subTest(status=status):
+                debug = {}
+                with patch("ralph.model.run_audit",
+                           return_value=(answer, {"status": status})):
+                    plan = routing.plan_review(self.runtime(), "Patch:\n+change", snapshot,
+                                               prompt_config, debug)
+                self.assertEqual(plan, routing.full_plan(
+                    "Routing unavailable; conservative review required"))
+                self.assertEqual(debug["stages"]["router"]["status"], "failed")
 
         plan = routing.validate_plan(
             route(missing_context=("caller omitted",)), {"src/example.cpp"}, "standard")
@@ -162,6 +165,28 @@ class RoutingTests(unittest.TestCase):
         plan = routing.validate_plan(route(), {"src/validationinterface.cpp"}, "routine")
         self.assertEqual(plan["audits"], ["concurrency", "tests", "dead_code", "design"])
 
+    def test_crypto_and_persistence_paths_remain_sensitive(self):
+        for path in ("src/crypto/sha256.cpp", "src/secp256k1/src/secp256k1.c",
+                     "src/dbwrapper.cpp", "src/index/base.cpp"):
+            with self.subTest(path=path):
+                plan = routing.validate_plan(route(), {path}, "routine")
+                self.assertEqual(plan["tier"], "sensitive")
+                self.assertEqual(plan["profiles"], [])
+                if path in {"src/dbwrapper.cpp", "src/index/base.cpp"}:
+                    self.assertIn("state", plan["audits"])
+
+    def test_docs_in_sensitive_and_build_directories_have_no_path_coverage(self):
+        for path in ("src/wallet/README.md", "src/wallet/rpc/README.md",
+                     "src/consensus/README.md", "src/policy/README.md",
+                     "src/crypto/README.md", "src/db/README.md", "src/util/thread.md",
+                     "src/rpc/README.md", "ci/README.md", "ci/test/README.md",
+                     "ci/lint/README.txt", "depends/README.txt", "cmake/README.rst"):
+            with self.subTest(path=path):
+                plan = routing.validate_plan(route(), {path}, "routine")
+                self.assertEqual(plan["tier"], "routine")
+                self.assertEqual(plan["audits"], [])
+                self.assertEqual(plan["profiles"], [])
+
     def test_test_only_changes_are_routine_tests_unless_router_adds_design(self):
         paths = {"src/test/validation_tests.cpp"}
         self.assertEqual(routing.minimum_tier(paths), "routine")
@@ -194,23 +219,67 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(set(plan["audits"]),
                          {"state", "public_contract", "tests", "dead_code", "design", "build"})
 
-    def test_public_contract_domains_and_build_only_floor(self):
-        for path in ("src/httprpc.cpp", "src/httpserver.cpp", "src/rest.cpp",
-                     "src/qt/rpcconsole.h", "src/wallet/rpc/spend.cpp"):
+    def test_public_contract_domains_have_standard_floor_and_mandatory_audits(self):
+        for path in ("src/rpc/misc.cpp", "src/httprpc.cpp", "src/httpserver.cpp",
+                     "src/rest.cpp", "src/qt/rpcconsole.h", "src/bitcoin-cli.cpp",
+                     "src/init.cpp", "src/common/args.cpp", "src/util/system.cpp"):
             with self.subTest(path=path):
                 plan = routing.validate_plan(route(), {path}, "routine")
-                self.assertEqual(plan["tier"], "sensitive")
-                self.assertIn("public_contract", plan["audits"])
-                self.assertIn("tests", plan["audits"])
+                self.assertEqual(plan["tier"], "standard")
+                self.assertEqual(plan["audits"], ["public_contract", "tests", "dead_code", "design"])
+                self.assertEqual(plan["profiles"], [])
 
-        plan = routing.validate_plan(route(), {"depends/packages/libevent.mk"}, "routine")
+    def test_public_contract_and_build_keep_overlapping_sensitive_floors(self):
+        plan = routing.validate_plan(route(), {"src/wallet/rpc/spend.cpp"}, "routine")
         self.assertEqual(plan["tier"], "sensitive")
+        self.assertEqual(plan["profiles"], ["wallet"])
+        self.assertIn("public_contract", plan["audits"])
+
+        plan = routing.validate_plan(route(), {"src/wallet/CMakeLists.txt"}, "routine")
+        self.assertEqual(plan["tier"], "sensitive")
+        self.assertEqual(plan["profiles"], ["wallet"])
         self.assertEqual(plan["audits"], ["dead_code", "build"])
-        self.assertEqual(plan["profiles"], [])
+
+    def test_build_and_ci_have_standard_floor_and_mandatory_audits(self):
+        for path in ("CMakeLists.txt", "src/CMakeLists.txt", "cmake/example.cmake",
+                     "depends/packages/libevent.mk", "contrib/guix/guix-build",
+                     "ci/lint/06_script.sh", "ci/lint/requirements.txt", "ci/config.yml",
+                     "configure.ac",
+                     "build-aux/m4/example.m4", "Cargo.lock", "flake.lock"):
+            with self.subTest(path=path):
+                plan = routing.validate_plan(route(), {path}, "routine")
+                self.assertEqual(plan["tier"], "standard")
+                self.assertEqual(plan["audits"], ["dead_code", "build"])
+                self.assertEqual(plan["profiles"], [])
+
+        plan = routing.validate_plan(route(), {"ci/test/00_setup_env.sh"}, "routine")
+        self.assertEqual(plan["tier"], "standard")
+        self.assertEqual(plan["audits"], ["tests", "dead_code", "build"])
 
         plan = routing.validate_plan(route(audits=("tests",)),
                                      {"depends/packages/libevent.mk"}, "routine")
         self.assertEqual(plan["audits"], ["tests", "dead_code", "build"])
+
+    def test_router_can_escalate_public_contract_and_build_security_changes(self):
+        for path, evidence in (
+            ("src/httprpc.cpp", "Changes RPC authentication checks"),
+            ("src/rpc/misc.cpp", "Changes parsing of untrusted input"),
+            ("ci/config.yml", "Changes workflow permissions and secret access"),
+            ("depends/packages/libevent.mk", "Changes dependency provenance"),
+            ("contrib/guix/guix-build", "Changes release signing and artifact integrity"),
+        ):
+            with self.subTest(path=path):
+                debug = {}
+                with patch("ralph.model.run_audit", return_value=(
+                    route(tier="sensitive", evidence=(evidence,)), {"status": "completed"}
+                )) as run:
+                    plan = routing.plan_review(self.runtime(), "Patch", self.snapshot(path),
+                                               self.prompt_config(), debug)
+                self.assertEqual(debug["routing"]["minimum_tier"], "standard")
+                self.assertEqual(plan["tier"], "sensitive")
+                self.assertEqual(plan["evidence"], [evidence])
+                self.assertEqual(plan["profiles"], [])
+                run.assert_called_once()
 
     def test_profiles_force_sensitive_tier(self):
         plan = routing.validate_plan(route(profiles=("wallet",)), {"src/util/time.cpp"},

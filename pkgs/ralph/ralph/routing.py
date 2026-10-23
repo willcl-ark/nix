@@ -53,7 +53,8 @@ WALLET = re.compile(r"^src/wallet(?:/|[._])")
 
 
 def _doc_path(path):
-    return path.endswith(DOC_EXTENSIONS)
+    return (path.endswith(DOC_EXTENSIONS)
+            and path.rsplit("/", 1)[-1] not in {"CMakeLists.txt", "requirements.txt"})
 
 
 def _production_path(path):
@@ -63,7 +64,7 @@ def _production_path(path):
 def domain_profiles(paths):
     profiles = set()
     for path in paths:
-        if is_test_path(path):
+        if _doc_path(path) or is_test_path(path):
             continue
         if CONSENSUS.search(path):
             profiles.add("consensus")
@@ -76,13 +77,16 @@ def domain_profiles(paths):
 
 def domain_audits(paths):
     audits = set()
-    if any(not _doc_path(path) or BUILD.search(path) for path in paths):
+    paths = [path for path in paths if not _doc_path(path)]
+    if paths:
         audits.add("dead_code")
     if any(is_test_path(path) or _production_path(path) for path in paths):
         audits.add("tests")
     if any(_production_path(path) for path in paths):
         audits.add("design")
     for path in paths:
+        if BUILD.search(path):
+            audits.add("build")
         if is_test_path(path):
             continue
         if CONCURRENCY.search(path):
@@ -91,19 +95,16 @@ def domain_audits(paths):
             audits.add("state")
         if PUBLIC_CONTRACT.search(path):
             audits.add("public_contract")
-        if BUILD.search(path):
-            audits.add("build")
     return audits
 
 
 def minimum_tier(paths):
     if domain_profiles(paths):
         return "sensitive"
-    if any((CONCURRENCY.search(path) or STATE.search(path) or PUBLIC_CONTRACT.search(path)
-            or BUILD.search(path) or CRYPTO.search(path))
-           for path in paths if not is_test_path(path)):
+    if any((CONCURRENCY.search(path) or STATE.search(path) or CRYPTO.search(path))
+           for path in paths if not _doc_path(path) and not is_test_path(path)):
         return "sensitive"
-    if all(_doc_path(path) or is_test_path(path) for path in paths):
+    if all(_doc_path(path) or (is_test_path(path) and not BUILD.search(path)) for path in paths):
         return "routine"
     return "standard"
 

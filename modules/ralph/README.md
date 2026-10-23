@@ -50,6 +50,12 @@ failed routing requests the general set, excluding the script specialist. Routin
 Header changes follow their domain's sensitivity rules; the `.h` extension
 alone does not force a full review. The router and reviewers can escalate
 based on changed behavior and inspect relevant headers with their tools.
+Ordinary RPC, CLI, build and CI changes have a standard floor and keep their
+matching specialist audits. Authentication, untrusted input, secrets, dependency
+provenance and release integrity can still trigger sensitive review. Overlapping
+critical domains retain their sensitive floor, including wallet RPC code.
+Documentation alone does not inherit a directory's sensitive floor.
+See the [routing contracts](../../pkgs/ralph/README.md#audit-selection).
 The `script` specialist is selected by the router only for substantive changes
 to script execution/flags, signatures, witness/annex rules, spend-type acceptance,
 or transaction validity and fee-bumping constraints. File paths and sensitivity

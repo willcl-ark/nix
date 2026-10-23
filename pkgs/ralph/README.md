@@ -155,14 +155,18 @@ Profiles extend the adversarial prompt; they are not separate model calls.
 | Network, policy, mempool and related paths | Sensitive; p2p profile |
 | Synchronization, scheduler, queues, validation callbacks, thread utilities | Sensitive; concurrency audit |
 | Databases, indexes, wallet storage, chainstate and block storage | Sensitive; state audit |
-| RPC, CLI, HTTP, REST, initialization and argument handling | Sensitive; public_contract audit |
-| Recognized build paths, including CMake, depends, Guix, CI and Cargo/flake locks | Sensitive; build audit |
+| RPC, CLI, HTTP, REST, initialization and argument handling | Standard; public_contract audit |
+| Recognized build paths, including CMake, depends, Guix, CI and Cargo/flake locks | Standard; build audit |
 | Crypto and secp256k1 paths | Sensitive floor |
 
 These are summaries of the regex rules in [routing.py](ralph/routing.py).
-Rules overlap. The router can select any additional audit or profile based on
-behavior, including effects that filenames alone do not reveal. Empty audit and
-profile lists are valid when no coverage applies. Routine does not mean no review.
+Documentation is excluded from directory-based coverage; `CMakeLists.txt` and
+`requirements.txt` are configuration despite their suffix. CI scripts under
+`ci/test/` retain both build and test audits. Rules overlap: wallet RPC and wallet build files still
+have a sensitive floor. The router can add audits, profiles or a higher tier
+based on behavior, including authentication, untrusted inputs, secrets,
+dependency provenance and release integrity. Empty audit and profile lists are
+valid when no coverage applies. Routine does not mean no review.
 
 ## Script and transaction-policy specialist
 
