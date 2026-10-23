@@ -100,11 +100,12 @@ class PipelineTests(unittest.TestCase):
 
     def test_script_runs_before_advisory_work_with_required_code_inspection(self):
         self.tier, self.audits = "sensitive", ["script"]
-        self.record_archaeologist_call = True
 
         def review(*args, **kwargs):
             stage = kwargs["stage_name"]
             self.calls.append((stage, kwargs["model"]))
+            if stage == "archaeologist":
+                return archaeology()
             if stage == "script":
                 self.assertEqual(args[1], "PR diff")
                 self.assertEqual(kwargs["model"], "gpt-6.1-sol")
@@ -118,8 +119,9 @@ class PipelineTests(unittest.TestCase):
                 self.assertFalse(names & model.LIVE_RESEARCH_TOOL_NAMES)
             return verification() if stage == "verifier" else discovery()
 
-        self.run_review(review)
-        self.assertEqual(self.calls[0], ("script", "gpt-6.1-sol"))
+        self.run_review(review, archaeology_enabled=True)
+        self.assertEqual([stage for stage, _ in self.calls[:3]],
+                         ["script", "archaeologist", "independent"])
         self.assertEqual(sum(stage == "script" for stage, _ in self.calls), 1)
         self.assertEqual(self.debug["stages"]["script"]["coverage"], COMPLETE)
 
@@ -257,20 +259,9 @@ class PipelineTests(unittest.TestCase):
 
     def run_review(self, reviewer, editor=None, budget=None, ppq_api_key=None, ppq_budget=None,
                    allow_discussions=True, research_evidence=None, blind_alternatives=False,
-                   archaeology_enabled=None):
-        def wrapped_reviewer(*args, **kwargs):
-            if kwargs["stage_name"] == "archaeologist":
-                if getattr(self, "record_archaeologist_call", False):
-                    self.calls.append((kwargs["stage_name"], kwargs["model"]))
-                if getattr(self, "capture_research_evidence", False):
-                    self.research_forwards.append(
-                        (kwargs["stage_name"], kwargs.get("research_evidence")))
-                    self.research_inputs[kwargs["stage_name"]] = args[1]
-                return getattr(self, "archaeology_output", archaeology())
-            return reviewer(*args, **kwargs)
-
+                   archaeology_enabled=False):
         with patch.object(pipeline.routing, "plan_review", side_effect=self.plan), \
-                patch.object(model, "openai_review", side_effect=wrapped_reviewer), \
+                patch.object(model, "openai_review", side_effect=reviewer), \
                 patch.object(model, "run_audit", side_effect=editor or self.edit), \
                 patch.object(protocol, "read_file", return_value="src/example.cpp (3 lines):\n3: setup();\n"), \
                 patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
@@ -283,8 +274,7 @@ class PipelineTests(unittest.TestCase):
                 attempt=self.debug)
             return pipeline.review_with_independent_passes(
                 case, runtime, self.prompts, blind_alternatives=blind_alternatives,
-                archaeology=(allow_discussions or research_evidence is not None)
-                if archaeology_enabled is None else archaeology_enabled)
+                archaeology=archaeology_enabled)
 
     def test_parallel_adversarial_models_share_context_and_attribute_merged_finding(self):
         self.tier, self.audits = "sensitive", []
@@ -468,13 +458,14 @@ class PipelineTests(unittest.TestCase):
 
     def test_archaeology_runs_after_routing_before_discovery(self):
         self.tier, self.audits = "standard", ["tests"]
-        self.record_archaeologist_call = True
 
         def review(*args, **kwargs):
             self.calls.append((kwargs["stage_name"], kwargs["model"]))
+            if kwargs["stage_name"] == "archaeologist":
+                return archaeology()
             return verification() if kwargs["stage_name"] == "verifier" else discovery()
 
-        self.run_review(review)
+        self.run_review(review, archaeology_enabled=True)
 
         self.assertEqual([name for name, _model in self.calls],
                          ["archaeologist", "independent", "tests", "verifier"])
@@ -487,13 +478,14 @@ class PipelineTests(unittest.TestCase):
                           "recommendation": "Use the smaller interface from the prior attempt.",
                           "proposed_review": "would_stop",
                           "review_reason": "The prior attempt avoids the current layering cost."}
-        self.archaeology_output = archaeology(stop_candidate)
         inputs = {}
 
         def review(*args, **kwargs):
             stage = kwargs["stage_name"]
             self.calls.append(stage)
             inputs[stage] = args[1]
+            if stage == "archaeologist":
+                return archaeology(stop_candidate)
             if stage == "verifier":
                 self.assertIn("concept_candidate", args[1])
                 return verification(concept={
@@ -505,9 +497,9 @@ class PipelineTests(unittest.TestCase):
                 })
             return discovery()
 
-        self.run_review(review)
+        self.run_review(review, archaeology_enabled=True)
 
-        self.assertEqual(self.calls, ["independent", "tests", "design", "verifier"])
+        self.assertEqual(self.calls, ["archaeologist", "independent", "tests", "design", "verifier"])
         for stage in ("independent", "tests", "design"):
             self.assertNotIn("would_stop", inputs[stage])
             self.assertNotIn("Use the smaller interface", inputs[stage])
@@ -518,15 +510,16 @@ class PipelineTests(unittest.TestCase):
 
     def test_archaeology_failure_does_not_skip_discovery_or_verification(self):
         self.tier, self.audits = "standard", ["tests"]
-        self.archaeology_output = "{not json"
 
         def review(*args, **kwargs):
             self.calls.append(kwargs["stage_name"])
+            if kwargs["stage_name"] == "archaeologist":
+                return "{not json"
             return verification() if kwargs["stage_name"] == "verifier" else discovery()
 
-        content = self.run_review(review)
+        content = self.run_review(review, archaeology_enabled=True)
 
-        self.assertEqual(self.calls, ["independent", "tests", "verifier"])
+        self.assertEqual(self.calls, ["archaeologist", "independent", "tests", "verifier"])
         self.assertIn("no actionable issues", content)
         self.assertEqual(self.debug["coverage"]["status"], "complete")
         self.assertEqual(self.debug["coverage"]["context"]["status"], "failed")
@@ -589,7 +582,6 @@ class PipelineTests(unittest.TestCase):
         self.tier, self.audits = "routine", []
         research_evidence = {"schema_version": 1, "captured_at": "2026-10-23T00:00:00Z",
                              "cutoff": "2026-10-23T00:00:00Z", "entries": []}
-        self.capture_research_evidence = True
         self.research_forwards = []
         self.research_inputs = {}
 
@@ -609,10 +601,13 @@ class PipelineTests(unittest.TestCase):
             self.research_inputs[kwargs["stage_name"]] = args[1]
             self.research_forwards.append(
                 (kwargs["stage_name"], kwargs.get("research_evidence")))
+            if kwargs["stage_name"] == "archaeologist":
+                return archaeology()
             return verification() if kwargs["stage_name"] == "verifier" else discovery()
 
         with patch.object(model.research, "inventory", return_value="Known frozen calls"):
-            self.run_review(review, budget=budget, research_evidence=research_evidence)
+            self.run_review(review, budget=budget, research_evidence=research_evidence,
+                            archaeology_enabled=True)
 
         self.assertIn(("archaeologist", research_evidence), self.research_forwards)
         self.assertIn(("verifier", research_evidence), self.research_forwards)
@@ -742,9 +737,11 @@ class PipelineTests(unittest.TestCase):
         self.tier, self.audits = "routine", []
 
         def review(*args, **kwargs):
+            if kwargs["stage_name"] == "archaeologist":
+                return archaeology()
             return verification() if kwargs["stage_name"] == "verifier" else discovery()
 
-        content = self.run_review(review)
+        content = self.run_review(review, archaeology_enabled=True)
 
         self.assertNotIn("Concept and approach", content)
         self.assertEqual(self.debug["concept_assessment"]["status"], "no_concern")
@@ -755,6 +752,8 @@ class PipelineTests(unittest.TestCase):
 
         def review(*args, **kwargs):
             stage = kwargs["stage_name"]
+            if stage == "archaeologist":
+                return archaeology()
             if stage == "alternatives":
                 return json.dumps({"coverage": COMPLETE,
                                    "alternatives": assessment()["alternatives"]})
@@ -769,7 +768,7 @@ class PipelineTests(unittest.TestCase):
                      "reason": "Useful simplification", "finding": self.published}])
             return discovery()
 
-        content = self.run_review(review, blind_alternatives=True)
+        content = self.run_review(review, blind_alternatives=True, archaeology_enabled=True)
 
         self.assertIn(self.published["body"], content)
         self.assertNotIn("Concept and approach", content)
@@ -785,9 +784,10 @@ class PipelineTests(unittest.TestCase):
                    "proposed_review": "would_stop",
                    "review_reason": "The process cost is decisive.",
                    "recommendation": "Doing nothing is conceptually stronger because the PR adds process cost."}
-        self.archaeology_output = archaeology(concern)
 
         def review(*args, **kwargs):
+            if kwargs["stage_name"] == "archaeologist":
+                return archaeology(concern)
             if kwargs["stage_name"] == "verifier":
                 return verification(concept={
                     "disposition": "publish",
@@ -798,7 +798,7 @@ class PipelineTests(unittest.TestCase):
                 })
             return discovery()
 
-        content = self.run_review(review)
+        content = self.run_review(review, archaeology_enabled=True)
 
         self.assertIn("Concept and approach", content)
         self.assertIn("process cost", content)
@@ -807,7 +807,7 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("**Do nothing**", content)
         self.assertEqual(self.debug["concept_assessment"]["status"], "verified")
 
-    def test_discussion_disabled_review_runs_archaeology_without_history_tools(self):
+    def test_discussion_disabled_review_skips_archaeology(self):
         self.tier, self.audits = "routine", []
         archaeology_tools = []
 
