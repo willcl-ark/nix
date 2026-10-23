@@ -9,14 +9,21 @@ from .repository import MAX_REVIEW_BYTES, is_test_path
 from .spend import BudgetExceeded
 from .model import StaleReview
 
-ROUTER_SCHEMA = object_schema({
-    "tier": {"type": "string", "enum": ["routine", "standard", "sensitive"]},
-    "audits": {"type": "array", "items": {"type": "string", "enum": list(AUDIT_NAMES)}},
-    "profiles": {"type": "array",
-                 "items": {"type": "string", "enum": list(ADVERSARIAL_PROFILES)}},
-    "evidence": STRINGS,
-    "missing_context": STRINGS,
-})
+ROUTER_SCHEMA = object_schema(
+    {
+        "tier": {"type": "string", "enum": ["routine", "standard", "sensitive"]},
+        "audits": {
+            "type": "array",
+            "items": {"type": "string", "enum": list(AUDIT_NAMES)},
+        },
+        "profiles": {
+            "type": "array",
+            "items": {"type": "string", "enum": list(ADVERSARIAL_PROFILES)},
+        },
+        "evidence": STRINGS,
+        "missing_context": STRINGS,
+    }
+)
 TIERS = ("routine", "standard", "sensitive")
 DOC_EXTENSIONS = (".md", ".rst", ".txt")
 BUILD = re.compile(
@@ -53,8 +60,10 @@ WALLET = re.compile(r"^src/wallet(?:/|[._])")
 
 
 def _doc_path(path):
-    return (path.endswith(DOC_EXTENSIONS)
-            and path.rsplit("/", 1)[-1] not in {"CMakeLists.txt", "requirements.txt"})
+    return path.endswith(DOC_EXTENSIONS) and path.rsplit("/", 1)[-1] not in {
+        "CMakeLists.txt",
+        "requirements.txt",
+    }
 
 
 def _production_path(path):
@@ -101,19 +110,29 @@ def domain_audits(paths):
 def minimum_tier(paths):
     if domain_profiles(paths):
         return "sensitive"
-    if any((CONCURRENCY.search(path) or STATE.search(path) or CRYPTO.search(path))
-           for path in paths if not _doc_path(path) and not is_test_path(path)):
+    if any(
+        (CONCURRENCY.search(path) or STATE.search(path) or CRYPTO.search(path))
+        for path in paths
+        if not _doc_path(path) and not is_test_path(path)
+    ):
         return "sensitive"
-    if all(_doc_path(path) or (is_test_path(path) and not BUILD.search(path)) for path in paths):
+    if all(
+        _doc_path(path) or (is_test_path(path) and not BUILD.search(path))
+        for path in paths
+    ):
         return "routine"
     return "standard"
 
 
 def full_plan(reason):
     # Expensive script review needs a semantic trigger, not generic uncertainty.
-    return {"tier": "sensitive", "audits": [name for name in AUDIT_NAMES if name != "script"],
-            "profiles": list(ADVERSARIAL_PROFILES), "evidence": [reason],
-            "missing_context": []}
+    return {
+        "tier": "sensitive",
+        "audits": [name for name in AUDIT_NAMES if name != "script"],
+        "profiles": list(ADVERSARIAL_PROFILES),
+        "evidence": [reason],
+        "missing_context": [],
+    }
 
 
 def validate_plan(text, paths, floor):
@@ -124,7 +143,9 @@ def validate_plan(text, paths, floor):
     if result["tier"] not in TIERS:
         raise InvalidReview("Invalid routing tier")
     for key in ("audits", "profiles", "evidence", "missing_context"):
-        if not isinstance(result[key], list) or any(not isinstance(item, str) for item in result[key]):
+        if not isinstance(result[key], list) or any(
+            not isinstance(item, str) for item in result[key]
+        ):
             raise InvalidReview("Invalid routing list")
     if set(result["audits"]) - set(AUDIT_NAMES):
         raise InvalidReview("Unknown audit role")
@@ -142,18 +163,23 @@ def validate_plan(text, paths, floor):
     if "script" in selected:
         result["tier"] = "sensitive"
     result["audits"] = [name for name in AUDIT_NAMES if name in selected]
-    result["profiles"] = [name for name in ADVERSARIAL_PROFILES if name in selected_profiles]
+    result["profiles"] = [
+        name for name in ADVERSARIAL_PROFILES if name in selected_profiles
+    ]
     return result
 
 
-def plan_review(runtime, review, snapshot, prompt_config, debug,
-                mode="enabled"):
+def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled"):
     if mode not in {"enabled", "shadow", "full"}:
         raise ValueError("Unknown routing mode")
     paths = sorted(snapshot.changed_paths)
     floor = minimum_tier(paths)
-    record = {"model": prompt_config.models["router"], "status": "skipped",
-              "turns": [], "tools": []}
+    record = {
+        "model": prompt_config.models["router"],
+        "status": "skipped",
+        "turns": [],
+        "tools": [],
+    }
     debug.setdefault("stages", {})["router"] = record
     if mode == "full":
         proposed = full_plan("Full review requested")
@@ -163,13 +189,19 @@ def plan_review(runtime, review, snapshot, prompt_config, debug,
     else:
         # The complete manifest precedes the patch; a model cannot silently
         # classify only the excerpt it happened to receive.
-        router_input = json.dumps({"minimum_tier": floor, "changed_paths": paths}) + "\n" + review
+        router_input = (
+            json.dumps({"minimum_tier": floor, "changed_paths": paths}) + "\n" + review
+        )
         try:
             answer, response = runtime.audit(
-                "router", prompt_config.audit_prompts["router"], router_input,
+                "router",
+                prompt_config.audit_prompts["router"],
+                router_input,
                 model_name=prompt_config.models["router"],
-                max_output_tokens=4_000, response_schema=ROUTER_SCHEMA,
-                debug_record=record)
+                max_output_tokens=4_000,
+                response_schema=ROUTER_SCHEMA,
+                debug_record=record,
+            )
             record["status"] = response["status"]
             record["raw_output"] = answer
             debug.setdefault("stage_outputs", {})["router"] = answer
@@ -184,9 +216,17 @@ def plan_review(runtime, review, snapshot, prompt_config, debug,
         except Exception as exc:
             record.update(status="failed", error_type=type(exc).__name__)
             proposed = full_plan("Routing unavailable; conservative review required")
-    actual = full_plan("Shadow routing retains full review") if mode == "shadow" else proposed
+    actual = (
+        full_plan("Shadow routing retains full review")
+        if mode == "shadow"
+        else proposed
+    )
     if mode == "shadow":
         actual["audits"] = list(AUDIT_NAMES)
-    debug["routing"] = {"mode": mode, "minimum_tier": floor,
-                        "proposed": proposed, "selected": actual}
+    debug["routing"] = {
+        "mode": mode,
+        "minimum_tier": floor,
+        "proposed": proposed,
+        "selected": actual,
+    }
     return actual

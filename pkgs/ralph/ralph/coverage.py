@@ -12,7 +12,9 @@ _SCOPE_NOTE = re.compile(
     r"test executions?|sanitizers?|sanitizer runs?|compilation|compiles?))*"
     r" (?:were|was) (?:run|performed|executed)"
     r"(?: \((?:as expected|expected for this review type)\)|, which is expected for this review(?: type)?)?"
-    r"(?:; this is a static review)?[.]?", re.IGNORECASE)
+    r"(?:; this is a static review)?[.]?",
+    re.IGNORECASE,
+)
 
 CONTEXT_STAGES = {"archaeologist", "alternatives"}
 FAILURES = {"failed", "invalid", "budget_exhausted"}
@@ -23,11 +25,13 @@ def _failure(stage):
     if status == "budget_exhausted":
         return "Stage budget exhausted before the review completed."
     if status == "invalid":
-        return "Output failed validation: " + stage.get("validation_error", "invalid review output")
-    if (stage.get("incomplete_reason") == "max_output_tokens"
-            or any(isinstance(turn, dict)
-                   and turn.get("incomplete_reason") == "max_output_tokens"
-                   for turn in stage.get("turns", []))):
+        return "Output failed validation: " + stage.get(
+            "validation_error", "invalid review output"
+        )
+    if stage.get("incomplete_reason") == "max_output_tokens" or any(
+        isinstance(turn, dict) and turn.get("incomplete_reason") == "max_output_tokens"
+        for turn in stage.get("turns", [])
+    ):
         limit = stage.get("max_output_tokens")
         if isinstance(limit, int) and limit > 0:
             return f"Model response reached its {limit:,}-token output limit."
@@ -56,7 +60,9 @@ def summarize(debug):
     contexts = []
     verification = "unknown"
     concept = (debug.get("concept_assessment") or {}).get("verification") or {}
-    concept_reason = concept.get("reason") if concept.get("disposition") == "unresolved" else None
+    concept_reason = (
+        concept.get("reason") if concept.get("disposition") == "unresolved" else None
+    )
 
     def issue(name, category, reason):
         item = {"stage": name, "category": category, "reason": reason}
@@ -66,8 +72,13 @@ def summarize(debug):
     for name, stage in stages.items():
         if name in {"router", "collator"} or stage.get("status") == "skipped":
             continue
-        category = ("context" if name in CONTEXT_STAGES else
-                    "verification" if name == "verifier" else "inspection")
+        category = (
+            "context"
+            if name in CONTEXT_STAGES
+            else "verification"
+            if name == "verifier"
+            else "inspection"
+        )
         state = stage.get("status")
         if state in FAILURES:
             status = "failed"
@@ -95,18 +106,32 @@ def summarize(debug):
                 # advisory concept evidence. Its original response is retained.
                 status = "complete"
             elif status == "partial":
-                issue(name, category, "Stage reported incomplete evidence without identifying the missing evidence.")
+                issue(
+                    name,
+                    category,
+                    "Stage reported incomplete evidence without identifying the missing evidence.",
+                )
             if name == "verifier":
                 for error in stage.get("validation_errors", []):
-                    if not any(error["error"] in item["reason"] for item in issues
-                               if item["stage"] == name and item["category"] == category):
+                    if not any(
+                        error["error"] in item["reason"]
+                        for item in issues
+                        if item["stage"] == name and item["category"] == category
+                    ):
                         issue(name, category, "Finding withheld: " + error["error"])
                     status = "partial"
                 for decision in debug.get("decisions", []):
                     if decision.get("disposition") == "unresolved":
-                        if not any(decision["reason"] in item["reason"] for item in issues
-                                   if item["stage"] == name and item["category"] == category):
-                            issue(name, category, "Unresolved candidate: " + decision["reason"])
+                        if not any(
+                            decision["reason"] in item["reason"]
+                            for item in issues
+                            if item["stage"] == name and item["category"] == category
+                        ):
+                            issue(
+                                name,
+                                category,
+                                "Unresolved candidate: " + decision["reason"],
+                            )
                         status = "partial"
         if category == "context":
             contexts.append(status)
@@ -120,18 +145,31 @@ def summarize(debug):
     if concept_reason:
         issue("verifier", "context", concept_reason)
         contexts.append("partial")
-    limitations = [f"{item['stage']}: {item['reason']}" for item in issues
-                   if item["category"] != "context"]
-    context_limits = [f"{item['stage']}: {item['reason']}" for item in issues
-                      if item["category"] == "context"]
-    verification_limits = [item["reason"] for item in issues
-                           if item["category"] == "verification"]
+    limitations = [
+        f"{item['stage']}: {item['reason']}"
+        for item in issues
+        if item["category"] != "context"
+    ]
+    context_limits = [
+        f"{item['stage']}: {item['reason']}"
+        for item in issues
+        if item["category"] == "context"
+    ]
+    verification_limits = [
+        item["reason"] for item in issues if item["category"] == "verification"
+    ]
     return {
         "status": _status([*inspections, verification]),
         "limitations": list(dict.fromkeys(limitations)),
-        "context": {"status": ("not_requested" if not contexts
-                                and (debug.get("concept_assessment") or {}).get("status") == "skipped"
-                                else _status(contexts)), "limitations": context_limits},
+        "context": {
+            "status": (
+                "not_requested"
+                if not contexts
+                and (debug.get("concept_assessment") or {}).get("status") == "skipped"
+                else _status(contexts)
+            ),
+            "limitations": context_limits,
+        },
         "verification": {"status": verification, "limitations": verification_limits},
         "issues": issues,
         "notes": notes,

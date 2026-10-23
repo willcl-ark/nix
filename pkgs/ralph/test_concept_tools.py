@@ -8,17 +8,41 @@ from ralph import model
 
 class ConceptToolTests(unittest.TestCase):
     def setUp(self):
-        self.snapshot = SimpleNamespace(checkout="checkout", head_files={"new.cpp": "head"},
-                                        base_files={"old.cpp": "base"}, changed_paths={"new.cpp"},
-                                        merge_base="other", diff_base_sha="base-sha", head_sha="head-sha")
+        self.snapshot = SimpleNamespace(
+            checkout="checkout",
+            head_files={"new.cpp": "head"},
+            base_files={"old.cpp": "base"},
+            changed_paths={"new.cpp"},
+            merge_base="other",
+            diff_base_sha="base-sha",
+            head_sha="head-sha",
+        )
 
     def run_tools(self, calls, **kwargs):
         responses = [
-            {"status": "completed", "output": [
-                {"type": "function_call", "call_id": str(index), "name": name,
-                 "arguments": json.dumps(args)} for index, (name, args) in enumerate(calls)]},
-            {"status": "completed", "output": [{"type": "message", "content": [
-                {"type": "output_text", "text": "Assessment complete."}]}]},
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": str(index),
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    }
+                    for index, (name, args) in enumerate(calls)
+                ],
+            },
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": "Assessment complete."}
+                        ],
+                    }
+                ],
+            },
         ]
         requests = []
 
@@ -28,38 +52,60 @@ class ConceptToolTests(unittest.TestCase):
 
         with patch.object(model, "request_response", side_effect=request):
             model.openai_review(
-                "key", "Problem and baseline.", self.snapshot, prompt="Review.",
-                model="gpt-6-luna", max_output_tokens=model.MAX_OUTPUT_TOKENS, **kwargs)
+                "key",
+                "Problem and baseline.",
+                self.snapshot,
+                prompt="Review.",
+                model="gpt-6-luna",
+                max_output_tokens=model.MAX_OUTPUT_TOKENS,
+                **kwargs,
+            )
         return requests
 
     def test_concept_can_inspect_actual_base_and_head_behavior(self):
         with patch.object(model, "read_file", return_value="evidence") as read:
-            self.run_tools([
-                ("read_file", {"path": "new.cpp", "start_line": 1}),
-                ("read_base_file", {"path": "old.cpp", "start_line": 1}),
-            ], tools=model.ARCHAEOLOGY_TOOLS)
-        self.assertEqual([call.args[1] for call in read.call_args_list],
-                         [self.snapshot.head_files, self.snapshot.base_files])
+            self.run_tools(
+                [
+                    ("read_file", {"path": "new.cpp", "start_line": 1}),
+                    ("read_base_file", {"path": "old.cpp", "start_line": 1}),
+                ],
+                tools=model.ARCHAEOLOGY_TOOLS,
+            )
+        self.assertEqual(
+            [call.args[1] for call in read.call_args_list],
+            [self.snapshot.head_files, self.snapshot.base_files],
+        )
 
     def test_blind_tools_search_only_base_and_reject_head_and_discussions(self):
-        with patch.object(model, "search_code", return_value="base matches") as search, \
-                patch.object(model, "read_file", return_value="base contents") as read, \
-                patch.object(model, "read_diff") as diff, \
-                patch.object(model, "read_commit") as discussion:
-            requests = self.run_tools([
-                ("find_base_paths", {"query": ".cpp"}),
-                ("search_base_code", {"query": "existing facility"}),
-                ("read_base_file", {"path": "old.cpp", "start_line": 1}),
-                ("read_file", {"path": "new.cpp", "start_line": 1}),
-                ("read_diff", {"path": "new.cpp", "start_line": 1}),
-                ("read_current_pr_discussion", {"kind": "comments", "page": 1, "review_id": 0}),
-            ], tools=model.BASE_TOOLS)
+        with (
+            patch.object(model, "search_code", return_value="base matches") as search,
+            patch.object(model, "read_file", return_value="base contents") as read,
+            patch.object(model, "read_diff") as diff,
+            patch.object(model, "read_commit") as discussion,
+        ):
+            requests = self.run_tools(
+                [
+                    ("find_base_paths", {"query": ".cpp"}),
+                    ("search_base_code", {"query": "existing facility"}),
+                    ("read_base_file", {"path": "old.cpp", "start_line": 1}),
+                    ("read_file", {"path": "new.cpp", "start_line": 1}),
+                    ("read_diff", {"path": "new.cpp", "start_line": 1}),
+                    (
+                        "read_current_pr_discussion",
+                        {"kind": "comments", "page": 1, "review_id": 0},
+                    ),
+                ],
+                tools=model.BASE_TOOLS,
+            )
         search.assert_called_once_with("checkout", "base-sha", "existing facility")
         read.assert_called_once_with("checkout", self.snapshot.base_files, "old.cpp", 1)
         diff.assert_not_called()
         discussion.assert_not_called()
-        outputs = [item["output"] for item in requests[-1]["input"]
-                   if item.get("type") == "function_call_output"]
+        outputs = [
+            item["output"]
+            for item in requests[-1]["input"]
+            if item.get("type") == "function_call_output"
+        ]
         self.assertEqual(outputs[0], "old.cpp\n")
         self.assertEqual(outputs[-3:], ["Unknown or unavailable tool."] * 3)
 
@@ -67,29 +113,60 @@ class ConceptToolTests(unittest.TestCase):
         evidence = {"frozen": "fixture"}
         for allow_live in (False, True):
             live = Mock()
-            with self.subTest(allow_live=allow_live), \
-                    patch.object(model.research, "lookup", return_value="Frozen discussion") as lookup, \
-                    patch.object(model, "read_commit") as unused:
-                requests = self.run_tools([
-                    ("read_current_pr_discussion", {"kind": "comments", "page": 1, "review_id": 0}),
-                ], tools=model.ARCHAEOLOGY_TOOLS, discussion_lookup=live if allow_live else None, allow_web_search=True,
-                    research_evidence=evidence)
+            with (
+                self.subTest(allow_live=allow_live),
+                patch.object(
+                    model.research, "lookup", return_value="Frozen discussion"
+                ) as lookup,
+                patch.object(model, "read_commit"),
+            ):
+                requests = self.run_tools(
+                    [
+                        (
+                            "read_current_pr_discussion",
+                            {"kind": "comments", "page": 1, "review_id": 0},
+                        ),
+                    ],
+                    tools=model.ARCHAEOLOGY_TOOLS,
+                    discussion_lookup=live if allow_live else None,
+                    allow_web_search=True,
+                    research_evidence=evidence,
+                )
             live.assert_not_called()
-            lookup.assert_called_once_with(evidence, "read_current_pr_discussion",
-                                           {"kind": "comments", "page": 1, "review_id": 0})
-            self.assertNotIn("web_search", {tool["type"] for tool in requests[0]["tools"]})
+            lookup.assert_called_once_with(
+                evidence,
+                "read_current_pr_discussion",
+                {"kind": "comments", "page": 1, "review_id": 0},
+            )
+            self.assertNotIn(
+                "web_search", {tool["type"] for tool in requests[0]["tools"]}
+            )
             self.assertEqual(requests[-1]["input"][-1]["output"], "Frozen discussion")
 
     def test_frozen_miss_without_pr_number_does_not_fall_back_to_reader(self):
-        evidence = {"schema_version": 1, "captured_at": "2026-10-23T00:00:00Z",
-                    "cutoff": "2026-10-23T00:00:00Z", "entries": []}
+        evidence = {
+            "schema_version": 1,
+            "captured_at": "2026-10-23T00:00:00Z",
+            "cutoff": "2026-10-23T00:00:00Z",
+            "entries": [],
+        }
         live = Mock()
-        requests = self.run_tools([
-            ("read_current_pr_discussion", {"kind": "comments", "page": 1, "review_id": 0}),
-        ], tools=model.ARCHAEOLOGY_TOOLS, discussion_lookup=live,
-            allow_web_search=True, research_evidence=evidence)
+        requests = self.run_tools(
+            [
+                (
+                    "read_current_pr_discussion",
+                    {"kind": "comments", "page": 1, "review_id": 0},
+                ),
+            ],
+            tools=model.ARCHAEOLOGY_TOOLS,
+            discussion_lookup=live,
+            allow_web_search=True,
+            research_evidence=evidence,
+        )
         live.assert_not_called()
-        self.assertEqual(requests[-1]["input"][-1]["output"], model.research.MISSING_RESEARCH)
+        self.assertEqual(
+            requests[-1]["input"][-1]["output"], model.research.MISSING_RESEARCH
+        )
 
 
 if __name__ == "__main__":

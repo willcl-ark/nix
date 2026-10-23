@@ -28,43 +28,65 @@ class BotTests(unittest.TestCase):
 
     def snapshot(self, files=None, checkout=Path("/unused")):
         return local_repository.RepositorySnapshot(
-            checkout, "b" * 40, "a" * 40, "b" * 40, "b" * 40,
-            files or {}, {}, frozenset())
+            checkout,
+            "b" * 40,
+            "a" * 40,
+            "b" * 40,
+            "b" * 40,
+            files or {},
+            {},
+            frozenset(),
+        )
 
-    def review_result(self, debug, *, head_sha="a" * 40, content="Public comment",
-                      exports=None):
+    def review_result(
+        self, debug, *, head_sha="a" * 40, content="Public comment", exports=None
+    ):
         return {
             "schema_version": 1,
-            "engine": {"name": "current", "code_sha256": "c" * 64,
-                       "config_sha256": "d" * 64,
-                       "config": {"models": self.prompt_config.models}},
+            "engine": {
+                "name": "current",
+                "code_sha256": "c" * 64,
+                "config_sha256": "d" * 64,
+                "config": {"models": self.prompt_config.models},
+            },
             "base_sha": "b" * 40,
             "head_sha": head_sha,
             "content": content,
-            "output": {"schema_version": 2,
-                       "data": {"schema_version": 2, **debug},
-                       "exports": exports or {}},
+            "output": {
+                "schema_version": 2,
+                "data": {"schema_version": 2, **debug},
+                "exports": exports or {},
+            },
             "run": {"status": "completed", "metrics": {}, "attempt": {}},
         }
 
-
     def test_config_derives_repository_url_and_default_marker(self):
-        self.assertEqual(self.bot_config.repository_url, "https://git.fish.foo/bitcoin/bitcoin")
-        self.assertEqual(self.bot_config.comment_marker,
-                         "<!-- ralph:bitcoin/bitcoin -->")
+        self.assertEqual(
+            self.bot_config.repository_url, "https://git.fish.foo/bitcoin/bitcoin"
+        )
+        self.assertEqual(
+            self.bot_config.comment_marker, "<!-- ralph:bitcoin/bitcoin -->"
+        )
 
     def test_report_configuration_requires_a_directory_and_public_url(self):
         with self.assertRaisesRegex(ValueError, "set together"):
             replace(self.bot_config, report_dir=Path("/public"))
-        for url in ("javascript:alert(1)", "https://user:secret@example.org",
-                    "https://example.org/?secret=foo", "https://example.org/#fragment"):
+        for url in (
+            "javascript:alert(1)",
+            "https://user:secret@example.org",
+            "https://example.org/?secret=foo",
+            "https://example.org/#fragment",
+        ):
             with self.subTest(url=url), self.assertRaises(ValueError):
-                replace(self.bot_config, report_dir=Path("/public"), report_base_url=url)
+                replace(
+                    self.bot_config, report_dir=Path("/public"), report_base_url=url
+                )
 
     def test_review_comment_links_to_full_report_and_keeps_commit_header(self):
         url = "https://review.example.org/traces/42-run.html"
-        body = forgejo.review_body(self.bot_config, "b" * 40, "a" * 40,
-                                   "Review text.", report_url=url)
+        body = forgejo.review_body(
+            self.bot_config, "b" * 40, "a" * 40, "Review text.", report_url=url
+        )
         self.assertIn(f"[Full review report](<{url}>)", body)
         self.assertIn(f"Head: `{'a' * 40}`", body.splitlines()[:5])
         self.assertNotIn("Review debug", body)
@@ -73,72 +95,116 @@ class BotTests(unittest.TestCase):
 
     def test_config_requires_repository_url_when_api_url_is_not_deriveable(self):
         with self.assertRaisesRegex(ValueError, "repository_url"):
-            config.BotConfig("https://git.example.org/owner/repo.git", "owner/repo",
-                             "https://git.example.org/custom-api")
-        configured = config.BotConfig("https://git.example.org/owner/repo.git", "owner/repo",
-                                      "https://git.example.org/custom-api",
-                                      "https://git.example.org/owner/repo")
-        self.assertEqual(configured.repository_url, "https://git.example.org/owner/repo")
+            config.BotConfig(
+                "https://git.example.org/owner/repo.git",
+                "owner/repo",
+                "https://git.example.org/custom-api",
+            )
+        configured = config.BotConfig(
+            "https://git.example.org/owner/repo.git",
+            "owner/repo",
+            "https://git.example.org/custom-api",
+            "https://git.example.org/owner/repo",
+        )
+        self.assertEqual(
+            configured.repository_url, "https://git.example.org/owner/repo"
+        )
 
     def test_model_config_requires_adversarial_stage_and_prompt(self):
         with tempfile.TemporaryDirectory() as directory:
             audit_dir = Path(directory)
             for name in core_config.PROMPT_NAMES:
                 (audit_dir / f"{name}.md").write_text(f"{name} instructions\n")
-            models = {name: "gpt-6.1-sol" if name in
-                      ("independent", "adversarial") else "gpt-6-luna"
-                      for name in core_config.MODEL_NAMES}
+            models = {
+                name: "gpt-6.1-sol"
+                if name in ("independent", "adversarial")
+                else "gpt-6-luna"
+                for name in core_config.MODEL_NAMES
+            }
             (audit_dir / "models.json").write_text(json.dumps(models))
-            loaded = core_config.PromptConfig.load(core_config.DEFAULT_PROMPT_FILE, audit_dir)
+            loaded = core_config.PromptConfig.load(
+                core_config.DEFAULT_PROMPT_FILE, audit_dir
+            )
             self.assertEqual(loaded.audit_prompts["router"], "router instructions")
-            self.assertEqual(loaded.audit_prompts["adversarial"],
-                             "adversarial instructions")
+            self.assertEqual(
+                loaded.audit_prompts["adversarial"], "adversarial instructions"
+            )
             self.assertEqual(loaded.models["adversarial"], "gpt-6.1-sol")
             self.assertEqual(loaded.models["verifier"], "gpt-6-luna")
             del models["adversarial"]
             (audit_dir / "models.json").write_text(json.dumps(models))
             with self.assertRaisesRegex(ValueError, "each review stage"):
-                core_config.PromptConfig.load(core_config.DEFAULT_PROMPT_FILE, audit_dir)
-
+                core_config.PromptConfig.load(
+                    core_config.DEFAULT_PROMPT_FILE, audit_dir
+                )
 
     def test_collect_review_skips_stale_head_without_model_call(self):
-        with patch.object(repository, "prepare_checkout"), \
-                patch.object(local_repository, "git", return_value="false"), \
-                patch.object(local_repository, "resolve_commit",
-                             side_effect=["b" * 40, "c" * 40]), \
-                patch.object(local_repository, "snapshot_repository") as snapshot:
+        with (
+            patch.object(repository, "prepare_checkout"),
+            patch.object(local_repository, "git", return_value="false"),
+            patch.object(
+                local_repository, "resolve_commit", side_effect=["b" * 40, "c" * 40]
+            ),
+            patch.object(local_repository, "snapshot_repository") as snapshot,
+        ):
             base, head, review, skip = repository.collect_review(
-                Path("/unused"), 42, "master", "a" * 40,
-                "Title", "Description", self.bot_config)
+                Path("/unused"),
+                42,
+                "master",
+                "a" * 40,
+                "Title",
+                "Description",
+                self.bot_config,
+            )
         self.assertEqual((base, head, review), ("c" * 40, "b" * 40, None))
         self.assertIn("changed", skip)
         snapshot.assert_not_called()
 
     def test_collect_review_uses_merge_base(self):
         snapshot = self.snapshot()
-        with patch.object(repository, "prepare_checkout"), \
-                patch.object(local_repository, "git", return_value="false") as git, \
-                patch.object(local_repository, "resolve_commit",
-                             side_effect=[snapshot.head_sha, snapshot.base_sha]), \
-                patch.object(local_repository, "snapshot_repository",
-                             return_value=snapshot) as build_snapshot, \
-                patch.object(local_repository, "build_review_input",
-                             return_value=("review input", None)) as build_input:
+        with (
+            patch.object(repository, "prepare_checkout"),
+            patch.object(local_repository, "git", return_value="false") as git,
+            patch.object(
+                local_repository,
+                "resolve_commit",
+                side_effect=[snapshot.head_sha, snapshot.base_sha],
+            ),
+            patch.object(
+                local_repository, "snapshot_repository", return_value=snapshot
+            ) as build_snapshot,
+            patch.object(
+                local_repository,
+                "build_review_input",
+                return_value=("review input", None),
+            ) as build_input,
+        ):
             result = repository.collect_review(
-                Path("/unused"), 42, "master", snapshot.head_sha,
-                "PR title", "Why this change is needed", self.bot_config)
-        self.assertEqual(result, (snapshot.base_sha, snapshot.head_sha,
-                                  "review input", None))
-        build_snapshot.assert_called_once_with(Path("/unused"), snapshot.base_sha,
-                                               snapshot.head_sha)
-        build_input.assert_called_once_with(snapshot, "PR title",
-                                            "Why this change is needed")
+                Path("/unused"),
+                42,
+                "master",
+                snapshot.head_sha,
+                "PR title",
+                "Why this change is needed",
+                self.bot_config,
+            )
+        self.assertEqual(
+            result, (snapshot.base_sha, snapshot.head_sha, "review input", None)
+        )
+        build_snapshot.assert_called_once_with(
+            Path("/unused"), snapshot.base_sha, snapshot.head_sha
+        )
+        build_input.assert_called_once_with(
+            snapshot, "PR title", "Why this change is needed"
+        )
         self.assertTrue(any("--no-filter" in call.args for call in git.call_args_list))
 
     def test_historical_review_after_merge_uses_pinned_base(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            origin, work, checkout = (root / name for name in ("origin.git", "work", "checkout"))
+            origin, work, checkout = (
+                root / name for name in ("origin.git", "work", "checkout")
+            )
             local_repository.git(root, "init", "--bare", str(origin))
             local_repository.git(root, "init", str(work))
             local_repository.git(work, "config", "user.name", "Test")
@@ -161,20 +227,34 @@ class BotTests(unittest.TestCase):
             local_repository.git(work, "merge", "--no-ff", head, "-m", "Merge PR")
             local_repository.git(work, "push", "origin", "HEAD:refs/heads/master")
             bot_config = replace(self.bot_config, origin=str(origin))
-            current = repository.collect_review(checkout, 42, "master", head,
-                "Title", "Description", bot_config)
+            current = repository.collect_review(
+                checkout, 42, "master", head, "Title", "Description", bot_config
+            )
             self.assertNotIn("diff --git", current[2])
             for base in (ancestor, historical_base):
-                historical = repository.collect_review(checkout, 42, f"sha:{base}", head,
-                    "Title", "Description", bot_config)
+                historical = repository.collect_review(
+                    checkout,
+                    42,
+                    f"sha:{base}",
+                    head,
+                    "Title",
+                    "Description",
+                    bot_config,
+                )
                 self.assertIsNone(historical[3])
                 self.assertIn("+PR behavior", historical[2])
                 self.assertNotIn("unrelated.cpp", historical[2])
-                snapshot = local_repository.snapshot_repository(checkout, historical[0], historical[1])
+                snapshot = local_repository.snapshot_repository(
+                    checkout, historical[0], historical[1]
+                )
                 self.assertEqual(snapshot.merge_base, ancestor)
                 self.assertEqual(set(snapshot.changed_paths), {"code.cpp"})
-                self.assertIn("original behavior", local_repository.read_file(
-                    checkout, snapshot.base_files, "code.cpp", 1))
+                self.assertIn(
+                    "original behavior",
+                    local_repository.read_file(
+                        checkout, snapshot.base_files, "code.cpp", 1
+                    ),
+                )
 
     def test_concurrent_review_refs_preserve_pinned_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -204,43 +284,106 @@ class BotTests(unittest.TestCase):
             second_head = local_repository.git(work, "rev-parse", "HEAD").strip()
             local_repository.git(work, "push", "origin", "HEAD:refs/pull/2/head")
 
-            bot_config = config.BotConfig(str(origin), "example/repo",
-                "https://git.example.org/api/v1/repos/example/repo")
+            bot_config = config.BotConfig(
+                str(origin),
+                "example/repo",
+                "https://git.example.org/api/v1/repos/example/repo",
+            )
             first_prefix = "refs/ralph/jobs/1-1"
             second_prefix = "refs/ralph/jobs/2-1"
-            first = repository.collect_review(checkout, 1, "master", first_head,
-                "First", "First PR", bot_config, ref_prefix=first_prefix)
+            first = repository.collect_review(
+                checkout,
+                1,
+                "master",
+                first_head,
+                "First",
+                "First PR",
+                bot_config,
+                ref_prefix=first_prefix,
+            )
             self.assertIsNone(first[3])
-            first_snapshot = local_repository.snapshot_repository(checkout, first[0], first[1])
-            second = repository.collect_review(checkout, 2, "master", second_head,
-                "Second", "Second PR", bot_config, ref_prefix=second_prefix)
+            first_snapshot = local_repository.snapshot_repository(
+                checkout, first[0], first[1]
+            )
+            second = repository.collect_review(
+                checkout,
+                2,
+                "master",
+                second_head,
+                "Second",
+                "Second PR",
+                bot_config,
+                ref_prefix=second_prefix,
+            )
             self.assertIsNone(second[3])
-            second_snapshot = local_repository.snapshot_repository(checkout, second[0], second[1])
+            second_snapshot = local_repository.snapshot_repository(
+                checkout, second[0], second[1]
+            )
             local_repository.git(checkout, "update-ref", "refs/ralph/head", base)
 
-            self.assertIn("first PR behavior", local_repository.read_file(checkout,
-                first_snapshot.head_files, "code.cpp", 1))
-            self.assertIn("+first PR behavior", local_repository.read_diff(checkout,
-                first_snapshot.changed_paths, first_snapshot.merge_base,
-                first_snapshot.head_sha, "code.cpp", 1))
-            self.assertIn("second PR behavior", local_repository.read_file(checkout,
-                second_snapshot.head_files, "code.cpp", 1))
+            self.assertIn(
+                "first PR behavior",
+                local_repository.read_file(
+                    checkout, first_snapshot.head_files, "code.cpp", 1
+                ),
+            )
+            self.assertIn(
+                "+first PR behavior",
+                local_repository.read_diff(
+                    checkout,
+                    first_snapshot.changed_paths,
+                    first_snapshot.merge_base,
+                    first_snapshot.head_sha,
+                    "code.cpp",
+                    1,
+                ),
+            )
+            self.assertIn(
+                "second PR behavior",
+                local_repository.read_file(
+                    checkout, second_snapshot.head_files, "code.cpp", 1
+                ),
+            )
             local_repository.git(checkout, "gc", "--prune=now")
-            self.assertIn("first PR behavior", local_repository.read_file(checkout,
-                first_snapshot.head_files, "code.cpp", 1))
-            local_repository.git(checkout, "update-ref", "refs/review-cases/example/head", first_head)
+            self.assertIn(
+                "first PR behavior",
+                local_repository.read_file(
+                    checkout, first_snapshot.head_files, "code.cpp", 1
+                ),
+            )
+            local_repository.git(
+                checkout, "update-ref", "refs/review-cases/example/head", first_head
+            )
 
             local_repository.release_review_refs(checkout, first_prefix)
-            self.assertEqual(local_repository.git(checkout, "for-each-ref", "--format=%(refname)",
-                first_prefix), "")
-            self.assertEqual(local_repository.git(checkout, "rev-parse", f"{second_prefix}/head").strip(),
-                second_head)
-            self.assertEqual(local_repository.git(checkout, "rev-parse", f"{second_prefix}/base").strip(),
-                base)
-            self.assertEqual(local_repository.git(checkout, "rev-parse", "refs/ralph/head").strip(),
-                base)
-            self.assertEqual(local_repository.git(checkout, "rev-parse",
-                "refs/review-cases/example/head").strip(), first_head)
+            self.assertEqual(
+                local_repository.git(
+                    checkout, "for-each-ref", "--format=%(refname)", first_prefix
+                ),
+                "",
+            )
+            self.assertEqual(
+                local_repository.git(
+                    checkout, "rev-parse", f"{second_prefix}/head"
+                ).strip(),
+                second_head,
+            )
+            self.assertEqual(
+                local_repository.git(
+                    checkout, "rev-parse", f"{second_prefix}/base"
+                ).strip(),
+                base,
+            )
+            self.assertEqual(
+                local_repository.git(checkout, "rev-parse", "refs/ralph/head").strip(),
+                base,
+            )
+            self.assertEqual(
+                local_repository.git(
+                    checkout, "rev-parse", "refs/review-cases/example/head"
+                ).strip(),
+                first_head,
+            )
 
     def test_large_patch_offers_per_file_diff_instead_of_skipping(self):
         snapshot = self.snapshot()
@@ -253,18 +396,26 @@ class BotTests(unittest.TestCase):
             return b""
 
         with patch.object(local_repository, "bounded_git", side_effect=bounded):
-            review, skip = local_repository.build_review_input(snapshot, "Title", "Description")
+            review, skip = local_repository.build_review_input(
+                snapshot, "Title", "Description"
+            )
         self.assertIsNone(skip)
         self.assertIn("Use read_diff", review)
         self.assertIn("M\tsrc/main.cpp", review)
         self.assertNotIn("+change", review)
 
     def test_fetch_pr_context_from_mirrored_issue(self):
-        issue = {"number": 42, "pull_request": {"html_url": "https://example.invalid/pulls/42"},
-                 "title": "Fix sanitizer warning", "body": "Reproduced with an empty vector"}
+        issue = {
+            "number": 42,
+            "pull_request": {"html_url": "https://example.invalid/pulls/42"},
+            "title": "Fix sanitizer warning",
+            "body": "Reproduced with an empty vector",
+        }
         with patch.object(forgejo, "forgejo_request", return_value=issue) as request:
-            self.assertEqual(forgejo.pull_request_context(self.bot_config, "token", 42),
-                             (issue["title"], issue["body"]))
+            self.assertEqual(
+                forgejo.pull_request_context(self.bot_config, "token", 42),
+                (issue["title"], issue["body"]),
+            )
             issue["pull_request"] = None
             with self.assertRaisesRegex(ValueError, "invalid pull request"):
                 forgejo.pull_request_context(self.bot_config, "token", 42)
@@ -284,26 +435,45 @@ class BotTests(unittest.TestCase):
             def read(self, size):
                 return self.body[:size]
 
-        with patch.object(urllib.request, "urlopen",
-                          return_value=Response(b'{"number": 42}')) as send:
-            self.assertEqual(forgejo.public_discussion_request(self.bot_config, "/issues/42"),
-                             {"number": 42})
+        with patch.object(
+            urllib.request, "urlopen", return_value=Response(b'{"number": 42}')
+        ) as send:
+            self.assertEqual(
+                forgejo.public_discussion_request(self.bot_config, "/issues/42"),
+                {"number": 42},
+            )
         request = send.call_args.args[0]
         self.assertNotIn("Authorization", request.headers)
-        self.assertEqual(request.full_url,
-                         "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin/issues/42")
-        with patch.object(urllib.request, "urlopen",
-                          return_value=Response(b"x" * (forgejo.MAX_DISCUSSION_RESPONSE_BYTES + 1))):
+        self.assertEqual(
+            request.full_url,
+            "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin/issues/42",
+        )
+        with patch.object(
+            urllib.request,
+            "urlopen",
+            return_value=Response(b"x" * (forgejo.MAX_DISCUSSION_RESPONSE_BYTES + 1)),
+        ):
             with self.assertRaisesRegex(ValueError, "context limit"):
                 forgejo.public_discussion_request(self.bot_config, "/issues/42")
 
     def test_discussion_search_and_read_are_bounded_and_exclude_bot_comment(self):
-        issue = {"number": 42, "pull_request": {"html_url": "ignored"},
-                 "title": "Fix a fee edge case", "body": "Reason for the change"}
-        comments = [{"id": i, "user": {"login": "reviewer"},
-                     "body": f"Comment {i}"} for i in range(12)]
-        comments.append({"id": 99, "user": {"login": "ralph"},
-                         "body": self.bot_config.comment_marker + " Bot review"})
+        issue = {
+            "number": 42,
+            "pull_request": {"html_url": "ignored"},
+            "title": "Fix a fee edge case",
+            "body": "Reason for the change",
+        }
+        comments = [
+            {"id": i, "user": {"login": "reviewer"}, "body": f"Comment {i}"}
+            for i in range(12)
+        ]
+        comments.append(
+            {
+                "id": 99,
+                "user": {"login": "ralph"},
+                "body": self.bot_config.comment_marker + " Bot review",
+            }
+        )
 
         def request(bot_config, path):
             if path.startswith("/issues?"):
@@ -314,7 +484,9 @@ class BotTests(unittest.TestCase):
                 return comments
             self.fail(path)
 
-        with patch.object(forgejo, "public_discussion_request", side_effect=request) as get:
+        with patch.object(
+            forgejo, "public_discussion_request", side_effect=request
+        ) as get:
             matches = forgejo.search_discussions(self.bot_config, "fee edge", 99)
             discussion = forgejo.read_discussion(self.bot_config, 42, 99)
         self.assertIn("PR #42: Fix a fee edge case", matches)
@@ -325,17 +497,31 @@ class BotTests(unittest.TestCase):
         self.assertIn("Comment 11", discussion)
         self.assertNotIn("Comment 4", discussion)
         self.assertNotIn("Bot review", discussion)
-        self.assertEqual(forgejo.read_discussion(self.bot_config, -1, 99), "Invalid issue or PR number.")
+        self.assertEqual(
+            forgejo.read_discussion(self.bot_config, -1, 99),
+            "Invalid issue or PR number.",
+        )
 
     def test_current_pr_discussion_reads_exact_pages_and_review_comments(self):
-        issue = {"number": 42, "pull_request": {"html_url": "ignored"},
-                 "title": "Concept change", "body": "Rationale"}
-        page_two = [{"id": 21, "user": {"login": "reviewer"},
-                     "body": "Middle-page concern"}]
-        reviews = [{"id": 7, "user": {"login": "reviewer"},
-                    "body": "Summary with review id"}]
-        inline = [{"id": 70, "user": {"login": "reviewer"},
-                   "body": "Inline concern" + "x" * 1600}]
+        issue = {
+            "number": 42,
+            "pull_request": {"html_url": "ignored"},
+            "title": "Concept change",
+            "body": "Rationale",
+        }
+        page_two = [
+            {"id": 21, "user": {"login": "reviewer"}, "body": "Middle-page concern"}
+        ]
+        reviews = [
+            {"id": 7, "user": {"login": "reviewer"}, "body": "Summary with review id"}
+        ]
+        inline = [
+            {
+                "id": 70,
+                "user": {"login": "reviewer"},
+                "body": "Inline concern" + "x" * 1600,
+            }
+        ]
 
         def request(bot_config, path):
             if path == "/issues/42":
@@ -350,25 +536,33 @@ class BotTests(unittest.TestCase):
 
         with patch.object(forgejo, "public_discussion_request", side_effect=request):
             comments = forgejo.read_current_pr_discussion(
-                self.bot_config, 42, "comments", 2, 0)
+                self.bot_config, 42, "comments", 2, 0
+            )
             review_list = forgejo.read_current_pr_discussion(
-                self.bot_config, 42, "reviews", 1, 0)
+                self.bot_config, 42, "reviews", 1, 0
+            )
             inline_comments = forgejo.read_current_pr_discussion(
-                self.bot_config, 42, "inline", 1, 7)
+                self.bot_config, 42, "inline", 1, 7
+            )
 
         self.assertIn("Issue comments page 2", comments)
         self.assertIn("Middle-page concern", comments)
         self.assertIn("id=7", review_list)
         self.assertIn("Inline concern", inline_comments)
         self.assertIn("[Comment truncated]", inline_comments)
-        self.assertIn("review_id", forgejo.read_current_pr_discussion(
-            self.bot_config, 42, "inline", 1, 0))
+        self.assertIn(
+            "review_id",
+            forgejo.read_current_pr_discussion(self.bot_config, 42, "inline", 1, 0),
+        )
 
     def test_github_discussion_permalink_fetches_referenced_inline_comment(self):
         issue = {"title": "Upstream PR", "body": "Original rationale"}
-        comment = {"id": 123, "user": {"login": "reviewer"},
-                   "body": "Referenced inline concern",
-                   "html_url": "https://github.com/bitcoin/bitcoin/pull/29415#discussion_r123"}
+        comment = {
+            "id": 123,
+            "user": {"login": "reviewer"},
+            "body": "Referenced inline concern",
+            "html_url": "https://github.com/bitcoin/bitcoin/pull/29415#discussion_r123",
+        }
         calls = []
 
         def github(path):
@@ -383,28 +577,55 @@ class BotTests(unittest.TestCase):
             discussion = forgejo.read_github_discussion(
                 self.bot_config,
                 "https://github.com/bitcoin/bitcoin/pull/29415#discussion_r123",
-                "inline", 99)
+                "inline",
+                99,
+            )
 
         self.assertIn("Referenced inline concern", discussion)
         self.assertTrue(any(path.endswith("/pulls/comments/123") for path in calls))
         self.assertNotIn("page=99", " ".join(calls))
 
     def test_current_pr_is_excluded_before_any_discussion_fetch(self):
-        with patch.object(forgejo, "public_discussion_request", return_value=[
+        with patch.object(
+            forgejo,
+            "public_discussion_request",
+            return_value=[
                 {"number": 42, "title": "Current PR", "pull_request": {}},
-                {"number": 41, "title": "Earlier PR", "pull_request": {}}]) as get:
-            self.assertNotIn("Current PR", forgejo.search_discussions(self.bot_config, "change", 42))
-            self.assertIn("Earlier PR", forgejo.search_discussions(self.bot_config, "change", 42))
+                {"number": 41, "title": "Earlier PR", "pull_request": {}},
+            ],
+        ) as get:
+            self.assertNotIn(
+                "Current PR", forgejo.search_discussions(self.bot_config, "change", 42)
+            )
+            self.assertIn(
+                "Earlier PR", forgejo.search_discussions(self.bot_config, "change", 42)
+            )
             self.assertIn("excluded", forgejo.read_discussion(self.bot_config, 42, 42))
         self.assertEqual(get.call_count, 2)
 
     def test_model_cannot_read_current_pr_discussion(self):
         responses = [
-            {"status": "completed", "output": [{"type": "function_call",
-                "id": "fc_1", "call_id": "call_1", "name": "read_discussion",
-                "arguments": '{"number":42}'}]},
-            {"status": "completed", "output": [{"type": "message",
-                "content": [{"type": "output_text", "text": "No findings."}]}]},
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "read_discussion",
+                        "arguments": '{"number":42}',
+                    }
+                ],
+            },
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "No findings."}],
+                    }
+                ],
+            },
         ]
         requests = []
 
@@ -425,16 +646,26 @@ class BotTests(unittest.TestCase):
             requests.append(json.loads(request.data))
             return Response(responses.pop(0))
 
-        with patch.object(urllib.request, "urlopen", side_effect=send), \
-                patch.object(forgejo, "public_discussion_request") as fetch:
-            self.assertEqual(model.openai_review(
-                "key", "patch", self.snapshot(), prompt=self.prompt_config.instructions,
-                model=self.prompt_config.models["independent"],
-                max_output_tokens=model.MAX_OUTPUT_TOKENS,
-                discussion_lookup=research.discussion_lookup(self.bot_config, 42)), "No findings.")
+        with (
+            patch.object(urllib.request, "urlopen", side_effect=send),
+            patch.object(forgejo, "public_discussion_request") as fetch,
+        ):
+            self.assertEqual(
+                model.openai_review(
+                    "key",
+                    "patch",
+                    self.snapshot(),
+                    prompt=self.prompt_config.instructions,
+                    model=self.prompt_config.models["independent"],
+                    max_output_tokens=model.MAX_OUTPUT_TOKENS,
+                    discussion_lookup=research.discussion_lookup(self.bot_config, 42),
+                ),
+                "No findings.",
+            )
         fetch.assert_not_called()
-        self.assertIn("current PR's discussion is excluded",
-                      requests[1]["input"][-1]["output"])
+        self.assertIn(
+            "current PR's discussion is excluded", requests[1]["input"][-1]["output"]
+        )
 
     def test_blame_and_commit_are_limited_to_base_history(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -443,8 +674,17 @@ class BotTests(unittest.TestCase):
             path = checkout / "code.cpp"
             path.write_text("old guard\nunchanged\n")
             subprocess.run(["git", "-C", directory, "add", "code.cpp"], check=True)
-            commit = ["git", "-C", directory, "-c", "user.name=Test",
-                      "-c", "user.email=test@example.com", "commit", "-qm"]
+            commit = [
+                "git",
+                "-C",
+                directory,
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+            ]
             subprocess.run(commit + ["Guard the old case"], check=True)
             base = local_repository.git(checkout, "rev-parse", "HEAD").strip()
             path.write_text("new guard\nunchanged\n")
@@ -453,17 +693,29 @@ class BotTests(unittest.TestCase):
             head = local_repository.git(checkout, "rev-parse", "HEAD").strip()
             base_files = local_repository.tracked_files_at(checkout, base)
 
-            blame = local_repository.blame_base(checkout, base_files, base, "code.cpp", 1)
+            blame = local_repository.blame_base(
+                checkout, base_files, base, "code.cpp", 1
+            )
             self.assertIn(base, blame)
             self.assertIn("old guard", blame)
             self.assertIn("Guard the old case", blame)
-            details = local_repository.read_commit(checkout, base_files, base, base, "code.cpp")
+            details = local_repository.read_commit(
+                checkout, base_files, base, base, "code.cpp"
+            )
             self.assertIn("Guard the old case", details)
             self.assertIn("+old guard", details)
-            self.assertIn("not an ancestor", local_repository.read_commit(
-                checkout, base_files, base, head, "code.cpp"))
-            self.assertIn("Invalid", local_repository.blame_base(
-                checkout, base_files, base, "../code.cpp", 1))
+            self.assertIn(
+                "not an ancestor",
+                local_repository.read_commit(
+                    checkout, base_files, base, head, "code.cpp"
+                ),
+            )
+            self.assertIn(
+                "Invalid",
+                local_repository.blame_base(
+                    checkout, base_files, base, "../code.cpp", 1
+                ),
+            )
 
     def test_openai_request_disables_storage(self):
         class Response:
@@ -474,15 +726,32 @@ class BotTests(unittest.TestCase):
                 pass
 
             def read(self, *args):
-                return json.dumps({"status": "completed", "output": [{"type": "message",
-                    "content": [{"type": "output_text", "text": "No findings."}]}]}).encode()
+                return json.dumps(
+                    {
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [
+                                    {"type": "output_text", "text": "No findings."}
+                                ],
+                            }
+                        ],
+                    }
+                ).encode()
 
         with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
-            self.assertEqual(model.openai_review(
-                "test-key", "patch", self.snapshot(), prompt=self.prompt_config.instructions,
-                model=self.prompt_config.models["independent"],
-                max_output_tokens=model.MAX_OUTPUT_TOKENS),
-                             "No findings.")
+            self.assertEqual(
+                model.openai_review(
+                    "test-key",
+                    "patch",
+                    self.snapshot(),
+                    prompt=self.prompt_config.instructions,
+                    model=self.prompt_config.models["independent"],
+                    max_output_tokens=model.MAX_OUTPUT_TOKENS,
+                ),
+                "No findings.",
+            )
         request = send.call_args.args[0]
         sent = json.loads(request.data)
         self.assertIs(sent["store"], False)
@@ -498,22 +767,44 @@ class BotTests(unittest.TestCase):
                 pass
 
             def read(self, *args):
-                return json.dumps({"status": "completed", "output": [{"type": "message",
-                    "content": [{"type": "output_text", "text": "No findings."}]}]}).encode()
+                return json.dumps(
+                    {
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [
+                                    {"type": "output_text", "text": "No findings."}
+                                ],
+                            }
+                        ],
+                    }
+                ).encode()
 
         with tempfile.TemporaryDirectory() as directory:
             prompt_file = Path(directory) / "prompt.md"
             prompt_file.write_text("Custom review prompt\n")
             debug = {}
-            custom_prompts = core_config.PromptConfig(core_config.load_prompt_file(prompt_file),
-                                                 self.prompt_config.audit_prompts,
-                                                 self.prompt_config.models)
-            with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
-                self.assertEqual(model.openai_review(
-                    "test-key", "patch", self.snapshot(), debug,
-                    prompt=custom_prompts.instructions, model=custom_prompts.models["independent"],
-                    max_output_tokens=model.MAX_OUTPUT_TOKENS),
-                                 "No findings.")
+            custom_prompts = core_config.PromptConfig(
+                core_config.load_prompt_file(prompt_file),
+                self.prompt_config.audit_prompts,
+                self.prompt_config.models,
+            )
+            with patch.object(
+                urllib.request, "urlopen", return_value=Response()
+            ) as send:
+                self.assertEqual(
+                    model.openai_review(
+                        "test-key",
+                        "patch",
+                        self.snapshot(),
+                        debug,
+                        prompt=custom_prompts.instructions,
+                        model=custom_prompts.models["independent"],
+                        max_output_tokens=model.MAX_OUTPUT_TOKENS,
+                    ),
+                    "No findings.",
+                )
         request = send.call_args.args[0]
         sent = json.loads(request.data)
         self.assertEqual(sent["instructions"], "Custom review prompt")
@@ -530,15 +821,28 @@ class BotTests(unittest.TestCase):
                 pass
 
             def read(self, *args):
-                return json.dumps({"status": "completed", "output": [{"type": "message",
-                    "content": [{"type": "output_text", "text": text}]}],
-                    "usage": {"input_tokens": 100, "output_tokens": 20}}).encode()
+                return json.dumps(
+                    {
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": text}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 100, "output_tokens": 20},
+                    }
+                ).encode()
 
         with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
             answer, record = model.run_audit(
-                "key", "public_contract", "Check policy", "PR patch",
+                "key",
+                "public_contract",
+                "Check policy",
+                "PR patch",
                 model_name=self.prompt_config.models["public_contract"],
-                max_output_tokens=model.MAX_AUDIT_OUTPUT_TOKENS)
+                max_output_tokens=model.MAX_AUDIT_OUTPUT_TOKENS,
+            )
         payload = json.loads(send.call_args.args[0].data)
         self.assertEqual(payload["model"], self.prompt_config.models["public_contract"])
         self.assertEqual(payload["reasoning"], {"effort": "low"})
@@ -559,14 +863,29 @@ class BotTests(unittest.TestCase):
                 pass
 
             def read(self, *args):
-                return json.dumps({"status": "completed", "output": [{"type": "message",
-                    "content": [{"type": "output_text", "text": "A" * 5000}]}]}).encode()
+                return json.dumps(
+                    {
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [
+                                    {"type": "output_text", "text": "A" * 5000}
+                                ],
+                            }
+                        ],
+                    }
+                ).encode()
 
         with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
             answer, record = model.run_audit(
-                "key", "collator", "Edit review", "Leads",
+                "key",
+                "collator",
+                "Edit review",
+                "Leads",
                 model_name=self.prompt_config.models["collator"],
-                max_output_tokens=model.MAX_COLLATOR_OUTPUT_TOKENS)
+                max_output_tokens=model.MAX_COLLATOR_OUTPUT_TOKENS,
+            )
         payload = json.loads(send.call_args.args[0].data)
         self.assertEqual(payload["max_output_tokens"], model.MAX_COLLATOR_OUTPUT_TOKENS)
         self.assertEqual(len(answer), 5000)
@@ -578,18 +897,29 @@ class BotTests(unittest.TestCase):
         def git(checkout, *args, **kwargs):
             calls.append(args)
             if args[-1] == "test/functional/example.py":
-                return ("diff --git a/test/functional/example.py b/"
-                        "test/functional/example.py\n"
-                        + "x" * local_repository.MAX_FOCUSED_DIFF_BYTES).encode()
+                return (
+                    "diff --git a/test/functional/example.py b/"
+                    "test/functional/example.py\n"
+                    + "x"
+                    * local_repository.MAX_FOCUSED_DIFF_BYTES
+                ).encode()
             return b"diff --git a/src/net.cpp b/src/net.cpp\n"
 
         with patch.object(local_repository, "bounded_git", side_effect=git):
             review = local_repository.focused_review_input(
                 "Patch exceeds 200000 input bytes. Use read_diff to inspect changed files.",
                 local_repository.RepositorySnapshot(
-                    Path("/unused"), "b" * 40, "a" * 40, "b" * 40, "b" * 40,
-                    {}, {}, frozenset({"test/functional/example.py", "src/net.cpp"})),
-                "tests")
+                    Path("/unused"),
+                    "b" * 40,
+                    "a" * 40,
+                    "b" * 40,
+                    "b" * 40,
+                    {},
+                    {},
+                    frozenset({"test/functional/example.py", "src/net.cpp"}),
+                ),
+                "tests",
+            )
         self.assertIn("test/functional/example.py", review)
         self.assertNotIn("src/net.cpp", review)
         self.assertEqual([call[-1] for call in calls], ["test/functional/example.py"])
@@ -603,15 +933,24 @@ class BotTests(unittest.TestCase):
                 pass
 
             def read(self, *args):
-                return json.dumps({"status": "incomplete", "output": [],
-                    "incomplete_details": {"reason": "max_output_tokens"},
-                    "usage": {"input_tokens": 1000, "output_tokens": 4000}}).encode()
+                return json.dumps(
+                    {
+                        "status": "incomplete",
+                        "output": [],
+                        "incomplete_details": {"reason": "max_output_tokens"},
+                        "usage": {"input_tokens": 1000, "output_tokens": 4000},
+                    }
+                ).encode()
 
         with patch.object(urllib.request, "urlopen", return_value=Response()):
             answer, record = model.run_audit(
-                "key", "state", "Check state", "PR patch",
+                "key",
+                "state",
+                "Check state",
+                "PR patch",
                 model_name=self.prompt_config.models["state"],
-                max_output_tokens=model.MAX_AUDIT_OUTPUT_TOKENS)
+                max_output_tokens=model.MAX_AUDIT_OUTPUT_TOKENS,
+            )
         self.assertEqual(answer, "")
         self.assertEqual(record["status"], "incomplete")
         self.assertEqual(record["incomplete_reason"], "max_output_tokens")
@@ -619,19 +958,36 @@ class BotTests(unittest.TestCase):
 
     def test_developer_notes_are_read_at_merge_base(self):
         base = "b" * 40
-        with patch.object(local_repository, "bounded_git", return_value=b"Base-only rules\n") as git:
-            self.assertEqual(local_repository.audit_developer_notes(self.snapshot()),
-                             "Base-only rules\n")
-        self.assertEqual(git.call_args.args[1:],
-                         ("show", f"{base}:doc/developer-notes.md"))
+        with patch.object(
+            local_repository, "bounded_git", return_value=b"Base-only rules\n"
+        ) as git:
+            self.assertEqual(
+                local_repository.audit_developer_notes(self.snapshot()),
+                "Base-only rules\n",
+            )
+        self.assertEqual(
+            git.call_args.args[1:], ("show", f"{base}:doc/developer-notes.md")
+        )
 
     def test_model_reads_context_then_finishes_with_stateless_history(self):
-        call = {"type": "function_call", "id": "fc_1", "call_id": "call_1",
-                "name": "read_file", "arguments": '{"path":"src/main.cpp","start_line":1}'}
+        call = {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "read_file",
+            "arguments": '{"path":"src/main.cpp","start_line":1}',
+        }
         responses = [
             {"status": "completed", "output": [call]},
-            {"status": "completed", "output": [{"type": "message",
-                "content": [{"type": "output_text", "text": "No findings."}]}]},
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "No findings."}],
+                    }
+                ],
+            },
         ]
         requests = []
 
@@ -653,59 +1009,85 @@ class BotTests(unittest.TestCase):
             return Response(responses.pop(0))
 
         debug = {}
-        with patch.object(urllib.request, "urlopen", side_effect=send), \
-                patch.object(model, "read_file", return_value="1: full context") as read:
-            self.assertEqual(model.openai_review(
-                "key", "patch", self.snapshot({"src/main.cpp": "a" * 40}), debug,
-                prompt=self.prompt_config.instructions,
-                model=self.prompt_config.models["independent"],
-                max_output_tokens=model.MAX_OUTPUT_TOKENS),
-                             "No findings.")
+        with (
+            patch.object(urllib.request, "urlopen", side_effect=send),
+            patch.object(model, "read_file", return_value="1: full context") as read,
+        ):
+            self.assertEqual(
+                model.openai_review(
+                    "key",
+                    "patch",
+                    self.snapshot({"src/main.cpp": "a" * 40}),
+                    debug,
+                    prompt=self.prompt_config.instructions,
+                    model=self.prompt_config.models["independent"],
+                    max_output_tokens=model.MAX_OUTPUT_TOKENS,
+                ),
+                "No findings.",
+            )
         read.assert_called_once()
         self.assertEqual(requests[1]["input"][1], call)
-        self.assertEqual(requests[1]["input"][2],
-                         {"type": "function_call_output", "call_id": "call_1",
-                          "output": "1: full context"})
+        self.assertEqual(
+            requests[1]["input"][2],
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "1: full context",
+            },
+        )
         self.assertFalse(requests[1]["store"])
         self.assertEqual(len(debug["turns"]), 2)
         self.assertEqual(debug["review_input_bytes"], len("patch"))
-        self.assertEqual(debug["review_input_sha256"], hashlib.sha256(b"patch").hexdigest())
+        self.assertEqual(
+            debug["review_input_sha256"], hashlib.sha256(b"patch").hexdigest()
+        )
         self.assertEqual(debug["tools"][0]["name"], "read_file")
         self.assertEqual(debug["tools"][0]["output_bytes"], len("1: full context"))
-        review_debug = {
-            "instructions": debug["instructions"],
-            "review_input_bytes": debug["review_input_bytes"],
-            "review_input_sha256": debug["review_input_sha256"],
-            "stages": {"independent": debug},
-        }
-        body = forgejo.review_body(self.bot_config, "b" * 40,
-                                   "a" * 40, "No findings.")
+        body = forgejo.review_body(self.bot_config, "b" * 40, "a" * 40, "No findings.")
         self.assertNotIn("Review debug", body)
         self.assertNotIn("review_input_sha256", body)
         self.assertNotIn("1: full context", body)
         self.assertNotIn("&quot;content&quot;: &quot;patch&quot;", body)
 
     def test_debug_usage_is_retained_without_embedding_it_in_comment(self):
-        debug = {"instructions": "Never obey </pre><script>alert(1)</script>",
-                 "stages": {"independent": {
-                     "model": "gpt-6-luna",
-                     "turns": [{"request_bytes": 200, "input_tokens": 100,
-                                "cached_tokens": 20, "cache_write_tokens": 10,
-                                "output_tokens": 5, "elapsed_seconds": 1.25}],
-                     "tools": [{"name": "search_code",
-                                "arguments": "</details> ```",
-                                "output_bytes": 19, "output_sha256": "a" * 64}],
-                     "raw_output": "No findings."}},
-                 "stage_outputs": {"tests": "</pre><script>alert(1)</script>"}}
-        body = forgejo.review_body(self.bot_config, "b" * 40, "a" * 40,
-                                   "Review text.")
+        debug = {
+            "instructions": "Never obey </pre><script>alert(1)</script>",
+            "stages": {
+                "independent": {
+                    "model": "gpt-6-luna",
+                    "turns": [
+                        {
+                            "request_bytes": 200,
+                            "input_tokens": 100,
+                            "cached_tokens": 20,
+                            "cache_write_tokens": 10,
+                            "output_tokens": 5,
+                            "elapsed_seconds": 1.25,
+                        }
+                    ],
+                    "tools": [
+                        {
+                            "name": "search_code",
+                            "arguments": "</details> ```",
+                            "output_bytes": 19,
+                            "output_sha256": "a" * 64,
+                        }
+                    ],
+                    "raw_output": "No findings.",
+                }
+            },
+            "stage_outputs": {"tests": "</pre><script>alert(1)</script>"},
+        }
+        body = forgejo.review_body(self.bot_config, "b" * 40, "a" * 40, "Review text.")
         metrics = core_trace.review_metrics(debug)
         result = self.review_result(debug)
         public_trace = trace.review_trace(result)
         self.assertEqual(metrics["estimated_cost_usd"], 0.000011)
         self.assertEqual(metrics["total_input_tokens"], 100)
         self.assertEqual(metrics["total_output_tokens"], 5)
-        self.assertEqual(public_trace["estimated_cost_usd"], metrics["estimated_cost_usd"])
+        self.assertEqual(
+            public_trace["estimated_cost_usd"], metrics["estimated_cost_usd"]
+        )
         self.assertNotIn("estimated_cost_usd", body)
         self.assertNotIn("total_model_seconds", body)
         self.assertNotIn("<script>", body)
@@ -715,44 +1097,79 @@ class BotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
             output = "A" * (trace.MAX_PUBLIC_STAGE_OUTPUT_BYTES + 100)
-            debug = {"stages": {"tests": {"model": "gpt-6-luna", "turns": [],
-                                             "tools": [], "raw_output": output}},
-                     "stage_outputs": {"tests": output, "verifier": "DROP weak claim"}}
+            debug = {
+                "stages": {
+                    "tests": {
+                        "model": "gpt-6-luna",
+                        "turns": [],
+                        "tools": [],
+                        "raw_output": output,
+                    }
+                },
+                "stage_outputs": {"tests": output, "verifier": "DROP weak claim"},
+            }
             result = self.review_result(debug, content="Public comment")
             path = trace.save_review_trace(state_dir, 34486, result)
             saved = json.loads(path.read_text())
-            self.assertEqual(saved["output"]["data"]["stages"]["tests"]["raw_output"], output)
+            self.assertEqual(
+                saved["output"]["data"]["stages"]["tests"]["raw_output"], output
+            )
             self.assertEqual(saved["output"]["data"]["stage_outputs"]["tests"], output)
             self.assertEqual(saved["content"], "Public comment")
             self.assertTrue(saved["trace"]["stage_outputs"]["tests"]["truncated"])
-            self.assertLessEqual(len(saved["trace"]["stage_outputs"]["tests"]["text"].encode()),
-                                 trace.MAX_PUBLIC_STAGE_OUTPUT_BYTES)
+            self.assertLessEqual(
+                len(saved["trace"]["stage_outputs"]["tests"]["text"].encode()),
+                trace.MAX_PUBLIC_STAGE_OUTPUT_BYTES,
+            )
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
 
-    def test_review_metrics_sum_stage_turns_and_price_missing_cache_write_conservatively(self):
-        def turn(input_tokens, cached_tokens, cache_write_tokens,
-                 output_tokens, elapsed):
-            return {"request_bytes": 100, "input_tokens": input_tokens,
-                    "cached_tokens": cached_tokens,
-                    "cache_write_tokens": cache_write_tokens,
-                    "output_tokens": output_tokens,
-                    "elapsed_seconds": elapsed}
+    def test_review_metrics_sum_stage_turns_and_price_missing_cache_write_conservatively(
+        self,
+    ):
+        def turn(
+            input_tokens, cached_tokens, cache_write_tokens, output_tokens, elapsed
+        ):
+            return {
+                "request_bytes": 100,
+                "input_tokens": input_tokens,
+                "cached_tokens": cached_tokens,
+                "cache_write_tokens": cache_write_tokens,
+                "output_tokens": output_tokens,
+                "elapsed_seconds": elapsed,
+            }
 
-        debug = {"stages": {
-            "router": {"model": "gpt-6-luna", "turns": [
-                turn(100, 20, None, 5, 1.0)], "tools": []},
-            "independent": {"model": "gpt-6-luna", "turns": [
-                turn(100, 20, 10, 5, 2.0), turn(100, 20, 10, 5, 3.0)],
-                "tools": [{"name": "read_file"}, {"name": "search_code"}]},
-            "tests": {"model": "gpt-6-luna", "status": "completed",
-                      "turns": [turn(100, 20, 10, 5, 6.0)], "tools": []},
-            "verifier": {"model": "gpt-6-luna", "turns": [
-                turn(1000, 100, 0, 200, 4.0)], "tools": []},
-            "collator": {"model": "gpt-6-luna", "turns": [
-                turn(500, 0, 0, 4000, 5.0)], "tools": []},
-            "state": {"status": "skipped", "turns": [], "tools": []},
-        }}
+        debug = {
+            "stages": {
+                "router": {
+                    "model": "gpt-6-luna",
+                    "turns": [turn(100, 20, None, 5, 1.0)],
+                    "tools": [],
+                },
+                "independent": {
+                    "model": "gpt-6-luna",
+                    "turns": [turn(100, 20, 10, 5, 2.0), turn(100, 20, 10, 5, 3.0)],
+                    "tools": [{"name": "read_file"}, {"name": "search_code"}],
+                },
+                "tests": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "turns": [turn(100, 20, 10, 5, 6.0)],
+                    "tools": [],
+                },
+                "verifier": {
+                    "model": "gpt-6-luna",
+                    "turns": [turn(1000, 100, 0, 200, 4.0)],
+                    "tools": [],
+                },
+                "collator": {
+                    "model": "gpt-6-luna",
+                    "turns": [turn(500, 0, 0, 4000, 5.0)],
+                    "tools": [],
+                },
+                "state": {"status": "skipped", "turns": [], "tools": []},
+            }
+        }
 
         metrics = core_trace.review_metrics(debug)
         self.assertEqual(metrics["model_turns"], 6)
@@ -768,8 +1185,11 @@ class BotTests(unittest.TestCase):
         base = "b" * 40
         head = "a" * 40
         body = forgejo.review_body(self.bot_config, base, head, "No findings.")
-        self.assertTrue(body.startswith(
-            f"{self.bot_config.comment_marker}\nBase: `{base}`  \nHead: `{head}`\n\n"))
+        self.assertTrue(
+            body.startswith(
+                f"{self.bot_config.comment_marker}\nBase: `{base}`  \nHead: `{head}`\n\n"
+            )
+        )
         self.assertNotIn("First-pass review", body)
         self.assertTrue(forgejo.comment_matches_head({"body": body}, head))
 
@@ -777,20 +1197,47 @@ class BotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
             subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
-            (checkout / "code.cpp").write_text("void target() {}\nvoid caller() { target(); }\n")
+            (checkout / "code.cpp").write_text(
+                "void target() {}\nvoid caller() { target(); }\n"
+            )
             (checkout / "link.cpp").symlink_to("code.cpp")
-            subprocess.run(["git", "-C", directory, "add", "code.cpp", "link.cpp"],
-                           check=True)
-            subprocess.run(["git", "-C", directory, "-c", "user.name=Test",
-                            "-c", "user.email=test@example.com", "commit", "-qm",
-                            "fixture"], check=True)
+            subprocess.run(
+                ["git", "-C", directory, "add", "code.cpp", "link.cpp"], check=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    directory,
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "commit",
+                    "-qm",
+                    "fixture",
+                ],
+                check=True,
+            )
             files = local_repository.tracked_files(checkout)
             self.assertIn("code.cpp", files)
             self.assertNotIn("link.cpp", files)
-            self.assertIn("2: void caller()", local_repository.read_file(checkout, files, "code.cpp", 2))
-            self.assertIn("Only tracked", local_repository.read_file(checkout, files, "../code.cpp", 1))
-            self.assertIn("Only tracked", local_repository.read_file(checkout, files, "link.cpp", 1))
-            self.assertIn("HEAD:code.cpp:1:void target", local_repository.search_code(checkout, "HEAD", "target"))
+            self.assertIn(
+                "2: void caller()",
+                local_repository.read_file(checkout, files, "code.cpp", 2),
+            )
+            self.assertIn(
+                "Only tracked",
+                local_repository.read_file(checkout, files, "../code.cpp", 1),
+            )
+            self.assertIn(
+                "Only tracked",
+                local_repository.read_file(checkout, files, "link.cpp", 1),
+            )
+            self.assertIn(
+                "HEAD:code.cpp:1:void target",
+                local_repository.search_code(checkout, "HEAD", "target"),
+            )
 
     def test_path_base_and_diff_tools_read_only_git_content(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -798,10 +1245,20 @@ class BotTests(unittest.TestCase):
             subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
             (checkout / "code.cpp").write_text("old behavior\nunchanged\n")
             (checkout / "link.cpp").symlink_to("code.cpp")
-            subprocess.run(["git", "-C", directory, "add", "code.cpp", "link.cpp"],
-                           check=True)
-            commit = ["git", "-C", directory, "-c", "user.name=Test",
-                      "-c", "user.email=test@example.com", "commit", "-qm"]
+            subprocess.run(
+                ["git", "-C", directory, "add", "code.cpp", "link.cpp"], check=True
+            )
+            commit = [
+                "git",
+                "-C",
+                directory,
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+            ]
             subprocess.run(commit + ["base"], check=True)
             base = local_repository.git(checkout, "rev-parse", "HEAD").strip()
             (checkout / "code.cpp").write_text("new behavior\nunchanged\n")
@@ -811,23 +1268,42 @@ class BotTests(unittest.TestCase):
 
             files = local_repository.tracked_files(checkout)
             base_files = local_repository.tracked_files_at(checkout, base)
-            changed = set(local_repository.git(checkout, "diff", "--name-only", "-z",
-                                  f"{base}..{head}").split("\x00"))
+            changed = set(
+                local_repository.git(
+                    checkout, "diff", "--name-only", "-z", f"{base}..{head}"
+                ).split("\x00")
+            )
             self.assertEqual(local_repository.find_paths(files, "CODE"), "code.cpp\n")
-            self.assertEqual(local_repository.find_paths(files, "missing"), "No matching tracked files.")
+            self.assertEqual(
+                local_repository.find_paths(files, "missing"),
+                "No matching tracked files.",
+            )
             self.assertNotIn("link.cpp", base_files)
-            self.assertIn("1: old behavior", local_repository.read_file(checkout, base_files,
-                                                           "code.cpp", 1))
-            self.assertIn("1: new behavior", local_repository.read_file(checkout, files,
-                                                           "code.cpp", 1))
-            diff = local_repository.read_diff(checkout, changed, base, head, "code.cpp", 1)
+            self.assertIn(
+                "1: old behavior",
+                local_repository.read_file(checkout, base_files, "code.cpp", 1),
+            )
+            self.assertIn(
+                "1: new behavior",
+                local_repository.read_file(checkout, files, "code.cpp", 1),
+            )
+            diff = local_repository.read_diff(
+                checkout, changed, base, head, "code.cpp", 1
+            )
             self.assertIn("-old behavior", diff)
             self.assertIn("+new behavior", diff)
-            self.assertIn("No diff lines", local_repository.read_diff(checkout, changed, base, head,
-                                                         "code.cpp", 100))
-            self.assertIn("Invalid", local_repository.read_diff(checkout, changed, base, head,
-                                                   "link.cpp", 1))
-
+            self.assertIn(
+                "No diff lines",
+                local_repository.read_diff(
+                    checkout, changed, base, head, "code.cpp", 100
+                ),
+            )
+            self.assertIn(
+                "Invalid",
+                local_repository.read_diff(
+                    checkout, changed, base, head, "link.cpp", 1
+                ),
+            )
 
     def test_snapshot_retains_both_paths_of_a_rename(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -835,8 +1311,14 @@ class BotTests(unittest.TestCase):
             local_repository.git(checkout, "init", "-q")
             (checkout / "before.cpp").write_text("unchanged content\n")
             local_repository.git(checkout, "add", ".")
-            commit = ("-c", "user.name=Test", "-c", "user.email=test@example.com",
-                      "commit", "-qm")
+            commit = (
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+            )
             local_repository.git(checkout, *commit, "base")
             base = local_repository.git(checkout, "rev-parse", "HEAD").strip()
             local_repository.git(checkout, "mv", "before.cpp", "after.cpp")
@@ -849,8 +1331,9 @@ class BotTests(unittest.TestCase):
             self.assertIn("after.cpp", snapshot.head_files)
 
     def test_publish_creates_then_edits_one_bot_comment(self):
-        comments = [{"id": 1, "user": {"login": "someone-else"},
-                     "body": "Unrelated comment"}]
+        comments = [
+            {"id": 1, "user": {"login": "someone-else"}, "body": "Unrelated comment"}
+        ]
         calls = []
 
         def request(bot_config, token, path, method="GET", data=None):
@@ -858,36 +1341,58 @@ class BotTests(unittest.TestCase):
             if path == "/issues/42/comments?limit=50&page=1":
                 return comments
             if method == "POST":
-                comments.append({"id": 2, "user": {"login": "ralph"},
-                                 "body": data["body"]})
+                comments.append(
+                    {"id": 2, "user": {"login": "ralph"}, "body": data["body"]}
+                )
                 return comments[-1]
             if method == "PATCH":
                 comments[-1]["body"] = data["body"]
                 return comments[-1]
             self.fail(f"Unexpected API call {path}")
 
-        with patch.object(forgejo, "forgejo_request", side_effect=request), \
-                patch.object(forgejo, "current_head", return_value="a" * 40):
+        with (
+            patch.object(forgejo, "forgejo_request", side_effect=request),
+            patch.object(forgejo, "current_head", return_value="a" * 40),
+        ):
             args = ("token", 42, "ralph", "b" * 40, "a" * 40)
-            self.assertEqual(forgejo.publish_review(self.bot_config, *args, "First review."), "created")
-            self.assertEqual(forgejo.publish_review(self.bot_config, *args, "First review."), "unchanged")
-            self.assertEqual(forgejo.publish_review(self.bot_config, *args, "Updated review."), "updated")
-        self.assertEqual([method for _, method, _ in calls if method != "GET"],
-                         ["POST", "PATCH"])
+            self.assertEqual(
+                forgejo.publish_review(self.bot_config, *args, "First review."),
+                "created",
+            )
+            self.assertEqual(
+                forgejo.publish_review(self.bot_config, *args, "First review."),
+                "unchanged",
+            )
+            self.assertEqual(
+                forgejo.publish_review(self.bot_config, *args, "Updated review."),
+                "updated",
+            )
+        self.assertEqual(
+            [method for _, method, _ in calls if method != "GET"], ["POST", "PATCH"]
+        )
         self.assertEqual(comments[-1]["id"], 2)
         self.assertIn("Updated review.", comments[-1]["body"])
 
     def test_foreign_marker_prevents_duplicate_comment(self):
-        with patch.object(forgejo, "forgejo_request", return_value=[
-            {"id": 1, "user": {"login": "someone-else"},
-             "body": self.bot_config.comment_marker}]) as request:
+        with patch.object(
+            forgejo,
+            "forgejo_request",
+            return_value=[
+                {
+                    "id": 1,
+                    "user": {"login": "someone-else"},
+                    "body": self.bot_config.comment_marker,
+                }
+            ],
+        ) as request:
             with self.assertRaisesRegex(ValueError, "another user"):
                 forgejo.find_comment(self.bot_config, "token", 42, "ralph")
         self.assertEqual(request.call_count, 1)
 
     def test_find_comment_stops_when_mirror_ignores_page(self):
-        comments = [{"id": i, "user": {"login": "someone-else"}, "body": ""}
-                    for i in range(65)]
+        comments = [
+            {"id": i, "user": {"login": "someone-else"}, "body": ""} for i in range(65)
+        ]
 
         def request(bot_config, token, path):
             if "page=3" in path:
@@ -895,30 +1400,44 @@ class BotTests(unittest.TestCase):
             return comments
 
         with patch.object(forgejo, "forgejo_request", side_effect=request) as get:
-            self.assertIsNone(forgejo.find_comment(self.bot_config, "token", 42, "ralph"))
+            self.assertIsNone(
+                forgejo.find_comment(self.bot_config, "token", 42, "ralph")
+            )
         self.assertEqual(get.call_count, 2)
 
     def test_publish_finds_comment_on_later_page(self):
-        existing = {"id": 73, "user": {"login": "ralph"},
-                    "body": self.bot_config.comment_marker + "\nOld review"}
+        existing = {
+            "id": 73,
+            "user": {"login": "ralph"},
+            "body": self.bot_config.comment_marker + "\nOld review",
+        }
         calls = []
 
         def request(bot_config, token, path, method="GET", data=None):
             calls.append((path, method))
             if "page=1" in path:
-                return [{"user": {"login": "someone-else"},
-                         "body": self.bot_config.comment_marker}] * 50
+                return [
+                    {
+                        "user": {"login": "someone-else"},
+                        "body": self.bot_config.comment_marker,
+                    }
+                ] * 50
             if "page=2" in path:
                 return [existing]
             if method == "PATCH":
                 return {"id": 73}
             self.fail(f"Unexpected API call {path}")
 
-        with patch.object(forgejo, "forgejo_request", side_effect=request), \
-                patch.object(forgejo, "current_head", return_value="a" * 40):
-            self.assertEqual(forgejo.publish_review(self.bot_config, "token", 42, "ralph",
-                                                "b" * 40, "a" * 40, "Review"),
-                             "updated")
+        with (
+            patch.object(forgejo, "forgejo_request", side_effect=request),
+            patch.object(forgejo, "current_head", return_value="a" * 40),
+        ):
+            self.assertEqual(
+                forgejo.publish_review(
+                    self.bot_config, "token", 42, "ralph", "b" * 40, "a" * 40, "Review"
+                ),
+                "updated",
+            )
         self.assertIn(("/issues/comments/73", "PATCH"), calls)
 
     def test_stale_head_does_not_publish(self):
@@ -930,21 +1449,30 @@ class BotTests(unittest.TestCase):
                 return []
             self.fail(f"Unexpected API call {path}")
 
-        with patch.object(forgejo, "forgejo_request", side_effect=request), \
-                patch.object(forgejo, "current_head", return_value="c" * 40):
-            self.assertEqual(forgejo.publish_review(self.bot_config, "token", 42, "ralph",
-                                                "b" * 40, "a" * 40, "Review"),
-                             "stale")
+        with (
+            patch.object(forgejo, "forgejo_request", side_effect=request),
+            patch.object(forgejo, "current_head", return_value="c" * 40),
+        ):
+            self.assertEqual(
+                forgejo.publish_review(
+                    self.bot_config, "token", 42, "ralph", "b" * 40, "a" * 40, "Review"
+                ),
+                "stale",
+            )
         self.assertTrue(all(method == "GET" for _, method in calls))
 
     def test_current_head_reads_fixed_git_ref(self):
         class Result:
             stdout = "a" * 40 + "\trefs/pull/42/head\n"
 
-        with patch.object(local_repository.subprocess, "run", return_value=Result()) as run:
+        with patch.object(
+            local_repository.subprocess, "run", return_value=Result()
+        ) as run:
             self.assertEqual(repository.current_head(self.bot_config, 42), "a" * 40)
-        self.assertEqual(run.call_args.args[0],
-                         ["git", "ls-remote", self.bot_config.origin, "refs/pull/42/head"])
+        self.assertEqual(
+            run.call_args.args[0],
+            ["git", "ls-remote", self.bot_config.origin, "refs/pull/42/head"],
+        )
 
 
 if __name__ == "__main__":

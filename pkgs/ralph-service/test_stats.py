@@ -11,7 +11,6 @@ from unittest.mock import patch
 from ralph import trace as core_trace
 from ralph_service import stats
 
-from ralph_service import trace
 
 from ralph_service.jobs import JobStore
 
@@ -22,52 +21,99 @@ class StatsTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.state_dir = Path(self.directory.name)
         self.report_dir = self.state_dir / "public"
-        self.jobs = JobStore(self.state_dir / "jobs.sqlite3",
-                             max_attempts=2, retry_base_seconds=0)
+        self.jobs = JobStore(
+            self.state_dir / "jobs.sqlite3", max_attempts=2, retry_base_seconds=0
+        )
 
     def enqueue(self, number, head):
-        self.jobs.enqueue(number, "master", head, "synchronize",
-                          engine_identity={"name": "current", "code_sha256": None,
-                                           "config_sha256": None, "config": None})
+        self.jobs.enqueue(
+            number,
+            "master",
+            head,
+            "synchronize",
+            engine_identity={
+                "name": "current",
+                "code_sha256": None,
+                "config_sha256": None,
+                "config": None,
+            },
+        )
         return self.jobs.claim()
 
     def save_complete(self, job, result):
         if result.get("schema_version") != 1:
             debug = result.pop("debug", {})
             attribution = debug.get("finding_attribution", [])
-            published = [decision.get("finding") or {}
-                         for decision in debug.get("decisions", [])
-                         if decision.get("disposition") == "publish"]
+            published = [
+                decision.get("finding") or {}
+                for decision in debug.get("decisions", [])
+                if decision.get("disposition") == "publish"
+            ]
             exported = []
             for index, finding in enumerate(published, 1):
-                item = next((row for row in attribution
-                             if row.get("finding_id") == f"finding:{index}"), {})
-                exported.append({
-                    "id": item.get("finding_id", f"finding:{index}"),
-                    **{key: finding[key] for key in
-                       ("kind", "severity", "path", "line", "side", "title", "body")
-                       if key in finding},
-                    "presented_title": item.get("title", finding.get("title", "")),
-                    "presented_body": finding.get("body", ""),
-                    **{key: item[key] for key in
-                       ("raised_by", "raised_by_models", "verified_by",
-                        "verified_by_model", "edited_by", "edited_by_model")
-                       if key in item},
-                })
+                item = next(
+                    (
+                        row
+                        for row in attribution
+                        if row.get("finding_id") == f"finding:{index}"
+                    ),
+                    {},
+                )
+                exported.append(
+                    {
+                        "id": item.get("finding_id", f"finding:{index}"),
+                        **{
+                            key: finding[key]
+                            for key in (
+                                "kind",
+                                "severity",
+                                "path",
+                                "line",
+                                "side",
+                                "title",
+                                "body",
+                            )
+                            if key in finding
+                        },
+                        "presented_title": item.get("title", finding.get("title", "")),
+                        "presented_body": finding.get("body", ""),
+                        **{
+                            key: item[key]
+                            for key in (
+                                "raised_by",
+                                "raised_by_models",
+                                "verified_by",
+                                "verified_by_model",
+                                "edited_by",
+                                "edited_by_model",
+                            )
+                            if key in item
+                        },
+                    }
+                )
             result = {
                 "schema_version": 1,
                 "base_sha": result.get("base_sha"),
                 "head_sha": result.get("head_sha"),
                 "content": result.get("content", ""),
-                "engine": {"name": "current", "code_sha256": None,
-                           "config_sha256": None, "config": None},
-                "output": {"schema_version": 2,
-                           "data": {"schema_version": 2, **debug},
-                           "exports": {"findings": exported}},
-                "run": {"status": "completed",
-                        "metrics": core_trace.review_metrics(debug),
-                        "budget": debug.get("budget"), "attempt": {},
-                        "skipped": bool(debug.get("skip"))},
+                "engine": {
+                    "name": "current",
+                    "code_sha256": None,
+                    "config_sha256": None,
+                    "config": None,
+                },
+                "output": {
+                    "schema_version": 2,
+                    "data": {"schema_version": 2, **debug},
+                    "exports": {"findings": exported},
+                },
+                "run": {
+                    "status": "completed",
+                    "metrics": core_trace.review_metrics(debug),
+                    "budget": debug.get("budget"),
+                    "attempt": {},
+                    "skipped": bool(debug.get("skip")),
+                },
             }
         self.assertTrue(self.jobs.save_result(job, result))
         self.assertTrue(self.jobs.complete(job))
@@ -76,14 +122,20 @@ class StatsTests(unittest.TestCase):
         result = self.result()
         debug = result["debug"]
         debug["candidate_sources"]["independent:3"] = "independent"
-        debug["stages"]["independent"]["raw_output"] = json.dumps({"findings": [
-            {"title": "Original title", "claim": "PRIVATE claim"},
-            {"title": "Dropped candidate", "evidence": "PRIVATE evidence"},
-            {"title": "Unassessed candidate"},
-        ]})
+        debug["stages"]["independent"]["raw_output"] = json.dumps(
+            {
+                "findings": [
+                    {"title": "Original title", "claim": "PRIVATE claim"},
+                    {"title": "Dropped candidate", "evidence": "PRIVATE evidence"},
+                    {"title": "Unassessed candidate"},
+                ]
+            }
+        )
         self.save_complete(self.enqueue(42, "a" * 40), result)
         summary = stats.collect_stats(self.state_dir, self.report_dir)
-        stage = next(item for item in summary["stages"] if item["stage"] == "independent")
+        stage = next(
+            item for item in summary["stages"] if item["stage"] == "independent"
+        )
         findings = stage["findings"]
         self.assertEqual(len(findings), 3)
         self.assertEqual(findings[0]["title"], "Merged finding")
@@ -97,12 +149,15 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(findings[2]["disposition"], "undisposed")
         self.assertEqual(findings[0]["number"], 42)
         self.assertNotIn("PRIVATE", json.dumps(findings))
-        glm = next(item for item in summary["stages"]
-                   if item["stage"] == "adversarial_glm")
+        glm = next(
+            item for item in summary["stages"] if item["stage"] == "adversarial_glm"
+        )
         self.assertEqual(glm["findings"][0]["finding_id"], findings[0]["finding_id"])
         self.assertEqual(glm["findings"][1]["disposition"], "unresolved")
-        self.assertEqual(stats._stage_findings({}, "independent", {},
-                                             {"number": 42, "id": 1}, None), [])
+        self.assertEqual(
+            stats._stage_findings({}, "independent", {}, {"number": 42, "id": 1}, None),
+            [],
+        )
 
     def result(self, head="a" * 40):
         return {
@@ -134,16 +189,20 @@ class StatsTests(unittest.TestCase):
                             "relevant_history": "Prior discussion asked for a narrower layer.",
                             "recommendation": "Fix it in the policy layer.",
                             "decisive_question": "Whether the old workaround is still needed.",
-                            "technical_assumptions": ["Verifier checks the policy call path."],
-                            "alternatives": [{
-                                "name": "Do nothing",
-                                "concept": "Keep the current policy.",
-                                "benefit": "No behavior churn.",
-                                "cost": "The workaround remains.",
-                                "unresolved": "Current impact is unclear.",
-                                "provenance": "agent_inference",
-                                "citations": [],
-                            }],
+                            "technical_assumptions": [
+                                "Verifier checks the policy call path."
+                            ],
+                            "alternatives": [
+                                {
+                                    "name": "Do nothing",
+                                    "concept": "Keep the current policy.",
+                                    "benefit": "No behavior churn.",
+                                    "cost": "The workaround remains.",
+                                    "unresolved": "Current impact is unclear.",
+                                    "provenance": "agent_inference",
+                                    "citations": [],
+                                }
+                            ],
                             "citations": ["https://code.example.org/org/repo/pulls/1"],
                         },
                     },
@@ -151,11 +210,16 @@ class StatsTests(unittest.TestCase):
                 "routing": {
                     "mode": "enabled",
                     "minimum_tier": "standard",
-                    "proposed": {"tier": "standard", "audits": ["tests"],
-                                 "profiles": []},
-                    "selected": {"tier": "sensitive",
-                                 "audits": ["tests", "design"],
-                                 "profiles": ["p2p"]},
+                    "proposed": {
+                        "tier": "standard",
+                        "audits": ["tests"],
+                        "profiles": [],
+                    },
+                    "selected": {
+                        "tier": "sensitive",
+                        "audits": ["tests", "design"],
+                        "profiles": ["p2p"],
+                    },
                 },
                 "candidate_sources": {
                     "independent:1": "independent",
@@ -165,80 +229,104 @@ class StatsTests(unittest.TestCase):
                     "adversarial_glm:2": "adversarial_glm",
                 },
                 "decisions": [
-                    {"candidate_ids": ["independent:1", "adversarial:1",
-                                       "adversarial_glm:1"],
-                     "disposition": "publish",
-                     "reason": "same verified bug",
-                     "finding": {
-                         "kind": "defect",
-                         "severity": "high",
-                         "path": "src/node.cpp",
-                         "line": 10,
-                         "side": "head",
-                         "title": "Merged finding",
-                         "body": "PRIVATE finding body must not leak",
-                     }},
-                    {"candidate_ids": ["independent:2"], "disposition": "drop",
-                     "reason": "not a bug", "finding": None},
-                    {"candidate_ids": ["adversarial_glm:2"],
-                     "disposition": "unresolved",
-                     "reason": "needs evidence", "finding": None},
+                    {
+                        "candidate_ids": [
+                            "independent:1",
+                            "adversarial:1",
+                            "adversarial_glm:1",
+                        ],
+                        "disposition": "publish",
+                        "reason": "same verified bug",
+                        "finding": {
+                            "kind": "defect",
+                            "severity": "high",
+                            "path": "src/node.cpp",
+                            "line": 10,
+                            "side": "head",
+                            "title": "Merged finding",
+                            "body": "PRIVATE finding body must not leak",
+                        },
+                    },
+                    {
+                        "candidate_ids": ["independent:2"],
+                        "disposition": "drop",
+                        "reason": "not a bug",
+                        "finding": None,
+                    },
+                    {
+                        "candidate_ids": ["adversarial_glm:2"],
+                        "disposition": "unresolved",
+                        "reason": "needs evidence",
+                        "finding": None,
+                    },
                 ],
-                "finding_attribution": [{
-                    "finding_id": "finding:1",
-                    "title": "Merged finding",
-                    "path": "src/node.cpp",
-                    "line": 10,
-                    "side": "head",
-                    "candidate_ids": ["independent:1", "adversarial:1",
-                                      "adversarial_glm:1"],
-                    "raised_by": ["independent", "adversarial", "adversarial_glm"],
-                    "raised_by_models": ["gpt-6.1-sol", "glm-5.3"],
-                    "verified_by": "verifier",
-                    "edited_by": "collator",
-                }],
+                "finding_attribution": [
+                    {
+                        "finding_id": "finding:1",
+                        "title": "Merged finding",
+                        "path": "src/node.cpp",
+                        "line": 10,
+                        "side": "head",
+                        "candidate_ids": [
+                            "independent:1",
+                            "adversarial:1",
+                            "adversarial_glm:1",
+                        ],
+                        "raised_by": ["independent", "adversarial", "adversarial_glm"],
+                        "raised_by_models": ["gpt-6.1-sol", "glm-5.3"],
+                        "verified_by": "verifier",
+                        "edited_by": "collator",
+                    }
+                ],
                 "stages": {
                     "independent": {
                         "model": "gpt-6.1-sol",
                         "status": "completed",
                         "raw_output": "PRIVATE raw output",
-                        "turns": [{
-                            "model": "gpt-6.1-sol",
-                            "request_bytes": 100,
-                            "input_tokens": 100,
-                            "cached_tokens": 10,
-                            "cache_write_tokens": 0,
-                            "output_tokens": 20,
-                            "elapsed_seconds": 1.5,
-                            "input": "PRIVATE turn input",
-                        }],
-                        "tools": [{"name": "read_file",
-                                   "output": "PRIVATE tool output"}],
+                        "turns": [
+                            {
+                                "model": "gpt-6.1-sol",
+                                "request_bytes": 100,
+                                "input_tokens": 100,
+                                "cached_tokens": 10,
+                                "cache_write_tokens": 0,
+                                "output_tokens": 20,
+                                "elapsed_seconds": 1.5,
+                                "input": "PRIVATE turn input",
+                            }
+                        ],
+                        "tools": [
+                            {"name": "read_file", "output": "PRIVATE tool output"}
+                        ],
                     },
                     "adversarial_glm": {
                         "model": "glm-5.3",
                         "status": "completed",
-                        "turns": [{
-                            "model": "z-ai/glm-5.3",
-                            "input_tokens": 80,
-                            "cached_tokens": 0,
-                            "cache_write_tokens": 0,
-                            "output_tokens": 16,
-                            "elapsed_seconds": 2.25,
-                        }],
+                        "turns": [
+                            {
+                                "model": "z-ai/glm-5.3",
+                                "input_tokens": 80,
+                                "cached_tokens": 0,
+                                "cache_write_tokens": 0,
+                                "output_tokens": 16,
+                                "elapsed_seconds": 2.25,
+                            }
+                        ],
                         "tools": [],
                     },
                     "adversarial": {
                         "model": "gpt-6.1-sol",
                         "status": "completed",
-                        "turns": [{
-                            "model": "gpt-6.1-sol",
-                            "input_tokens": 60,
-                            "cached_tokens": 0,
-                            "cache_write_tokens": 0,
-                            "output_tokens": 12,
-                            "elapsed_seconds": 1.0,
-                        }],
+                        "turns": [
+                            {
+                                "model": "gpt-6.1-sol",
+                                "input_tokens": 60,
+                                "cached_tokens": 0,
+                                "cache_write_tokens": 0,
+                                "output_tokens": 12,
+                                "elapsed_seconds": 1.0,
+                            }
+                        ],
                         "tools": [],
                     },
                     "tests": {
@@ -250,14 +338,16 @@ class StatsTests(unittest.TestCase):
                     "archaeologist": {
                         "model": "gpt-6-luna",
                         "status": "completed",
-                        "turns": [{
-                            "model": "gpt-6-luna",
-                            "input_tokens": 40,
-                            "cached_tokens": 0,
-                            "cache_write_tokens": 0,
-                            "output_tokens": 10,
-                            "elapsed_seconds": 0.5,
-                        }],
+                        "turns": [
+                            {
+                                "model": "gpt-6-luna",
+                                "input_tokens": 40,
+                                "cached_tokens": 0,
+                                "cache_write_tokens": 0,
+                                "output_tokens": 10,
+                                "elapsed_seconds": 0.5,
+                            }
+                        ],
                         "tools": [{"name": "web_search"}],
                     },
                 },
@@ -285,58 +375,182 @@ class StatsTests(unittest.TestCase):
                 "INSERT INTO requests (token, review_id, stage, model, month, "
                 "status, usage_json, cost_micros, reserved_micros, requested_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [(*row, (timestamps or {}).get(row[0])) for row in rows])
+                [(*row, (timestamps or {}).get(row[0])) for row in rows],
+            )
 
-    def usage(self, input_tokens=100, output_tokens=20, complete=True,
-              cache_write_tokens=0):
-        return json.dumps({
-            "input_tokens": input_tokens,
-            "cached_tokens": 10,
-            "cache_write_tokens": cache_write_tokens,
-            "complete": complete,
-            "output_tokens": output_tokens,
-        })
+    def usage(
+        self, input_tokens=100, output_tokens=20, complete=True, cache_write_tokens=0
+    ):
+        return json.dumps(
+            {
+                "input_tokens": input_tokens,
+                "cached_tokens": 10,
+                "cache_write_tokens": cache_write_tokens,
+                "complete": complete,
+                "output_tokens": output_tokens,
+            }
+        )
 
     def test_cost_trends_use_utc_periods_and_all_three_ledgers_once(self):
         def timestamp(value):
             return int(datetime.fromisoformat(value).timestamp())
 
-        self.create_ledger("spend.sqlite3", [
-            ("dec", "pr:1:1:1", "audit", "gpt-6-luna", "2026-12",
-             "settled", self.usage(), 11, 0),
-            ("jan", "pr:1:1:1", "audit", "gpt-6-luna", "2027-01",
-             "settled", self.usage(), 13, 0),
-            ("sunday", "pr:1:1:1", "audit", "gpt-6-luna", "2027-01",
-             "settled", self.usage(), 17, 0),
-            ("monday", "pr:1:1:1", "audit", "gpt-6-luna", "2027-01",
-             "settled", self.usage(), 19, 0),
-            ("old-dec", "pr:1:1:1", "audit", "gpt-6-luna", "2026-12",
-             "settled", self.usage(), 23, 0),
-            ("old-jan", "pr:1:1:1", "audit", "gpt-6-luna", "2027-01",
-             "settled", self.usage(), 37, 0),
-        ], timestamps={
-            "dec": timestamp("2026-12-31T23:59:59+00:00"),
-            "jan": timestamp("2027-01-01T00:00:00+00:00"),
-            "sunday": timestamp("2027-01-04T00:59:59+01:00"),
-            "monday": timestamp("2027-01-04T01:00:00+01:00"),
-        })
+        self.create_ledger(
+            "spend.sqlite3",
+            [
+                (
+                    "dec",
+                    "pr:1:1:1",
+                    "audit",
+                    "gpt-6-luna",
+                    "2026-12",
+                    "settled",
+                    self.usage(),
+                    11,
+                    0,
+                ),
+                (
+                    "jan",
+                    "pr:1:1:1",
+                    "audit",
+                    "gpt-6-luna",
+                    "2027-01",
+                    "settled",
+                    self.usage(),
+                    13,
+                    0,
+                ),
+                (
+                    "sunday",
+                    "pr:1:1:1",
+                    "audit",
+                    "gpt-6-luna",
+                    "2027-01",
+                    "settled",
+                    self.usage(),
+                    17,
+                    0,
+                ),
+                (
+                    "monday",
+                    "pr:1:1:1",
+                    "audit",
+                    "gpt-6-luna",
+                    "2027-01",
+                    "settled",
+                    self.usage(),
+                    19,
+                    0,
+                ),
+                (
+                    "old-dec",
+                    "pr:1:1:1",
+                    "audit",
+                    "gpt-6-luna",
+                    "2026-12",
+                    "settled",
+                    self.usage(),
+                    23,
+                    0,
+                ),
+                (
+                    "old-jan",
+                    "pr:1:1:1",
+                    "audit",
+                    "gpt-6-luna",
+                    "2027-01",
+                    "settled",
+                    self.usage(),
+                    37,
+                    0,
+                ),
+            ],
+            timestamps={
+                "dec": timestamp("2026-12-31T23:59:59+00:00"),
+                "jan": timestamp("2027-01-01T00:00:00+00:00"),
+                "sunday": timestamp("2027-01-04T00:59:59+01:00"),
+                "monday": timestamp("2027-01-04T01:00:00+01:00"),
+            },
+        )
         monday = timestamp("2027-01-04T00:00:00+00:00")
-        self.create_ledger("ppq-spend.sqlite3", [
-            ("ppq", "pr:1:1:1", "adversarial", "glm-5.3", "2027-01",
-             "settled", self.usage(), 29, 0),
-            ("reserved", "pr:1:1:1", "adversarial", "glm-5.3", "2027-01",
-             "reserved", None, None, 500),
-            ("unknown", "pr:1:1:1", "adversarial", "glm-5.3", "2027-01",
-             "unknown", None, None, 700),
-        ], timestamps=dict.fromkeys(("ppq", "reserved", "unknown"), monday))
-        self.create_ledger("followup/spend.sqlite3", [
-            ("followup", "followup:1", "addressed", "gpt-6-luna", "2027-01",
-             "settled", self.usage(), 31, 0),
-            ("released", "followup:1", "addressed", "gpt-6-luna", "2027-01",
-             "released", None, None, 0),
-            ("duplicate", "followup:1", "addressed", "gpt-6-luna", "2027-01",
-             "duplicate", None, None, 0),
-        ], timestamps=dict.fromkeys(("followup", "released", "duplicate"), monday))
+        self.create_ledger(
+            "ppq-spend.sqlite3",
+            [
+                (
+                    "ppq",
+                    "pr:1:1:1",
+                    "adversarial",
+                    "glm-5.3",
+                    "2027-01",
+                    "settled",
+                    self.usage(),
+                    29,
+                    0,
+                ),
+                (
+                    "reserved",
+                    "pr:1:1:1",
+                    "adversarial",
+                    "glm-5.3",
+                    "2027-01",
+                    "reserved",
+                    None,
+                    None,
+                    500,
+                ),
+                (
+                    "unknown",
+                    "pr:1:1:1",
+                    "adversarial",
+                    "glm-5.3",
+                    "2027-01",
+                    "unknown",
+                    None,
+                    None,
+                    700,
+                ),
+            ],
+            timestamps=dict.fromkeys(("ppq", "reserved", "unknown"), monday),
+        )
+        self.create_ledger(
+            "followup/spend.sqlite3",
+            [
+                (
+                    "followup",
+                    "followup:1",
+                    "addressed",
+                    "gpt-6-luna",
+                    "2027-01",
+                    "settled",
+                    self.usage(),
+                    31,
+                    0,
+                ),
+                (
+                    "released",
+                    "followup:1",
+                    "addressed",
+                    "gpt-6-luna",
+                    "2027-01",
+                    "released",
+                    None,
+                    None,
+                    0,
+                ),
+                (
+                    "duplicate",
+                    "followup:1",
+                    "addressed",
+                    "gpt-6-luna",
+                    "2027-01",
+                    "duplicate",
+                    None,
+                    None,
+                    0,
+                ),
+            ],
+            timestamps=dict.fromkeys(("followup", "released", "duplicate"), monday),
+        )
         with patch.object(stats, "datetime", wraps=datetime) as clock:
             clock.now.return_value = datetime(2027, 1, 4, 0, 0, 30, tzinfo=timezone.utc)
             summary = stats.collect_stats(self.state_dir, self.report_dir)
@@ -344,32 +558,76 @@ class StatsTests(unittest.TestCase):
         trends = summary["cost_trends"]
         self.assertEqual(trends["timezone"], "UTC")
         self.assertEqual(trends["week_start"], "Monday")
-        self.assertEqual(trends["current_day"], {
-            "period": "2027-01-04", "request_count": 7, "known_cost_micros": 79,
-            "reserved_micros": 1200, "unknown_cost_request_count": 2})
+        self.assertEqual(
+            trends["current_day"],
+            {
+                "period": "2027-01-04",
+                "request_count": 7,
+                "known_cost_micros": 79,
+                "reserved_micros": 1200,
+                "unknown_cost_request_count": 2,
+            },
+        )
         self.assertEqual(trends["current_week"], trends["current_day"])
-        self.assertEqual(trends["current_month"], {
-            "period": "2027-01", "request_count": 10, "known_cost_micros": 146,
-            "reserved_micros": 1200, "unknown_cost_request_count": 2})
-        self.assertEqual([(row["period"], row["known_cost_micros"])
-                          for row in trends["days"]], [
-            ("2026-12-31", 11), ("2027-01-01", 13), ("2027-01-02", 0),
-            ("2027-01-03", 17), ("2027-01-04", 79)])
-        self.assertEqual([(row["period"], row["known_cost_micros"])
-                          for row in trends["weeks"]], [
-            ("2026-12-28", 41), ("2027-01-04", 79)])
-        self.assertEqual([(row["period"], row["known_cost_micros"])
-                          for row in trends["months"]], [("2026-12", 34), ("2027-01", 146)])
-        self.assertEqual(trends["undated"], {
-            "request_count": 2, "known_cost_micros": 60,
-            "reserved_micros": 0, "unknown_cost_request_count": 0})
+        self.assertEqual(
+            trends["current_month"],
+            {
+                "period": "2027-01",
+                "request_count": 10,
+                "known_cost_micros": 146,
+                "reserved_micros": 1200,
+                "unknown_cost_request_count": 2,
+            },
+        )
+        self.assertEqual(
+            [(row["period"], row["known_cost_micros"]) for row in trends["days"]],
+            [
+                ("2026-12-31", 11),
+                ("2027-01-01", 13),
+                ("2027-01-02", 0),
+                ("2027-01-03", 17),
+                ("2027-01-04", 79),
+            ],
+        )
+        self.assertEqual(
+            [(row["period"], row["known_cost_micros"]) for row in trends["weeks"]],
+            [("2026-12-28", 41), ("2027-01-04", 79)],
+        )
+        self.assertEqual(
+            [(row["period"], row["known_cost_micros"]) for row in trends["months"]],
+            [("2026-12", 34), ("2027-01", 146)],
+        )
+        self.assertEqual(
+            trends["undated"],
+            {
+                "request_count": 2,
+                "known_cost_micros": 60,
+                "reserved_micros": 0,
+                "unknown_cost_request_count": 0,
+            },
+        )
         self.assertEqual(summary["spend"]["lifetime"]["known_cost_micros"], 149)
 
     def test_cost_trends_bound_windows_and_fill_only_observed_history(self):
-        self.create_ledger("spend.sqlite3", [
-            ("old", "pr:1:1:1", "audit", "gpt-6-luna", "2025-01",
-             "settled", self.usage(), 100, 0),
-        ], timestamps={"old": int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp())})
+        self.create_ledger(
+            "spend.sqlite3",
+            [
+                (
+                    "old",
+                    "pr:1:1:1",
+                    "audit",
+                    "gpt-6-luna",
+                    "2025-01",
+                    "settled",
+                    self.usage(),
+                    100,
+                    0,
+                ),
+            ],
+            timestamps={
+                "old": int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp())
+            },
+        )
         with patch.object(stats, "datetime", wraps=datetime) as clock:
             clock.now.return_value = datetime(2027, 1, 4, tzinfo=timezone.utc)
             trends = stats.collect_stats(self.state_dir, self.report_dir)["cost_trends"]
@@ -384,10 +642,22 @@ class StatsTests(unittest.TestCase):
             self.assertEqual(trends[period]["known_cost_micros"], 0)
 
     def test_cost_trends_do_not_invent_dates_for_old_rows(self):
-        self.create_ledger("spend.sqlite3", [
-            ("old", "pr:1:1:1", "audit", "gpt-6-luna", "2026-12",
-             "settled", self.usage(), 100, 0),
-        ])
+        self.create_ledger(
+            "spend.sqlite3",
+            [
+                (
+                    "old",
+                    "pr:1:1:1",
+                    "audit",
+                    "gpt-6-luna",
+                    "2026-12",
+                    "settled",
+                    self.usage(),
+                    100,
+                    0,
+                ),
+            ],
+        )
         with patch.object(stats, "datetime", wraps=datetime) as clock:
             clock.now.return_value = datetime(2027, 1, 4, tzinfo=timezone.utc)
             trends = stats.collect_stats(self.state_dir, self.report_dir)["cost_trends"]
@@ -399,7 +669,11 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(trends["months"][0]["known_cost_micros"], 100)
 
     def test_cost_trends_empty_ledgers_have_no_history(self):
-        for filename in ("spend.sqlite3", "ppq-spend.sqlite3", "followup/spend.sqlite3"):
+        for filename in (
+            "spend.sqlite3",
+            "ppq-spend.sqlite3",
+            "followup/spend.sqlite3",
+        ):
             self.create_ledger(filename, [])
         trends = stats.collect_stats(self.state_dir, self.report_dir)["cost_trends"]
         for period in ("days", "weeks", "months"):
@@ -414,12 +688,15 @@ class StatsTests(unittest.TestCase):
         reviewed = self.enqueue(42, "a" * 40)
         self.save_complete(reviewed, self.result())
         skipped = self.enqueue(43, "c" * 40)
-        self.save_complete(skipped, {
-            "base_sha": "d" * 40,
-            "head_sha": "c" * 40,
-            "content": "Skipped: no production changes",
-            "debug": {"skip": "no production changes"},
-        })
+        self.save_complete(
+            skipped,
+            {
+                "base_sha": "d" * 40,
+                "head_sha": "c" * 40,
+                "content": "Skipped: no production changes",
+                "debug": {"skip": "no production changes"},
+            },
+        )
         failed = self.enqueue(44, "e" * 40)
         self.assertEqual(self.jobs.retry(failed, "first failure"), "retry")
         failed_retry = self.jobs.claim()
@@ -430,33 +707,101 @@ class StatsTests(unittest.TestCase):
                 "force, engine_identity, status, attempts, review_result) "
                 "VALUES (45, 1, 'master', ?, 'synchronize', 0, ?, "
                 "'complete', 0, ?)",
-                ("f" * 40, json.dumps({"name": "current"}), "{not json}"))
+                ("f" * 40, json.dumps({"name": "current"}), "{not json}"),
+            )
 
         self.report_dir.mkdir()
-        report_name = f'42-{"a" * 40}-{reviewed["id"]}-{reviewed["generation"]}.html'
+        report_name = f"42-{'a' * 40}-{reviewed['id']}-{reviewed['generation']}.html"
         (self.report_dir / report_name).write_text("public report", encoding="utf-8")
-        review_id = f'pr:42:{reviewed["id"]}:{reviewed["generation"]}'
-        failed_id = f'pr:44:{failed["id"]}:{failed["generation"]}'
-        self.create_ledger("spend.sqlite3", [
-            ("openai-1", review_id, "independent", "gpt-6.1-sol", month,
-             "settled", self.usage(100, 20), 100, 0),
-            ("openai-2", review_id, "independent", "gpt-6.1-sol", month,
-             "uncertain", None, None, 500),
-            ("openai-3", failed_id, "independent", "gpt-6.1-sol", month,
-             "settled", self.usage(50, 10, complete=False,
-                                    cache_write_tokens=None), 200, 0),
-            ("openai-4", review_id, "adversarial", "gpt-6.1-sol", month,
-             "settled", self.usage(60, 12), 150, 0),
-            ("openai-5", review_id, "archaeologist", "gpt-6-luna", month,
-             "settled", self.usage(40, 10), 50, 0),
-        ])
-        self.create_ledger("ppq-spend.sqlite3", [
-            ("glm-1", review_id, "adversarial_glm", "z-ai/glm-5.3", month,
-             "settled", self.usage(80, 16), 300, 0),
-            ("glm-2", review_id, "adversarial_glm", "z-ai/glm-5.3", month,
-             "unknown", self.usage(70, 14, complete=False,
-                                    cache_write_tokens=None), None, 700),
-        ])
+        review_id = f"pr:42:{reviewed['id']}:{reviewed['generation']}"
+        failed_id = f"pr:44:{failed['id']}:{failed['generation']}"
+        self.create_ledger(
+            "spend.sqlite3",
+            [
+                (
+                    "openai-1",
+                    review_id,
+                    "independent",
+                    "gpt-6.1-sol",
+                    month,
+                    "settled",
+                    self.usage(100, 20),
+                    100,
+                    0,
+                ),
+                (
+                    "openai-2",
+                    review_id,
+                    "independent",
+                    "gpt-6.1-sol",
+                    month,
+                    "uncertain",
+                    None,
+                    None,
+                    500,
+                ),
+                (
+                    "openai-3",
+                    failed_id,
+                    "independent",
+                    "gpt-6.1-sol",
+                    month,
+                    "settled",
+                    self.usage(50, 10, complete=False, cache_write_tokens=None),
+                    200,
+                    0,
+                ),
+                (
+                    "openai-4",
+                    review_id,
+                    "adversarial",
+                    "gpt-6.1-sol",
+                    month,
+                    "settled",
+                    self.usage(60, 12),
+                    150,
+                    0,
+                ),
+                (
+                    "openai-5",
+                    review_id,
+                    "archaeologist",
+                    "gpt-6-luna",
+                    month,
+                    "settled",
+                    self.usage(40, 10),
+                    50,
+                    0,
+                ),
+            ],
+        )
+        self.create_ledger(
+            "ppq-spend.sqlite3",
+            [
+                (
+                    "glm-1",
+                    review_id,
+                    "adversarial_glm",
+                    "z-ai/glm-5.3",
+                    month,
+                    "settled",
+                    self.usage(80, 16),
+                    300,
+                    0,
+                ),
+                (
+                    "glm-2",
+                    review_id,
+                    "adversarial_glm",
+                    "z-ai/glm-5.3",
+                    month,
+                    "unknown",
+                    self.usage(70, 14, complete=False, cache_write_tokens=None),
+                    None,
+                    700,
+                ),
+            ],
+        )
 
         summary = stats.collect_stats(self.state_dir, self.report_dir)
         text = json.dumps(summary, sort_keys=True)
@@ -472,12 +817,18 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(summary["overview"]["saved_reviews"], 1)
         self.assertEqual(summary["overview"]["published_reviews"], 1)
         self.assertEqual(summary["overview"]["saved_findings"], 1)
-        self.assertEqual(summary["overview"]["coverage"], {
-            "complete": 0, "failed": 1, "partial": 0, "unknown": 0})
-        self.assertEqual(summary["overview"]["context_coverage"], {
-            "complete": 1, "failed": 0, "partial": 0, "unknown": 0})
-        self.assertEqual(summary["overview"]["verification_status"], {
-            "complete": 0, "failed": 1, "partial": 0, "unknown": 0})
+        self.assertEqual(
+            summary["overview"]["coverage"],
+            {"complete": 0, "failed": 1, "partial": 0, "unknown": 0},
+        )
+        self.assertEqual(
+            summary["overview"]["context_coverage"],
+            {"complete": 1, "failed": 0, "partial": 0, "unknown": 0},
+        )
+        self.assertEqual(
+            summary["overview"]["verification_status"],
+            {"complete": 0, "failed": 1, "partial": 0, "unknown": 0},
+        )
         self.assertEqual(summary["overview"]["finding_kinds"], {"defect": 1})
         self.assertEqual(summary["overview"]["finding_severities"], {"high": 1})
         self.assertEqual(summary["spend"]["lifetime"]["request_count"], 7)
@@ -486,33 +837,39 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(summary["spend"]["lifetime"]["unknown_cost_request_count"], 2)
         self.assertEqual(summary["overview"]["archaeology"]["research_completed"], 1)
         self.assertEqual(summary["overview"]["archaeology"]["published_concerns"], 1)
-        self.assertEqual(summary["overview"]["archaeology"]["assessment_status_counts"],
-                         {"verified": 1})
+        self.assertEqual(
+            summary["overview"]["archaeology"]["assessment_status_counts"],
+            {"verified": 1},
+        )
 
         leaderboard = summary["stage_model_leaderboard"]
         self.assertFalse(any(item["stage"] == "archaeologist" for item in leaderboard))
-        glm_leader = next(item for item in leaderboard
-                          if item["stage"] == "adversarial_glm")
+        glm_leader = next(
+            item for item in leaderboard if item["stage"] == "adversarial_glm"
+        )
         self.assertEqual(glm_leader["configured_model"], "glm-5.3")
         self.assertEqual(glm_leader["accepted_findings"], 1)
         self.assertEqual(glm_leader["selected_candidate_findings"], 1)
         self.assertEqual(glm_leader["shared_findings"], 1)
         self.assertEqual(glm_leader["known_cost_micros"], 300)
         self.assertEqual(glm_leader["reserved_micros"], 700)
-        glm_stage = next(item for item in summary["stages"]
-                         if item["stage"] == "adversarial_glm")
+        glm_stage = next(
+            item for item in summary["stages"] if item["stage"] == "adversarial_glm"
+        )
         self.assertEqual(glm_stage["configured_model"], "glm-5.3")
         self.assertEqual(glm_stage["ledger"]["request_count"], 2)
         self.assertEqual(glm_stage["known_cost_per_accepted_finding_micros"], 300)
-        archaeology = next(item for item in summary["stages"]
-                           if item["stage"] == "archaeologist")
+        archaeology = next(
+            item for item in summary["stages"] if item["stage"] == "archaeologist"
+        )
         self.assertTrue(archaeology["concept_stage"])
         self.assertEqual(archaeology["conceptual_concerns"], 1)
         self.assertEqual(archaeology["accepted_findings"], 0)
         self.assertEqual(archaeology["ledger"]["known_cost_micros"], 50)
 
-        review = next(item for item in summary["reviews"]
-                      if item["job_id"] == reviewed["id"])
+        review = next(
+            item for item in summary["reviews"] if item["job_id"] == reviewed["id"]
+        )
         self.assertEqual(review["job_id"], reviewed["id"])
         self.assertEqual(review["report_name"], report_name)
         self.assertEqual(review["ledger"]["known_cost_micros"], 600)
@@ -530,30 +887,51 @@ class StatsTests(unittest.TestCase):
 
     def test_adversarial_comparison_requires_all_three_completed_stages(self):
         comparison = stats._new_adversarial_comparison()
-        debug = {"stages": {name: {"status": "completed"}
-                            for name in stats.ADVERSARIAL_STAGES}}
-        requests = [{"stage": name, "cost_micros": 100,
-                     "status": "reserved", "reserved_micros": 200}
-                    for name in stats.ADVERSARIAL_STAGES]
-        requests.append({"stage": "adversarial_glm", "cost_micros": 999,
-                         "status": "reserved", "reserved_micros": 999})
-        metrics = {name: {"sole_source_findings": index,
-                          "shared_findings": 1}
-                   for index, name in enumerate(stats.ADVERSARIAL_STAGES, 1)}
+        debug = {
+            "stages": {
+                name: {"status": "completed"} for name in stats.ADVERSARIAL_STAGES
+            }
+        }
+        requests = [
+            {
+                "stage": name,
+                "cost_micros": 100,
+                "status": "reserved",
+                "reserved_micros": 200,
+            }
+            for name in stats.ADVERSARIAL_STAGES
+        ]
+        requests.append(
+            {
+                "stage": "adversarial_glm",
+                "cost_micros": 999,
+                "status": "reserved",
+                "reserved_micros": 999,
+            }
+        )
+        metrics = {
+            name: {"sole_source_findings": index, "shared_findings": 1}
+            for index, name in enumerate(stats.ADVERSARIAL_STAGES, 1)
+        }
         with patch.object(core_trace, "stage_metrics", return_value=metrics):
             stats._add_adversarial_comparison(comparison, debug, requests)
             debug["stages"]["adversarial_gemini"]["status"] = "failed"
             stats._add_adversarial_comparison(comparison, debug, requests)
         self.assertEqual(comparison["completed_reviews"], 1)
-        self.assertEqual(comparison["sole_accepted"], {
-            "adversarial": 1, "adversarial_deepseek": 2,
-            "adversarial_gemini": 3})
-        self.assertEqual(comparison["shared_accepted"],
-                         dict.fromkeys(stats.ADVERSARIAL_STAGES, 1))
-        self.assertEqual(comparison["known_cost_micros"],
-                         dict.fromkeys(stats.ADVERSARIAL_STAGES, 100))
-        self.assertEqual(comparison["reserved_micros"],
-                         dict.fromkeys(stats.ADVERSARIAL_STAGES, 200))
+        self.assertEqual(
+            comparison["sole_accepted"],
+            {"adversarial": 1, "adversarial_deepseek": 2, "adversarial_gemini": 3},
+        )
+        self.assertEqual(
+            comparison["shared_accepted"], dict.fromkeys(stats.ADVERSARIAL_STAGES, 1)
+        )
+        self.assertEqual(
+            comparison["known_cost_micros"],
+            dict.fromkeys(stats.ADVERSARIAL_STAGES, 100),
+        )
+        self.assertEqual(
+            comparison["reserved_micros"], dict.fromkeys(stats.ADVERSARIAL_STAGES, 200)
+        )
 
     def test_missing_history_does_not_create_databases_and_uses_readonly_uri(self):
         empty = self.state_dir / "empty"
@@ -563,19 +941,36 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(set(empty.iterdir()), before)
         self.assertTrue(summary["inventory"]["missing_sources"]["jobs_db"])
         self.assertTrue(summary["inventory"]["missing_sources"]["openai_ledger"])
-        self.assertTrue(
-            summary["inventory"]["missing_sources"]["followup_assessments"])
+        self.assertTrue(summary["inventory"]["missing_sources"]["followup_assessments"])
         self.assertEqual(summary["cost_trends"]["days"], [])
         self.assertEqual(summary["cost_trends"]["months"], [])
 
         job = self.enqueue(50, "a" * 40)
         self.save_complete(job, self.result())
-        for filename in ("spend.sqlite3", "ppq-spend.sqlite3", "followup/spend.sqlite3"):
-            self.create_ledger(filename, [
-                ("old", "pr:50:1:1", "audit", "gpt-6-luna", "2026-09",
-                 "settled", self.usage(), 100, 0),
-            ])
-        ledger_bytes = {path: path.read_bytes() for path in self.state_dir.rglob("*.sqlite3")}
+        for filename in (
+            "spend.sqlite3",
+            "ppq-spend.sqlite3",
+            "followup/spend.sqlite3",
+        ):
+            self.create_ledger(
+                filename,
+                [
+                    (
+                        "old",
+                        "pr:50:1:1",
+                        "audit",
+                        "gpt-6-luna",
+                        "2026-09",
+                        "settled",
+                        self.usage(),
+                        100,
+                        0,
+                    ),
+                ],
+            )
+        ledger_bytes = {
+            path: path.read_bytes() for path in self.state_dir.rglob("*.sqlite3")
+        }
         real_connect = sqlite3.connect
         calls = []
 
@@ -596,89 +991,143 @@ class StatsTests(unittest.TestCase):
     def test_current_month_provider_totals_do_not_reuse_lifetime_providers(self):
         month = datetime.now(timezone.utc).strftime("%Y-%m")
         old_month = "1999-01"
-        self.create_ledger("spend.sqlite3", [
-            ("current-openai", "pr:1:1:1", "independent", "gpt-6-luna",
-             month, "settled", self.usage(100, 20), 10, 0),
-        ])
-        self.create_ledger("ppq-spend.sqlite3", [
-            ("old-glm", "pr:2:2:1", "adversarial_glm", "z-ai/glm-5.3",
-             old_month, "settled", self.usage(100, 20), 20, 0),
-        ])
+        self.create_ledger(
+            "spend.sqlite3",
+            [
+                (
+                    "current-openai",
+                    "pr:1:1:1",
+                    "independent",
+                    "gpt-6-luna",
+                    month,
+                    "settled",
+                    self.usage(100, 20),
+                    10,
+                    0,
+                ),
+            ],
+        )
+        self.create_ledger(
+            "ppq-spend.sqlite3",
+            [
+                (
+                    "old-glm",
+                    "pr:2:2:1",
+                    "adversarial_glm",
+                    "z-ai/glm-5.3",
+                    old_month,
+                    "settled",
+                    self.usage(100, 20),
+                    20,
+                    0,
+                ),
+            ],
+        )
 
         summary = stats.collect_stats(self.state_dir, self.report_dir)
 
         self.assertEqual(
             summary["spend"]["current_month"]["providers"]["openai"][
-                "known_cost_micros"], 10)
+                "known_cost_micros"
+            ],
+            10,
+        )
         self.assertNotIn("ppq", summary["spend"]["current_month"]["providers"])
         self.assertEqual(
-            summary["spend"]["lifetime"]["providers"]["ppq"]["known_cost_micros"],
-            20)
+            summary["spend"]["lifetime"]["providers"]["ppq"]["known_cost_micros"], 20
+        )
 
     def test_old_publish_decisions_without_attribution_do_not_credit_agents(self):
         job = self.enqueue(60, "a" * 40)
-        self.save_complete(job, {
-            "base_sha": "b" * 40,
-            "head_sha": "a" * 40,
-            "content": "Review body",
-            "debug": {
-                "coverage": {"status": "complete", "limitations": []},
-                "candidate_sources": {"independent:1": "independent"},
-                "decisions": [{
-                    "candidate_ids": ["independent:1"],
-                    "disposition": "publish",
-                    "reason": "verified",
-                    "finding": {
-                        "kind": "defect",
-                        "severity": "medium",
-                        "path": "src/init.cpp",
-                        "line": 5,
-                        "side": "head",
-                        "title": "Old finding",
-                        "body": "Finding text",
-                    },
-                }],
-                "stages": {
-                    "independent": {
-                        "model": "gpt-6-luna",
-                        "status": "completed",
-                        "turns": [],
-                        "tools": [],
+        self.save_complete(
+            job,
+            {
+                "base_sha": "b" * 40,
+                "head_sha": "a" * 40,
+                "content": "Review body",
+                "debug": {
+                    "coverage": {"status": "complete", "limitations": []},
+                    "candidate_sources": {"independent:1": "independent"},
+                    "decisions": [
+                        {
+                            "candidate_ids": ["independent:1"],
+                            "disposition": "publish",
+                            "reason": "verified",
+                            "finding": {
+                                "kind": "defect",
+                                "severity": "medium",
+                                "path": "src/init.cpp",
+                                "line": 5,
+                                "side": "head",
+                                "title": "Old finding",
+                                "body": "Finding text",
+                            },
+                        }
+                    ],
+                    "stages": {
+                        "independent": {
+                            "model": "gpt-6-luna",
+                            "status": "completed",
+                            "turns": [],
+                            "tools": [],
+                        },
                     },
                 },
             },
-        })
-        self.jobs.enqueue(61, "master", "c" * 40, "synchronize",
-                          engine_identity={"name": "narrative"})
+        )
+        self.jobs.enqueue(
+            61, "master", "c" * 40, "synchronize", engine_identity={"name": "narrative"}
+        )
         unsupported = self.jobs.claim()
-        self.save_complete(unsupported, {
-            "schema_version": 1,
-            "base_sha": "b" * 40,
-            "head_sha": "c" * 40,
-            "content": "Narrative review.",
-            "engine": {"name": "narrative", "code_sha256": None,
-                       "config_sha256": None, "config": None},
-            "output": {"schema_version": 1, "data": {}, "exports": {}},
-            "run": {"status": "completed", "metrics": {}, "attempt": {},
-                    "skipped": False},
-        })
-        self.create_followups([(unsupported["id"], {
-            "status": "skipped", "reason": "findings_export_unsupported",
-            "findings": [],
-        })])
+        self.save_complete(
+            unsupported,
+            {
+                "schema_version": 1,
+                "base_sha": "b" * 40,
+                "head_sha": "c" * 40,
+                "content": "Narrative review.",
+                "engine": {
+                    "name": "narrative",
+                    "code_sha256": None,
+                    "config_sha256": None,
+                    "config": None,
+                },
+                "output": {"schema_version": 1, "data": {}, "exports": {}},
+                "run": {
+                    "status": "completed",
+                    "metrics": {},
+                    "attempt": {},
+                    "skipped": False,
+                },
+            },
+        )
+        self.create_followups(
+            [
+                (
+                    unsupported["id"],
+                    {
+                        "status": "skipped",
+                        "reason": "findings_export_unsupported",
+                        "findings": [],
+                    },
+                )
+            ]
+        )
 
         summary = stats.collect_stats(self.state_dir, self.report_dir)
-        stage = next(item for item in summary["stages"]
-                     if item["stage"] == "independent")
-        review = next(item for item in summary["reviews"]
-                      if item["job_id"] == job["id"])
+        stage = next(
+            item for item in summary["stages"] if item["stage"] == "independent"
+        )
+        review = next(
+            item for item in summary["reviews"] if item["job_id"] == job["id"]
+        )
 
         self.assertEqual(summary["overview"]["saved_findings"], 1)
         self.assertEqual(summary["overview"]["findings_unavailable_reviews"], 1)
-        self.assertEqual(
-            summary["addressed_findings"]["unsupported_exports"], 1)
-        unsupported_review = next(item for item in summary["reviews"]
-                                  if item["job_id"] == unsupported["id"])
+        self.assertEqual(summary["addressed_findings"]["unsupported_exports"], 1)
+        unsupported_review = next(
+            item for item in summary["reviews"] if item["job_id"] == unsupported["id"]
+        )
         self.assertIsNone(unsupported_review["findings"]["saved"])
         self.assertEqual(summary["overview"]["coverage"]["complete"], 1)
         self.assertEqual(summary["overview"]["context_coverage"]["unknown"], 2)
@@ -693,15 +1142,17 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(review["verification_status"], "unknown")
         self.assertIsNone(review["ledger"]["known_cost_micros"])
         self.assertIsNone(
-            summary["distributions"]["saved_review_known_cost_micros"]["median"])
+            summary["distributions"]["saved_review_known_cost_micros"]["median"]
+        )
         self.assertEqual(
-            summary["distributions"]["saved_review_cost_missing_ledger_count"], 2)
+            summary["distributions"]["saved_review_cost_missing_ledger_count"], 2
+        )
 
     def test_addressed_findings_are_deduped_and_validated(self):
         source = self.enqueue(80, "a" * 40)
         self.save_complete(source, self.result(head="a" * 40))
         self.report_dir.mkdir()
-        report_name = f'80-{"a" * 40}-{source["id"]}-{source["generation"]}.html'
+        report_name = f"80-{'a' * 40}-{source['id']}-{source['generation']}.html"
         (self.report_dir / report_name).write_text("public report", encoding="utf-8")
 
         superseded = self.enqueue(80, "c" * 40)
@@ -714,86 +1165,110 @@ class StatsTests(unittest.TestCase):
         running = self.enqueue(80, "e" * 40)
         self.assertTrue(self.jobs.save_result(running, self.result(head="e" * 40)))
 
-        self.create_followups([
-            (superseded["id"], {
-                "assessed_at": "2026-10-07T11:00:00Z",
-                "model": "gpt-6-luna",
-                "findings": [{
-                    "source_job_id": source["id"],
-                    "source_generation": source["generation"],
-                    "finding_id": "finding:1",
-                    "title": "Merged finding",
-                    "path": "src/node.cpp",
-                    "old_head": "a" * 40,
-                    "new_head": "c" * 40,
-                    "status": "still_present",
-                    "reason": "The old issue remains.",
-                    "evidence": "The diff does not touch the guard.",
-                }],
-            }),
-            (addressed["id"], {
-                "assessed_at": "2026-10-07T12:00:00Z",
-                "model": "gpt-6-luna",
-                "findings": [{
-                    "source_job_id": source["id"],
-                    "source_generation": source["generation"],
-                    "finding_id": "finding:1",
-                    "title": "Merged finding",
-                    "path": "src/node.cpp",
-                    "old_head": "a" * 40,
-                    "new_head": "d" * 40,
-                    "status": "addressed",
-                    "reason": "The follow-up adds the missing guard.",
-                    "evidence": "src/node.cpp now rejects the invalid state.",
-                }, {
-                    "source_job_id": source["id"],
-                    "source_generation": source["generation"],
-                    "finding_id": "missing:finding",
-                    "old_head": "a" * 40,
-                    "new_head": "d" * 40,
-                    "status": "addressed",
-                }, {
-                    "source_job_id": source["id"],
-                    "source_generation": source["generation"],
-                    "finding_id": "finding:1",
-                    "old_head": "b" * 40,
-                    "new_head": "d" * 40,
-                    "status": "addressed",
-                }, {
-                    "source_job_id": True,
-                    "source_generation": source["generation"],
-                    "finding_id": "finding:1",
-                    "old_head": "a" * 40,
-                    "new_head": "d" * 40,
-                    "status": "addressed",
-                },
-                ],
-            }),
-            (running["id"], {
-                "assessed_at": "2026-10-07T13:00:00Z",
-                "model": "gpt-6-luna",
-                "findings": [{
-                    "source_job_id": source["id"],
-                    "source_generation": source["generation"],
-                    "finding_id": "finding:1",
-                    "old_head": "a" * 40,
-                    "new_head": "e" * 40,
-                    "status": "still_present",
-                }],
-            }),
-            (9999, {
-                "assessed_at": "2026-10-07T14:00:00Z",
-                "model": "gpt-6-luna",
-                "findings": [{
-                    "source_job_id": source["id"],
-                    "source_generation": source["generation"],
-                    "finding_id": "finding:1",
-                    "old_head": "a" * 40,
-                    "new_head": "f" * 40,
-                    "status": "addressed",
-                }],
-            }),
-        ])
+        self.create_followups(
+            [
+                (
+                    superseded["id"],
+                    {
+                        "assessed_at": "2026-10-07T11:00:00Z",
+                        "model": "gpt-6-luna",
+                        "findings": [
+                            {
+                                "source_job_id": source["id"],
+                                "source_generation": source["generation"],
+                                "finding_id": "finding:1",
+                                "title": "Merged finding",
+                                "path": "src/node.cpp",
+                                "old_head": "a" * 40,
+                                "new_head": "c" * 40,
+                                "status": "still_present",
+                                "reason": "The old issue remains.",
+                                "evidence": "The diff does not touch the guard.",
+                            }
+                        ],
+                    },
+                ),
+                (
+                    addressed["id"],
+                    {
+                        "assessed_at": "2026-10-07T12:00:00Z",
+                        "model": "gpt-6-luna",
+                        "findings": [
+                            {
+                                "source_job_id": source["id"],
+                                "source_generation": source["generation"],
+                                "finding_id": "finding:1",
+                                "title": "Merged finding",
+                                "path": "src/node.cpp",
+                                "old_head": "a" * 40,
+                                "new_head": "d" * 40,
+                                "status": "addressed",
+                                "reason": "The follow-up adds the missing guard.",
+                                "evidence": "src/node.cpp now rejects the invalid state.",
+                            },
+                            {
+                                "source_job_id": source["id"],
+                                "source_generation": source["generation"],
+                                "finding_id": "missing:finding",
+                                "old_head": "a" * 40,
+                                "new_head": "d" * 40,
+                                "status": "addressed",
+                            },
+                            {
+                                "source_job_id": source["id"],
+                                "source_generation": source["generation"],
+                                "finding_id": "finding:1",
+                                "old_head": "b" * 40,
+                                "new_head": "d" * 40,
+                                "status": "addressed",
+                            },
+                            {
+                                "source_job_id": True,
+                                "source_generation": source["generation"],
+                                "finding_id": "finding:1",
+                                "old_head": "a" * 40,
+                                "new_head": "d" * 40,
+                                "status": "addressed",
+                            },
+                        ],
+                    },
+                ),
+                (
+                    running["id"],
+                    {
+                        "assessed_at": "2026-10-07T13:00:00Z",
+                        "model": "gpt-6-luna",
+                        "findings": [
+                            {
+                                "source_job_id": source["id"],
+                                "source_generation": source["generation"],
+                                "finding_id": "finding:1",
+                                "old_head": "a" * 40,
+                                "new_head": "e" * 40,
+                                "status": "still_present",
+                            }
+                        ],
+                    },
+                ),
+                (
+                    9999,
+                    {
+                        "assessed_at": "2026-10-07T14:00:00Z",
+                        "model": "gpt-6-luna",
+                        "findings": [
+                            {
+                                "source_job_id": source["id"],
+                                "source_generation": source["generation"],
+                                "finding_id": "finding:1",
+                                "old_head": "a" * 40,
+                                "new_head": "f" * 40,
+                                "status": "addressed",
+                            }
+                        ],
+                    },
+                ),
+            ]
+        )
         self.add_malformed_followup()
 
         summary = stats.collect_stats(self.state_dir, self.report_dir)
@@ -804,19 +1279,21 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(addressed_summary["source_published_findings"], 1)
         self.assertEqual(addressed_summary["assessed_source_reviews"], 1)
         self.assertEqual(addressed_summary["assessment_jobs"], 1)
-        self.assertEqual(addressed_summary["status_counts"], {
-            "addressed": 1,
-            "partially_addressed": 0,
-            "still_present": 0,
-            "unclear": 0,
-        })
+        self.assertEqual(
+            addressed_summary["status_counts"],
+            {
+                "addressed": 1,
+                "partially_addressed": 0,
+                "still_present": 0,
+                "unclear": 0,
+            },
+        )
         self.assertEqual(findings[0]["source_job_id"], source["id"])
         self.assertEqual(findings[0]["assessment_job_id"], addressed["id"])
         self.assertEqual(findings[0]["source_report_name"], report_name)
         self.assertEqual(findings[0]["old_head"], "a" * 40)
         self.assertEqual(findings[0]["new_head"], "d" * 40)
         self.assertEqual(summary["inventory"]["malformed_followups"], 1)
-
 
     def test_time_series_uses_trace_and_commit_dates_only(self):
         checkout = self.state_dir / "followup" / "checkout"
@@ -838,32 +1315,44 @@ class StatsTests(unittest.TestCase):
         addressed_missing = self.enqueue(91, missing_head)
         self.save_complete(addressed_missing, self.result(head=missing_head))
 
-        self.create_followups([
-            (addressed["id"], {
-                "assessed_at": "2099-12-01T00:00:00Z",
-                "model": "gpt-6-luna",
-                "findings": [{
-                    "source_job_id": source["id"],
-                    "source_generation": source["generation"],
-                    "finding_id": "finding:1",
-                    "old_head": old_head,
-                    "new_head": new_head,
-                    "status": "addressed",
-                }],
-            }),
-            (addressed_missing["id"], {
-                "assessed_at": "2099-12-01T00:00:00Z",
-                "model": "gpt-6-luna",
-                "findings": [{
-                    "source_job_id": source_missing["id"],
-                    "source_generation": source_missing["generation"],
-                    "finding_id": "finding:1",
-                    "old_head": old_head_two,
-                    "new_head": missing_head,
-                    "status": "partially_addressed",
-                }],
-            }),
-        ])
+        self.create_followups(
+            [
+                (
+                    addressed["id"],
+                    {
+                        "assessed_at": "2099-12-01T00:00:00Z",
+                        "model": "gpt-6-luna",
+                        "findings": [
+                            {
+                                "source_job_id": source["id"],
+                                "source_generation": source["generation"],
+                                "finding_id": "finding:1",
+                                "old_head": old_head,
+                                "new_head": new_head,
+                                "status": "addressed",
+                            }
+                        ],
+                    },
+                ),
+                (
+                    addressed_missing["id"],
+                    {
+                        "assessed_at": "2099-12-01T00:00:00Z",
+                        "model": "gpt-6-luna",
+                        "findings": [
+                            {
+                                "source_job_id": source_missing["id"],
+                                "source_generation": source_missing["generation"],
+                                "finding_id": "finding:1",
+                                "old_head": old_head_two,
+                                "new_head": missing_head,
+                                "status": "partially_addressed",
+                            }
+                        ],
+                    },
+                ),
+            ]
+        )
         self.write_trace(90, old_head, "2024-01-16T00:00:00+0000")
         self.write_trace(90, new_head, "2024-04-01T00:00:00+0000")
         self.write_trace(90, new_head, "2024-04-02T00:00:00+0000")
@@ -871,31 +1360,40 @@ class StatsTests(unittest.TestCase):
 
         summary = stats.collect_stats(self.state_dir, self.report_dir)
 
-        self.assertEqual(summary["time_series"], [{
-            "period": "2024-01",
-            "reviews": 1,
-            "verified_reviews": 1,
-            "findings": 1,
-            "addressed": 0,
-        }, {
-            "period": "2024-02",
-            "reviews": 0,
-            "verified_reviews": 0,
-            "findings": 0,
-            "addressed": 0,
-        }, {
-            "period": "2024-03",
-            "reviews": 0,
-            "verified_reviews": 0,
-            "findings": 0,
-            "addressed": 1,
-        }])
+        self.assertEqual(
+            summary["time_series"],
+            [
+                {
+                    "period": "2024-01",
+                    "reviews": 1,
+                    "verified_reviews": 1,
+                    "findings": 1,
+                    "addressed": 0,
+                },
+                {
+                    "period": "2024-02",
+                    "reviews": 0,
+                    "verified_reviews": 0,
+                    "findings": 0,
+                    "addressed": 0,
+                },
+                {
+                    "period": "2024-03",
+                    "reviews": 0,
+                    "verified_reviews": 0,
+                    "findings": 0,
+                    "addressed": 1,
+                },
+            ],
+        )
         self.assertEqual(summary["time_series_undated"]["reviews"], 3)
         self.assertEqual(summary["time_series_undated"]["addressed"], 1)
         self.assertEqual(
-            summary["time_series_undated"]["review_ambiguous_trace_groups"], 1)
+            summary["time_series_undated"]["review_ambiguous_trace_groups"], 1
+        )
         self.assertEqual(
-            summary["time_series_undated"]["review_unmatched_trace_groups"], 1)
+            summary["time_series_undated"]["review_unmatched_trace_groups"], 1
+        )
         self.assertNotIn("2024-04", {item["period"] for item in summary["time_series"]})
         self.assertNotIn("2099-12", {item["period"] for item in summary["time_series"]})
 
@@ -937,7 +1435,8 @@ class StatsTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env=env)
+            env=env,
+        )
         return result.stdout
 
     def create_followups(self, rows):
@@ -948,8 +1447,10 @@ class StatsTests(unittest.TestCase):
                 job_id INTEGER PRIMARY KEY,
                 result TEXT
             )""")
-            db.executemany("INSERT INTO assessments VALUES (?, ?)",
-                           [(job_id, json.dumps(result)) for job_id, result in rows])
+            db.executemany(
+                "INSERT INTO assessments VALUES (?, ?)",
+                [(job_id, json.dumps(result)) for job_id, result in rows],
+            )
             db.execute("INSERT INTO assessments VALUES (?, ?)", (8888, None))
 
     def add_malformed_followup(self):
@@ -960,36 +1461,61 @@ class StatsTests(unittest.TestCase):
         month = datetime.now(timezone.utc).strftime("%Y-%m")
         generic = self.enqueue(70, "a" * 40)
         explicit = self.enqueue(71, "b" * 40)
-        self.save_complete(generic, self.single_stage_result(
-            "independent", "gpt-6.1-sol"))
-        self.save_complete(explicit, self.single_stage_result(
-            "independent", "gpt-6.1-sol-2026-08-01", head="b" * 40))
-        generic_id = f'pr:70:{generic["id"]}:{generic["generation"]}'
-        explicit_id = f'pr:71:{explicit["id"]}:{explicit["generation"]}'
-        self.create_ledger("spend.sqlite3", [
-            ("generic-snapshot", generic_id, "independent",
-             "gpt-6.1-sol-2026-09-01", month, "settled",
-             self.usage(100, 20), 111, 0),
-            ("explicit-different-snapshot", explicit_id, "independent",
-             "gpt-6.1-sol-2026-09-01", month, "settled",
-             self.usage(100, 20), 222, 0),
-        ])
+        self.save_complete(
+            generic, self.single_stage_result("independent", "gpt-6.1-sol")
+        )
+        self.save_complete(
+            explicit,
+            self.single_stage_result(
+                "independent", "gpt-6.1-sol-2026-08-01", head="b" * 40
+            ),
+        )
+        generic_id = f"pr:70:{generic['id']}:{generic['generation']}"
+        explicit_id = f"pr:71:{explicit['id']}:{explicit['generation']}"
+        self.create_ledger(
+            "spend.sqlite3",
+            [
+                (
+                    "generic-snapshot",
+                    generic_id,
+                    "independent",
+                    "gpt-6.1-sol-2026-09-01",
+                    month,
+                    "settled",
+                    self.usage(100, 20),
+                    111,
+                    0,
+                ),
+                (
+                    "explicit-different-snapshot",
+                    explicit_id,
+                    "independent",
+                    "gpt-6.1-sol-2026-09-01",
+                    month,
+                    "settled",
+                    self.usage(100, 20),
+                    222,
+                    0,
+                ),
+            ],
+        )
 
         summary = stats.collect_stats(self.state_dir, self.report_dir)
-        stages = {(item["stage"], item["configured_model"]): item
-                  for item in summary["stages"]}
-        spend_models = {(item["provider"], item["model"]): item
-                        for item in summary["spend"]["models"]}
+        stages = {
+            (item["stage"], item["configured_model"]): item
+            for item in summary["stages"]
+        }
+        spend_models = {
+            (item["provider"], item["model"]): item
+            for item in summary["spend"]["models"]
+        }
 
         generic_stage = stages[("independent", "gpt-6.1-sol")]
-        configured_snapshot_stage = stages[
-            ("independent", "gpt-6.1-sol-2026-08-01")]
-        served_snapshot_stage = stages[
-            ("independent", "gpt-6.1-sol-2026-09-01")]
+        configured_snapshot_stage = stages[("independent", "gpt-6.1-sol-2026-08-01")]
+        served_snapshot_stage = stages[("independent", "gpt-6.1-sol-2026-09-01")]
         self.assertEqual(generic_stage["accepted_findings"], 1)
         self.assertEqual(generic_stage["ledger"]["known_cost_micros"], 111)
-        self.assertEqual(
-            generic_stage["known_cost_per_accepted_finding_micros"], 111)
+        self.assertEqual(generic_stage["known_cost_per_accepted_finding_micros"], 111)
         self.assertEqual(configured_snapshot_stage["accepted_findings"], 1)
         self.assertEqual(configured_snapshot_stage["ledger"]["known_cost_micros"], 0)
         self.assertEqual(served_snapshot_stage["accepted_findings"], 0)
@@ -1000,44 +1526,70 @@ class StatsTests(unittest.TestCase):
     def test_script_totals_include_cost_attribution_and_each_status(self):
         month = datetime.now(timezone.utc).strftime("%Y-%m")
         for number, (status, coverage_status) in enumerate(
-                (("completed", "complete"), ("completed", "partial"),
-                 ("skipped", None), ("budget_exhausted", None)), start=80):
+            (
+                ("completed", "complete"),
+                ("completed", "partial"),
+                ("skipped", None),
+                ("budget_exhausted", None),
+            ),
+            start=80,
+        ):
             head = str(number % 10) * 40
             job = self.enqueue(number, head)
             result = self.single_stage_result("script", "gpt-6.1-sol", head)
             result["debug"]["stages"]["script"]["status"] = status
             if coverage_status:
                 result["debug"]["stages"]["script"]["coverage"] = {
-                    "status": coverage_status, "limitations": []}
+                    "status": coverage_status,
+                    "limitations": [],
+                }
             if number != 80:
                 result["debug"]["decisions"] = []
                 result["debug"]["finding_attribution"] = []
             self.save_complete(job, result)
             if number == 80:
-                review_id = f'pr:{number}:{job["id"]}:{job["generation"]}'
-                self.create_ledger("spend.sqlite3", [
-                    ("script-request", review_id, "script", "gpt-6.1-sol",
-                     month, "settled", self.usage(), 250000, 0),
-                ])
+                review_id = f"pr:{number}:{job['id']}:{job['generation']}"
+                self.create_ledger(
+                    "spend.sqlite3",
+                    [
+                        (
+                            "script-request",
+                            review_id,
+                            "script",
+                            "gpt-6.1-sol",
+                            month,
+                            "settled",
+                            self.usage(),
+                            250000,
+                            0,
+                        ),
+                    ],
+                )
 
         summary = stats.collect_stats(self.state_dir, self.report_dir)
-        stage = next(item for item in summary["stages"]
-                     if item["stage"] == "script")
+        stage = next(item for item in summary["stages"] if item["stage"] == "script")
         self.assertEqual(stage["configured_model"], "gpt-6.1-sol")
         self.assertEqual(stage["saved_result_runs"], 4)
         self.assertEqual(stage["executed_runs"], 3)
         self.assertEqual(stage["skipped_runs"], 1)
-        self.assertEqual(stage["status_counts"], {
-            "completed": 2, "skipped": 1, "budget_exhausted": 1})
-        self.assertEqual(stage["coverage_counts"], {
-            "complete": 1, "partial": 1, "failed": 0, "unknown": 2})
+        self.assertEqual(
+            stage["status_counts"],
+            {"completed": 2, "skipped": 1, "budget_exhausted": 1},
+        )
+        self.assertEqual(
+            stage["coverage_counts"],
+            {"complete": 1, "partial": 1, "failed": 0, "unknown": 2},
+        )
         self.assertEqual(stage["accepted_findings"], 1)
         self.assertEqual(stage["sole_source_findings"], 1)
         self.assertEqual(stage["candidate_counts"]["publish"], 1)
         self.assertEqual(stage["ledger"]["known_cost_micros"], 250000)
         self.assertEqual(stage["ledger"]["request_count"], 1)
-        leader = next(item for item in summary["stage_model_leaderboard"]
-                      if item["stage"] == "script")
+        leader = next(
+            item
+            for item in summary["stage_model_leaderboard"]
+            if item["stage"] == "script"
+        )
         self.assertEqual(leader["accepted_findings"], 1)
 
     def single_stage_result(self, stage_name, model, head="a" * 40):
@@ -1048,32 +1600,36 @@ class StatsTests(unittest.TestCase):
             "debug": {
                 "coverage": {"status": "complete", "limitations": []},
                 "candidate_sources": {f"{stage_name}:1": stage_name},
-                "decisions": [{
-                    "candidate_ids": [f"{stage_name}:1"],
-                    "disposition": "publish",
-                    "reason": "verified",
-                    "finding": {
-                        "kind": "defect",
-                        "severity": "medium",
+                "decisions": [
+                    {
+                        "candidate_ids": [f"{stage_name}:1"],
+                        "disposition": "publish",
+                        "reason": "verified",
+                        "finding": {
+                            "kind": "defect",
+                            "severity": "medium",
+                            "path": "src/node.cpp",
+                            "line": 1,
+                            "side": "head",
+                            "title": "Finding",
+                            "body": "Finding text",
+                        },
+                    }
+                ],
+                "finding_attribution": [
+                    {
+                        "finding_id": "finding:1",
+                        "title": "Finding",
                         "path": "src/node.cpp",
                         "line": 1,
                         "side": "head",
-                        "title": "Finding",
-                        "body": "Finding text",
-                    },
-                }],
-                "finding_attribution": [{
-                    "finding_id": "finding:1",
-                    "title": "Finding",
-                    "path": "src/node.cpp",
-                    "line": 1,
-                    "side": "head",
-                    "candidate_ids": [f"{stage_name}:1"],
-                    "raised_by": [stage_name],
-                    "raised_by_models": [model],
-                    "verified_by": "verifier",
-                    "edited_by": "collator",
-                }],
+                        "candidate_ids": [f"{stage_name}:1"],
+                        "raised_by": [stage_name],
+                        "raised_by_models": [model],
+                        "verified_by": "verifier",
+                        "edited_by": "collator",
+                    }
+                ],
                 "stages": {
                     stage_name: {
                         "model": model,
@@ -1086,15 +1642,29 @@ class StatsTests(unittest.TestCase):
         }
 
     def test_research_outcomes_and_publication_are_counted_separately(self):
-        overview = {"archaeology": {"research_completed": 0, "saved_concerns": 0,
-                                    "published_concerns": 0, "assessment_status_counts": {}}}
-        stats._add_archaeology_counts(overview, True,
-            {"status": "no_concern", "published_concern": False}, True)
-        stats._add_archaeology_counts(overview, True,
-            {"status": "verified", "published_concern": True}, False)
-        self.assertEqual(overview["archaeology"], {
-            "research_completed": 2, "saved_concerns": 1, "published_concerns": 0,
-            "assessment_status_counts": {"no_concern": 1, "verified": 1}})
+        overview = {
+            "archaeology": {
+                "research_completed": 0,
+                "saved_concerns": 0,
+                "published_concerns": 0,
+                "assessment_status_counts": {},
+            }
+        }
+        stats._add_archaeology_counts(
+            overview, True, {"status": "no_concern", "published_concern": False}, True
+        )
+        stats._add_archaeology_counts(
+            overview, True, {"status": "verified", "published_concern": True}, False
+        )
+        self.assertEqual(
+            overview["archaeology"],
+            {
+                "research_completed": 2,
+                "saved_concerns": 1,
+                "published_concerns": 0,
+                "assessment_status_counts": {"no_concern": 1, "verified": 1},
+            },
+        )
 
 
 if __name__ == "__main__":

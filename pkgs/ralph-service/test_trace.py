@@ -8,42 +8,63 @@ from ralph import trace as core_trace
 from ralph_service import report, trace
 
 
-
 class TraceAttributionTests(unittest.TestCase):
     def setUp(self):
         self.prompt_config = SimpleNamespace(
             instructions="Review.",
-            models={"independent": "gpt-6-luna", "verifier": "gpt-6-luna",
-                    "collator": "gpt-6-luna"})
+            models={
+                "independent": "gpt-6-luna",
+                "verifier": "gpt-6-luna",
+                "collator": "gpt-6-luna",
+            },
+        )
 
     def result(self, debug, head="a" * 40, content="Review."):
         return {
             "schema_version": 1,
             "head_sha": head,
             "content": content,
-            "engine": {"name": "current", "config": {
-                "prompts": {"instructions": self.prompt_config.instructions,
-                            "models": self.prompt_config.models}}},
-            "output": {"schema_version": 2,
-                        "data": {"schema_version": 2, **debug},
-                        "exports": {"findings": []}},
+            "engine": {
+                "name": "current",
+                "config": {
+                    "prompts": {
+                        "instructions": self.prompt_config.instructions,
+                        "models": self.prompt_config.models,
+                    }
+                },
+            },
+            "output": {
+                "schema_version": 2,
+                "data": {"schema_version": 2, **debug},
+                "exports": {"findings": []},
+            },
             "run": {"status": "completed", "metrics": {}, "attempt": {}},
         }
 
     def test_favorable_public_assessment_is_not_counted_as_a_concern(self):
         debug = {
             "concept_assessment": {
-                "status": "verified", "stage": "archaeologist", "summary": "Worth pursuing.",
-                "verification": {"disposition": "publish",
-                                 "assessment": {"assessment": "worth_pursuing"}},
+                "status": "verified",
+                "stage": "archaeologist",
+                "summary": "Worth pursuing.",
+                "verification": {
+                    "disposition": "publish",
+                    "assessment": {"assessment": "worth_pursuing"},
+                },
             },
-            "stages": {"archaeologist": {"status": "completed"},
-                       "alternatives": {"status": "completed"}},
+            "stages": {
+                "archaeologist": {"status": "completed"},
+                "alternatives": {"status": "completed"},
+            },
         }
         self.assertIsNotNone(core_trace.published_concept_assessment(debug))
         self.assertFalse(core_trace.published_concept_concern(debug))
-        self.assertEqual(core_trace.stage_metrics(debug)["archaeologist"]["conceptual_concerns"], 0)
-        self.assertTrue(core_trace.stage_metrics(debug)["alternatives"]["concept_stage"])
+        self.assertEqual(
+            core_trace.stage_metrics(debug)["archaeologist"]["conceptual_concerns"], 0
+        )
+        self.assertTrue(
+            core_trace.stage_metrics(debug)["alternatives"]["concept_stage"]
+        )
 
     def test_stage_metrics_credit_merged_candidates_without_unique_overcount(self):
         debug = {
@@ -54,33 +75,64 @@ class TraceAttributionTests(unittest.TestCase):
                 "tests:1": "tests",
             },
             "decisions": [
-                {"candidate_ids": ["independent:1", "adversarial:1"],
-                 "disposition": "publish", "reason": "same bug", "finding": {}},
-                {"candidate_ids": ["state:1"], "disposition": "drop",
-                 "reason": "not a bug", "finding": None},
-                {"candidate_ids": ["tests:1"], "disposition": "unresolved",
-                 "reason": "needs more evidence", "finding": None},
+                {
+                    "candidate_ids": ["independent:1", "adversarial:1"],
+                    "disposition": "publish",
+                    "reason": "same bug",
+                    "finding": {},
+                },
+                {
+                    "candidate_ids": ["state:1"],
+                    "disposition": "drop",
+                    "reason": "not a bug",
+                    "finding": None,
+                },
+                {
+                    "candidate_ids": ["tests:1"],
+                    "disposition": "unresolved",
+                    "reason": "needs more evidence",
+                    "finding": None,
+                },
             ],
-            "finding_attribution": [{
-                "finding_id": "finding:1",
-                "title": "Merged bug",
-                "path": "src/node.cpp",
-                "line": 12,
-                "side": "head",
-                "raised_by": ["adversarial", "independent"],
-                "candidate_ids": ["independent:1", "adversarial:1"],
-                "verified_by": "verifier",
-                "edited_by": "collator",
-            }],
+            "finding_attribution": [
+                {
+                    "finding_id": "finding:1",
+                    "title": "Merged bug",
+                    "path": "src/node.cpp",
+                    "line": 12,
+                    "side": "head",
+                    "raised_by": ["adversarial", "independent"],
+                    "candidate_ids": ["independent:1", "adversarial:1"],
+                    "verified_by": "verifier",
+                    "edited_by": "collator",
+                }
+            ],
             "stages": {
-                "independent": {"model": "gpt-6-luna", "status": "completed",
-                                "turns": [], "tools": []},
-                "adversarial": {"model": "gpt-6-luna", "status": "completed",
-                                "profiles": ["p2p"], "turns": [], "tools": []},
-                "state": {"model": "gpt-6-luna", "status": "completed",
-                          "turns": [], "tools": []},
-                "tests": {"model": "gpt-6-luna", "status": "completed",
-                          "turns": [], "tools": []},
+                "independent": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "turns": [],
+                    "tools": [],
+                },
+                "adversarial": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "profiles": ["p2p"],
+                    "turns": [],
+                    "tools": [],
+                },
+                "state": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "turns": [],
+                    "tools": [],
+                },
+                "tests": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "turns": [],
+                    "tools": [],
+                },
             },
         }
 
@@ -99,22 +151,34 @@ class TraceAttributionTests(unittest.TestCase):
     def test_verifier_only_finding_is_credited_to_verifier(self):
         debug = {
             "decisions": [
-                {"candidate_ids": [], "disposition": "publish",
-                 "reason": "new finding", "finding": {}},
+                {
+                    "candidate_ids": [],
+                    "disposition": "publish",
+                    "reason": "new finding",
+                    "finding": {},
+                },
             ],
-            "finding_attribution": [{
-                "finding_id": "finding:1",
-                "title": "Verifier bug",
-                "path": "src/validation.cpp",
-                "line": 7,
-                "side": "head",
-                "raised_by": ["verifier"],
-                "candidate_ids": [],
-                "verified_by": "verifier",
-                "edited_by": "collator",
-            }],
-            "stages": {"verifier": {"model": "gpt-6-luna", "status": "completed",
-                                    "turns": [], "tools": []}},
+            "finding_attribution": [
+                {
+                    "finding_id": "finding:1",
+                    "title": "Verifier bug",
+                    "path": "src/validation.cpp",
+                    "line": 7,
+                    "side": "head",
+                    "raised_by": ["verifier"],
+                    "candidate_ids": [],
+                    "verified_by": "verifier",
+                    "edited_by": "collator",
+                }
+            ],
+            "stages": {
+                "verifier": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "turns": [],
+                    "tools": [],
+                }
+            },
         }
 
         metrics = core_trace.stage_metrics(debug)
@@ -125,49 +189,64 @@ class TraceAttributionTests(unittest.TestCase):
 
     def test_collator_fallback_leaves_editor_empty_in_public_table(self):
         debug = {
-            "finding_attribution": [{
-                "finding_id": "finding:1",
-                "title": "Verifier wording",
-                "path": "src/rpc.cpp",
-                "line": 3,
-                "side": "head",
-                "raised_by": ["independent"],
-                "candidate_ids": ["independent:1"],
-                "verified_by": "verifier",
-                "edited_by": None,
-            }],
+            "finding_attribution": [
+                {
+                    "finding_id": "finding:1",
+                    "title": "Verifier wording",
+                    "path": "src/rpc.cpp",
+                    "line": 3,
+                    "side": "head",
+                    "raised_by": ["independent"],
+                    "candidate_ids": ["independent:1"],
+                    "verified_by": "verifier",
+                    "edited_by": None,
+                }
+            ],
             "stages": {},
         }
 
         with tempfile.TemporaryDirectory() as directory:
-            filename = report.save_report(Path(directory), 42,
-                                          self.result(debug), "42-run")
+            filename = report.save_report(
+                Path(directory), 42, self.result(debug), "42-run"
+            )
             rendered = (Path(directory) / filename).read_text()
         public = trace.review_trace(self.result(debug))
 
         self.assertIsNone(public["finding_attribution"][0]["edited_by"])
         self.assertIn("<td>independent:1</td><td>verifier</td><td></td>", rendered)
 
-    def test_invalid_withheld_finding_has_no_attribution_but_keeps_decision_counts(self):
+    def test_invalid_withheld_finding_has_no_attribution_but_keeps_decision_counts(
+        self,
+    ):
         debug = {
             "candidate_sources": {"independent:1": "independent"},
             "decisions": [
-                {"candidate_ids": ["independent:1"], "disposition": "unresolved",
-                 "reason": "Finding withheld: invalid path", "finding": None},
+                {
+                    "candidate_ids": ["independent:1"],
+                    "disposition": "unresolved",
+                    "reason": "Finding withheld: invalid path",
+                    "finding": None,
+                },
             ],
-            "stages": {"independent": {"model": "gpt-6-luna", "status": "completed",
-                                       "turns": [], "tools": []}},
+            "stages": {
+                "independent": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "turns": [],
+                    "tools": [],
+                }
+            },
         }
 
         public = trace.review_trace(self.result(debug))
 
         self.assertNotIn("finding_attribution", public)
         self.assertEqual(
-            public["stage_metrics"]["independent"]["candidate_counts"]["unresolved"],
-            1)
+            public["stage_metrics"]["independent"]["candidate_counts"]["unresolved"], 1
+        )
         self.assertEqual(
-            public["stage_metrics"]["independent"]["candidate_counts"]["undisposed"],
-            0)
+            public["stage_metrics"]["independent"]["candidate_counts"]["undisposed"], 0
+        )
         self.assertEqual(public["stage_metrics"]["independent"]["accepted_findings"], 0)
 
     def test_candidates_are_undisposed_when_verifier_fails_before_decisions(self):
@@ -177,8 +256,14 @@ class TraceAttributionTests(unittest.TestCase):
                 "independent:2": "independent",
                 "missing:1": "missing",
             },
-            "stages": {"independent": {"model": "gpt-6-luna", "status": "completed",
-                                       "turns": [], "tools": []}},
+            "stages": {
+                "independent": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "turns": [],
+                    "tools": [],
+                }
+            },
         }
 
         metrics = core_trace.stage_metrics(debug)
@@ -188,17 +273,29 @@ class TraceAttributionTests(unittest.TestCase):
         self.assertNotIn("unknown", metrics)
 
     def test_stage_metrics_track_unknown_and_incomplete_costs(self):
-        debug = {"stages": {
-            "independent": {"model": "gpt-6-luna", "status": "completed",
-                            "tools": [{"name": "read_file"}],
-                            "turns": [
-                                {"model": "gpt-6-luna", "input_tokens": 100,
-                                 "cached_tokens": 0, "cache_write_tokens": None,
-                                 "output_tokens": 20},
-                                {"model": "unknown-model", "input_tokens": 1,
-                                 "output_tokens": 1},
-                            ]},
-        }}
+        debug = {
+            "stages": {
+                "independent": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "tools": [{"name": "read_file"}],
+                    "turns": [
+                        {
+                            "model": "gpt-6-luna",
+                            "input_tokens": 100,
+                            "cached_tokens": 0,
+                            "cache_write_tokens": None,
+                            "output_tokens": 20,
+                        },
+                        {
+                            "model": "unknown-model",
+                            "input_tokens": 1,
+                            "output_tokens": 1,
+                        },
+                    ],
+                },
+            }
+        }
 
         metrics = core_trace.stage_metrics(debug)
 
@@ -210,28 +307,32 @@ class TraceAttributionTests(unittest.TestCase):
 
     def test_public_attribution_table_escapes_untrusted_text(self):
         debug = {
-            "finding_attribution": [{
-                "finding_id": "finding:1",
-                "title": "<script>alert('x')</script> & title",
-                "path": "src/<bad>.cpp",
-                "line": 5,
-                "side": "head",
-                "raised_by": ["agent<one>"],
-                "candidate_ids": ["agent<one>:1"],
-                "verified_by": "verifier",
-                "edited_by": "collator",
-            }],
+            "finding_attribution": [
+                {
+                    "finding_id": "finding:1",
+                    "title": "<script>alert('x')</script> & title",
+                    "path": "src/<bad>.cpp",
+                    "line": 5,
+                    "side": "head",
+                    "raised_by": ["agent<one>"],
+                    "candidate_ids": ["agent<one>:1"],
+                    "verified_by": "verifier",
+                    "edited_by": "collator",
+                }
+            ],
             "stages": {},
         }
 
         with tempfile.TemporaryDirectory() as directory:
-            filename = report.save_report(Path(directory), 42,
-                                          self.result(debug), "42-run")
+            filename = report.save_report(
+                Path(directory), 42, self.result(debug), "42-run"
+            )
             rendered = (Path(directory) / filename).read_text()
 
         table = rendered.split("<table>", 1)[1].split("</table>", 1)[0]
-        self.assertIn("&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt; &amp; title",
-                      table)
+        self.assertIn(
+            "&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt; &amp; title", table
+        )
         self.assertIn("src/&lt;bad&gt;.cpp:5", table)
         self.assertIn("agent&lt;one&gt;", table)
         self.assertNotIn("<script>alert", table)
@@ -239,8 +340,14 @@ class TraceAttributionTests(unittest.TestCase):
     def test_private_trace_preserves_the_schema_versioned_envelope(self):
         debug = {
             "candidate_sources": {"independent:1": "independent"},
-            "decisions": [{"candidate_ids": ["independent:1"], "disposition": "drop",
-                           "reason": "not a bug", "finding": None}],
+            "decisions": [
+                {
+                    "candidate_ids": ["independent:1"],
+                    "disposition": "drop",
+                    "reason": "not a bug",
+                    "finding": None,
+                }
+            ],
             "finding_attribution": [],
             "stages": {},
         }
@@ -248,16 +355,24 @@ class TraceAttributionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.result(debug, head="head", content="review")
             result.update(base_sha="base", merge_base_sha="merge-base")
-            result["engine"] = {"name": "narrative", "code_sha256": None,
-                                "config_sha256": None, "config": None}
-            result["output"] = {"schema_version": 7,
-                                "data": {"schema_version": 9, "native": "data"},
-                                "exports": {"custom": ["native export"]}}
+            result["engine"] = {
+                "name": "narrative",
+                "code_sha256": None,
+                "config_sha256": None,
+                "config": None,
+            }
+            result["output"] = {
+                "schema_version": 7,
+                "data": {"schema_version": 9, "native": "data"},
+                "exports": {"custom": ["native export"]},
+            }
             result["run"]["attempt"] = {"partial": "attempt data"}
             path = trace.save_review_trace(Path(tmp), 123, result)
             record = json.loads(path.read_text(encoding="utf-8"))
 
-        self.assertEqual(record, {**result, "pr": 123, "trace": trace.review_trace(result)})
+        self.assertEqual(
+            record, {**result, "pr": 123, "trace": trace.review_trace(result)}
+        )
 
     def test_public_trace_omits_stale_global_token_limits(self):
         public = trace.review_trace(self.result({"stages": {}}))

@@ -45,10 +45,12 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
     jobs, jobs_missing = _job_rows(state_dir / "jobs.sqlite3")
     followup_dir = state_dir / "followup"
     followups, followups_missing, malformed_followups = _followup_rows(
-        followup_dir / "assessments.sqlite3")
+        followup_dir / "assessments.sqlite3"
+    )
     requests, ledger_missing = _ledger_rows(state_dir)
     followup_requests, followup_ledger_missing = _provider_ledger_rows(
-        "followup", followup_dir / "spend.sqlite3")
+        "followup", followup_dir / "spend.sqlite3"
+    )
     spend = _spend_summary(requests, current_month)
 
     report_dir_missing = not report_dir.exists()
@@ -61,8 +63,9 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         "skipped_results": 0,
         "malformed_results": 0,
         "malformed_followups": malformed_followups,
-        "recorded_failed_attempts": sum(max(0, int(row["attempts"] or 0))
-                                        for row in jobs),
+        "recorded_failed_attempts": sum(
+            max(0, int(row["attempts"] or 0)) for row in jobs
+        ),
         "missing_sources": {
             "jobs_db": jobs_missing,
             "followup_assessments": followups_missing,
@@ -134,7 +137,8 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         review_requests = requests_by_review.get(review_id, [])
         ledger_totals = _request_totals(review_requests)
         observed_ledger_totals = _observed_review_totals(
-            ledger_totals, bool(review_requests))
+            ledger_totals, bool(review_requests)
+        )
         findings = _published_findings(result) or []
         concept = _concept_summary(debug)
         research_completed = _archaeology_research_completed(debug)
@@ -145,8 +149,11 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
 
         if not skipped:
             overview["saved_reviews"] += 1
-            overview["current_diagnostics_reviews" if debug else
-                     "diagnostics_unavailable_reviews"] += 1
+            overview[
+                "current_diagnostics_reviews"
+                if debug
+                else "diagnostics_unavailable_reviews"
+            ] += 1
             if exported_findings is None:
                 overview["findings_unavailable_reviews"] += 1
             else:
@@ -156,10 +163,12 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             overview["verification_status"][coverage["verification_status"]] += 1
             if exported_findings is not None:
                 overview["attribution_coverage"][
-                    "complete" if _has_attribution(result, findings) else "missing"] += 1
+                    "complete" if _has_attribution(result, findings) else "missing"
+                ] += 1
             if debug:
-                _add_archaeology_counts(overview, research_completed, concept,
-                                        row["status"] == "complete")
+                _add_archaeology_counts(
+                    overview, research_completed, concept, row["status"] == "complete"
+                )
             if row["status"] == "complete":
                 overview["published_reviews"] += 1
                 if exported_findings is not None:
@@ -199,34 +208,43 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "context_coverage": coverage["context_status"],
             "verification_status": coverage["verification_status"],
             "findings": {
-                "export_status": "supported" if exported_findings is not None else "unsupported",
+                "export_status": "supported"
+                if exported_findings is not None
+                else "unsupported",
                 "saved": len(findings) if exported_findings is not None else None,
                 "published": (len(findings) if row["status"] == "complete" else 0)
-                if exported_findings is not None else None,
+                if exported_findings is not None
+                else None,
             },
-            "archaeology": ({"research_completed": research_completed, **concept}
-                            if debug else None),
+            "archaeology": (
+                {"research_completed": research_completed, **concept} if debug else None
+            ),
             "ledger": observed_ledger_totals,
             "tokens": observed_ledger_totals["tokens"],
             "runtime_metrics": core_trace.result_metrics(result) or {},
             "tool_calls": metrics["tool_calls"],
             "model_seconds": metrics["model_seconds"],
             "saved_trace_known_estimated_cost_micros": (
-                metrics["saved_trace_known_estimated_cost_micros"]),
+                metrics["saved_trace_known_estimated_cost_micros"]
+            ),
         }
         if report_name is not None:
             record["report_name"] = report_name
         review_records.append(record)
-        review_time_records.append({
-            "number": row["number"],
-            "job_id": row["id"],
-            "generation": row["generation"],
-            "head": record["head"],
-            "verified": _verifier_completed(debug) if debug else None,
-            "published_findings": (
-                (len(findings) if row["status"] == "complete" else 0)
-                if exported_findings is not None else None),
-        })
+        review_time_records.append(
+            {
+                "number": row["number"],
+                "job_id": row["id"],
+                "generation": row["generation"],
+                "head": record["head"],
+                "verified": _verifier_completed(debug) if debug else None,
+                "published_findings": (
+                    (len(findings) if row["status"] == "complete" else 0)
+                    if exported_findings is not None
+                    else None
+                ),
+            }
+        )
         if row["status"] == "complete":
             completed_reviews[(row["number"], row["id"], row["generation"])] = {
                 "number": row["number"],
@@ -234,26 +252,32 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
                 "generation": row["generation"],
                 "head": record["head"],
                 "published_findings": (len(findings) if not skipped else 0)
-                if exported_findings is not None else None,
+                if exported_findings is not None
+                else None,
                 "finding_ids": _published_finding_ids(result),
                 "report_name": report_name,
             }
             completed_reviews_by_job[row["id"]] = completed_reviews[
-                (row["number"], row["id"], row["generation"])]
+                (row["number"], row["id"], row["generation"])
+            ]
 
     addressed_records = []
     for followup in followups:
-        addressed_records.extend(
-            _addressed_records(followup, completed_reviews_by_job))
+        addressed_records.extend(_addressed_records(followup, completed_reviews_by_job))
 
     for request in requests:
         _add_stage_ledger(stages, request, configured_stage_models)
 
     addressed_summary = _addressed_summary(
-        addressed_records, completed_reviews, followup_requests, followups,
-        completed_reviews_by_job)
+        addressed_records,
+        completed_reviews,
+        followup_requests,
+        followups,
+        completed_reviews_by_job,
+    )
     time_series, time_series_undated = _time_series_summary(
-        state_dir, review_time_records, addressed_summary["findings"])
+        state_dir, review_time_records, addressed_summary["findings"]
+    )
 
     return {
         "generated_at": _iso_z(now),
@@ -275,9 +299,11 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "saved_review_tools": _distribution(tool_values),
             "saved_review_model_seconds": _distribution(second_values),
             "saved_review_conceptual_concern_citations": _distribution(
-                concept_citation_values),
+                concept_citation_values
+            ),
             "saved_review_conceptual_concern_alternatives": _distribution(
-                concept_alternative_values),
+                concept_alternative_values
+            ),
         },
         "adversarial_comparison": paired,
         "time_series": time_series,
@@ -287,10 +313,12 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "Addressed months come from the new_head commit committer timestamp in the follow-up checkout; assessed_at is not used for trend bucketing.",
         ],
         "addressed_findings": addressed_summary,
-        "recent_reviews": sorted(review_records, key=lambda item: item["job_id"],
-                                 reverse=True)[:50],
-        "reviews": sorted(review_records, key=lambda item: item["job_id"],
-                          reverse=True),
+        "recent_reviews": sorted(
+            review_records, key=lambda item: item["job_id"], reverse=True
+        )[:50],
+        "reviews": sorted(
+            review_records, key=lambda item: item["job_id"], reverse=True
+        ),
     }
 
 
@@ -310,9 +338,13 @@ def _job_rows(path):
         return [], True
     try:
         with _connect_readonly(path) as db:
-            return [dict(row) for row in db.execute(
-                "SELECT id, number, generation, base_ref, head, action, force, "
-                "status, attempts, review_result FROM jobs ORDER BY id")], False
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT id, number, generation, base_ref, head, action, force, "
+                    "status, attempts, review_result FROM jobs ORDER BY id"
+                )
+            ], False
     except sqlite3.Error:
         return [], True
 
@@ -325,7 +357,8 @@ def _followup_rows(path):
     try:
         with _connect_readonly(path) as db:
             records = db.execute(
-                "SELECT job_id, result FROM assessments ORDER BY job_id")
+                "SELECT job_id, result FROM assessments ORDER BY job_id"
+            )
             for row in records:
                 job_id = _positive_int(row["job_id"])
                 if row["result"] is None:
@@ -358,7 +391,8 @@ def _provider_ledger_rows(provider, path):
         with _connect_readonly(path) as db:
             rows = db.execute(
                 "SELECT review_id, stage, model, month, status, usage_json, "
-                "cost_micros, reserved_micros, requested_at FROM requests ORDER BY rowid")
+                "cost_micros, reserved_micros, requested_at FROM requests ORDER BY rowid"
+            )
             return [_ledger_record(provider, row) for row in rows], False
     except sqlite3.Error:
         return [], True
@@ -409,21 +443,24 @@ def _usage_metrics(usage, status):
         "cached": usage.get("cached_tokens"),
         "cache_write": usage.get("cache_write_tokens"),
     }
-    known_core = _is_nonnegative_int(fields["input"]) and _is_nonnegative_int(fields["output"])
+    known_core = _is_nonnegative_int(fields["input"]) and _is_nonnegative_int(
+        fields["output"]
+    )
     if not known_core:
         return tokens, True, False
     for key, value in fields.items():
         if _is_nonnegative_int(value):
             tokens[key] = int(value)
     incomplete = usage.get("complete") is not True or not _is_nonnegative_int(
-        fields["cache_write"])
+        fields["cache_write"]
+    )
     return tokens, False, incomplete
 
 
 def _parse_review_id(review_id):
     if not isinstance(review_id, str) or not review_id.startswith(REVIEW_ID_PREFIX):
         return None, None, None
-    parts = review_id[len(REVIEW_ID_PREFIX):].split(":")
+    parts = review_id[len(REVIEW_ID_PREFIX) :].split(":")
     if len(parts) != 3:
         return None, None, None
     try:
@@ -452,9 +489,11 @@ def _review_result(row):
     if row.get("review_result") is None:
         return None, False
     result = _parse_json(row["review_result"])
-    if (not isinstance(result, dict)
-            or type(result.get("schema_version")) is not int
-            or result["schema_version"] != 1):
+    if (
+        not isinstance(result, dict)
+        or type(result.get("schema_version")) is not int
+        or result["schema_version"] != 1
+    ):
         return None, True
     return result, False
 
@@ -465,7 +504,7 @@ def _skipped_result(result):
 
 
 def _review_id(row):
-    return f'pr:{row["number"]}:{row["id"]}:{row["generation"]}'
+    return f"pr:{row['number']}:{row['id']}:{row['generation']}"
 
 
 def _verifier_completed(debug):
@@ -475,12 +514,19 @@ def _verifier_completed(debug):
 
 
 def _time_series_summary(state_dir, review_records, addressed_findings):
-    series = defaultdict(lambda: {"reviews": 0, "verified_reviews": 0,
-                                  "findings": 0, "addressed": 0,
-                                  "verified_unknown": False,
-                                  "findings_unknown": False})
+    series = defaultdict(
+        lambda: {
+            "reviews": 0,
+            "verified_reviews": 0,
+            "findings": 0,
+            "addressed": 0,
+            "verified_unknown": False,
+            "findings_unknown": False,
+        }
+    )
     review_months, review_undated = _review_months(
-        state_dir / "review-traces", review_records)
+        state_dir / "review-traces", review_records
+    )
     for record in review_records:
         period = review_months.get((record["job_id"], record["generation"]))
         if period is None:
@@ -496,16 +542,24 @@ def _time_series_summary(state_dir, review_records, addressed_findings):
             series[period]["findings"] += record["published_findings"]
 
     addressed_counts, addressed_undated = _addressed_month_counts(
-        state_dir, addressed_findings)
+        state_dir, addressed_findings
+    )
     for period, count in addressed_counts.items():
         series[period]["addressed"] += count
 
     return [
-        {"period": period,
-         **{key: value for key, value in series[period].items()
-            if not key.endswith("_unknown")},
-         **({"verified_reviews": None} if series[period]["verified_unknown"] else {}),
-         **({"findings": None} if series[period]["findings_unknown"] else {})}
+        {
+            "period": period,
+            **{
+                key: value
+                for key, value in series[period].items()
+                if not key.endswith("_unknown")
+            },
+            **(
+                {"verified_reviews": None} if series[period]["verified_unknown"] else {}
+            ),
+            **({"findings": None} if series[period]["findings_unknown"] else {}),
+        }
         for period in _month_range(series)
     ], {**review_undated, **addressed_undated}
 
@@ -586,7 +640,8 @@ def _trace_months(trace_dir):
             malformed += 1
             continue
         traces[(int(match.group(1)), match.group(2).lower())].append(
-            (int(match.group(3)), period))
+            (int(match.group(3)), period)
+        )
     return traces, malformed
 
 
@@ -600,12 +655,14 @@ def _time_ns_period(value):
 
 def _addressed_month_counts(state_dir, findings):
     eligible = [
-        item for item in findings
+        item
+        for item in findings
         if item["status"] in {"addressed", "partially_addressed"}
     ]
     months = _commit_months(
         state_dir / "followup" / "checkout" / ".git",
-        {item.get("new_head") for item in eligible})
+        {item.get("new_head") for item in eligible},
+    )
     counts = Counter()
     undated = 0
     for item in eligible:
@@ -618,8 +675,13 @@ def _addressed_month_counts(state_dir, findings):
 
 
 def _commit_months(git_dir, heads):
-    heads = sorted({head.lower() for head in heads
-                    if isinstance(head, str) and SHA.fullmatch(head)})
+    heads = sorted(
+        {
+            head.lower()
+            for head in heads
+            if isinstance(head, str) and SHA.fullmatch(head)
+        }
+    )
     if not heads or not git_dir.exists():
         return {}
     env = os.environ.copy()
@@ -632,7 +694,8 @@ def _commit_months(git_dir, heads):
             stderr=subprocess.DEVNULL,
             env=env,
             timeout=15,
-            check=False)
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError):
         return {}
 
@@ -653,13 +716,15 @@ def _commit_months(git_dir, heads):
             size = int(header[2])
         except ValueError:
             break
-        content = output[offset:offset + size]
+        content = output[offset : offset + size]
         offset += size
-        if offset < len(output) and output[offset:offset + 1] == b"\n":
+        if offset < len(output) and output[offset : offset + 1] == b"\n":
             offset += 1
         timestamp = _committer_timestamp(content)
         if timestamp is not None:
-            months[head] = datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m")
+            months[head] = datetime.fromtimestamp(timestamp, timezone.utc).strftime(
+                "%Y-%m"
+            )
     return months
 
 
@@ -707,25 +772,27 @@ def _addressed_records(followup, completed_reviews_by_job):
         status = finding.get("status")
         if status not in ADDRESSED_STATUSES:
             status = "unclear"
-        records.append({
-            "number": assessment["number"],
-            "assessment_job_id": assessment["job_id"],
-            "assessment_generation": assessment["generation"],
-            "source_job_id": source_job_id,
-            "source_generation": source_generation,
-            "finding_id": finding_id,
-            "title": _optional_string(finding.get("title")),
-            "path": _optional_string(finding.get("path")),
-            "old_head": _optional_string(finding.get("old_head")),
-            "new_head": _optional_string(finding.get("new_head"))
-                        or assessment["head"],
-            "assessment_head": assessment["head"],
-            "status": status,
-            "reason": _optional_string(finding.get("reason")),
-            "evidence": _optional_string(finding.get("evidence")),
-            "assessed_at": assessed_at,
-            "model": model,
-        })
+        records.append(
+            {
+                "number": assessment["number"],
+                "assessment_job_id": assessment["job_id"],
+                "assessment_generation": assessment["generation"],
+                "source_job_id": source_job_id,
+                "source_generation": source_generation,
+                "finding_id": finding_id,
+                "title": _optional_string(finding.get("title")),
+                "path": _optional_string(finding.get("path")),
+                "old_head": _optional_string(finding.get("old_head")),
+                "new_head": _optional_string(finding.get("new_head"))
+                or assessment["head"],
+                "assessment_head": assessment["head"],
+                "status": status,
+                "reason": _optional_string(finding.get("reason")),
+                "evidence": _optional_string(finding.get("evidence")),
+                "assessed_at": assessed_at,
+                "model": model,
+            }
+        )
     return records
 
 
@@ -739,12 +806,16 @@ def _positive_int(value):
     return value if value > 0 else None
 
 
-def _addressed_summary(records, completed_reviews, followup_requests,
-                       followups, completed_reviews_by_job):
+def _addressed_summary(
+    records, completed_reviews, followup_requests, followups, completed_reviews_by_job
+):
     latest = {}
     for record in records:
-        source_key = (record["number"], record["source_job_id"],
-                      record["source_generation"])
+        source_key = (
+            record["number"],
+            record["source_job_id"],
+            record["source_generation"],
+        )
         source = completed_reviews.get(source_key)
         if source is None:
             continue
@@ -757,29 +828,41 @@ def _addressed_summary(records, completed_reviews, followup_requests,
         if record["finding_id"] not in source["finding_ids"]:
             continue
         enriched = {
-            key: value for key, value in record.items()
-            if key != "assessment_head"
+            key: value for key, value in record.items() if key != "assessment_head"
         }
         enriched["source_report_name"] = source.get("report_name")
         key = (*source_key, record["finding_id"])
         previous = latest.get(key)
-        if previous is None or _assessment_order(enriched) > _assessment_order(previous):
+        if previous is None or _assessment_order(enriched) > _assessment_order(
+            previous
+        ):
             latest[key] = enriched
-    findings = sorted(latest.values(), key=lambda item: (
-        item["source_job_id"], item["source_generation"], item["finding_id"],
-        item["assessment_job_id"], item["assessment_generation"]),
-        reverse=True)
+    findings = sorted(
+        latest.values(),
+        key=lambda item: (
+            item["source_job_id"],
+            item["source_generation"],
+            item["finding_id"],
+            item["assessment_job_id"],
+            item["assessment_generation"],
+        ),
+        reverse=True,
+    )
     status_counts = Counter(item["status"] for item in findings)
     source_keys = {
         (item["number"], item["source_job_id"], item["source_generation"])
         for item in findings
     }
     source_finding_count = sum(
-        completed_reviews[key]["published_findings"] for key in source_keys)
+        completed_reviews[key]["published_findings"] for key in source_keys
+    )
     unsupported_exports = sum(
-        1 for followup in followups
-        if (followup["result"].get("reason") == "findings_export_unsupported"
-            and followup["job_id"] in completed_reviews_by_job)
+        1
+        for followup in followups
+        if (
+            followup["result"].get("reason") == "findings_export_unsupported"
+            and followup["job_id"] in completed_reviews_by_job
+        )
     )
     return {
         "note": (
@@ -789,14 +872,21 @@ def _addressed_summary(records, completed_reviews, followup_requests,
         "evaluated_findings": len(findings),
         "source_published_findings": source_finding_count,
         "assessed_source_reviews": len(source_keys),
-        "assessment_jobs": len({
-            (item["number"], item["assessment_job_id"], item["assessment_generation"])
-            for item in findings
-        }),
+        "assessment_jobs": len(
+            {
+                (
+                    item["number"],
+                    item["assessment_job_id"],
+                    item["assessment_generation"],
+                )
+                for item in findings
+            }
+        ),
         "unsupported_exports": unsupported_exports,
         "spend": _request_totals(followup_requests),
-        "status_counts": {status: status_counts.get(status, 0)
-                          for status in ADDRESSED_STATUSES},
+        "status_counts": {
+            status: status_counts.get(status, 0) for status in ADDRESSED_STATUSES
+        },
         "findings": findings,
     }
 
@@ -829,21 +919,36 @@ def _routing_summary(debug):
     routing = debug.get("routing") if isinstance(debug, dict) else None
     if not isinstance(routing, dict):
         return {}
-    selected = routing.get("selected") if isinstance(routing.get("selected"), dict) else {}
-    proposed = routing.get("proposed") if isinstance(routing.get("proposed"), dict) else {}
+    selected = (
+        routing.get("selected") if isinstance(routing.get("selected"), dict) else {}
+    )
+    proposed = (
+        routing.get("proposed") if isinstance(routing.get("proposed"), dict) else {}
+    )
     return {
         "mode": routing.get("mode") if isinstance(routing.get("mode"), str) else None,
-        "minimum_tier": (routing.get("minimum_tier")
-                         if isinstance(routing.get("minimum_tier"), str) else None),
-        "proposed_tier": proposed.get("tier") if isinstance(proposed.get("tier"), str) else None,
-        "selected_tier": selected.get("tier") if isinstance(selected.get("tier"), str) else None,
+        "minimum_tier": (
+            routing.get("minimum_tier")
+            if isinstance(routing.get("minimum_tier"), str)
+            else None
+        ),
+        "proposed_tier": proposed.get("tier")
+        if isinstance(proposed.get("tier"), str)
+        else None,
+        "selected_tier": selected.get("tier")
+        if isinstance(selected.get("tier"), str)
+        else None,
         "selected_audits": _strings(selected.get("audits")),
         "selected_profiles": _strings(selected.get("profiles")),
     }
 
 
 def _strings(value):
-    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+    return (
+        [item for item in value if isinstance(item, str)]
+        if isinstance(value, list)
+        else []
+    )
 
 
 def _published_findings(result):
@@ -857,31 +962,51 @@ def _published_finding_ids(result):
     findings = core_trace.findings_export(result)
     if findings is None:
         return set()
-    return {item["id"] for item in findings
-            if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    return {
+        item["id"]
+        for item in findings
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
 
 
 def _has_attribution(result, findings):
     if not findings:
         return True
-    return all(isinstance(item.get("raised_by"), list)
-               and isinstance(item.get("verified_by"), str)
-               for item in findings)
+    return all(
+        isinstance(item.get("raised_by"), list)
+        and isinstance(item.get("verified_by"), str)
+        for item in findings
+    )
 
 
 def _concept_summary(debug):
     concept = core_trace.concept_assessment(debug)
     if not concept:
         return {"published_concern": False}
-    verification = concept.get("verification") if isinstance(concept.get("verification"), dict) else {}
-    assessment = verification.get("assessment") if isinstance(
-        verification.get("assessment"), dict) else None
-    alternatives = assessment.get("alternatives") if isinstance(assessment, dict) else []
-    citations = list(assessment.get("citations") if isinstance(assessment, dict) else [])
+    verification = (
+        concept.get("verification")
+        if isinstance(concept.get("verification"), dict)
+        else {}
+    )
+    assessment = (
+        verification.get("assessment")
+        if isinstance(verification.get("assessment"), dict)
+        else None
+    )
+    alternatives = (
+        assessment.get("alternatives") if isinstance(assessment, dict) else []
+    )
+    citations = list(
+        assessment.get("citations") if isinstance(assessment, dict) else []
+    )
     for alternative in alternatives if isinstance(alternatives, list) else []:
-        if isinstance(alternative, dict) and isinstance(alternative.get("citations"), list):
+        if isinstance(alternative, dict) and isinstance(
+            alternative.get("citations"), list
+        ):
             citations.extend(alternative["citations"])
-    status = concept.get("status") if isinstance(concept.get("status"), str) else "unknown"
+    status = (
+        concept.get("status") if isinstance(concept.get("status"), str) else "unknown"
+    )
     stage = concept.get("stage") if isinstance(concept.get("stage"), str) else None
     published_concern = core_trace.published_concept_concern(debug)
     return {
@@ -920,9 +1045,14 @@ def _add_finding_counts(overview, findings):
     kinds = Counter(overview["finding_kinds"])
     severities = Counter(overview["finding_severities"])
     for finding in findings:
-        kind = finding.get("kind") if isinstance(finding.get("kind"), str) else "unknown"
-        severity = (finding.get("severity")
-                    if isinstance(finding.get("severity"), str) else "unknown")
+        kind = (
+            finding.get("kind") if isinstance(finding.get("kind"), str) else "unknown"
+        )
+        severity = (
+            finding.get("severity")
+            if isinstance(finding.get("severity"), str)
+            else "unknown"
+        )
         kinds[kind] += 1
         severities[severity] += 1
     overview["finding_kinds"] = dict(sorted(kinds.items()))
@@ -933,14 +1063,18 @@ def _saved_review_metrics(debug, result):
     if not debug:
         common = core_trace.result_metrics(result)
         if common is None:
-            return {"tool_calls": None, "model_seconds": None,
-                    "saved_trace_known_estimated_cost_micros": None}
+            return {
+                "tool_calls": None,
+                "model_seconds": None,
+                "saved_trace_known_estimated_cost_micros": None,
+            }
         cost = common.get("estimated_cost_usd")
         return {
             "tool_calls": common.get("tool_calls"),
             "model_seconds": common.get("total_model_seconds"),
             "saved_trace_known_estimated_cost_micros": (
-                _usd_to_micros(cost) if isinstance(cost, (int, float)) else None),
+                _usd_to_micros(cost) if isinstance(cost, (int, float)) else None
+            ),
         }
     model_turns = 0
     tool_calls = 0
@@ -954,7 +1088,9 @@ def _saved_review_metrics(debug, result):
         model_turns += len(turns)
         tool_calls += len(tools)
         for turn in turns:
-            if isinstance(turn, dict) and isinstance(turn.get("elapsed_seconds"), (int, float)):
+            if isinstance(turn, dict) and isinstance(
+                turn.get("elapsed_seconds"), (int, float)
+            ):
                 model_seconds += Decimal(str(turn["elapsed_seconds"]))
     for metric in core_trace.stage_metrics(debug).values():
         saved_cost += _usd_to_micros(metric.get("known_estimated_cost_usd", 0))
@@ -967,15 +1103,16 @@ def _saved_review_metrics(debug, result):
 
 
 def _usd_to_micros(value):
-    return int((Decimal(str(value)) * MICRODOLLARS).to_integral_value(
-        rounding=ROUND_HALF_UP))
+    return int(
+        (Decimal(str(value)) * MICRODOLLARS).to_integral_value(rounding=ROUND_HALF_UP)
+    )
 
 
 def _report_name(report_dir, row, result):
     head = result.get("head_sha")
     if not isinstance(head, str):
         return None
-    name = f'{row["number"]}-{head}-{row["id"]}-{row["generation"]}.html'
+    name = f"{row['number']}-{head}-{row['id']}-{row['generation']}.html"
     return name if (report_dir / name).is_file() else None
 
 
@@ -1033,8 +1170,9 @@ def _add_request(record, request):
     for key, value in request["tokens"].items():
         record["tokens"][key] += value
     if "providers" in record and request.get("provider") is not None:
-        _add_request(record["providers"][request["provider"]],
-                     {**request, "provider": None})
+        _add_request(
+            record["providers"][request["provider"]], {**request, "provider": None}
+        )
 
 
 def _final_request_totals(record):
@@ -1063,8 +1201,9 @@ def _observed_review_totals(totals, observed):
 
 def _spend_summary(requests, current_month):
     lifetime = _request_totals(requests)
-    current = _request_totals([request for request in requests
-                               if request["month"] == current_month])
+    current = _request_totals(
+        [request for request in requests if request["month"] == current_month]
+    )
     by_provider = defaultdict(_new_request_totals)
     by_model = defaultdict(_new_request_totals)
     by_month = defaultdict(_new_request_totals)
@@ -1080,7 +1219,8 @@ def _spend_summary(requests, current_month):
         "accounting_note": (
             "request_count is every ledger request row, including retries, "
             "duplicates, released reservations, and failed attempts. Known "
-            "cost and reserved micros are the observed accounting amounts."),
+            "cost and reserved micros are the observed accounting amounts."
+        ),
         "current_month": {"month": current_month, **current_totals},
         "lifetime": lifetime_totals,
         "providers": [
@@ -1100,17 +1240,26 @@ def _spend_summary(requests, current_month):
 
 def _cost_totals(record):
     record = record or _new_provider_totals()
-    return {key: record[key] for key in (
-        "request_count", "known_cost_micros", "reserved_micros",
-        "unknown_cost_request_count")}
+    return {
+        key: record[key]
+        for key in (
+            "request_count",
+            "known_cost_micros",
+            "reserved_micros",
+            "unknown_cost_request_count",
+        )
+    }
 
 
 def _cost_periods(records, periods):
     if not records:
         return []
     first = min(records)
-    return [{"period": period, **_cost_totals(records.get(period))}
-            for period in periods if period >= first]
+    return [
+        {"period": period, **_cost_totals(records.get(period))}
+        for period in periods
+        if period >= first
+    ]
 
 
 def _cost_trends(requests, now):
@@ -1131,10 +1280,17 @@ def _cost_trends(requests, now):
 
     today = now.date()
     monday = today - timedelta(days=today.weekday())
-    days = _cost_periods(by_day, [
-        (today - timedelta(days=offset)).isoformat() for offset in range(29, -1, -1)])
-    weeks = _cost_periods(by_week, [
-        (monday - timedelta(weeks=offset)).isoformat() for offset in range(11, -1, -1)])
+    days = _cost_periods(
+        by_day,
+        [(today - timedelta(days=offset)).isoformat() for offset in range(29, -1, -1)],
+    )
+    weeks = _cost_periods(
+        by_week,
+        [
+            (monday - timedelta(weeks=offset)).isoformat()
+            for offset in range(11, -1, -1)
+        ],
+    )
     month_periods = []
     for offset in range(11, -1, -1):
         year, month = divmod(now.year * 12 + now.month - 1 - offset, 12)
@@ -1145,8 +1301,10 @@ def _cost_trends(requests, now):
         "week_start": "Monday",
         "current_day": days[-1] if days else None,
         "current_week": weeks[-1] if weeks else None,
-        "current_month": {"period": current_month,
-                          **_cost_totals(by_month.get(current_month))},
+        "current_month": {
+            "period": current_month,
+            **_cost_totals(by_month.get(current_month)),
+        },
         "days": days,
         "weeks": weeks,
         "months": _cost_periods(by_month, month_periods),
@@ -1164,7 +1322,8 @@ def _new_stage():
         "status_counts": Counter(),
         "coverage_counts": Counter(_new_coverage_counts()),
         "candidate_counts": Counter(
-            {"publish": 0, "drop": 0, "unresolved": 0, "undisposed": 0}),
+            {"publish": 0, "drop": 0, "unresolved": 0, "undisposed": 0}
+        ),
         "accepted_findings": 0,
         "findings": [],
         "concept_stage": False,
@@ -1209,42 +1368,73 @@ def _stage_findings(debug, name, stage, row, report_name):
     for identifier, source in sorted(sources.items()):
         if source != name:
             continue
-        decision = next((item for item in debug.get("decisions", [])
-                         if isinstance(item, dict)
-                         and identifier in (item.get("candidate_ids") or [])), {})
-        accepted = next((item for item in attribution if isinstance(item, dict)
-                         and identifier in (item.get("candidate_ids") or [])), {})
-        original = next((item for index, item in enumerate(originals, 1)
-                         if f"{name}:{index}" == identifier and isinstance(item, dict)), {})
+        decision = next(
+            (
+                item
+                for item in debug.get("decisions", [])
+                if isinstance(item, dict)
+                and identifier in (item.get("candidate_ids") or [])
+            ),
+            {},
+        )
+        accepted = next(
+            (
+                item
+                for item in attribution
+                if isinstance(item, dict)
+                and identifier in (item.get("candidate_ids") or [])
+            ),
+            {},
+        )
+        original = next(
+            (
+                item
+                for index, item in enumerate(originals, 1)
+                if f"{name}:{index}" == identifier and isinstance(item, dict)
+            ),
+            {},
+        )
         finding = accepted or decision.get("finding") or original
         disposition = decision.get("disposition", "undisposed")
-        records.append({
-            "number": row["number"], "job_id": row["id"],
-            "candidate_id": identifier,
-            "title": finding.get("title") or identifier,
-            "path": finding.get("path"), "line": finding.get("line"),
-            "disposition": disposition if disposition in
-                {"publish", "drop", "unresolved"} else "undisposed",
-            "accepted": bool(accepted),
-            "attribution": ("shared" if len(set(accepted.get("raised_by") or [])) > 1
-                            else "sole") if accepted else None,
-            "finding_id": accepted.get("finding_id"),
-            "report_name": report_name,
-        })
+        records.append(
+            {
+                "number": row["number"],
+                "job_id": row["id"],
+                "candidate_id": identifier,
+                "title": finding.get("title") or identifier,
+                "path": finding.get("path"),
+                "line": finding.get("line"),
+                "disposition": disposition
+                if disposition in {"publish", "drop", "unresolved"}
+                else "undisposed",
+                "accepted": bool(accepted),
+                "attribution": (
+                    "shared"
+                    if len(set(accepted.get("raised_by") or [])) > 1
+                    else "sole"
+                )
+                if accepted
+                else None,
+                "finding_id": accepted.get("finding_id"),
+                "report_name": report_name,
+            }
+        )
     return records
 
 
 def _add_stage_results(stages, debug, row, report_name):
     metrics = core_trace.stage_metrics(debug)
     attribution_known = bool(core_trace.finding_attribution(debug))
-    has_publish = any(isinstance(decision, dict)
-                      and decision.get("disposition") == "publish"
-                      for decision in debug.get("decisions", []))
+    has_publish = any(
+        isinstance(decision, dict) and decision.get("disposition") == "publish"
+        for decision in debug.get("decisions", [])
+    )
     for name, stage in sorted((debug.get("stages") or {}).items()):
         if not isinstance(stage, dict):
             continue
-        model = _normalize_model(stage.get("model") if isinstance(stage.get("model"), str)
-                                 else "unknown")
+        model = _normalize_model(
+            stage.get("model") if isinstance(stage.get("model"), str) else "unknown"
+        )
         record = stages[_stage_key(name, model)]
         record["stage"] = name
         record["configured_model"] = model
@@ -1253,7 +1443,9 @@ def _add_stage_results(stages, debug, row, report_name):
         record["concept_stage"] = bool(stage_metrics.get("concept_stage"))
         record["conceptual_concerns"] += stage_metrics.get("conceptual_concerns", 0)
         record["saved_result_runs"] += 1
-        status = stage.get("status") if isinstance(stage.get("status"), str) else "unknown"
+        status = (
+            stage.get("status") if isinstance(stage.get("status"), str) else "unknown"
+        )
         record["status_counts"][status] += 1
         record["coverage_counts"][_coverage_status(stage.get("coverage"))] += 1
         if status == "skipped":
@@ -1268,10 +1460,13 @@ def _add_stage_results(stages, debug, row, report_name):
         record["tool_calls"] += stage_metrics.get("tool_calls", 0)
         record["model_turns"] += stage_metrics.get("calls", 0)
         for turn in stage.get("turns", []):
-            if isinstance(turn, dict) and isinstance(turn.get("elapsed_seconds"), (int, float)):
+            if isinstance(turn, dict) and isinstance(
+                turn.get("elapsed_seconds"), (int, float)
+            ):
                 record["model_seconds"] += float(turn["elapsed_seconds"])
         record["saved_trace_known_estimated_cost_micros"] += _usd_to_micros(
-            stage_metrics.get("known_estimated_cost_usd", 0))
+            stage_metrics.get("known_estimated_cost_usd", 0)
+        )
         if has_publish and not attribution_known:
             record["attribution_unknown_reviews"] += 1
 
@@ -1314,22 +1509,25 @@ def _stage_records(stages):
             "findings": record["findings"],
             "concept_stage": record["concept_stage"],
             "conceptual_concerns": record["conceptual_concerns"],
-            "selected_candidate_findings": (
-                record["candidate_counts"]["publish"]),
+            "selected_candidate_findings": (record["candidate_counts"]["publish"]),
             "sole_source_findings": record["sole_source_findings"],
             "shared_findings": record["shared_findings"],
             "known_cost_per_accepted_finding_micros": (
                 round(record["ledger"]["known_cost_micros"] / accepted, 2)
-                if accepted else None),
+                if accepted
+                else None
+            ),
             "attribution_unknown_reviews": record["attribution_unknown_reviews"],
             "acceptance_denominator_runs": executed,
             "accepted_per_executed_run": (
-                round(accepted / executed, 4) if executed else None),
+                round(accepted / executed, 4) if executed else None
+            ),
             "tool_calls": record["tool_calls"],
             "model_turns": record["model_turns"],
             "model_seconds": round(record["model_seconds"], 2),
             "saved_trace_known_estimated_cost_micros": (
-                record["saved_trace_known_estimated_cost_micros"]),
+                record["saved_trace_known_estimated_cost_micros"]
+            ),
             "ledger": _final_request_totals(record["ledger"]),
         }
         records.append(stage_record)
@@ -1344,27 +1542,34 @@ def _stage_leaderboard(stages):
         accepted = record["accepted_findings"]
         selected_candidates = record["candidate_counts"]["publish"]
         cost = record["ledger"]["known_cost_micros"]
-        records.append({
-            "stage": record["stage"],
-            "configured_model": record["configured_model"],
-            "accepted_findings": accepted,
-            "selected_candidate_findings": selected_candidates,
-            "sole_source_findings": record["sole_source_findings"],
-            "shared_findings": record["shared_findings"],
-            "executed_runs": record["executed_runs"],
-            "known_cost_micros": cost,
-            "reserved_micros": record["ledger"]["reserved_micros"],
-            "request_count": record["ledger"]["request_count"],
-            "known_cost_per_accepted_finding_micros": (
-                round(cost / accepted, 2) if accepted else None),
-            "note": "Shared findings overlap across stages and do not sum to total unique findings.",
-        })
-    return sorted(records, key=lambda item: (
-        item["accepted_findings"],
-        item["sole_source_findings"],
-        item["shared_findings"],
-        -item["request_count"],
-    ), reverse=True)
+        records.append(
+            {
+                "stage": record["stage"],
+                "configured_model": record["configured_model"],
+                "accepted_findings": accepted,
+                "selected_candidate_findings": selected_candidates,
+                "sole_source_findings": record["sole_source_findings"],
+                "shared_findings": record["shared_findings"],
+                "executed_runs": record["executed_runs"],
+                "known_cost_micros": cost,
+                "reserved_micros": record["ledger"]["reserved_micros"],
+                "request_count": record["ledger"]["request_count"],
+                "known_cost_per_accepted_finding_micros": (
+                    round(cost / accepted, 2) if accepted else None
+                ),
+                "note": "Shared findings overlap across stages and do not sum to total unique findings.",
+            }
+        )
+    return sorted(
+        records,
+        key=lambda item: (
+            item["accepted_findings"],
+            item["sole_source_findings"],
+            item["shared_findings"],
+            -item["request_count"],
+        ),
+        reverse=True,
+    )
 
 
 def _new_adversarial_comparison():
@@ -1380,22 +1585,27 @@ def _new_adversarial_comparison():
 
 def _add_adversarial_comparison(paired, debug, requests):
     stages = debug.get("stages") or {}
-    if not all(isinstance(stages.get(name), dict)
-               and stages[name].get("status") == "completed"
-               for name in ADVERSARIAL_STAGES):
+    if not all(
+        isinstance(stages.get(name), dict) and stages[name].get("status") == "completed"
+        for name in ADVERSARIAL_STAGES
+    ):
         return
     metrics = core_trace.stage_metrics(debug)
     paired["completed_reviews"] += 1
     for name in ADVERSARIAL_STAGES:
         paired["sole_accepted"][name] += metrics.get(name, {}).get(
-            "sole_source_findings", 0)
+            "sole_source_findings", 0
+        )
         paired["shared_accepted"][name] += metrics.get(name, {}).get(
-            "shared_findings", 0)
+            "shared_findings", 0
+        )
     for request in requests:
         if request["stage"] in ADVERSARIAL_STAGES:
             paired["known_cost_micros"][request["stage"]] += request["cost_micros"]
             if request["status"] in RESERVED_STATUSES:
-                paired["reserved_micros"][request["stage"]] += request["reserved_micros"]
+                paired["reserved_micros"][request["stage"]] += request[
+                    "reserved_micros"
+                ]
 
 
 def _distribution(values):

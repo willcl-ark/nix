@@ -1,7 +1,7 @@
 """Committed local comparisons never depend on a checkout or a remote."""
+
 import os
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -37,7 +37,9 @@ class LocalRepositoryTests(unittest.TestCase):
         return repository.git(self.repo, *args)
 
     def pins(self):
-        return self.git("for-each-ref", "--format=%(refname)", "refs/ralph/local").splitlines()
+        return self.git(
+            "for-each-ref", "--format=%(refname)", "refs/ralph/local"
+        ).splitlines()
 
     def test_divergent_exact_range_and_branch_have_different_baselines(self):
         with repository.local_snapshot(self.repo, "target..topic") as exact:
@@ -61,8 +63,10 @@ class LocalRepositoryTests(unittest.TestCase):
             with repository.local_snapshot(self.repo, "target..topic"):
                 self.assertEqual(len(self.pins()), 4)
                 self.git("gc", "--prune=now")
-                self.assertIn("head", repository.read_file(
-                    self.repo, first.head_files, "code.txt", 1))
+                self.assertIn(
+                    "head",
+                    repository.read_file(self.repo, first.head_files, "code.txt", 1),
+                )
             self.assertEqual(self.pins(), original_pins)
         self.assertEqual(self.pins(), [])
         for failure in (RuntimeError, KeyboardInterrupt):
@@ -76,7 +80,10 @@ class LocalRepositoryTests(unittest.TestCase):
         (self.repo / "untracked").write_text("ignored\n")
         index = self.git("write-tree").strip()
         with repository.local_snapshot(self.repo, "target..topic") as snapshot:
-            self.assertIn("head", repository.read_file(self.repo, snapshot.head_files, "code.txt", 1))
+            self.assertIn(
+                "head",
+                repository.read_file(self.repo, snapshot.head_files, "code.txt", 1),
+            )
             self.assertNotIn("untracked", snapshot.head_files)
         self.assertEqual(self.git("write-tree").strip(), index)
         bare = self.root / "bare.git"
@@ -84,7 +91,9 @@ class LocalRepositoryTests(unittest.TestCase):
         linked = self.root / "linked"
         self.git("worktree", "add", "--detach", str(linked), self.head)
         for checkout in (bare, linked):
-            with repository.local_snapshot(checkout, f"{self.base}..{self.head}") as snapshot:
+            with repository.local_snapshot(
+                checkout, f"{self.base}..{self.head}"
+            ) as snapshot:
                 self.assertEqual(snapshot.diff_base_sha, self.base)
 
     def test_missing_blob_never_attempts_network_and_removes_pins(self):
@@ -109,9 +118,15 @@ class LocalRepositoryTests(unittest.TestCase):
                 pass
 
     def test_invalid_targets_fail_before_evidence(self):
-        for target, base in (("topic", None), ("..topic", None), ("target..", None),
-                             ("target...topic", None), ("target..topic", "target"),
-                             ("--all..topic", None), ("code.txt..topic", None)):
+        for target, base in (
+            ("topic", None),
+            ("..topic", None),
+            ("target..", None),
+            ("target...topic", None),
+            ("target..topic", "target"),
+            ("--all..topic", None),
+            ("code.txt..topic", None),
+        ):
             with self.subTest(target=target, base=base), self.assertRaises(ValueError):
                 with repository.local_snapshot(self.repo, target, base=base):
                     self.fail("invalid target accepted")
@@ -125,13 +140,17 @@ class LocalRepositoryTests(unittest.TestCase):
         self.git("commit", "-qm", "unrelated root")
         with repository.local_snapshot(self.repo, "unrelated..topic") as snapshot:
             self.assertIsNone(snapshot.merge_base)
-            self.assertEqual(snapshot.diff_base_sha, self.git("rev-parse", "HEAD").strip())
+            self.assertEqual(
+                snapshot.diff_base_sha, self.git("rev-parse", "HEAD").strip()
+            )
         with self.assertRaisesRegex(ValueError, "unique merge base"):
             with repository.local_snapshot(self.repo, "topic", base="unrelated"):
                 pass
 
     def test_missing_history_fails_before_evidence(self):
-        (self.repo / ".git" / "objects" / self.ancestor[:2] / self.ancestor[2:]).unlink()
+        (
+            self.repo / ".git" / "objects" / self.ancestor[:2] / self.ancestor[2:]
+        ).unlink()
         with self.assertRaisesRegex(ValueError, "history.*missing"):
             with repository.local_snapshot(self.repo, "target..topic"):
                 self.fail("incomplete history reached review")
@@ -139,7 +158,9 @@ class LocalRepositoryTests(unittest.TestCase):
 
     def test_large_patch_and_long_diff_lines_remain_bounded(self):
         self.git("checkout", "-q", "topic")
-        (self.repo / "large.txt").write_text("x" * (repository.MAX_REVIEW_BYTES * 2) + "\n")
+        (self.repo / "large.txt").write_text(
+            "x" * (repository.MAX_REVIEW_BYTES * 2) + "\n"
+        )
         self.git("add", ".")
         self.git("commit", "-qm", "large patch")
         with repository.local_snapshot(self.repo, "target..topic") as snapshot:
@@ -147,26 +168,54 @@ class LocalRepositoryTests(unittest.TestCase):
             self.assertIsNone(skip)
             self.assertLessEqual(len(review.encode()), repository.MAX_REVIEW_BYTES)
             self.assertIn("Patch exceeds", review)
-            excerpt = repository.read_diff(self.repo, snapshot.changed_paths,
-                snapshot.diff_base_sha, snapshot.head_sha, "large.txt", 1)
+            excerpt = repository.read_diff(
+                self.repo,
+                snapshot.changed_paths,
+                snapshot.diff_base_sha,
+                snapshot.head_sha,
+                "large.txt",
+                1,
+            )
             self.assertLess(len(excerpt.encode()), repository.MAX_TOOL_BYTES + 200)
             self.assertIn("exceeds output limit", excerpt)
-            self.assertLessEqual(len(repository.diff_between_heads(
-                self.repo, self.base, snapshot.head_sha).encode()),
-                repository.MAX_FOLLOWUP_DIFF_BYTES + 100)
+            self.assertLessEqual(
+                len(
+                    repository.diff_between_heads(
+                        self.repo, self.base, snapshot.head_sha
+                    ).encode()
+                ),
+                repository.MAX_FOLLOWUP_DIFF_BYTES + 100,
+            )
 
     def test_untracked_attributes_cannot_change_pinned_patch(self):
         with repository.local_snapshot(self.repo, "target..topic") as snapshot:
             expected, _ = repository.build_review_input(snapshot)
-            expected_diff = repository.read_diff(self.repo, snapshot.changed_paths,
-                snapshot.diff_base_sha, snapshot.head_sha, "code.txt", 1)
+            expected_diff = repository.read_diff(
+                self.repo,
+                snapshot.changed_paths,
+                snapshot.diff_base_sha,
+                snapshot.head_sha,
+                "code.txt",
+                1,
+            )
             (self.repo / ".gitattributes").write_text("* -diff\n")
             actual, _ = repository.build_review_input(snapshot)
             self.assertEqual(actual, expected)
-            self.assertEqual(repository.read_diff(self.repo, snapshot.changed_paths,
-                snapshot.diff_base_sha, snapshot.head_sha, "code.txt", 1), expected_diff)
+            self.assertEqual(
+                repository.read_diff(
+                    self.repo,
+                    snapshot.changed_paths,
+                    snapshot.diff_base_sha,
+                    snapshot.head_sha,
+                    "code.txt",
+                    1,
+                ),
+                expected_diff,
+            )
 
-    def test_local_attributes_are_ignored_in_worktree_bare_and_linked_repositories(self):
+    def test_local_attributes_are_ignored_in_worktree_bare_and_linked_repositories(
+        self,
+    ):
         self.git("checkout", "-q", "topic")
         (self.repo / ".gitattributes").write_text("*.txt diff\n")
         self.git("add", ".gitattributes")
@@ -178,10 +227,19 @@ class LocalRepositoryTests(unittest.TestCase):
         self.git("worktree", "add", "--detach", str(linked), head)
         with repository.local_snapshot(self.repo, f"{self.base}..{head}") as snapshot:
             expected, _ = repository.build_review_input(snapshot)
-            expected_diff = repository.read_diff(self.repo, snapshot.changed_paths,
-                snapshot.diff_base_sha, snapshot.head_sha, "code.txt", 1)
+            expected_diff = repository.read_diff(
+                self.repo,
+                snapshot.changed_paths,
+                snapshot.diff_base_sha,
+                snapshot.head_sha,
+                "code.txt",
+                1,
+            )
             expected_focused = repository.focused_review_input(
-                f"Patch exceeds {repository.MAX_REVIEW_BYTES} input bytes. Use read_diff", snapshot, "tests")
+                f"Patch exceeds {repository.MAX_REVIEW_BYTES} input bytes. Use read_diff",
+                snapshot,
+                "tests",
+            )
         # Highest-priority repository attributes and default global attributes must
         # not override the committed tree. Also stage conflicting attributes.
         (self.repo / ".git" / "info" / "attributes").write_text("* -diff\n")
@@ -194,17 +252,44 @@ class LocalRepositoryTests(unittest.TestCase):
         (xdg / "git" / "attributes").write_text("* -diff\n")
         with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(xdg)}):
             for checkout in (self.repo, bare, linked):
-                with self.subTest(checkout=checkout), repository.local_snapshot(
-                        checkout, f"{self.base}..{head}") as snapshot:
-                    self.assertEqual(repository.build_review_input(snapshot)[0], expected)
-                    self.assertEqual(repository.read_diff(checkout, snapshot.changed_paths,
-                        snapshot.diff_base_sha, snapshot.head_sha, "code.txt", 1), expected_diff)
-                    self.assertEqual(repository.focused_review_input(
-                        f"Patch exceeds {repository.MAX_REVIEW_BYTES} input bytes. Use read_diff",
-                        snapshot, "tests"), expected_focused)
-                    self.assertIn("+head", repository.diff_between_heads(checkout, self.base, head))
-                    self.assertIn("+head", repository.diff_path_between_heads(
-                        checkout, self.base, head, "code.txt"))
+                with (
+                    self.subTest(checkout=checkout),
+                    repository.local_snapshot(
+                        checkout, f"{self.base}..{head}"
+                    ) as snapshot,
+                ):
+                    self.assertEqual(
+                        repository.build_review_input(snapshot)[0], expected
+                    )
+                    self.assertEqual(
+                        repository.read_diff(
+                            checkout,
+                            snapshot.changed_paths,
+                            snapshot.diff_base_sha,
+                            snapshot.head_sha,
+                            "code.txt",
+                            1,
+                        ),
+                        expected_diff,
+                    )
+                    self.assertEqual(
+                        repository.focused_review_input(
+                            f"Patch exceeds {repository.MAX_REVIEW_BYTES} input bytes. Use read_diff",
+                            snapshot,
+                            "tests",
+                        ),
+                        expected_focused,
+                    )
+                    self.assertIn(
+                        "+head",
+                        repository.diff_between_heads(checkout, self.base, head),
+                    )
+                    self.assertIn(
+                        "+head",
+                        repository.diff_path_between_heads(
+                            checkout, self.base, head, "code.txt"
+                        ),
+                    )
 
     def test_committed_binary_attributes_are_respected(self):
         self.git("checkout", "-q", "topic")
@@ -213,10 +298,20 @@ class LocalRepositoryTests(unittest.TestCase):
         self.git("commit", "-qm", "committed binary attribute")
         (self.repo / ".gitattributes").write_text("code.txt diff\n")
         with repository.local_snapshot(self.repo, "target..topic") as snapshot:
-            self.assertIn("GIT binary patch", repository.build_review_input(snapshot)[0])
-            self.assertIn("Binary files", repository.read_diff(
-                self.repo, snapshot.changed_paths, snapshot.diff_base_sha,
-                snapshot.head_sha, "code.txt", 1))
+            self.assertIn(
+                "GIT binary patch", repository.build_review_input(snapshot)[0]
+            )
+            self.assertIn(
+                "Binary files",
+                repository.read_diff(
+                    self.repo,
+                    snapshot.changed_paths,
+                    snapshot.diff_base_sha,
+                    snapshot.head_sha,
+                    "code.txt",
+                    1,
+                ),
+            )
 
     def test_ambiguous_ref_is_rejected(self):
         self.git("tag", "topic", self.base)
@@ -227,10 +322,12 @@ class LocalRepositoryTests(unittest.TestCase):
 
     def test_multiple_merge_bases_only_allowed_for_exact_endpoints(self):
         tree = self.git("rev-parse", f"{self.head}^{{tree}}").strip()
-        left = self.git("commit-tree", tree, "-p", self.base, "-p", self.head,
-                        "-m", "left").strip()
-        right = self.git("commit-tree", tree, "-p", self.head, "-p", self.base,
-                         "-m", "right").strip()
+        left = self.git(
+            "commit-tree", tree, "-p", self.base, "-p", self.head, "-m", "left"
+        ).strip()
+        right = self.git(
+            "commit-tree", tree, "-p", self.head, "-p", self.base, "-m", "right"
+        ).strip()
         with repository.local_snapshot(self.repo, f"{left}..{right}") as snapshot:
             self.assertIsNone(snapshot.merge_base)
             self.assertEqual(snapshot.diff_base_sha, left)
@@ -243,16 +340,28 @@ class LocalRepositoryTests(unittest.TestCase):
         (self.repo / "link").symlink_to("code.txt")
         (self.repo / ":(glob)*").write_text("literal file\n")
         self.git("add", ".")
-        self.git("update-index", "--add", "--cacheinfo", f"160000,{self.base},submodule")
+        self.git(
+            "update-index", "--add", "--cacheinfo", f"160000,{self.base},submodule"
+        )
         self.git("commit", "-qm", "nonregular and literal paths")
         with repository.local_snapshot(self.repo, "target..topic") as snapshot:
             self.assertNotIn("link", snapshot.head_files)
             self.assertNotIn("submodule", snapshot.head_files)
-            self.assertIn("literal file", repository.read_file(
-                self.repo, snapshot.head_files, ":(glob)*", 1))
-            self.assertIn("literal file", repository.read_diff(
-                self.repo, snapshot.changed_paths, snapshot.diff_base_sha,
-                snapshot.head_sha, ":(glob)*", 1))
+            self.assertIn(
+                "literal file",
+                repository.read_file(self.repo, snapshot.head_files, ":(glob)*", 1),
+            )
+            self.assertIn(
+                "literal file",
+                repository.read_diff(
+                    self.repo,
+                    snapshot.changed_paths,
+                    snapshot.diff_base_sha,
+                    snapshot.head_sha,
+                    ":(glob)*",
+                    1,
+                ),
+            )
 
     def test_source_hooks_and_text_conversion_are_never_executed(self):
         marker = self.root / "executed"
@@ -265,8 +374,14 @@ class LocalRepositoryTests(unittest.TestCase):
         with repository.local_snapshot(self.repo, "target..topic") as snapshot:
             review, _ = repository.build_review_input(snapshot)
             self.assertIn("+head", review)
-            repository.read_diff(self.repo, snapshot.changed_paths, snapshot.diff_base_sha,
-                                 snapshot.head_sha, "code.txt", 1)
+            repository.read_diff(
+                self.repo,
+                snapshot.changed_paths,
+                snapshot.diff_base_sha,
+                snapshot.head_sha,
+                "code.txt",
+                1,
+            )
         self.assertFalse(marker.exists())
 
 

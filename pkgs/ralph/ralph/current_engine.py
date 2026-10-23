@@ -21,20 +21,30 @@ def configure(value):
                 for name in config.PROMPT_NAMES
             },
             "models": config.validate_models(
-                json.loads(Path(value.get("models_json", audit_dir / "models.json"))
-                           .read_text(encoding="utf-8"))),
+                json.loads(
+                    Path(value.get("models_json", audit_dir / "models.json")).read_text(
+                        encoding="utf-8"
+                    )
+                )
+            ),
         }
     else:
         prompts = dict(prompts)
-        if (not isinstance(prompts.get("instructions"), str)
-                or not isinstance(prompts.get("audit_prompts"), dict)
-                or not isinstance(prompts.get("models"), dict)):
-            raise ValueError("prompts must contain instructions, audit_prompts, and models")
+        if (
+            not isinstance(prompts.get("instructions"), str)
+            or not isinstance(prompts.get("audit_prompts"), dict)
+            or not isinstance(prompts.get("models"), dict)
+        ):
+            raise ValueError(
+                "prompts must contain instructions, audit_prompts, and models"
+            )
         config.validate_models(prompts["models"])
         if set(prompts["audit_prompts"]) != set(config.PROMPT_NAMES):
             raise ValueError("prompt config must name each review prompt")
         if "prompt_file" in value:
-            prompts["instructions"] = config.load_prompt_file(Path(value["prompt_file"]))
+            prompts["instructions"] = config.load_prompt_file(
+                Path(value["prompt_file"])
+            )
         if "audit_prompt_dir" in value:
             audit_dir = Path(value["audit_prompt_dir"])
             prompts["audit_prompts"] = {
@@ -43,14 +53,17 @@ def configure(value):
             }
         if "models_json" in value:
             prompts["models"] = config.validate_models(
-                json.loads(Path(value["models_json"]).read_text(encoding="utf-8")))
+                json.loads(Path(value["models_json"]).read_text(encoding="utf-8"))
+            )
     prompt_config = config.PromptConfig(**prompts)
     if any(not prompt.strip() for prompt in prompt_config.audit_prompts.values()):
         raise ValueError("audit prompt files must not be empty")
-    normalized = {"prompts": asdict(prompt_config),
-                  "routing_mode": value.get("routing_mode", "enabled"),
-                  "blind_alternatives": value.get("blind_alternatives", True),
-                  "archaeology": value.get("archaeology", False)}
+    normalized = {
+        "prompts": asdict(prompt_config),
+        "routing_mode": value.get("routing_mode", "enabled"),
+        "blind_alternatives": value.get("blind_alternatives", True),
+        "archaeology": value.get("archaeology", False),
+    }
     if normalized["routing_mode"] not in {"enabled", "shadow", "full"}:
         raise ValueError("Unknown routing mode")
     if type(normalized["blind_alternatives"]) is not bool:
@@ -62,17 +75,31 @@ def configure(value):
 
 def run(case, runtime, configured):
     if configured["archaeology"]:
-        if (not isinstance(case.source, dict) or case.source.get("kind") != "pull_request"
-                or not case.source.get("url")
-                or (case.research_evidence is None and runtime.discussion_lookup is None)):
-            raise ValueError("archaeology requires PR context and discussion evidence or a reader")
+        if (
+            not isinstance(case.source, dict)
+            or case.source.get("kind") != "pull_request"
+            or not case.source.get("url")
+            or (case.research_evidence is None and runtime.discussion_lookup is None)
+        ):
+            raise ValueError(
+                "archaeology requires PR context and discussion evidence or a reader"
+            )
     runtime.debug["schema_version"] = 2
     prompt_config = config.PromptConfig(**configured["prompts"])
     result = pipeline.review_with_independent_passes(
-        case, runtime, prompt_config, configured["routing_mode"],
-        configured["blind_alternatives"], configured["archaeology"])
+        case,
+        runtime,
+        prompt_config,
+        configured["routing_mode"],
+        configured["blind_alternatives"],
+        configured["archaeology"],
+    )
     data = {**runtime.debug, "schema_version": 2}
-    exports = {"findings": result.findings,
-               "actionable": [*[finding["id"] for finding in result.findings],
-                              *(["concept_objection"] if result.concept_concern else [])]}
+    exports = {
+        "findings": result.findings,
+        "actionable": [
+            *[finding["id"] for finding in result.findings],
+            *(["concept_objection"] if result.concept_concern else []),
+        ],
+    }
     return Output(result.content, data, exports, schema_version=2)

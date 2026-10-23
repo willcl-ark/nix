@@ -5,11 +5,11 @@ import hashlib
 import json
 
 
-
 SCHEMA_VERSION = 1
 MISSING_RESEARCH = (
     "Frozen research evidence is unavailable for this tool call. Continue "
-    "without live discussion or web lookup.")
+    "without live discussion or web lookup."
+)
 
 
 def _parse_time(value):
@@ -25,13 +25,18 @@ def _parse_time(value):
 
 
 def _canonical(value):
-    return json.loads(json.dumps(value, sort_keys=True, separators=(",", ":"),
-                                 ensure_ascii=True))
+    return json.loads(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    )
 
 
 def _entry_key(name, arguments):
-    payload = json.dumps([name, _canonical(arguments)], sort_keys=True,
-                         separators=(",", ":"), ensure_ascii=True).encode()
+    payload = json.dumps(
+        [name, _canonical(arguments)],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode()
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -78,7 +83,14 @@ def validate(evidence):
     for entry in evidence["entries"]:
         if not isinstance(entry, dict):
             raise ValueError("Frozen research evidence entry must be an object")
-        if set(entry) != {"key", "name", "arguments", "output", "captured_at", "cutoff"}:
+        if set(entry) != {
+            "key",
+            "name",
+            "arguments",
+            "output",
+            "captured_at",
+            "cutoff",
+        }:
             raise ValueError("Frozen research evidence entry has unexpected fields")
         name = entry["name"]
         if not isinstance(name, str):
@@ -88,7 +100,10 @@ def validate(evidence):
             raise ValueError("Frozen research evidence arguments are not canonical")
         if not isinstance(entry["output"], str):
             raise ValueError("Frozen research evidence output must be text")
-        if entry["captured_at"] != evidence["captured_at"] or entry["cutoff"] != evidence["cutoff"]:
+        if (
+            entry["captured_at"] != evidence["captured_at"]
+            or entry["cutoff"] != evidence["cutoff"]
+        ):
             raise ValueError("Frozen research evidence entry timestamps differ")
         key = _entry_key(name, arguments)
         if entry["key"] != key:
@@ -125,9 +140,11 @@ def inventory(evidence):
     if not evidence["entries"]:
         lines.append("No discussion tool calls were captured.")
     for entry in evidence["entries"]:
-        arguments = json.dumps(entry["arguments"], sort_keys=True,
-                               separators=(",", ":"), ensure_ascii=True)
+        arguments = json.dumps(
+            entry["arguments"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        )
         lines.append(
             f"- {entry['name']} {arguments}: {len(entry['output'].encode())} bytes, "
-            f"key {entry['key'][:12]}")
+            f"key {entry['key'][:12]}"
+        )
     return "\n".join(lines)

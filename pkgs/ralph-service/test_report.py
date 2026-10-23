@@ -9,7 +9,6 @@ from unittest.mock import patch
 from ralph_service import report, trace
 
 
-
 class ReportTests(unittest.TestCase):
     def setUp(self):
         self.prompt_config = SimpleNamespace(
@@ -40,16 +39,19 @@ class ReportTests(unittest.TestCase):
                     "limitations": ["Verifier failed <hard>."],
                     "private": "coverage-verification-private-marker",
                 },
-                "issues": [{
-                    "stage": "verifier",
-                    "category": "verification",
-                    "reason": "Verifier failed <hard>.",
-                    "raw_error": "coverage-issue-private-marker",
-                }, {
-                    "stage": "archaeologist",
-                    "category": "private-category",
-                    "reason": "category is not public",
-                }],
+                "issues": [
+                    {
+                        "stage": "verifier",
+                        "category": "verification",
+                        "reason": "Verifier failed <hard>.",
+                        "raw_error": "coverage-issue-private-marker",
+                    },
+                    {
+                        "stage": "archaeologist",
+                        "category": "private-category",
+                        "reason": "category is not public",
+                    },
+                ],
                 "notes": ["Documentation-only paths were out of scope."],
                 "private": "coverage-private-marker",
             },
@@ -67,37 +69,41 @@ class ReportTests(unittest.TestCase):
                 },
             },
             "candidate_sources": {"tests:1": "tests"},
-            "decisions": [{
-                "candidate_ids": ["tests:1"],
-                "disposition": "publish",
-                "reason": "Verified from changed code.",
-                "finding": {
-                    "kind": "defect",
-                    "severity": "major",
+            "decisions": [
+                {
+                    "candidate_ids": ["tests:1"],
+                    "disposition": "publish",
+                    "reason": "Verified from changed code.",
+                    "finding": {
+                        "kind": "defect",
+                        "severity": "major",
+                        "path": "src/node.cpp",
+                        "line": 7,
+                        "side": "head",
+                        "title": "Breaks startup",
+                        "body": "The verified finding body.",
+                        "private": "decision-private-marker",
+                    },
+                    "private": "decision-private-marker",
+                }
+            ],
+            "finding_attribution": [
+                {
+                    "finding_id": "finding:1",
+                    "title": "Breaks startup",
                     "path": "src/node.cpp",
                     "line": 7,
                     "side": "head",
-                    "title": "Breaks startup",
-                    "body": "The verified finding body.",
-                    "private": "decision-private-marker",
-                },
-                "private": "decision-private-marker",
-            }],
-            "finding_attribution": [{
-                "finding_id": "finding:1",
-                "title": "Breaks startup",
-                "path": "src/node.cpp",
-                "line": 7,
-                "side": "head",
-                "candidate_ids": ["tests:1"],
-                "raised_by": ["tests"],
-                "raised_by_models": ["gpt-6-luna"],
-                "verified_by": "verifier",
-                "verified_by_model": "gpt-6-luna",
-                "edited_by": "collator",
-                "edited_by_model": "gpt-6-luna",
-                "private": "attribution-private-marker",
-            }],
+                    "candidate_ids": ["tests:1"],
+                    "raised_by": ["tests"],
+                    "raised_by_models": ["gpt-6-luna"],
+                    "verified_by": "verifier",
+                    "verified_by_model": "gpt-6-luna",
+                    "edited_by": "collator",
+                    "edited_by_model": "gpt-6-luna",
+                    "private": "attribution-private-marker",
+                }
+            ],
             "stage_outputs": {"tests": raw_output},
             "stages": {
                 "tests": {
@@ -105,32 +111,36 @@ class ReportTests(unittest.TestCase):
                     "status": "completed",
                     "raw_output": raw_output,
                     "coverage": {"status": "complete", "limitations": []},
-                    "turns": [{
-                        "model": "gpt-6-luna",
-                        "request_bytes": 123,
-                        "input_tokens": 100,
-                        "cached_tokens": 0,
-                        "cache_write_tokens": 0,
-                        "output_tokens": 20,
-                        "elapsed_seconds": 1.5,
-                        "input": "private turn input marker",
-                        "instructions": "private turn instructions marker",
-                    }],
-                    "tools": [{
-                        "name": "read_file",
-                        "arguments": "private tool arguments marker",
-                        "output": "private tool output marker",
-                        "output_bytes": 50,
-                        "output_sha256": "a" * 64,
-                        "hosted": True,
-                        "action_type": "search",
-                        "retrieved_at": "2026-10-01T00:00:00Z",
-                        "sources": [
-                            "https://code.example.org/source",
-                            "javascript:alert(1)",
-                            "https://[",
-                        ],
-                    }],
+                    "turns": [
+                        {
+                            "model": "gpt-6-luna",
+                            "request_bytes": 123,
+                            "input_tokens": 100,
+                            "cached_tokens": 0,
+                            "cache_write_tokens": 0,
+                            "output_tokens": 20,
+                            "elapsed_seconds": 1.5,
+                            "input": "private turn input marker",
+                            "instructions": "private turn instructions marker",
+                        }
+                    ],
+                    "tools": [
+                        {
+                            "name": "read_file",
+                            "arguments": "private tool arguments marker",
+                            "output": "private tool output marker",
+                            "output_bytes": 50,
+                            "output_sha256": "a" * 64,
+                            "hosted": True,
+                            "action_type": "search",
+                            "retrieved_at": "2026-10-01T00:00:00Z",
+                            "sources": [
+                                "https://code.example.org/source",
+                                "javascript:alert(1)",
+                                "https://[",
+                            ],
+                        }
+                    ],
                     "private": "stage-private-marker",
                 }
             },
@@ -144,17 +154,21 @@ class ReportTests(unittest.TestCase):
             "relevant_history": "Earlier attempts stalled on unclear deployment impact.",
             "recommendation": "Use the submitted concept only if the history still applies.",
             "decisive_question": "Do current deployments still hit the old failure mode?",
-            "technical_assumptions": ["The verifier still needs to check the policy path."],
-            "alternatives": [{
-                "name": "Do nothing",
-                "provenance": "history",
-                "concept": "Keep the existing policy.",
-                "benefit": "No churn",
-                "cost": "Known operator pain remains",
-                "unresolved": "Whether the old pain still matters.",
-                "citations": ["https://code.example.org/bitcoin/bitcoin/pulls/2"],
-                "private": "alternative-private-marker",
-            }],
+            "technical_assumptions": [
+                "The verifier still needs to check the policy path."
+            ],
+            "alternatives": [
+                {
+                    "name": "Do nothing",
+                    "provenance": "history",
+                    "concept": "Keep the existing policy.",
+                    "benefit": "No churn",
+                    "cost": "Known operator pain remains",
+                    "unresolved": "Whether the old pain still matters.",
+                    "citations": ["https://code.example.org/bitcoin/bitcoin/pulls/2"],
+                    "private": "alternative-private-marker",
+                }
+            ],
             "citations": [
                 "https://code.example.org/bitcoin/bitcoin/pulls/1#issuecomment-2",
                 "javascript:alert(1)",
@@ -169,17 +183,20 @@ class ReportTests(unittest.TestCase):
             "schema_version": 1,
             "head_sha": "a" * 40,
             "content": content,
-            "engine": {"name": "current", "config": {
-                "prompts": {"instructions": "",
-                            "models": self.prompt_config.models}}},
-            "output": {"schema_version": 2,
-                        "data": {"schema_version": 2, **debug},
-                        "exports": {"findings": []}},
+            "engine": {
+                "name": "current",
+                "config": {
+                    "prompts": {"instructions": "", "models": self.prompt_config.models}
+                },
+            },
+            "output": {
+                "schema_version": 2,
+                "data": {"schema_version": 2, **debug},
+                "exports": {"findings": []},
+            },
             "run": {"status": "completed", "metrics": {}, "attempt": {}},
         }
-        return report.save_report(
-            Path(directory), 123, result, "123-abcdef"
-        )
+        return report.save_report(Path(directory), 123, result, "123-abcdef")
 
     def test_report_keeps_full_stage_replies_untruncated(self):
         raw = "X" * (trace.MAX_PUBLIC_STAGE_OUTPUT_BYTES + 500)
@@ -195,31 +212,57 @@ class ReportTests(unittest.TestCase):
 
     def test_public_report_retains_security_in_findings_and_decisions(self):
         for classification in ("potential_vulnerability", "non_security", "uncertain"):
-            with self.subTest(classification=classification), tempfile.TemporaryDirectory() as directory:
-                security = {"classification": classification,
-                            "reason": "The verifier's assessment."}
-                finding = {"kind": "defect", "severity": "major", "security": security,
-                           "path": "src/node.cpp", "line": 7, "side": "head",
-                           "title": "Breaks startup", "body": "The verified finding body."}
+            with (
+                self.subTest(classification=classification),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                security = {
+                    "classification": classification,
+                    "reason": "The verifier's assessment.",
+                }
+                finding = {
+                    "kind": "defect",
+                    "severity": "major",
+                    "security": security,
+                    "path": "src/node.cpp",
+                    "line": 7,
+                    "side": "head",
+                    "title": "Breaks startup",
+                    "body": "The verified finding body.",
+                }
                 debug = self.debug()
                 debug["decisions"][0]["finding"] = finding
-                result = {"schema_version": 1, "engine": {"name": "current"},
-                          "output": {"schema_version": 2,
-                                     "data": {"schema_version": 2, **debug},
-                                     "exports": {"findings": [{"id": "finding:1", **finding}],
-                                                 "actionable": ["finding:1"]}}}
+                result = {
+                    "schema_version": 1,
+                    "engine": {"name": "current"},
+                    "output": {
+                        "schema_version": 2,
+                        "data": {"schema_version": 2, **debug},
+                        "exports": {
+                            "findings": [{"id": "finding:1", **finding}],
+                            "actionable": ["finding:1"],
+                        },
+                    },
+                }
                 report.save_report(directory, 123, result, "123-security")
                 public = json.loads((Path(directory) / "123-security.json").read_text())
                 self.assertEqual(public["findings"][0]["security"], security)
-                self.assertEqual(public["decisions"][0]["finding"]["security"], security)
+                self.assertEqual(
+                    public["decisions"][0]["finding"]["security"], security
+                )
 
     def test_public_report_keeps_old_exports_without_native_diagnostics(self):
         findings = [{"id": "finding:1", "title": "Earlier finding"}]
-        result = {"schema_version": 1, "engine": {"name": "current"},
-                  "content": "Earlier review",
-                  "output": {"schema_version": 1,
-                             "data": {"schema_version": 1, **self.debug()},
-                             "exports": {"findings": findings}}}
+        result = {
+            "schema_version": 1,
+            "engine": {"name": "current"},
+            "content": "Earlier review",
+            "output": {
+                "schema_version": 1,
+                "data": {"schema_version": 1, **self.debug()},
+                "exports": {"findings": findings},
+            },
+        }
         with tempfile.TemporaryDirectory() as directory:
             report.save_report(directory, 123, result, "123-earlier")
             public = json.loads((Path(directory) / "123-earlier.json").read_text())
@@ -230,21 +273,28 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("security", public["findings"][0])
 
     def test_json_stage_reply_renders_readable_findings_without_changing_download(self):
-        raw = json.dumps({"coverage": {"status": "partial", "limitations": ["needs run"]},
-                          "requires_sensitive_review": False,
-                          "findings": [{
-                              "kind": "defect",
-                              "path": "src/node.cpp",
-                              "line": 7,
-                              "side": "head",
-                              "title": "Startup regression",
-                              "claim": "The daemon exits before loading settings.",
-                              "consequence": "Nodes cannot start with this config.",
-                              "evidence": "The new guard rejects the default value.",
-                              "correction": "Accept the default before validation.",
-                              "uncertainty": "Did not run integration tests.",
-                          }, {"title": "Edited finding", "body": "Verified finding text."}]},
-                         separators=(",", ":"))
+        raw = json.dumps(
+            {
+                "coverage": {"status": "partial", "limitations": ["needs run"]},
+                "requires_sensitive_review": False,
+                "findings": [
+                    {
+                        "kind": "defect",
+                        "path": "src/node.cpp",
+                        "line": 7,
+                        "side": "head",
+                        "title": "Startup regression",
+                        "claim": "The daemon exits before loading settings.",
+                        "consequence": "Nodes cannot start with this config.",
+                        "evidence": "The new guard rejects the default value.",
+                        "correction": "Accept the default before validation.",
+                        "uncertainty": "Did not run integration tests.",
+                    },
+                    {"title": "Edited finding", "body": "Verified finding text."},
+                ],
+            },
+            separators=(",", ":"),
+        )
         with tempfile.TemporaryDirectory() as directory:
             html_name = self.save(directory, self.debug(raw))
             public = json.loads((Path(directory) / "123-abcdef.json").read_text())
@@ -253,16 +303,21 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(public["stages"]["tests"]["raw_output"], raw)
         self.assertIn("<h4>Parsed Findings</h4>", html)
         self.assertIn("Startup regression", html)
-        self.assertIn("<strong>Claim:</strong> The daemon exits before loading settings.", html)
+        self.assertIn(
+            "<strong>Claim:</strong> The daemon exits before loading settings.", html
+        )
         self.assertIn("<strong>Body:</strong> Verified finding text.", html)
         self.assertIn("Formatted JSON", html)
-        self.assertIn('{\n  &quot;coverage&quot;: {', html)
+        self.assertIn("{\n  &quot;coverage&quot;: {", html)
         self.assertIn("Raw full reply", html)
 
     def test_script_report_preserves_status_coverage_and_budget_failure(self):
         for status, coverage_status in (
-                ("completed", "complete"), ("completed", "partial"),
-                ("skipped", None), ("budget_exhausted", None)):
+            ("completed", "complete"),
+            ("completed", "partial"),
+            ("skipped", None),
+            ("budget_exhausted", None),
+        ):
             with self.subTest(status=status, coverage=coverage_status):
                 debug = self.debug("Script finding reply")
                 stage = debug["stages"].pop("tests")
@@ -272,7 +327,9 @@ class ReportTests(unittest.TestCase):
                     stage["coverage"] = {
                         "status": coverage_status,
                         "limitations": ["Witness path needs replay"]
-                        if coverage_status == "partial" else []}
+                        if coverage_status == "partial"
+                        else [],
+                    }
                 if status == "budget_exhausted":
                     stage["error_type"] = "BudgetExceeded"
                     stage["error"] = "Script stage budget exhausted"
@@ -282,14 +339,19 @@ class ReportTests(unittest.TestCase):
                     stage["tools"] = []
                 debug["stages"]["script"] = stage
                 debug["stage_outputs"] = (
-                    {"script": "Script finding reply"} if status == "completed" else {})
+                    {"script": "Script finding reply"} if status == "completed" else {}
+                )
                 with tempfile.TemporaryDirectory() as directory:
                     html_name = self.save(directory, debug)
-                    public = json.loads((Path(directory) / "123-abcdef.json").read_text())
+                    public = json.loads(
+                        (Path(directory) / "123-abcdef.json").read_text()
+                    )
                     html = (Path(directory) / html_name).read_text()
                 self.assertEqual(public["stages"]["script"]["status"], status)
                 if coverage_status:
-                    self.assertEqual(public["stages"]["script"]["coverage"], stage["coverage"])
+                    self.assertEqual(
+                        public["stages"]["script"]["coverage"], stage["coverage"]
+                    )
                 else:
                     self.assertNotIn("coverage", public["stages"]["script"])
                 self.assertIn(f"script: {status} (gpt-6.1-sol)", html)
@@ -299,7 +361,9 @@ class ReportTests(unittest.TestCase):
                     self.assertIn("Script finding reply", html)
                 if status == "budget_exhausted":
                     self.assertIn("Script stage budget exhausted", html)
-                    self.assertEqual(public["stages"]["script"]["error_type"], "BudgetExceeded")
+                    self.assertEqual(
+                        public["stages"]["script"]["error_type"], "BudgetExceeded"
+                    )
 
     def test_concept_assessment_renders_without_becoming_a_finding(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -310,17 +374,21 @@ class ReportTests(unittest.TestCase):
         assessment = public["concept_assessment"]
         self.assertEqual(assessment["status"], "verified")
         self.assertEqual(assessment["verification"]["disposition"], "publish")
-        self.assertEqual(assessment["verification"]["assessment"]["alternatives"][0]["name"],
-                         "Do nothing")
+        self.assertEqual(
+            assessment["verification"]["assessment"]["alternatives"][0]["name"],
+            "Do nothing",
+        )
         self.assertEqual(
             assessment["verification"]["assessment"]["alternatives"][0]["concept"],
-            "Keep the existing policy.")
+            "Keep the existing policy.",
+        )
         self.assertEqual(len(public["finding_attribution"]), 1)
         self.assertIn("Concept and Approach", html)
         self.assertIn("Earlier attempts stalled on unclear deployment impact.", html)
         self.assertIn(
             'href="https://code.example.org/bitcoin/bitcoin/pulls/1#issuecomment-2"',
-            html)
+            html,
+        )
         self.assertNotIn('href="javascript:', html)
         self.assertNotIn('href="https://["', html)
 
@@ -330,24 +398,30 @@ class ReportTests(unittest.TestCase):
             public = json.loads((Path(directory) / "123-abcdef.json").read_text())
             html = (Path(directory) / html_name).read_text()
 
-        self.assertEqual(public["coverage"], {
-            "status": "partial",
-            "limitations": ["Verification was partial."],
-            "context": {"status": "complete", "limitations": []},
-            "verification": {
-                "status": "failed",
-                "limitations": ["Verifier failed <hard>."],
+        self.assertEqual(
+            public["coverage"],
+            {
+                "status": "partial",
+                "limitations": ["Verification was partial."],
+                "context": {"status": "complete", "limitations": []},
+                "verification": {
+                    "status": "failed",
+                    "limitations": ["Verifier failed <hard>."],
+                },
+                "issues": [
+                    {
+                        "stage": "verifier",
+                        "category": "verification",
+                        "reason": "Verifier failed <hard>.",
+                    },
+                    {
+                        "stage": "archaeologist",
+                        "reason": "category is not public",
+                    },
+                ],
+                "notes": ["Documentation-only paths were out of scope."],
             },
-            "issues": [{
-                "stage": "verifier",
-                "category": "verification",
-                "reason": "Verifier failed <hard>.",
-            }, {
-                "stage": "archaeologist",
-                "reason": "category is not public",
-            }],
-            "notes": ["Documentation-only paths were out of scope."],
-        })
+        )
         self.assertIn("Code review status: <strong>partial</strong>", html)
         self.assertIn("Historical context status: <strong>complete</strong>", html)
         self.assertIn("Verification status: <strong>failed</strong>", html)
@@ -369,19 +443,28 @@ class ReportTests(unittest.TestCase):
         debug = self.debug()
         concept = debug["concept_assessment"]
         concept["candidate"].update(
-            goal="Reduce review effort", assessment="not_worth_pursuing",
-            proposed_review="would_stop", review_reason="The baseline supplies the benefit.")
+            goal="Reduce review effort",
+            assessment="not_worth_pursuing",
+            proposed_review="would_stop",
+            review_reason="The baseline supplies the benefit.",
+        )
         concept["verification"] = {
-            "disposition": "no_concern", "assessment": None,
+            "disposition": "no_concern",
+            "assessment": None,
             "reason": "The new behavior has an independent benefit.",
-            "proposed_review": "continue", "review_reason": "Review the implementation.",
+            "proposed_review": "continue",
+            "review_reason": "Review the implementation.",
         }
         with tempfile.TemporaryDirectory() as directory:
             html_name = self.save(directory, debug)
             public = json.loads((Path(directory) / "123-abcdef.json").read_text())
             html = (Path(directory) / html_name).read_text()
-        self.assertEqual(public["concept_assessment"]["candidate"]["proposed_review"], "would_stop")
-        self.assertEqual(public["concept_assessment"]["verification"]["proposed_review"], "continue")
+        self.assertEqual(
+            public["concept_assessment"]["candidate"]["proposed_review"], "would_stop"
+        )
+        self.assertEqual(
+            public["concept_assessment"]["verification"]["proposed_review"], "continue"
+        )
         self.assertIn("The baseline supplies the benefit.", html)
         self.assertIn("Review the implementation.", html)
         self.assertIn("do not stop code review", html)
@@ -393,8 +476,13 @@ class ReportTests(unittest.TestCase):
             html_name = self.save(directory, self.debug(raw), content)
             html = (Path(directory) / html_name).read_text()
 
-        self.assertIn("&lt;/pre&gt;&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;&lt;pre&gt;", html)
-        self.assertIn("&lt;/pre&gt;&lt;script&gt;alert(&#x27;review&#x27;)&lt;/script&gt;", html)
+        self.assertIn(
+            "&lt;/pre&gt;&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;&lt;pre&gt;",
+            html,
+        )
+        self.assertIn(
+            "&lt;/pre&gt;&lt;script&gt;alert(&#x27;review&#x27;)&lt;/script&gt;", html
+        )
         self.assertNotIn("<script>", html)
 
     def test_public_json_whitelist_excludes_private_debug_data(self):
@@ -429,15 +517,20 @@ class ReportTests(unittest.TestCase):
         public = json.loads(public_text)
         self.assertEqual(public["review"], "Verified review text.")
         self.assertEqual(public["metrics"]["tool_calls"], 1)
-        self.assertEqual(public["stages"]["tests"]["tools"], [{
-            "name": "read_file",
-            "output_bytes": 50,
-            "output_sha256": "a" * 64,
-            "hosted": True,
-            "action_type": "search",
-            "retrieved_at": "2026-10-01T00:00:00Z",
-            "sources": ["https://code.example.org/source"],
-        }])
+        self.assertEqual(
+            public["stages"]["tests"]["tools"],
+            [
+                {
+                    "name": "read_file",
+                    "output_bytes": 50,
+                    "output_sha256": "a" * 64,
+                    "hosted": True,
+                    "action_type": "search",
+                    "retrieved_at": "2026-10-01T00:00:00Z",
+                    "sources": ["https://code.example.org/source"],
+                }
+            ],
+        )
 
     def test_files_are_public_readable_and_named_from_report_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -463,12 +556,15 @@ class ReportTests(unittest.TestCase):
             calls.append((Path(src), Path(dst), Path(src).exists(), Path(dst).exists()))
             real_replace(src, dst)
 
-        with tempfile.TemporaryDirectory() as directory, \
-                patch.object(report.os, "replace", side_effect=replace):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(report.os, "replace", side_effect=replace),
+        ):
             self.save(directory)
 
-        self.assertEqual([dst.name for _, dst, _, _ in calls],
-                         ["123-abcdef.json", "123-abcdef.html"])
+        self.assertEqual(
+            [dst.name for _, dst, _, _ in calls], ["123-abcdef.json", "123-abcdef.html"]
+        )
         for src, dst, src_existed, dst_existed in calls:
             self.assertTrue(src.name.startswith(f".{dst.name}."))
             self.assertTrue(src_existed)

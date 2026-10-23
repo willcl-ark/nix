@@ -1,4 +1,5 @@
 """Managed remote acquisition before the local review boundary."""
+
 import subprocess
 from pathlib import Path
 
@@ -21,8 +22,17 @@ def prepare_checkout(checkout, bot_config):
         raise ValueError("checkout origin does not match configured repository")
 
 
-def collect_review(checkout, number, base_ref, expected_head, title, description, bot_config,
-                   *, ref_prefix="refs/ralph"):
+def collect_review(
+    checkout,
+    number,
+    base_ref,
+    expected_head,
+    title,
+    description,
+    bot_config,
+    *,
+    ref_prefix="refs/ralph",
+):
     prepare_checkout(checkout, bot_config)
     base_fetch_ref = f"{ref_prefix}/base"
     head_fetch_ref = f"{ref_prefix}/head"
@@ -42,8 +52,13 @@ def collect_review(checkout, number, base_ref, expected_head, title, description
     args = ["fetch", "--refetch", "--no-tags", "--no-filter"]
     if local.git(checkout, "rev-parse", "--is-shallow-repository").strip() == "true":
         args.append("--unshallow")
-    local.git(checkout, *args, "origin", f"+{base_source}:{base_fetch_ref}",
-              f"+refs/pull/{number}/head:{head_fetch_ref}")
+    local.git(
+        checkout,
+        *args,
+        "origin",
+        f"+{base_source}:{base_fetch_ref}",
+        f"+refs/pull/{number}/head:{head_fetch_ref}",
+    )
     actual_head = local.resolve_commit(checkout, head_fetch_ref)
     base_sha = local.resolve_commit(checkout, base_fetch_ref)
     if actual_head != expected_head:
@@ -52,7 +67,8 @@ def collect_review(checkout, number, base_ref, expected_head, title, description
     review, skip = local.build_review_input(snapshot, title, description)
     if review is not None:
         review = review.replace("Title: ", "PR title: ", 1).replace(
-            "\nDescription:\n", "\nPR description:\n", 1)
+            "\nDescription:\n", "\nPR description:\n", 1
+        )
         if len(review.encode()) > local.MAX_REVIEW_BYTES:
             review, skip = None, f"Review input exceeds {local.MAX_REVIEW_BYTES} bytes"
     return base_sha, actual_head, review, skip
@@ -63,11 +79,17 @@ def current_head(bot_config, number):
         raise ValueError("invalid pull request number")
     result = subprocess.run(
         ["git", "ls-remote", bot_config.origin, f"refs/pull/{number}/head"],
-        check=True, capture_output=True, text=True, timeout=180,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=180,
         env=local.git_environment(),
     ).stdout.strip()
     fields = result.split()
-    if (len(fields) != 2 or not local.SHA.fullmatch(fields[0])
-            or fields[1] != f"refs/pull/{number}/head"):
+    if (
+        len(fields) != 2
+        or not local.SHA.fullmatch(fields[0])
+        or fields[1] != f"refs/pull/{number}/head"
+    ):
         raise ValueError("Git returned invalid PR head")
     return fields[0]

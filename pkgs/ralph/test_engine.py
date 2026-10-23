@@ -14,30 +14,60 @@ class EngineTests(unittest.TestCase):
         for classification in ("potential_vulnerability", "non_security", "uncertain"):
             for concern in (False, True):
                 with self.subTest(classification=classification, concern=concern):
-                    finding = {"id": "finding:7", "security": {
-                        "classification": classification, "reason": "Verifier assessment."}}
+                    finding = {
+                        "id": "finding:7",
+                        "security": {
+                            "classification": classification,
+                            "reason": "Verifier assessment.",
+                        },
+                    }
                     result = pipeline.ReviewResult("Review", [finding], concern)
-                    runtime = engine.Runtime(case=case, api_key="secret", attempt={
-                        "decisions": [], "finding_attribution": [], "concept_assessment": {}})
-                    with patch.object(pipeline, "review_with_independent_passes", return_value=result):
-                        output = current_engine.run(case, runtime, current_engine.configure({}))
+                    runtime = engine.Runtime(
+                        case=case,
+                        api_key="secret",
+                        attempt={
+                            "decisions": [],
+                            "finding_attribution": [],
+                            "concept_assessment": {},
+                        },
+                    )
+                    with patch.object(
+                        pipeline, "review_with_independent_passes", return_value=result
+                    ):
+                        output = current_engine.run(
+                            case, runtime, current_engine.configure({})
+                        )
                     self.assertEqual(output.content, "Review")
                     self.assertEqual(output.exports["findings"], [finding])
-                    self.assertEqual(output.exports["actionable"],
-                                     ["finding:7", "concept_objection"] if concern else ["finding:7"])
+                    self.assertEqual(
+                        output.exports["actionable"],
+                        ["finding:7", "concept_objection"]
+                        if concern
+                        else ["finding:7"],
+                    )
 
     def test_current_engine_declares_native_version_on_success_and_failure(self):
         case = engine.ReviewCase("Patch", None)
         for failure in (None, TimeoutError):
             with self.subTest(failure=failure):
-                runtime = engine.Runtime(case=case, api_key="secret", attempt={"schema_version": 1})
-                with patch.object(current_engine.pipeline, "review_with_independent_passes",
-                                  return_value=pipeline.ReviewResult("Review", [], False), side_effect=failure):
+                runtime = engine.Runtime(
+                    case=case, api_key="secret", attempt={"schema_version": 1}
+                )
+                with patch.object(
+                    current_engine.pipeline,
+                    "review_with_independent_passes",
+                    return_value=pipeline.ReviewResult("Review", [], False),
+                    side_effect=failure,
+                ):
                     if failure:
                         with self.assertRaises(failure):
-                            current_engine.run(case, runtime, current_engine.configure({}))
+                            current_engine.run(
+                                case, runtime, current_engine.configure({})
+                            )
                     else:
-                        output = current_engine.run(case, runtime, current_engine.configure({}))
+                        output = current_engine.run(
+                            case, runtime, current_engine.configure({})
+                        )
                         self.assertEqual(output.schema_version, 2)
                         self.assertEqual(output.data["schema_version"], 2)
                 self.assertEqual(runtime.debug["schema_version"], 2)
@@ -45,30 +75,54 @@ class EngineTests(unittest.TestCase):
     def test_current_diagnostics_require_matching_native_version_two(self):
         for output_version in (1, 2, 7):
             for data_version in (1, 2, 7):
-                with self.subTest(output_version=output_version, data_version=data_version):
+                with self.subTest(
+                    output_version=output_version, data_version=data_version
+                ):
                     data = {"schema_version": data_version, "stages": {}}
-                    result = {"schema_version": 1, "engine": {"name": "current"},
-                              "output": {"schema_version": output_version, "data": data,
-                                         "exports": {"findings": [{"id": "finding:1"}]}}}
-                    self.assertEqual(trace.current_diagnostics(result),
-                                     data if output_version == data_version == 2 else {})
-                    self.assertEqual(trace.findings_export(result), [{"id": "finding:1"}])
+                    result = {
+                        "schema_version": 1,
+                        "engine": {"name": "current"},
+                        "output": {
+                            "schema_version": output_version,
+                            "data": data,
+                            "exports": {"findings": [{"id": "finding:1"}]},
+                        },
+                    }
+                    self.assertEqual(
+                        trace.current_diagnostics(result),
+                        data if output_version == data_version == 2 else {},
+                    )
+                    self.assertEqual(
+                        trace.findings_export(result), [{"id": "finding:1"}]
+                    )
         for version in (1, 2, 7):
             with self.subTest(attempt_version=version):
                 attempt = {"schema_version": version, "stages": {}}
-                result = {"schema_version": 1, "engine": {"name": "current"},
-                          "run": {"status": "failed", "attempt": attempt}}
-                self.assertEqual(trace.current_diagnostics(result), attempt if version == 2 else {})
+                result = {
+                    "schema_version": 1,
+                    "engine": {"name": "current"},
+                    "run": {"status": "failed", "attempt": attempt},
+                }
+                self.assertEqual(
+                    trace.current_diagnostics(result), attempt if version == 2 else {}
+                )
 
     def test_findings_exports_are_independent_of_native_schema(self):
-        for exports, expected in (({}, None), ({"findings": []}, []),
-                                  ({"findings": [{"id": "finding:1"}]},
-                                   [{"id": "finding:1"}])):
+        for exports, expected in (
+            ({}, None),
+            ({"findings": []}, []),
+            ({"findings": [{"id": "finding:1"}]}, [{"id": "finding:1"}]),
+        ):
             with self.subTest(exports=exports):
-                result = {"schema_version": 1, "engine": {"name": "current"},
-                          "output": {"schema_version": 7,
-                                     "data": {"schema_version": 7, "native": "value"},
-                                     "exports": exports}}
+                result = {
+                    "schema_version": 1,
+                    "engine": {"name": "current"},
+                    "output": {
+                        "schema_version": 7,
+                        "data": {"schema_version": 7, "native": "value"},
+                        "exports": exports,
+                    },
+                }
                 self.assertEqual(trace.findings_export(result), expected)
                 self.assertEqual(trace.current_diagnostics(result), {})
         result["schema_version"] = 2
@@ -91,7 +145,9 @@ class EngineTests(unittest.TestCase):
             with patch.object(engine, "__file__", str(engine_path)):
                 original = engine.LoadedEngine("current", module, {}).identity
                 service_path.write_text("changed service")
-                self.assertEqual(engine.LoadedEngine("current", module, {}).identity, original)
+                self.assertEqual(
+                    engine.LoadedEngine("current", module, {}).identity, original
+                )
                 engine_path.write_text("changed core engine")
                 changed = engine.LoadedEngine("current", module, {}).identity
             self.assertNotEqual(changed["code_sha256"], original["code_sha256"])
@@ -105,27 +161,49 @@ class EngineTests(unittest.TestCase):
         configured = current_engine.configure({"archaeology": True})
         case = engine.ReviewCase("Patch", None)
         runtime = engine.Runtime(case=case, api_key="secret")
-        with patch.object(current_engine.pipeline, "review_with_independent_passes") as run:
+        with patch.object(
+            current_engine.pipeline, "review_with_independent_passes"
+        ) as run:
             with self.assertRaisesRegex(ValueError, "requires PR context"):
                 current_engine.run(case, runtime, configured)
         run.assert_not_called()
 
-    def test_archaeology_accepts_live_or_frozen_pr_evidence_and_uses_recorded_flag(self):
-        frozen = {"schema_version": 1, "captured_at": "2026-10-23T00:00:00Z",
-                  "cutoff": "2026-10-23T00:00:00Z", "entries": []}
-        source = {"kind": "pull_request", "url": "https://github.com/o/r/pull/7", "number": 7}
+    def test_archaeology_accepts_live_or_frozen_pr_evidence_and_uses_recorded_flag(
+        self,
+    ):
+        frozen = {
+            "schema_version": 1,
+            "captured_at": "2026-10-23T00:00:00Z",
+            "cutoff": "2026-10-23T00:00:00Z",
+            "entries": [],
+        }
+        source = {
+            "kind": "pull_request",
+            "url": "https://github.com/o/r/pull/7",
+            "number": 7,
+        }
         for evidence, reader in ((None, Mock()), (frozen, None)):
             with self.subTest(frozen=evidence is not None):
                 case = engine.ReviewCase("Patch", None, source, evidence)
-                runtime = engine.Runtime(case=case, api_key="secret", discussion_lookup=reader)
-                with patch.object(current_engine.pipeline, "review_with_independent_passes",
-                                  return_value=pipeline.ReviewResult("Review", [], False)) as run:
-                    current_engine.run(case, runtime, current_engine.configure({"archaeology": True}))
+                runtime = engine.Runtime(
+                    case=case, api_key="secret", discussion_lookup=reader
+                )
+                with patch.object(
+                    current_engine.pipeline,
+                    "review_with_independent_passes",
+                    return_value=pipeline.ReviewResult("Review", [], False),
+                ) as run:
+                    current_engine.run(
+                        case, runtime, current_engine.configure({"archaeology": True})
+                    )
                 self.assertIs(run.call_args.args[-1], True)
         case = engine.ReviewCase("Patch", None)
         runtime = engine.Runtime(case=case, api_key="secret")
-        with patch.object(current_engine.pipeline, "review_with_independent_passes",
-                          return_value=pipeline.ReviewResult("Review", [], False)) as run:
+        with patch.object(
+            current_engine.pipeline,
+            "review_with_independent_passes",
+            return_value=pipeline.ReviewResult("Review", [], False),
+        ) as run:
             current_engine.run(case, runtime, current_engine.configure({}))
         self.assertIs(run.call_args.args[-1], False)
 
@@ -136,38 +214,68 @@ class EngineTests(unittest.TestCase):
         record = {}
         with patch.object(model, "openai_review", side_effect=error):
             with self.assertRaises(urllib.error.HTTPError) as caught:
-                runtime.review("independent", "Patch", prompt="Review", model_name="model",
-                               tools=[], max_tool_calls=0, max_output_tokens=10,
-                               reasoning_effort="low", response_schema=None, record=record)
+                runtime.review(
+                    "independent",
+                    "Patch",
+                    prompt="Review",
+                    model_name="model",
+                    tools=[],
+                    max_tool_calls=0,
+                    max_output_tokens=10,
+                    reasoning_effort="low",
+                    response_schema=None,
+                    record=record,
+                )
         self.assertIs(caught.exception, error)
         self.assertIs(runtime._records[0], record)
 
     def test_frozen_case_overrides_per_call_evidence_and_live_sources(self):
-        evidence = {"schema_version": 1, "captured_at": "2026-10-23T00:00:00Z",
-                    "cutoff": "2026-10-23T00:00:00Z", "entries": []}
+        evidence = {
+            "schema_version": 1,
+            "captured_at": "2026-10-23T00:00:00Z",
+            "cutoff": "2026-10-23T00:00:00Z",
+            "entries": [],
+        }
         case = engine.ReviewCase("Patch", None, research_evidence=evidence)
         live = Mock()
-        runtime = engine.Runtime(case=case, api_key="secret", discussion_lookup=live,
-                                 allow_web_search=True)
+        runtime = engine.Runtime(
+            case=case, api_key="secret", discussion_lookup=live, allow_web_search=True
+        )
         with patch.object(model, "openai_review", return_value="done") as review:
-            runtime.review("verifier", "Patch", prompt="Review", model_name="model",
-                           tools=[], max_tool_calls=0, max_output_tokens=10,
-                           reasoning_effort="low", response_schema=None)
+            runtime.review(
+                "verifier",
+                "Patch",
+                prompt="Review",
+                model_name="model",
+                tools=[],
+                max_tool_calls=0,
+                max_output_tokens=10,
+                reasoning_effort="low",
+                response_schema=None,
+            )
         self.assertIs(review.call_args.kwargs["research_evidence"], evidence)
         tools = model.available_tools(model.ARCHAEOLOGY_TOOLS, live, evidence, True)
-        self.assertFalse(any(tool["type"] in model.WEB_SEARCH_TOOL_TYPES for tool in tools))
-        self.assertEqual(research.lookup(evidence, "search_discussions", {"query": "missing"}),
-                         research.MISSING_RESEARCH)
+        self.assertFalse(
+            any(tool["type"] in model.WEB_SEARCH_TOOL_TYPES for tool in tools)
+        )
+        self.assertEqual(
+            research.lookup(evidence, "search_discussions", {"query": "missing"}),
+            research.MISSING_RESEARCH,
+        )
         live.assert_not_called()
 
     def test_web_permission_and_discussion_availability_are_independent(self):
         live = Mock()
         tools = model.available_tools(model.ARCHAEOLOGY_TOOLS, live)
         self.assertIn("search_discussions", {tool.get("name") for tool in tools})
-        self.assertFalse(any(tool["type"] in model.WEB_SEARCH_TOOL_TYPES for tool in tools))
+        self.assertFalse(
+            any(tool["type"] in model.WEB_SEARCH_TOOL_TYPES for tool in tools)
+        )
         tools = model.available_tools(model.ARCHAEOLOGY_TOOLS, allow_web_search=True)
         self.assertNotIn("search_discussions", {tool.get("name") for tool in tools})
-        self.assertTrue(any(tool["type"] in model.WEB_SEARCH_TOOL_TYPES for tool in tools))
+        self.assertTrue(
+            any(tool["type"] in model.WEB_SEARCH_TOOL_TYPES for tool in tools)
+        )
 
 
 if __name__ == "__main__":

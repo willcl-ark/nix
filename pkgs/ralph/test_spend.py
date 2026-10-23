@@ -7,9 +7,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ralph import spend
-from ralph.spend import (MICRODOLLARS, FINAL_TOOL_OUTPUT_HEADROOM_TOKENS,
-                                      BudgetExceeded, Ledger, RequestBudget,
-                                      price_usd, supports_model)
+from ralph.spend import (
+    MICRODOLLARS,
+    FINAL_TOOL_OUTPUT_HEADROOM_TOKENS,
+    BudgetExceeded,
+    Ledger,
+    RequestBudget,
+    price_usd,
+    supports_model,
+)
 
 
 class SpendTests(unittest.TestCase):
@@ -35,8 +41,11 @@ class SpendTests(unittest.TestCase):
             db.executemany(
                 "INSERT INTO requests VALUES (?, 'pr-1', 'audit', 'gpt-6-luna', "
                 "?, NULL, ?, NULL, ?, ?)",
-                [("old", "2026-09", "settled", 100, 0),
-                 ("pending", "2026-10", "uncertain", None, 500)])
+                [
+                    ("old", "2026-09", "settled", 100, 0),
+                    ("pending", "2026-10", "uncertain", None, 500),
+                ],
+            )
 
     def test_timestamp_migration_preserves_history_and_backs_up_once(self):
         self.legacy_ledger()
@@ -46,11 +55,14 @@ class SpendTests(unittest.TestCase):
         backup = Path(f"{self.path}.pre-timestamps.bak")
         self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
         with sqlite3.connect(backup) as db:
-            self.assertEqual(db.execute("SELECT * FROM requests ORDER BY token").fetchall(),
-                             original)
+            self.assertEqual(
+                db.execute("SELECT * FROM requests ORDER BY token").fetchall(), original
+            )
         with sqlite3.connect(self.path) as db:
-            self.assertEqual(db.execute("SELECT * FROM requests ORDER BY token").fetchall(),
-                             [row + (None,) for row in original])
+            self.assertEqual(
+                db.execute("SELECT * FROM requests ORDER BY token").fetchall(),
+                [row + (None,) for row in original],
+            )
         backup_bytes = backup.read_bytes()
         self.assertFalse(spend.migrate_state(self.path))
         self.assertEqual(backup.read_bytes(), backup_bytes)
@@ -85,10 +97,13 @@ class SpendTests(unittest.TestCase):
             with self.assertRaisesRegex(sqlite3.OperationalError, "commit failed"):
                 spend.migrate_state(self.path)
         with sqlite3.connect(self.path) as db:
-            self.assertNotIn("requested_at", {
-                row[1] for row in db.execute("PRAGMA table_info(requests)")})
-            self.assertEqual(db.execute("SELECT SUM(cost_micros) FROM requests").fetchone()[0],
-                             100)
+            self.assertNotIn(
+                "requested_at",
+                {row[1] for row in db.execute("PRAGMA table_info(requests)")},
+            )
+            self.assertEqual(
+                db.execute("SELECT SUM(cost_micros) FROM requests").fetchone()[0], 100
+            )
         self.assertTrue(Path(f"{self.path}.pre-timestamps.bak").is_file())
 
     def test_timestamp_migration_backups_include_wal_rows(self):
@@ -100,19 +115,30 @@ class SpendTests(unittest.TestCase):
         db.commit()
         self.assertTrue(spend.migrate_state(self.path))
         with sqlite3.connect(f"{self.path}.pre-timestamps.bak") as backup:
-            self.assertEqual(backup.execute(
-                "SELECT cost_micros FROM requests WHERE token='old'").fetchone()[0], 123)
+            self.assertEqual(
+                backup.execute(
+                    "SELECT cost_micros FROM requests WHERE token='old'"
+                ).fetchone()[0],
+                123,
+            )
 
     def test_ledger_initialization_upgrades_existing_timestamps(self):
         self.legacy_ledger()
         ledger = Ledger(self.path)
         token = ledger.reserve("audit", "gpt-6-luna", self.payload(), "pr-2")
         with sqlite3.connect(self.path) as db:
-            self.assertIsInstance(db.execute(
-                "SELECT requested_at FROM requests WHERE token=?", (token,)).fetchone()[0],
-                                  int)
-            self.assertEqual(db.execute(
-                "SELECT COUNT(*) FROM requests WHERE requested_at IS NULL").fetchone()[0], 2)
+            self.assertIsInstance(
+                db.execute(
+                    "SELECT requested_at FROM requests WHERE token=?", (token,)
+                ).fetchone()[0],
+                int,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM requests WHERE requested_at IS NULL"
+                ).fetchone()[0],
+                2,
+            )
 
     def test_reservation_records_one_utc_clock_read_and_keeps_it_on_completion(self):
         ledger = Ledger(self.path)
@@ -120,21 +146,29 @@ class SpendTests(unittest.TestCase):
         after = datetime(2027, 1, 1, tzinfo=timezone.utc)
         with patch("ralph.spend.datetime", wraps=datetime) as clock:
             clock.now.side_effect = [before, after, after, after]
-            tokens = [ledger.reserve("audit", "gpt-6-luna", self.payload(), "pr-1")
-                      for _ in range(4)]
+            tokens = [
+                ledger.reserve("audit", "gpt-6-luna", self.payload(), "pr-1")
+                for _ in range(4)
+            ]
             self.assertEqual(clock.now.call_count, 4)
-        response = {"id": "response", "model": "gpt-6-luna",
-                    "usage": {"input_tokens": 100, "output_tokens": 10}}
+        response = {
+            "id": "response",
+            "model": "gpt-6-luna",
+            "usage": {"input_tokens": 100, "output_tokens": 10},
+        }
         ledger.settle(tokens[0], response)
         ledger.fail(tokens[1])
         ledger.fail(tokens[2], charged_unknown=False)
         ledger.settle(tokens[3], response)
         with sqlite3.connect(self.path) as db:
             for index, token in enumerate(tokens):
-                row = db.execute("SELECT requested_at, month FROM requests WHERE token=?",
-                                 (token,)).fetchone()
+                row = db.execute(
+                    "SELECT requested_at, month FROM requests WHERE token=?", (token,)
+                ).fetchone()
                 expected = before if index == 0 else after
-                self.assertEqual(row, (int(expected.timestamp()), expected.strftime("%Y-%m")))
+                self.assertEqual(
+                    row, (int(expected.timestamp()), expected.strftime("%Y-%m"))
+                )
         self.assertFalse(Path(f"{self.path}.pre-timestamps.bak").exists())
 
     def test_migration_skips_missing_ledger_without_creating_it(self):
@@ -143,58 +177,85 @@ class SpendTests(unittest.TestCase):
 
     def test_web_search_reserves_limit_and_settles_search_actions(self):
         ledger = Ledger(self.path, review_limit_usd=1, input_padding_tokens=0)
-        payload = {**self.payload(), "tools": [{"type": "web_search"}],
-                   "max_tool_calls": 3}
+        payload = {
+            **self.payload(),
+            "tools": [{"type": "web_search"}],
+            "max_tool_calls": 3,
+        }
         estimate = ledger.reserve_estimate_micros("gpt-6-luna", payload)
         self.assertGreater(estimate, 30_000)
-        self.assertLess(ledger.reserve_estimate_micros(
-            "gpt-6-luna", {**payload, "tool_choice": "none"}), 1_000)
+        self.assertLess(
+            ledger.reserve_estimate_micros(
+                "gpt-6-luna", {**payload, "tool_choice": "none"}
+            ),
+            1_000,
+        )
         with self.assertRaisesRegex(ValueError, "max_tool_calls"):
             ledger.reserve_estimate_micros(
-                "gpt-6-luna", {**self.payload(), "tools": payload["tools"]})
+                "gpt-6-luna", {**self.payload(), "tools": payload["tools"]}
+            )
         token = ledger.reserve("archaeologist", "gpt-6-luna", payload, "pr-1")
-        response = {"id": "search-response", "model": "gpt-6-luna",
-                    "usage": {"input_tokens": 100, "output_tokens": 10},
-                    "output": [{"type": "web_search_call", "action": {"type": action}}
-                               for action in ("search", "open_page", "find_in_page", "search")]}
+        response = {
+            "id": "search-response",
+            "model": "gpt-6-luna",
+            "usage": {"input_tokens": 100, "output_tokens": 10},
+            "output": [
+                {"type": "web_search_call", "action": {"type": action}}
+                for action in ("search", "open_page", "find_in_page", "search")
+            ],
+        }
         ledger.settle(token, response)
-        self.assertEqual(ledger.summary(review_id="pr-1")["estimated_total_usd"],
-                         float(price_usd("gpt-6-luna", {
-                             **response["usage"], "web_search_calls": 2})))
-        self.assertGreater(ledger.summary(review_id="pr-1")["estimated_total_usd"], 0.02)
+        self.assertEqual(
+            ledger.summary(review_id="pr-1")["estimated_total_usd"],
+            float(
+                price_usd("gpt-6-luna", {**response["usage"], "web_search_calls": 2})
+            ),
+        )
+        self.assertGreater(
+            ledger.summary(review_id="pr-1")["estimated_total_usd"], 0.02
+        )
         # Replayed provider responses do not charge the searches twice.
         ledger.settle(token, response)
         self.assertLess(ledger.summary(review_id="pr-1")["estimated_total_usd"], 0.021)
 
     def test_price_uses_request_model_and_long_context_rates(self):
-        normal = {"input_tokens": 1_000_000,
-                  "input_tokens_details": {"cached_tokens": 100_000,
-                                           "cache_write_tokens": 100_000},
-                  "output_tokens": 1_000_000}
+        normal = {
+            "input_tokens": 1_000_000,
+            "input_tokens_details": {
+                "cached_tokens": 100_000,
+                "cache_write_tokens": 100_000,
+            },
+            "output_tokens": 1_000_000,
+        }
         self.assertEqual(price_usd("gpt-6-luna", normal).as_tuple().exponent, -6)
         self.assertEqual(str(price_usd("gpt-6-luna", normal)), "0.937000")
 
-        long_context = {"input_tokens": 272_001,
-                        "input_tokens_details": {"cached_tokens": 0,
-                                                 "cache_write_tokens": 0},
-                        "output_tokens": 100}
+        long_context = {
+            "input_tokens": 272_001,
+            "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+            "output_tokens": 100,
+        }
         self.assertEqual(str(price_usd("gpt-6-luna", long_context)), "0.054476")
         self.assertEqual(str(price_usd("gpt-6.1-sol", long_context)), "1.089504")
         snapshot = "gpt-6-luna-2026-09-29"
-        self.assertEqual(price_usd(snapshot, long_context),
-                         price_usd("gpt-6-luna", long_context))
+        self.assertEqual(
+            price_usd(snapshot, long_context), price_usd("gpt-6-luna", long_context)
+        )
         self.assertIsNone(price_usd("gpt-6-luna-unrecognized", long_context))
         self.assertTrue(supports_model("gpt-6.1-sol"))
         self.assertFalse(supports_model("gpt-6-luna-unrecognized"))
 
     def test_glm_rates_have_no_cache_discount_or_long_context_multiplier(self):
-        usage = {"input_tokens": 1_000_000,
-                 "input_tokens_details": {"cached_tokens": 100_000,
-                                          "cache_write_tokens": 100_000},
-                 "output_tokens": 1_000_000}
+        usage = {
+            "input_tokens": 1_000_000,
+            "input_tokens_details": {
+                "cached_tokens": 100_000,
+                "cache_write_tokens": 100_000,
+            },
+            "output_tokens": 1_000_000,
+        }
         self.assertEqual(str(price_usd("glm-5.3", usage)), "6.119000")
-        self.assertEqual(price_usd("z-ai/glm-5.3", usage),
-                         price_usd("glm-5.3", usage))
+        self.assertEqual(price_usd("z-ai/glm-5.3", usage), price_usd("glm-5.3", usage))
         self.assertTrue(supports_model("glm-5.3"))
         self.assertTrue(supports_model("z-ai/glm-5.3"))
         del usage["input_tokens_details"]
@@ -203,18 +264,32 @@ class SpendTests(unittest.TestCase):
         payload = {"max_output_tokens": 1_000_000}
         expected_input = ledger._payload_bytes(payload) + 1_000_000
         estimate = ledger.reserve_estimate_micros(
-            "glm-5.3", payload, extra_input_tokens=1_000_000)
-        self.assertEqual(estimate,
-                         int(price_usd("glm-5.3", {"input_tokens": expected_input,
-                             "output_tokens": 1_000_000}) * MICRODOLLARS))
+            "glm-5.3", payload, extra_input_tokens=1_000_000
+        )
+        self.assertEqual(
+            estimate,
+            int(
+                price_usd(
+                    "glm-5.3",
+                    {"input_tokens": expected_input, "output_tokens": 1_000_000},
+                )
+                * MICRODOLLARS
+            ),
+        )
 
     def test_ppq_adversarial_rates_and_long_context_estimates(self):
-        usage = {"input_tokens": 1_000_000,
-                 "input_tokens_details": {"cached_tokens": 100_000,
-                                          "cache_write_tokens": 100_000},
-                 "output_tokens": 1_000_000}
-        for model, expected in (("deepseek/deepseek-v4-pro-0813", "2.717891"),
-                                ("google/gemini-4-argon", "5.814375")):
+        usage = {
+            "input_tokens": 1_000_000,
+            "input_tokens_details": {
+                "cached_tokens": 100_000,
+                "cache_write_tokens": 100_000,
+            },
+            "output_tokens": 1_000_000,
+        }
+        for model, expected in (
+            ("deepseek/deepseek-v4-pro-0813", "2.717891"),
+            ("google/gemini-4-argon", "5.814375"),
+        ):
             with self.subTest(model=model):
                 self.assertTrue(supports_model(model))
                 self.assertEqual(str(price_usd(model, usage)), expected)
@@ -222,21 +297,39 @@ class SpendTests(unittest.TestCase):
                 payload = {"max_output_tokens": 1_000_000}
                 expected_input = ledger._payload_bytes(payload) + 1_000_000
                 estimate = ledger.reserve_estimate_micros(
-                    model, payload, extra_input_tokens=1_000_000)
-                self.assertEqual(estimate, int(price_usd(model, {
-                    "input_tokens": expected_input, "output_tokens": 1_000_000,
-                }) * MICRODOLLARS))
+                    model, payload, extra_input_tokens=1_000_000
+                )
+                self.assertEqual(
+                    estimate,
+                    int(
+                        price_usd(
+                            model,
+                            {
+                                "input_tokens": expected_input,
+                                "output_tokens": 1_000_000,
+                            },
+                        )
+                        * MICRODOLLARS
+                    ),
+                )
 
     def test_missing_usage_is_unknown_and_missing_cache_writes_is_conservative(self):
         self.assertIsNone(price_usd("gpt-6-luna", {"input_tokens": 10}))
-        usage = {"input_tokens": 1_000_000, "output_tokens": 0,
-                 "input_tokens_details": {"cached_tokens": 0}}
+        usage = {
+            "input_tokens": 1_000_000,
+            "output_tokens": 0,
+            "input_tokens_details": {"cached_tokens": 0},
+        }
         self.assertEqual(str(price_usd("gpt-6-luna", usage)), "0.250000")
 
         ledger = Ledger(self.path, review_limit_usd=1)
         token = ledger.reserve("audit", "gpt-6-luna", self.payload(), "pr-1")
-        self.assertTrue(ledger.settle(token, {"id": "resp-1", "model": "gpt-6-luna",
-                                             "usage": {"input_tokens": 10}}))
+        self.assertTrue(
+            ledger.settle(
+                token,
+                {"id": "resp-1", "model": "gpt-6-luna", "usage": {"input_tokens": 10}},
+            )
+        )
         summary = ledger.summary(review_id="pr-1")
         self.assertEqual(summary["unknown_request_count"], 1)
         self.assertEqual(summary["incomplete_usage_count"], 1)
@@ -245,24 +338,31 @@ class SpendTests(unittest.TestCase):
     def test_reservations_enforce_limits_in_parallel(self):
         for monthly in (False, True):
             with self.subTest(monthly=monthly):
-                ledger = Ledger(self.path.with_name(f"parallel-{monthly}.sqlite3"),
-                                review_limit_usd=1 if monthly else 0.0008,
-                                monthly_limit_usd=0.0008 if monthly else None,
-                                input_padding_tokens=0)
+                ledger = Ledger(
+                    self.path.with_name(f"parallel-{monthly}.sqlite3"),
+                    review_limit_usd=1 if monthly else 0.0008,
+                    monthly_limit_usd=0.0008 if monthly else None,
+                    input_padding_tokens=0,
+                )
                 barrier = threading.Barrier(2)
                 result = []
 
                 def reserve(review_id):
                     barrier.wait(timeout=5)
                     try:
-                        result.append(ledger.reserve("audit", "gpt-6-luna",
-                                                     self.payload(1000), review_id))
+                        result.append(
+                            ledger.reserve(
+                                "audit", "gpt-6-luna", self.payload(1000), review_id
+                            )
+                        )
                     except BudgetExceeded:
                         result.append("blocked")
 
                 review_ids = ("pr-2", "pr-3" if monthly else "pr-2")
-                threads = [threading.Thread(target=reserve, args=(review_id,))
-                           for review_id in review_ids]
+                threads = [
+                    threading.Thread(target=reserve, args=(review_id,))
+                    for review_id in review_ids
+                ]
                 for thread in threads:
                     thread.start()
                 for thread in threads:
@@ -271,15 +371,21 @@ class SpendTests(unittest.TestCase):
                 self.assertEqual(len(result), 2)
                 self.assertEqual(ledger.summary()["unknown_request_count"], 1)
 
-    def test_settlement_deduplicates_response_and_known_refund_releases_reservation(self):
+    def test_settlement_deduplicates_response_and_known_refund_releases_reservation(
+        self,
+    ):
         ledger = Ledger(self.path, review_limit_usd=0.001, input_padding_tokens=0)
         first = ledger.reserve("audit", "gpt-6-luna", self.payload(100), "pr-3")
         second = ledger.reserve("audit", "gpt-6-luna", self.payload(100), "pr-3")
-        response = {"id": "same-response", "model": "gpt-6-luna",
-                    "usage": {"input_tokens": 100,
-                              "input_tokens_details": {"cached_tokens": 0,
-                                                       "cache_write_tokens": 0},
-                              "output_tokens": 100}}
+        response = {
+            "id": "same-response",
+            "model": "gpt-6-luna",
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                "output_tokens": 100,
+            },
+        }
         self.assertTrue(ledger.settle(first, response))
         self.assertFalse(ledger.settle(second, response))
         self.assertFalse(ledger.settle(first, response))
@@ -303,7 +409,8 @@ class SpendTests(unittest.TestCase):
             Ledger(self.path, review_limit_usd=1, monthly_limit_usd=0)
         with self.assertRaises(BudgetExceeded):
             Ledger(self.path, review_limit_usd=1, monthly_limit_usd=0.000001).reserve(
-                "verify", "gpt-6.1-sol", self.payload(), "pr-4")
+                "verify", "gpt-6.1-sol", self.payload(), "pr-4"
+            )
 
     def test_limits_are_finite_and_positive(self):
         for value in (0, -1, float("nan"), float("inf")):
@@ -313,15 +420,28 @@ class SpendTests(unittest.TestCase):
     def test_review_summary_and_cap_span_months(self):
         ledger = Ledger(self.path, review_limit_usd=0.001, input_padding_tokens=0)
         with patch("ralph.spend.datetime", wraps=datetime) as clock:
-            clock.now.side_effect = [datetime(2026, 9, 30, tzinfo=timezone.utc),
-                                     datetime(2026, 10, 1, tzinfo=timezone.utc)]
+            clock.now.side_effect = [
+                datetime(2026, 9, 30, tzinfo=timezone.utc),
+                datetime(2026, 10, 1, tzinfo=timezone.utc),
+            ]
             token = ledger.reserve("audit", "gpt-6-luna", self.payload(1000), "pr-5")
-            self.assertTrue(ledger.settle(token, {
-                "id": "resp-month", "model": "gpt-6-luna",
-                "usage": {"input_tokens": 1000,
-                          "input_tokens_details": {"cached_tokens": 0,
-                                                   "cache_write_tokens": 0},
-                          "output_tokens": 1000}}))
+            self.assertTrue(
+                ledger.settle(
+                    token,
+                    {
+                        "id": "resp-month",
+                        "model": "gpt-6-luna",
+                        "usage": {
+                            "input_tokens": 1000,
+                            "input_tokens_details": {
+                                "cached_tokens": 0,
+                                "cache_write_tokens": 0,
+                            },
+                            "output_tokens": 1000,
+                        },
+                    },
+                )
+            )
             with self.assertRaises(BudgetExceeded):
                 ledger.reserve("audit", "gpt-6-luna", self.payload(1000), "pr-5")
         summary = ledger.summary(review_id="pr-5")
@@ -330,23 +450,38 @@ class SpendTests(unittest.TestCase):
         self.assertTrue(summary["usage_complete"])
 
     def test_protected_verifier_floor_preserves_start_and_final(self):
-        sizing = Ledger(self.path.with_name("sizing.sqlite3"),
-                        review_limit_usd=1, input_padding_tokens=0)
-        verifier = {"model": "gpt-6.1-sol", "max_output_tokens": 25_000,
-                    "input": "Candidate findings: []", "tools": [{"type": "function"}],
-                    "tool_choice": "required"}
-        discovery = {"model": "gpt-6-luna", "max_output_tokens": 1_000,
-                     "input": "review"}
+        sizing = Ledger(
+            self.path.with_name("sizing.sqlite3"),
+            review_limit_usd=1,
+            input_padding_tokens=0,
+        )
+        verifier = {
+            "model": "gpt-6.1-sol",
+            "max_output_tokens": 25_000,
+            "input": "Candidate findings: []",
+            "tools": [{"type": "function"}],
+            "tool_choice": "required",
+        }
+        discovery = {
+            "model": "gpt-6-luna",
+            "max_output_tokens": 1_000,
+            "input": "review",
+        }
         initial = sizing.reserve_estimate_micros(verifier["model"], verifier)
         continuation = sizing.reserve_estimate_micros(
-            verifier["model"], {**verifier, "tool_choice": "none"},
-            extra_input_tokens=FINAL_TOOL_OUTPUT_HEADROOM_TOKENS)
+            verifier["model"],
+            {**verifier, "tool_choice": "none"},
+            extra_input_tokens=FINAL_TOOL_OUTPUT_HEADROOM_TOKENS,
+        )
         floor = initial + continuation
         discovery_cost = sizing.reserve_estimate_micros(discovery["model"], discovery)
         limit = (floor + discovery_cost) / MICRODOLLARS
 
-        ledger = Ledger(self.path.with_name("protected.sqlite3"),
-                        review_limit_usd=limit, input_padding_tokens=0)
+        ledger = Ledger(
+            self.path.with_name("protected.sqlite3"),
+            review_limit_usd=limit,
+            input_padding_tokens=0,
+        )
         budget = RequestBudget(ledger, "pr-6")
         protection = budget.protect(verifier, exempt_stages={"verifier"})
 
@@ -361,11 +496,13 @@ class SpendTests(unittest.TestCase):
     def test_verifier_protection_uses_configured_model_rates(self):
         ledger = Ledger(self.path, review_limit_usd=1, input_padding_tokens=0)
         budget = RequestBudget(ledger, "pr-7")
-        payload = {"model": "gpt-6-luna", "max_output_tokens": 8_000,
-                   "input": "Candidate findings: []"}
+        payload = {
+            "model": "gpt-6-luna",
+            "max_output_tokens": 8_000,
+            "input": "Candidate findings: []",
+        }
         luna = budget.protect(payload)["protected_micros"]
-        sol = budget.protect({**payload, "model": "gpt-6.1-sol"})[
-            "protected_micros"]
+        sol = budget.protect({**payload, "model": "gpt-6.1-sol"})["protected_micros"]
         self.assertGreater(sol, luna)
 
 

@@ -7,14 +7,19 @@ import test_pipeline as fixtures
 
 
 class BlindAlternativesTests(unittest.TestCase):
-    def test_default_alternatives_are_blind_and_publish_one_verified_superior_option(self):
+    def test_default_alternatives_are_blind_and_publish_one_verified_superior_option(
+        self,
+    ):
         fixture = fixtures.PipelineTests()
         fixture.setUp()
         fixture.tier, fixture.audits = "standard", ["design"]
-        concept = {**fixtures.assessment(), "assessment": "rework_approach",
-                   "recommendation": "Keep the current workflow; the PR adds review cost without solving a missed check.",
-                   "proposed_review": "would_stop",
-                   "review_reason": "The current workflow already catches the conceptual objections."}
+        concept = {
+            **fixtures.assessment(),
+            "assessment": "rework_approach",
+            "recommendation": "Keep the current workflow; the PR adds review cost without solving a missed check.",
+            "proposed_review": "would_stop",
+            "review_reason": "The current workflow already catches the conceptual objections.",
+        }
         option = concept["alternatives"][0]
         outputs = {}
         summary = concept["recommendation"] + " https://example.invalid/o/r/pulls/42"
@@ -25,40 +30,64 @@ class BlindAlternativesTests(unittest.TestCase):
             if stage == "archaeologist":
                 return fixtures.archaeology(concept)
             if stage == "alternatives":
-                self.assertEqual(json.loads(args[1]),
-                                 {key: concept[key] for key in ("problem", "goal", "baseline")})
+                self.assertEqual(
+                    json.loads(args[1]),
+                    {key: concept[key] for key in ("problem", "goal", "baseline")},
+                )
                 self.assertEqual(kwargs["tools"], model.BASE_TOOLS)
-                self.assertEqual(kwargs["model"], fixture.prompts.models["archaeologist"])
-                return json.dumps({"coverage": {"status": "complete", "limitations": []},
-                                   "alternatives": [option]})
+                self.assertEqual(
+                    kwargs["model"], fixture.prompts.models["archaeologist"]
+                )
+                return json.dumps(
+                    {
+                        "coverage": {"status": "complete", "limitations": []},
+                        "alternatives": [option],
+                    }
+                )
             if stage == "verifier":
                 data = json.loads(args[1].split("Verification input:\n")[1])
                 self.assertEqual(data["blind_alternatives"], [option])
-                return fixtures.verification(concept={
-                    "disposition": "publish", "assessment": concept,
-                    "reason": "Existing review checks already catch the repeated objections.",
-                    "proposed_review": "would_stop", "review_reason": concept["review_reason"],
-                })
+                return fixtures.verification(
+                    concept={
+                        "disposition": "publish",
+                        "assessment": concept,
+                        "reason": "Existing review checks already catch the repeated objections.",
+                        "proposed_review": "would_stop",
+                        "review_reason": concept["review_reason"],
+                    }
+                )
             return fixtures.discovery()
 
         def edit(api_key, name, prompt, input_text, **kwargs):
             self.assertEqual(name, "collator")
             payload = json.loads(input_text)
             self.assertEqual(payload["concept_assessment"]["alternatives"], [option])
-            return json.dumps({"concept_summary": summary, "findings": []}), {"status": "completed"}
+            return json.dumps({"concept_summary": summary, "findings": []}), {
+                "status": "completed"
+            }
 
-        with patch.object(pipeline.routing, "plan_review", side_effect=fixture.plan), \
-                patch.object(model, "openai_review", side_effect=review), \
-                patch.object(model, "run_audit", side_effect=edit), \
-                patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
-            case = engine.ReviewCase("SECRET PR TITLE AND PATCH", fixture.snapshot,
-                                     fixture.source)
-            runtime = engine.Runtime(case=case, discussion_lookup=lambda name, args: "Discussion",
-                                     api_key="key", attempt=fixture.debug)
+        with (
+            patch.object(pipeline.routing, "plan_review", side_effect=fixture.plan),
+            patch.object(model, "openai_review", side_effect=review),
+            patch.object(model, "run_audit", side_effect=edit),
+            patch.object(pipeline, "audit_developer_notes", return_value="Policy"),
+        ):
+            case = engine.ReviewCase(
+                "SECRET PR TITLE AND PATCH", fixture.snapshot, fixture.source
+            )
+            runtime = engine.Runtime(
+                case=case,
+                discussion_lookup=lambda name, args: "Discussion",
+                api_key="key",
+                attempt=fixture.debug,
+            )
             result = pipeline.review_with_independent_passes(
-                case, runtime, fixture.prompts, archaeology=True)
+                case, runtime, fixture.prompts, archaeology=True
+            )
             content = result.content
-        self.assertLess(list(outputs).index("alternatives"), list(outputs).index("independent"))
+        self.assertLess(
+            list(outputs).index("alternatives"), list(outputs).index("independent")
+        )
         for stage in ("independent", "design"):
             self.assertNotIn(option["concept"], outputs[stage])
         self.assertNotIn("SECRET", outputs["alternatives"])
@@ -68,12 +97,20 @@ class BlindAlternativesTests(unittest.TestCase):
         self.assertNotIn(option["unresolved"], content)
 
     def test_blind_alternatives_allow_none_and_reject_claimed_thread_sources(self):
-        empty = {"coverage": {"status": "complete", "limitations": []}, "alternatives": []}
+        empty = {
+            "coverage": {"status": "complete", "limitations": []},
+            "alternatives": [],
+        }
         self.assertEqual(protocol.blind_alternatives(json.dumps(empty)), empty)
-        for fields in ({"provenance": "current_pr"}, {"citations": ["https://example.org/pr"]}):
+        for fields in (
+            {"provenance": "current_pr"},
+            {"citations": ["https://example.org/pr"]},
+        ):
             option = {**fixtures.assessment()["alternatives"][0], **fields}
             with self.subTest(fields=fields), self.assertRaises(protocol.InvalidReview):
-                protocol.blind_alternatives(json.dumps({**empty, "alternatives": [option]}))
+                protocol.blind_alternatives(
+                    json.dumps({**empty, "alternatives": [option]})
+                )
 
 
 if __name__ == "__main__":

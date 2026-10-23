@@ -1,7 +1,9 @@
 """Service deployment configuration."""
+
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
+
 
 def default_repository_url(forgejo_api):
     api_marker = "/api/v1/repos/"
@@ -32,16 +34,30 @@ class BotConfig:
         object.__setattr__(self, "forgejo_api", self.forgejo_api.rstrip("/"))
         url = self.repository_url or default_repository_url(self.forgejo_api)
         if not url:
-            raise ValueError("repository_url is required when forgejo_api is not a repository API URL")
+            raise ValueError(
+                "repository_url is required when forgejo_api is not a repository API URL"
+            )
         object.__setattr__(self, "repository_url", url)
-        object.__setattr__(self, "comment_marker",
-                           self.comment_marker or default_comment_marker(self.repository))
+        object.__setattr__(
+            self,
+            "comment_marker",
+            self.comment_marker or default_comment_marker(self.repository),
+        )
         if (self.report_dir is None) != (self.report_base_url is None):
             raise ValueError("report_dir and report_base_url must be set together")
         if self.report_base_url is not None:
             report_url = urlsplit(self.report_base_url)
-            if (report_url.scheme not in {"http", "https"} or not report_url.netloc
-                    or report_url.username or report_url.password
-                    or report_url.query or report_url.fragment):
-                raise ValueError("report_base_url must be an HTTP URL without credentials, query or fragment")
-            object.__setattr__(self, "report_base_url", self.report_base_url.rstrip("/"))
+            if (
+                report_url.scheme not in {"http", "https"}
+                or not report_url.netloc
+                or report_url.username
+                or report_url.password
+                or report_url.query
+                or report_url.fragment
+            ):
+                raise ValueError(
+                    "report_base_url must be an HTTP URL without credentials, query or fragment"
+                )
+            object.__setattr__(
+                self, "report_base_url", self.report_base_url.rstrip("/")
+            )

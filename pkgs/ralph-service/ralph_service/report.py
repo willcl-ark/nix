@@ -9,8 +9,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ralph import trace as core_trace
-from . import trace
-
 
 
 REPORT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -29,23 +27,61 @@ ATTRIBUTION_FIELDS = (
     "edited_by_model",
 )
 FINDING_FIELDS = ("kind", "severity", "path", "line", "side", "title", "body")
-CANDIDATE_FIELDS = ("kind", "path", "line", "side", "title", "claim", "consequence",
-                    "evidence", "correction", "uncertainty")
-TOOL_FIELDS = ("name", "output_bytes", "output_sha256", "skipped", "hosted",
-               "action_type", "retrieved_at", "frozen")
+CANDIDATE_FIELDS = (
+    "kind",
+    "path",
+    "line",
+    "side",
+    "title",
+    "claim",
+    "consequence",
+    "evidence",
+    "correction",
+    "uncertainty",
+)
+TOOL_FIELDS = (
+    "name",
+    "output_bytes",
+    "output_sha256",
+    "skipped",
+    "hosted",
+    "action_type",
+    "retrieved_at",
+    "frozen",
+)
 COVERAGE_STATUSES = {"complete", "partial", "failed", "unknown"}
 COVERAGE_CATEGORIES = {"inspection", "context", "verification"}
-CONCEPT_FIELDS = ("status", "stage", "model", "problem", "goal", "baseline",
-                  "assessment", "proposed_review", "review_reason",
-                  "delivered_benefit", "relevant_history", "recommendation",
-                  "decisive_question", "technical_assumptions")
-CONCEPT_ALTERNATIVE_FIELDS = ("name", "concept", "benefit", "cost", "unresolved",
-                              "provenance")
+CONCEPT_FIELDS = (
+    "status",
+    "stage",
+    "model",
+    "problem",
+    "goal",
+    "baseline",
+    "assessment",
+    "proposed_review",
+    "review_reason",
+    "delivered_benefit",
+    "relevant_history",
+    "recommendation",
+    "decisive_question",
+    "technical_assumptions",
+)
+CONCEPT_ALTERNATIVE_FIELDS = (
+    "name",
+    "concept",
+    "benefit",
+    "cost",
+    "unresolved",
+    "provenance",
+)
 CONCEPT_CITATION_FIELDS = ("title", "url", "description")
 
 
 def _scalar(value):
-    return value if value is None or isinstance(value, (str, int, float, bool)) else None
+    return (
+        value if value is None or isinstance(value, (str, int, float, bool)) else None
+    )
 
 
 def _filtered(record, fields):
@@ -55,7 +91,11 @@ def _filtered(record, fields):
 
 
 def _strings(value):
-    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+    return (
+        [item for item in value if isinstance(item, str)]
+        if isinstance(value, list)
+        else []
+    )
 
 
 def _coverage_status(coverage):
@@ -77,7 +117,11 @@ def _safe_http_url(url):
         parsed = urlsplit(url)
     except ValueError:
         return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not parsed.hostname
+    ):
         return None
     if parsed.username or parsed.password:
         return None
@@ -87,8 +131,10 @@ def _safe_http_url(url):
 def _public_coverage(coverage):
     if not isinstance(coverage, dict):
         return None
-    record = {"status": _coverage_status(coverage),
-              "limitations": _strings(coverage.get("limitations"))}
+    record = {
+        "status": _coverage_status(coverage),
+        "limitations": _strings(coverage.get("limitations")),
+    }
     for key in ("context", "verification"):
         child = coverage.get(key)
         if isinstance(child, dict):
@@ -147,8 +193,11 @@ def _public_tools(stage):
                 if url is not None:
                     sources.append(url)
             elif isinstance(source, dict):
-                item = {key: source[key] for key in ("type", "title")
-                        if isinstance(source.get(key), str)}
+                item = {
+                    key: source[key]
+                    for key in ("type", "title")
+                    if isinstance(source.get(key), str)
+                }
                 url = _safe_http_url(source.get("url"))
                 if url is not None:
                     item["url"] = url
@@ -167,8 +216,15 @@ def _public_stages(debug):
         if not isinstance(stage, dict):
             continue
         record = {}
-        for key in ("model", "status", "reason", "error", "error_type",
-                    "validation_error", "incomplete_reason"):
+        for key in (
+            "model",
+            "status",
+            "reason",
+            "error",
+            "error_type",
+            "validation_error",
+            "incomplete_reason",
+        ):
             if isinstance(stage.get(key), str):
                 record[key] = stage[key]
         if isinstance(stage.get("used_verified_wording"), bool):
@@ -194,8 +250,11 @@ def _public_stages(debug):
 
 def _public_stage_outputs(debug):
     outputs = debug.get("stage_outputs") or {}
-    return {str(name): output for name, output in sorted(outputs.items())
-            if isinstance(output, str)}
+    return {
+        str(name): output
+        for name, output in sorted(outputs.items())
+        if isinstance(output, str)
+    }
 
 
 def _public_attribution(debug):
@@ -216,7 +275,9 @@ def _public_finding(finding):
         return None
     record = _filtered(finding, FINDING_FIELDS)
     if isinstance(finding.get("security"), dict):
-        record["security"] = _filtered(finding["security"], ("classification", "reason"))
+        record["security"] = _filtered(
+            finding["security"], ("classification", "reason")
+        )
     return record
 
 
@@ -338,15 +399,24 @@ def _public_record(number, result, report_id):
         "pr": number,
         "head": result.get("head_sha"),
         "review": result.get("content", ""),
-        "engine": {key: engine.get(key) for key in
-                   ("name", "code_sha256", "config_sha256")},
-        "findings_export_status": "supported" if findings is not None else "unsupported",
+        "engine": {
+            key: engine.get(key) for key in ("name", "code_sha256", "config_sha256")
+        },
+        "findings_export_status": "supported"
+        if findings is not None
+        else "unsupported",
         "findings": findings,
-        "actionable": ((result.get("output", {}).get("exports", {}) or {}).get("actionable")
-                       if isinstance(result.get("output"), dict) else None),
+        "actionable": (
+            (result.get("output", {}).get("exports", {}) or {}).get("actionable")
+            if isinstance(result.get("output"), dict)
+            else None
+        ),
         "metrics": metrics,
-        "budget": (result.get("run", {}).get("budget")
-                   if isinstance(result.get("run"), dict) else None),
+        "budget": (
+            result.get("run", {}).get("budget")
+            if isinstance(result.get("run"), dict)
+            else None
+        ),
         "notice": (
             "The review text is the engine's published assessment. Diagnostic "
             "records describe model activity and do not establish correctness."
@@ -359,11 +429,13 @@ def _public_record(number, result, report_id):
     if debug:
         config = engine.get("config")
         prompts = config.get("prompts") if isinstance(config, dict) else None
-        models = (prompts.get("models") if isinstance(prompts, dict) else None)
+        models = prompts.get("models") if isinstance(prompts, dict) else None
         record["models"] = models if isinstance(models, dict) else None
         record["metrics"] = core_trace.review_metrics(debug)
         record["metrics"].update(metrics or {})
-        record["coverage"] = _public_coverage(debug.get("coverage")) or _unknown_coverage()
+        record["coverage"] = (
+            _public_coverage(debug.get("coverage")) or _unknown_coverage()
+        )
         record["stages"] = _public_stages(debug)
         record["stage_outputs"] = _public_stage_outputs(debug)
         record["stage_metrics"] = core_trace.stage_metrics(debug)
@@ -386,19 +458,24 @@ def _coverage_html(coverage, detailed=False):
         return "<p>No coverage summary was recorded.</p>"
     limitations = coverage.get("limitations") or []
     status = coverage.get("status", "unknown")
-    if not detailed and not any(key in coverage for key in (
-            "context", "verification", "issues", "notes")):
+    if not detailed and not any(
+        key in coverage for key in ("context", "verification", "issues", "notes")
+    ):
         if limitations:
-            return (f"<p>Status: <strong>{_escape(status)}</strong></p>"
-                    f"<ul>{_summary_list(limitations)}</ul>")
+            return (
+                f"<p>Status: <strong>{_escape(status)}</strong></p>"
+                f"<ul>{_summary_list(limitations)}</ul>"
+            )
         return f"<p>Status: <strong>{_escape(status)}</strong>. No limitations recorded.</p>"
     parts = [f"<p>Code review status: <strong>{_escape(status)}</strong></p>"]
     if limitations:
         parts.append(f"<ul>{_summary_list(limitations)}</ul>")
     else:
         parts.append("<p>No code review limitations recorded.</p>")
-    for key, label in (("context", "Historical context"),
-                       ("verification", "Verification")):
+    for key, label in (
+        ("context", "Historical context"),
+        ("verification", "Verification"),
+    ):
         child = coverage.get(key) if isinstance(coverage.get(key), dict) else {}
         child_status = child.get("status", "unknown")
         child_limits = child.get("limitations") or []
@@ -452,7 +529,9 @@ def _paragraphs(record, keys):
     for key, label in keys:
         value = record.get(key)
         if isinstance(value, str) and value:
-            paragraphs.append(f"<p><strong>{_escape(label)}:</strong> {_escape(value)}</p>")
+            paragraphs.append(
+                f"<p><strong>{_escape(label)}:</strong> {_escape(value)}</p>"
+            )
     return "".join(paragraphs)
 
 
@@ -465,49 +544,75 @@ def _concept_value_html(value):
 def _concept_assessment_html(assessment):
     if not isinstance(assessment, dict) or not assessment:
         return "<p>No conceptual concern was recorded.</p>"
-    verification = assessment.get("verification") if isinstance(
-        assessment.get("verification"), dict) else {}
+    verification = (
+        assessment.get("verification")
+        if isinstance(assessment.get("verification"), dict)
+        else {}
+    )
     brief = verification.get("assessment")
     if not isinstance(brief, dict):
-        brief = assessment.get("candidate") if isinstance(assessment.get("candidate"), dict) else {}
-    body = _paragraphs(assessment, (
-        ("status", "Status"),
-        ("summary", "Published summary"),
-    ))
+        brief = (
+            assessment.get("candidate")
+            if isinstance(assessment.get("candidate"), dict)
+            else {}
+        )
+    body = _paragraphs(
+        assessment,
+        (
+            ("status", "Status"),
+            ("summary", "Published summary"),
+        ),
+    )
     candidate = assessment.get("candidate") or {}
     if candidate.get("proposed_review") or verification.get("proposed_review"):
-        body += "<p>Review recommendations are advisory and do not stop code review.</p>"
-        body += _paragraphs(candidate, (
-            ("assessment", "Initial concept assessment"),
-            ("proposed_review", "Initial review recommendation"),
-            ("review_reason", "Initial review reason"),
-        ))
-    body += _paragraphs(verification, (
-        ("disposition", "Verifier disposition"),
-        ("reason", "Verifier reason"),
-        ("proposed_review", "Verified review recommendation"),
-        ("review_reason", "Verified review reason"),
-    ))
-    body += _paragraphs(brief, (
-        ("recommendation", "Recommendation"),
-        ("problem", "Problem"),
-        ("goal", "Higher-level goal"),
-        ("baseline", "Baseline"),
-        ("delivered_benefit", "Delivered benefit"),
-        ("relevant_history", "Relevant history"),
-        ("decisive_question", "Question that could change this"),
-        ("technical_assumptions", "Technical assumptions"),
-    ))
-    alternatives = brief.get("alternatives") if isinstance(
-        brief.get("alternatives"), list) else []
+        body += (
+            "<p>Review recommendations are advisory and do not stop code review.</p>"
+        )
+        body += _paragraphs(
+            candidate,
+            (
+                ("assessment", "Initial concept assessment"),
+                ("proposed_review", "Initial review recommendation"),
+                ("review_reason", "Initial review reason"),
+            ),
+        )
+    body += _paragraphs(
+        verification,
+        (
+            ("disposition", "Verifier disposition"),
+            ("reason", "Verifier reason"),
+            ("proposed_review", "Verified review recommendation"),
+            ("review_reason", "Verified review reason"),
+        ),
+    )
+    body += _paragraphs(
+        brief,
+        (
+            ("recommendation", "Recommendation"),
+            ("problem", "Problem"),
+            ("goal", "Higher-level goal"),
+            ("baseline", "Baseline"),
+            ("delivered_benefit", "Delivered benefit"),
+            ("relevant_history", "Relevant history"),
+            ("decisive_question", "Question that could change this"),
+            ("technical_assumptions", "Technical assumptions"),
+        ),
+    )
+    alternatives = (
+        brief.get("alternatives") if isinstance(brief.get("alternatives"), list) else []
+    )
     if alternatives:
         rows = []
         for alternative in alternatives:
             if not isinstance(alternative, dict):
                 continue
             details = []
-            for key, label in (("concept", "Concept"), ("benefit", "Benefit"),
-                               ("cost", "Cost"), ("unresolved", "Unresolved")):
+            for key, label in (
+                ("concept", "Concept"),
+                ("benefit", "Benefit"),
+                ("cost", "Cost"),
+                ("unresolved", "Unresolved"),
+            ):
                 if alternative.get(key):
                     details.append(
                         f"<p><strong>{_escape(label)}:</strong> "
@@ -539,7 +644,9 @@ def _concept_assessment_html(assessment):
         else:
             label = _escape(title)
         description = source.get("description")
-        links.append(f"<li>{label}{': ' + _escape(description) if description else ''}</li>")
+        links.append(
+            f"<li>{label}{': ' + _escape(description) if description else ''}</li>"
+        )
     if links:
         body += f"<h3>Sources</h3><ul>{''.join(links)}</ul>"
     return body or "<p>No conceptual concern was recorded.</p>"
@@ -560,20 +667,36 @@ def _finding_detail(finding, index):
     if finding.get("path") and finding.get("line") and finding.get("side"):
         location = f" {finding['path']}:{finding['line']} ({finding['side']})"
     rows = []
-    for key in ("claim", "consequence", "evidence", "correction", "uncertainty", "body"):
+    for key in (
+        "claim",
+        "consequence",
+        "evidence",
+        "correction",
+        "uncertainty",
+        "body",
+    ):
         if finding.get(key):
-            rows.append(f"<p><strong>{_escape(key.title())}:</strong> {_escape(finding[key])}</p>")
-    return (f"<details><summary>{_escape(title)}{_escape(location)}</summary>"
-            f"{''.join(rows)}</details>")
+            rows.append(
+                f"<p><strong>{_escape(key.title())}:</strong> {_escape(finding[key])}</p>"
+            )
+    return (
+        f"<details><summary>{_escape(title)}{_escape(location)}</summary>"
+        f"{''.join(rows)}</details>"
+    )
 
 
 def _parsed_findings_html(parsed):
     if not isinstance(parsed, dict) or not isinstance(parsed.get("findings"), list):
         return ""
-    findings = [_filtered(finding, CANDIDATE_FIELDS + FINDING_FIELDS)
-                for finding in parsed["findings"]]
-    details = "".join(_finding_detail(finding, index)
-                      for index, finding in enumerate(findings, 1) if finding)
+    findings = [
+        _filtered(finding, CANDIDATE_FIELDS + FINDING_FIELDS)
+        for finding in parsed["findings"]
+    ]
+    details = "".join(
+        _finding_detail(finding, index)
+        for index, finding in enumerate(findings, 1)
+        if finding
+    )
     return f"<h4>Parsed Findings</h4>{details}" if details else ""
 
 
@@ -624,8 +747,14 @@ def _stage_html(name, stage, stage_output):
         output_blocks.append(("<h4>Raw Output</h4>", raw_output))
     if stage_output is not None and stage_output != raw_output:
         output_blocks.append(("<h4>Stage Output</h4>", stage_output))
-    outputs = "".join(f"{heading}{_reply_html(text)}" for heading, text in output_blocks)
-    coverage = _coverage_html(stage["coverage"]) if isinstance(stage.get("coverage"), dict) else ""
+    outputs = "".join(
+        f"{heading}{_reply_html(text)}" for heading, text in output_blocks
+    )
+    coverage = (
+        _coverage_html(stage["coverage"])
+        if isinstance(stage.get("coverage"), dict)
+        else ""
+    )
     return (
         f"<details><summary>{_escape(title)}</summary>"
         f"{coverage}"
@@ -645,18 +774,19 @@ def _html_report(record, json_name):
     orphan_outputs = "".join(
         f"<details><summary>{_escape(name)}: stage output</summary>"
         f"<pre>{_escape(output)}</pre></details>"
-        for name, output in stage_outputs.items() if name not in stages
+        for name, output in stage_outputs.items()
+        if name not in stages
     )
     if "stages" in record:
         engine_sections = f"""
 <section><h2>Concept and Approach</h2>
-{_concept_assessment_html(record.get('concept_assessment'))}</section>
+{_concept_assessment_html(record.get("concept_assessment"))}</section>
 <section><h2>Coverage</h2>
-{_coverage_html(record.get('coverage'), detailed=True)}</section>
+{_coverage_html(record.get("coverage"), detailed=True)}</section>
 <section><h2>Findings</h2>
-{_findings_html(record.get('finding_attribution') or [])}</section>
+{_findings_html(record.get("finding_attribution") or [])}</section>
 <section><h2>Verifier Decisions</h2>
-{_decisions_html(record.get('decisions') or [])}</section>
+{_decisions_html(record.get("decisions") or [])}</section>
 <section><h2>Agent Outputs</h2>{stage_sections}{orphan_outputs}</section>
 """
     else:
@@ -666,7 +796,7 @@ def _html_report(record, json_name):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Review report PR #{_escape(record['pr'])}</title>
+<title>Review report PR #{_escape(record["pr"])}</title>
 <style>
 body {{ margin: 2rem auto; max-width: 76rem; padding: 0 1rem; color: #1f2933; font: 16px/1.5 system-ui, sans-serif; overflow-wrap: anywhere; }}
 a {{ color: #075985; }}
@@ -682,22 +812,28 @@ summary {{ cursor: pointer; font-weight: 600; }}
 <body>
 <header>
 <h1>Forgejo Review Report</h1>
-<p>PR #{_escape(record['pr'])} at <code>{_escape(record['head'])}</code></p>
+<p>PR #{_escape(record["pr"])} at <code>{_escape(record["head"])}</code></p>
 <p><a href="{_escape(json_name)}" download>Download JSON report</a></p>
 <p><a href="stats/">Review statistics</a></p>
 </header>
-<p class="notice">{_escape(record['notice'])}</p>
+<p class="notice">{_escape(record["notice"])}</p>
 <section>
 <h2>Review</h2>
-<pre>{_escape(record['review'])}</pre>
+<pre>{_escape(record["review"])}</pre>
 </section>
 {engine_sections}
 <section>
 <h2>Usage</h2>
-{_json_html({"metrics": record["metrics"],
-             "stage_metrics": record.get("stage_metrics"),
-             "budget": record.get("budget")})}
-<p>{_escape(record['pricing_note'])}</p>
+{
+        _json_html(
+            {
+                "metrics": record["metrics"],
+                "stage_metrics": record.get("stage_metrics"),
+                "budget": record.get("budget"),
+            }
+        )
+    }
+<p>{_escape(record["pricing_note"])}</p>
 </section>
 </body>
 </html>
@@ -725,12 +861,16 @@ def _export_findings_html(record):
             f"<td>{_escape(finding.get('presented_title') or finding.get('title', ''))}</td>"
             f"<td><code>{_escape(location)}</code></td>"
             f"<td>{_escape(finding.get('presented_body') or finding.get('body', ''))}</td>"
-            "</tr>")
+            "</tr>"
+        )
     if not rows:
         return "<p>The supported findings export contained no readable items.</p>"
-    return ("<table><thead><tr><th>ID</th><th>Severity</th><th>Kind</th>"
-            "<th>Title</th><th>Location</th><th>Details</th></tr></thead><tbody>"
-            + "".join(rows) + "</tbody></table>")
+    return (
+        "<table><thead><tr><th>ID</th><th>Severity</th><th>Kind</th>"
+        "<th>Title</th><th>Location</th><th>Details</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
 
 
 def _write_public_file(path, content):

@@ -1,4 +1,5 @@
 """Persistent request reservations and spend accounting."""
+
 import json
 import os
 import re
@@ -16,26 +17,34 @@ FINAL_TOOL_OUTPUT_HEADROOM_TOKENS = 13_000
 WEB_SEARCH_CALL_MICROS = 10_000
 WEB_SEARCH_TOOL_TYPES = {"web_search"}
 RATES = {
-    "deepseek/deepseek-v4-pro-0813": (Decimal("0.6963"), Decimal("0.02321"),
-                                      Decimal("0.6963"), Decimal("2.0889")),
-    "google/gemini-4-argon": (Decimal("1"), Decimal("0.05"),
-                               Decimal("0.09375"), Decimal("5")),
-    "glm-5.3": (Decimal("1.477"), Decimal("1.477"),
-                Decimal("1.477"), Decimal("4.642")),
-    "gpt-6-luna": (Decimal("0.1"), Decimal("0.01"),
-                   Decimal("0.125"), Decimal("0.5")),
-    "gpt-6.1-sol": (Decimal("2"), Decimal("0.1"),
-                    Decimal("2.5"), Decimal("10")),
+    "deepseek/deepseek-v4-pro-0813": (
+        Decimal("0.6963"),
+        Decimal("0.02321"),
+        Decimal("0.6963"),
+        Decimal("2.0889"),
+    ),
+    "google/gemini-4-argon": (
+        Decimal("1"),
+        Decimal("0.05"),
+        Decimal("0.09375"),
+        Decimal("5"),
+    ),
+    "glm-5.3": (Decimal("1.477"), Decimal("1.477"), Decimal("1.477"), Decimal("4.642")),
+    "gpt-6-luna": (Decimal("0.1"), Decimal("0.01"), Decimal("0.125"), Decimal("0.5")),
+    "gpt-6.1-sol": (Decimal("2"), Decimal("0.1"), Decimal("2.5"), Decimal("10")),
 }
 SNAPSHOT_MODEL = re.compile(r"(gpt-6-luna|gpt-6\.1-sol)-\d{4}-\d{2}-\d{2}")
 
 
 def web_search_calls(response):
     """Count chargeable searches; opening and finding within pages are free."""
-    return sum(1 for item in response.get("output", [])
-               if isinstance(item, dict) and item.get("type") == "web_search_call"
-               and (item.get("action") or {}).get("type") not in
-               {"open_page", "find_in_page"})
+    return sum(
+        1
+        for item in response.get("output", [])
+        if isinstance(item, dict)
+        and item.get("type") == "web_search_call"
+        and (item.get("action") or {}).get("type") not in {"open_page", "find_in_page"}
+    )
 
 
 class BudgetExceeded(Exception):
@@ -46,24 +55,34 @@ def _usage_values(usage):
     details = usage.get("input_tokens_details") or {}
     input_tokens = usage.get("input_tokens")
     cached_tokens = details.get("cached_tokens", usage.get("cached_tokens", 0))
-    cache_write_tokens = details.get("cache_write_tokens",
-                                     usage.get("cache_write_tokens"))
+    cache_write_tokens = details.get(
+        "cache_write_tokens", usage.get("cache_write_tokens")
+    )
     output_tokens = usage.get("output_tokens")
     if input_tokens is None or output_tokens is None:
         return None
     try:
         input_tokens, cached_tokens, output_tokens = (
-            int(value) for value in (input_tokens, cached_tokens, output_tokens))
-        cache_write_tokens = (None if cache_write_tokens is None
-                              else int(cache_write_tokens))
+            int(value) for value in (input_tokens, cached_tokens, output_tokens)
+        )
+        cache_write_tokens = (
+            None if cache_write_tokens is None else int(cache_write_tokens)
+        )
     except (TypeError, ValueError):
         return None
-    if (input_tokens < 0 or cached_tokens < 0 or output_tokens < 0
-            or (cache_write_tokens is not None and cache_write_tokens < 0)):
+    if (
+        input_tokens < 0
+        or cached_tokens < 0
+        or output_tokens < 0
+        or (cache_write_tokens is not None and cache_write_tokens < 0)
+    ):
         return None
     if cached_tokens > input_tokens:
         return None
-    if cache_write_tokens is not None and cached_tokens + cache_write_tokens > input_tokens:
+    if (
+        cache_write_tokens is not None
+        and cached_tokens + cache_write_tokens > input_tokens
+    ):
         return None
     return input_tokens, cached_tokens, cache_write_tokens, output_tokens
 
@@ -84,11 +103,18 @@ def price_usd(model, usage):
         # Use the higher input rate when cache-write usage is unknown.
         write_rate = max(input_rate, write_rate)
         cache_write_tokens = input_tokens - cached_tokens
-    multiplier = (Decimal(2) if model not in {"glm-5.3", "z-ai/glm-5.3",
-                                             "deepseek/deepseek-v4-pro-0813",
-                                             "google/gemini-4-argon"}
-                  and input_tokens > THRESHOLD_TOKENS
-                  else Decimal(1))
+    multiplier = (
+        Decimal(2)
+        if model
+        not in {
+            "glm-5.3",
+            "z-ai/glm-5.3",
+            "deepseek/deepseek-v4-pro-0813",
+            "google/gemini-4-argon",
+        }
+        and input_tokens > THRESHOLD_TOKENS
+        else Decimal(1)
+    )
     if multiplier == 2:
         output_rate *= Decimal("1.5")
     web_search_calls = usage.get("web_search_calls", 0)
@@ -99,12 +125,16 @@ def price_usd(model, usage):
     if web_search_calls < 0:
         return None
     dollars = (
-        Decimal(input_tokens - cached_tokens - cache_write_tokens) * input_rate * multiplier
+        Decimal(input_tokens - cached_tokens - cache_write_tokens)
+        * input_rate
+        * multiplier
         + Decimal(cached_tokens) * cached_rate * multiplier
         + Decimal(cache_write_tokens) * write_rate * multiplier
         + Decimal(output_tokens) * output_rate
     ) / Decimal(1_000_000)
-    dollars += Decimal(web_search_calls * WEB_SEARCH_CALL_MICROS) / Decimal(MICRODOLLARS)
+    dollars += Decimal(web_search_calls * WEB_SEARCH_CALL_MICROS) / Decimal(
+        MICRODOLLARS
+    )
     return dollars.quantize(Decimal("0.000001"), rounding=ROUND_CEILING)
 
 
@@ -176,11 +206,18 @@ def migrate_state(path):
 class Ledger:
     """A SQLite ledger that reserves monthly spend before API requests."""
 
-    def __init__(self, path, review_limit_usd=1.00, monthly_limit_usd=None,
-                 input_padding_tokens=1024):
+    def __init__(
+        self,
+        path,
+        review_limit_usd=1.00,
+        monthly_limit_usd=None,
+        input_padding_tokens=1024,
+    ):
         self.path = str(path)
         self.review_limit_micros = _limit_micros(review_limit_usd, "review_limit_usd")
-        self.monthly_limit_micros = _limit_micros(monthly_limit_usd, "monthly_limit_usd")
+        self.monthly_limit_micros = _limit_micros(
+            monthly_limit_usd, "monthly_limit_usd"
+        )
         self.input_padding_tokens = int(input_padding_tokens)
         if self.input_padding_tokens < 0:
             raise ValueError("input_padding_tokens must be nonnegative")
@@ -200,7 +237,9 @@ class Ledger:
                 requested_at INTEGER
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS requests_month ON requests(month)")
-            db.execute("CREATE INDEX IF NOT EXISTS requests_review ON requests(review_id)")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS requests_review ON requests(review_id)"
+            )
         migrate_state(self.path)
 
     @contextmanager
@@ -228,16 +267,19 @@ class Ledger:
         if extra_input_tokens < 0:
             raise ValueError("extra_input_tokens must be nonnegative")
         try:
-            request = json.loads(payload) if isinstance(payload, (bytes, str)) else payload
+            request = (
+                json.loads(payload) if isinstance(payload, (bytes, str)) else payload
+            )
             max_output_tokens = int(request["max_output_tokens"])
         except (TypeError, ValueError, KeyError):
             raise ValueError("payload must include max_output_tokens") from None
         if max_output_tokens < 0:
             raise ValueError("max_output_tokens must be nonnegative")
         search_limit = 0
-        if (request.get("tool_choice") != "none"
-                and any(tool.get("type") in WEB_SEARCH_TOOL_TYPES
-                        for tool in request.get("tools", []))):
+        if request.get("tool_choice") != "none" and any(
+            tool.get("type") in WEB_SEARCH_TOOL_TYPES
+            for tool in request.get("tools", [])
+        ):
             search_limit = request.get("max_tool_calls")
             if type(search_limit) is not int or search_limit < 1:
                 raise ValueError("Web search requires a positive max_tool_calls limit")
@@ -246,22 +288,44 @@ class Ledger:
             extra_input_tokens += search_limit * FINAL_TOOL_OUTPUT_HEADROOM_TOKENS
         # Byte length plus padding is a coarse preflight estimate, not a guarantee
         # of the eventual invoice amount.
-        input_tokens = (self._payload_bytes(payload) + self.input_padding_tokens
-                        + extra_input_tokens)
-        multiplier = (Decimal(2) if model not in {"glm-5.3", "z-ai/glm-5.3",
-                                             "deepseek/deepseek-v4-pro-0813",
-                                             "google/gemini-4-argon"}
-                      and input_tokens > THRESHOLD_TOKENS else Decimal(1))
+        input_tokens = (
+            self._payload_bytes(payload)
+            + self.input_padding_tokens
+            + extra_input_tokens
+        )
+        multiplier = (
+            Decimal(2)
+            if model
+            not in {
+                "glm-5.3",
+                "z-ai/glm-5.3",
+                "deepseek/deepseek-v4-pro-0813",
+                "google/gemini-4-argon",
+            }
+            and input_tokens > THRESHOLD_TOKENS
+            else Decimal(1)
+        )
         input_rate = max(rates[:3]) * multiplier
         output_rate = rates[3] * (Decimal("1.5") if multiplier == 2 else Decimal(1))
-        dollars = (Decimal(input_tokens) * input_rate
-                   + Decimal(max_output_tokens) * output_rate) / Decimal(1_000_000)
+        dollars = (
+            Decimal(input_tokens) * input_rate
+            + Decimal(max_output_tokens) * output_rate
+        ) / Decimal(1_000_000)
         web_search_micros = search_limit * WEB_SEARCH_CALL_MICROS
-        return int((dollars * MICRODOLLARS).to_integral_value(
-            rounding=ROUND_CEILING)) + web_search_micros
+        return (
+            int((dollars * MICRODOLLARS).to_integral_value(rounding=ROUND_CEILING))
+            + web_search_micros
+        )
 
-    def reserve(self, stage, model, payload, review_id, reserve_floor_usd=0,
-                reserve_floor_micros=0):
+    def reserve(
+        self,
+        stage,
+        model,
+        payload,
+        review_id,
+        reserve_floor_usd=0,
+        reserve_floor_micros=0,
+    ):
         """Reserve an upper cost estimate and return the request token."""
         amount = self.reserve_estimate_micros(model, payload)
         floor = _micros(reserve_floor_usd) + int(reserve_floor_micros)
@@ -277,7 +341,8 @@ class Ledger:
                     "SELECT COALESCE(SUM(CASE WHEN cost_micros IS NOT NULL "
                     "THEN cost_micros ELSE reserved_micros END), 0) "
                     "FROM requests WHERE review_id=? AND status IN "
-                    "('reserved','uncertain','unknown','settled')", (review_id,),
+                    "('reserved','uncertain','unknown','settled')",
+                    (review_id,),
                 ).fetchone()[0]
                 if review_current + amount + floor > self.review_limit_micros:
                     db.rollback()
@@ -292,40 +357,59 @@ class Ledger:
                 if current + amount + floor > self.monthly_limit_micros:
                     db.rollback()
                     raise BudgetExceeded("monthly spend limit would be exceeded")
-            db.execute("INSERT INTO requests "
-                       "(token, review_id, stage, model, month, status, "
-                       "reserved_micros, requested_at) "
-                       "VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?)",
-                       (token, review_id, stage, model, month, amount,
-                        int(requested_at.timestamp())))
+            db.execute(
+                "INSERT INTO requests "
+                "(token, review_id, stage, model, month, status, "
+                "reserved_micros, requested_at) "
+                "VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?)",
+                (
+                    token,
+                    review_id,
+                    stage,
+                    model,
+                    month,
+                    amount,
+                    int(requested_at.timestamp()),
+                ),
+            )
             db.commit()
         return token
 
     def settle(self, token, response):
         """Settle a reservation from a Responses API result; return whether new."""
         response_id = response.get("id")
-        usage = {**(response.get("usage") or {}),
-                 "web_search_calls": web_search_calls(response)}
+        usage = {
+            **(response.get("usage") or {}),
+            "web_search_calls": web_search_calls(response),
+        }
         details = usage.get("input_tokens_details") or {}
         cached_tokens = details.get("cached_tokens", usage.get("cached_tokens", 0))
-        cache_write_tokens = details.get("cache_write_tokens",
-                                         usage.get("cache_write_tokens"))
+        cache_write_tokens = details.get(
+            "cache_write_tokens", usage.get("cache_write_tokens")
+        )
         actual_model = response.get("model")
         usage_model = actual_model
-        usage_json = json.dumps({
-            "input_tokens": usage.get("input_tokens"),
-            "cached_tokens": cached_tokens,
-            "cache_write_tokens": cache_write_tokens,
-            "complete": (usage.get("input_tokens") is not None
-                         and usage.get("output_tokens") is not None
-                         and cache_write_tokens is not None),
-            "output_tokens": usage.get("output_tokens"),
-            "web_search_calls": usage["web_search_calls"],
-        }, sort_keys=True)
+        usage_json = json.dumps(
+            {
+                "input_tokens": usage.get("input_tokens"),
+                "cached_tokens": cached_tokens,
+                "cache_write_tokens": cache_write_tokens,
+                "complete": (
+                    usage.get("input_tokens") is not None
+                    and usage.get("output_tokens") is not None
+                    and cache_write_tokens is not None
+                ),
+                "output_tokens": usage.get("output_tokens"),
+                "web_search_calls": usage["web_search_calls"],
+            },
+            sort_keys=True,
+        )
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT model, status, reserved_micros FROM requests WHERE token=?",
-                             (token,)).fetchone()
+            row = db.execute(
+                "SELECT model, status, reserved_micros FROM requests WHERE token=?",
+                (token,),
+            ).fetchone()
             if row is None:
                 db.rollback()
                 raise KeyError(token)
@@ -334,21 +418,32 @@ class Ledger:
                 db.rollback()
                 return False
             if response_id is not None:
-                duplicate = db.execute("SELECT 1 FROM requests WHERE response_id=?",
-                                       (str(response_id),)).fetchone()
+                duplicate = db.execute(
+                    "SELECT 1 FROM requests WHERE response_id=?", (str(response_id),)
+                ).fetchone()
                 if duplicate:
-                    db.execute("UPDATE requests SET response_id=?, status='duplicate', "
-                               "reserved_micros=0 WHERE token=?", (str(response_id), token))
+                    db.execute(
+                        "UPDATE requests SET response_id=?, status='duplicate', "
+                        "reserved_micros=0 WHERE token=?",
+                        (str(response_id), token),
+                    )
                     db.commit()
                     return False
             selected_model = usage_model or model
             cost = price_usd(selected_model, usage)
-            db.execute("UPDATE requests SET response_id=?, model=?, status=?, usage_json=?, "
-                       "cost_micros=?, reserved_micros=? WHERE token=?",
-                       (str(response_id) if response_id is not None else None,
-                        selected_model, "settled" if cost is not None else "unknown",
-                        usage_json, None if cost is None else _micros(cost),
-                        0 if cost is not None else reserved, token))
+            db.execute(
+                "UPDATE requests SET response_id=?, model=?, status=?, usage_json=?, "
+                "cost_micros=?, reserved_micros=? WHERE token=?",
+                (
+                    str(response_id) if response_id is not None else None,
+                    selected_model,
+                    "settled" if cost is not None else "unknown",
+                    usage_json,
+                    None if cost is None else _micros(cost),
+                    0 if cost is not None else reserved,
+                    token,
+                ),
+            )
             db.commit()
         return True
 
@@ -356,7 +451,9 @@ class Ledger:
         """Retain an uncertain reservation, or release a known no-charge failure."""
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT status FROM requests WHERE token=?", (token,)).fetchone()
+            row = db.execute(
+                "SELECT status FROM requests WHERE token=?", (token,)
+            ).fetchone()
             if row is None:
                 db.rollback()
                 raise KeyError(token)
@@ -364,10 +461,15 @@ class Ledger:
                 db.rollback()
                 return False
             if charged_unknown:
-                db.execute("UPDATE requests SET status='uncertain' WHERE token=?", (token,))
+                db.execute(
+                    "UPDATE requests SET status='uncertain' WHERE token=?", (token,)
+                )
             else:
-                db.execute("UPDATE requests SET status='released', reserved_micros=0 "
-                           "WHERE token=?", (token,))
+                db.execute(
+                    "UPDATE requests SET status='released', reserved_micros=0 "
+                    "WHERE token=?",
+                    (token,),
+                )
             db.commit()
         return True
 
@@ -382,7 +484,8 @@ class Ledger:
                 "SUM(CASE WHEN status IN ('reserved','uncertain','unknown') THEN 1 ELSE 0 END), "
                 "SUM(CASE WHEN status IN ('settled','unknown') AND "
                 "json_extract(usage_json, '$.complete')=0 THEN 1 ELSE 0 END) "
-                "FROM requests WHERE 1=1")
+                "FROM requests WHERE 1=1"
+            )
             params = []
             if month is not None:
                 query += " AND month=?"
@@ -391,12 +494,14 @@ class Ledger:
                 query += " AND review_id=?"
                 params.append(review_id)
             known, reserved, unknown, incomplete = db.execute(query, params).fetchone()
-        return {"month": month,
-                "estimated_total_usd": (known + reserved) / MICRODOLLARS,
-                "reserved_total_usd": reserved / MICRODOLLARS,
-                "unknown_request_count": unknown or 0,
-                "incomplete_usage_count": incomplete or 0,
-                "usage_complete": not (unknown or incomplete)}
+        return {
+            "month": month,
+            "estimated_total_usd": (known + reserved) / MICRODOLLARS,
+            "reserved_total_usd": reserved / MICRODOLLARS,
+            "unknown_request_count": unknown or 0,
+            "incomplete_usage_count": incomplete or 0,
+            "usage_complete": not (unknown or incomplete),
+        }
 
 
 class RequestBudget:
@@ -415,10 +520,12 @@ class RequestBudget:
         continuation = self._continuation_floor_micros(payload)
         self.protected_floor_micros = initial + continuation
         self.exempt_stages.update(exempt_stages)
-        return {"protected_usd": self.protected_floor_micros / MICRODOLLARS,
-                "protected_micros": self.protected_floor_micros,
-                "initial_usd": initial / MICRODOLLARS,
-                "continuation_usd": continuation / MICRODOLLARS}
+        return {
+            "protected_usd": self.protected_floor_micros / MICRODOLLARS,
+            "protected_micros": self.protected_floor_micros,
+            "initial_usd": initial / MICRODOLLARS,
+            "continuation_usd": continuation / MICRODOLLARS,
+        }
 
     def exempt(self, stage):
         """Do not reserve review headroom for requests in this configured phase."""
@@ -430,23 +537,26 @@ class RequestBudget:
         if self.protected_floor_micros:
             return self.protected_floor_micros
         limit = self.ledger.review_limit_micros
-        scale = (1 if limit is None else
-                 min(1, limit / (0.60 * MICRODOLLARS)))
+        scale = 1 if limit is None else min(1, limit / (0.60 * MICRODOLLARS))
         return int((0.08 * scale) * MICRODOLLARS)
 
     def _continuation_floor_micros(self, data):
         if data.get("tool_choice") == "none" or not data.get("tools"):
             return 0
         return self.ledger.reserve_estimate_micros(
-            data["model"], {**data, "tool_choice": "none"},
-            extra_input_tokens=FINAL_TOOL_OUTPUT_HEADROOM_TOKENS)
+            data["model"],
+            {**data, "tool_choice": "none"},
+            extra_input_tokens=FINAL_TOOL_OUTPUT_HEADROOM_TOKENS,
+        )
 
     def reserve(self, stage, data):
         model = data["model"]
-        floor = (self._fallback_floor_micros(stage)
-                 + self._continuation_floor_micros(data))
-        return self.ledger.reserve(stage, model, data, self.review_id,
-                                   reserve_floor_micros=floor)
+        floor = self._fallback_floor_micros(stage) + self._continuation_floor_micros(
+            data
+        )
+        return self.ledger.reserve(
+            stage, model, data, self.review_id, reserve_floor_micros=floor
+        )
 
     def settle(self, token, response):
         return self.ledger.settle(token, response)

@@ -15,7 +15,9 @@ from ralph.spend import supports_model
 from ralph import spend
 
 
-DEFAULT_PROMPT_FILE = Path(__file__).resolve().parent.parent / "audits/addressed_findings.md"
+DEFAULT_PROMPT_FILE = (
+    Path(__file__).resolve().parent.parent / "audits/addressed_findings.md"
+)
 DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_BATCH_SIZE = 5
 FOLLOWUP_DIR = "followup"
@@ -89,8 +91,9 @@ def completed_jobs(jobs_db):
             WHERE status = 'complete' AND review_result IS NOT NULL
             ORDER BY id
         """).fetchall()
-    return [job for job in (_job(row) for row in rows)
-            if job["review_result"] is not None]
+    return [
+        job for job in (_job(row) for row in rows) if job["review_result"] is not None
+    ]
 
 
 def init_assessments(path, jobs):
@@ -104,24 +107,21 @@ def init_assessments(path, jobs):
             value TEXT NOT NULL
         )""")
         initialized = db.execute(
-            "SELECT 1 FROM metadata WHERE key = 'initialized'").fetchone()
+            "SELECT 1 FROM metadata WHERE key = 'initialized'"
+        ).fetchone()
         if initialized:
             return False
         db.executemany(
             "INSERT OR IGNORE INTO assessments (job_id, result) VALUES (?, NULL)",
             [(job["id"],) for job in jobs],
         )
-        db.execute(
-            "INSERT INTO metadata (key, value) VALUES ('initialized', '1')")
+        db.execute("INSERT INTO metadata (key, value) VALUES ('initialized', '1')")
         return True
 
 
 def pending_jobs(path, jobs):
     with _read_db(path) as db:
-        seen = {
-            row["job_id"] for row in db.execute(
-                "SELECT job_id FROM assessments")
-        }
+        seen = {row["job_id"] for row in db.execute("SELECT job_id FROM assessments")}
     return [job for job in jobs if job["id"] not in seen]
 
 
@@ -152,16 +152,22 @@ def assessment_results(path):
 
 def history_before(jobs, job):
     return [
-        candidate for candidate in reversed(jobs)
-        if (candidate["number"] == job["number"]
-            and candidate["generation"] < job["generation"])
+        candidate
+        for candidate in reversed(jobs)
+        if (
+            candidate["number"] == job["number"]
+            and candidate["generation"] < job["generation"]
+        )
     ]
 
 
 def _git(checkout, *args):
     return subprocess.run(
-        ["git", "-C", str(checkout), *args], check=True, capture_output=True,
-        text=True, timeout=180,
+        ["git", "-C", str(checkout), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=180,
     ).stdout
 
 
@@ -178,12 +184,29 @@ def fetch_heads(checkout, origin, job_id, old_head, new_head):
     prepare_checkout(checkout, origin)
     ref_prefix = f"refs/ralph/followup/{job_id}"
     # Hydrate blobs omitted by earlier follow-up fetches before offline reads.
-    _git(checkout, "fetch", "--refetch", "--no-tags", "--no-filter", "origin",
-         f"+{old_head}:{ref_prefix}/old", f"+{new_head}:{ref_prefix}/new")
+    _git(
+        checkout,
+        "fetch",
+        "--refetch",
+        "--no-tags",
+        "--no-filter",
+        "origin",
+        f"+{old_head}:{ref_prefix}/old",
+        f"+{new_head}:{ref_prefix}/new",
+    )
 
 
-def assess_job(api_key, state_dir, origin, prompt, stage_model, ledger, jobs, job,
-               prior_assessments):
+def assess_job(
+    api_key,
+    state_dir,
+    origin,
+    prompt,
+    stage_model,
+    ledger,
+    jobs,
+    job,
+    prior_assessments,
+):
     history = history_before(jobs, job)
     checkout = state_dir / FOLLOWUP_DIR / CHECKOUT_DIR
     if history:
@@ -193,19 +216,36 @@ def assess_job(api_key, state_dir, origin, prompt, stage_model, ledger, jobs, jo
             try:
                 fetch_heads(checkout, origin, job["id"], old_head, new_head)
             except (OSError, subprocess.SubprocessError, ValueError) as exc:
-                logging.warning("Could not fetch follow-up commits for job %d: %s",
-                                job["id"], type(exc).__name__)
+                logging.warning(
+                    "Could not fetch follow-up commits for job %d: %s",
+                    job["id"],
+                    type(exc).__name__,
+                )
     return followup.assess_completed_review(
-        api_key, checkout, job, history, prior_assessments, prompt, stage_model,
-        spend.RequestBudget(ledger, _review_id(job)))
+        api_key,
+        checkout,
+        job,
+        history,
+        prior_assessments,
+        prompt,
+        stage_model,
+        spend.RequestBudget(ledger, _review_id(job)),
+    )
 
 
 def _review_id(job):
-    return f'pr:{job["number"]}:{job["id"]}:{job["generation"]}'
+    return f"pr:{job['number']}:{job['id']}:{job['generation']}"
 
 
-def run_once(state_dir, origin, api_key, prompt, stage_model, budget_usd,
-             batch_size=DEFAULT_BATCH_SIZE):
+def run_once(
+    state_dir,
+    origin,
+    api_key,
+    prompt,
+    stage_model,
+    budget_usd,
+    batch_size=DEFAULT_BATCH_SIZE,
+):
     state_dir = Path(state_dir)
     followup_dir = state_dir / FOLLOWUP_DIR
     assessments_path = followup_dir / ASSESSMENTS_DB
@@ -231,11 +271,21 @@ def run_once(state_dir, origin, api_key, prompt, stage_model, budget_usd,
         if assessed >= batch_size:
             break
         try:
-            result = assess_job(api_key, state_dir, origin, prompt, stage_model, ledger,
-                                jobs, job, prior_assessments)
+            result = assess_job(
+                api_key,
+                state_dir,
+                origin,
+                prompt,
+                stage_model,
+                ledger,
+                jobs,
+                job,
+                prior_assessments,
+            )
         except Exception as exc:
-            logging.warning("Could not assess follow-up job %d: %s",
-                            job["id"], type(exc).__name__)
+            logging.warning(
+                "Could not assess follow-up job %d: %s", job["id"], type(exc).__name__
+            )
             result = {
                 "assessed_at": followup._now(),
                 "model": stage_model,
@@ -253,7 +303,8 @@ def run_once(state_dir, origin, api_key, prompt, stage_model, budget_usd,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Assess whether later PR updates addressed Ralph findings")
+        description="Assess whether later PR updates addressed Ralph findings"
+    )
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--origin", required=True)
     parser.add_argument("--openai-key-file", type=Path, required=True)
@@ -272,8 +323,15 @@ def main(argv=None):
         prompt, stage_model = load_settings(args.prompt_file, args.model)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
-    run_once(args.state_dir, args.origin, api_key, prompt, stage_model,
-             args.budget_usd, batch_size=args.batch_size)
+    run_once(
+        args.state_dir,
+        args.origin,
+        api_key,
+        prompt,
+        stage_model,
+        args.budget_usd,
+        batch_size=args.batch_size,
+    )
     return 0
 
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Replay Forgejo pull request reviews into private local JSON artifacts."""
+
 from ralph_service.evaluate import main
 
 if __name__ == "__main__":

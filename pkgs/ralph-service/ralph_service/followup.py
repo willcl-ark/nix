@@ -31,8 +31,12 @@ SCHEMA = {
                     "evidence": {"type": "string"},
                 },
                 "required": [
-                    "source_job_id", "source_generation", "finding_id",
-                    "status", "reason", "evidence",
+                    "source_job_id",
+                    "source_generation",
+                    "finding_id",
+                    "status",
+                    "reason",
+                    "evidence",
                 ],
                 "additionalProperties": False,
             },
@@ -44,8 +48,12 @@ SCHEMA = {
 
 
 def _now():
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _truncate(text, limit):
@@ -57,8 +65,7 @@ def _truncate(text, limit):
 
 
 def _fingerprint(finding):
-    text = "\n".join(str(finding.get(key) or "")
-                     for key in ("path", "title", "body"))
+    text = "\n".join(str(finding.get(key) or "") for key in ("path", "title", "body"))
     normalized = re.sub(r"\s+", " ", text).strip()
     return hashlib.sha256(normalized.encode()).hexdigest()
 
@@ -111,8 +118,13 @@ def _source_findings(history):
     sources = {}
     for job in history:
         for finding in _published_findings(job) or []:
-            sources[(finding["source_job_id"], finding["source_generation"],
-                     finding["finding_id"])] = finding
+            sources[
+                (
+                    finding["source_job_id"],
+                    finding["source_generation"],
+                    finding["finding_id"],
+                )
+            ] = finding
     return sources
 
 
@@ -138,8 +150,9 @@ def _candidate_from_assessment(item, sources):
     path = item.get("path")
     finding_id = item.get("finding_id")
     status = item.get("status")
-    if (status not in STATUSES or not all(isinstance(value, str) and value
-                                           for value in (title, path, finding_id))):
+    if status not in STATUSES or not all(
+        isinstance(value, str) and value for value in (title, path, finding_id)
+    ):
         return None, None, None
     key = (source_job_id, source_generation, finding_id)
     finding = {
@@ -176,11 +189,17 @@ def _apply_assessment(active, resolved_fingerprints, assessment, sources):
 def _add_published(active, resolved_fingerprints, job):
     active_fingerprints = {finding["fingerprint"] for finding in active.values()}
     for finding in _published_findings(job) or []:
-        key = (finding["source_job_id"], finding["source_generation"],
-               finding["finding_id"])
+        key = (
+            finding["source_job_id"],
+            finding["source_generation"],
+            finding["finding_id"],
+        )
         fingerprint = finding["fingerprint"]
-        if (key in active or fingerprint in active_fingerprints
-                or fingerprint in resolved_fingerprints):
+        if (
+            key in active
+            or fingerprint in active_fingerprints
+            or fingerprint in resolved_fingerprints
+        ):
             continue
         active[key] = finding
         active_fingerprints.add(fingerprint)
@@ -193,13 +212,22 @@ def _candidate_findings(history, prior_assessments):
     resolved_fingerprints = set()
     for job in reversed(history):
         _apply_assessment(
-            active, resolved_fingerprints,
-            _prior_assessment(prior_assessments, job["id"]), sources)
+            active,
+            resolved_fingerprints,
+            _prior_assessment(prior_assessments, job["id"]),
+            sources,
+        )
         _add_published(active, resolved_fingerprints, job)
     candidates = list(active.values())
-    return sorted(candidates, key=lambda finding: (
-        not finding.get("deferred"), finding["source_generation"],
-        finding["source_job_id"], finding["finding_id"]))
+    return sorted(
+        candidates,
+        key=lambda finding: (
+            not finding.get("deferred"),
+            finding["source_generation"],
+            finding["source_job_id"],
+            finding["finding_id"],
+        ),
+    )
 
 
 def _assessment_source_ids(assessment):
@@ -218,7 +246,8 @@ def _assessment_source_ids(assessment):
 
 def _relevant_history(history, prior_assessments):
     assessed = [
-        index for index, job in enumerate(history)
+        index
+        for index, job in enumerate(history)
         if _prior_assessment(prior_assessments, job["id"]) is not None
     ]
     if not assessed:
@@ -229,8 +258,9 @@ def _relevant_history(history, prior_assessments):
     included = {job["id"] for job in relevant}
     source_ids = set()
     for job in relevant:
-        source_ids.update(_assessment_source_ids(
-            _prior_assessment(prior_assessments, job["id"])))
+        source_ids.update(
+            _assessment_source_ids(_prior_assessment(prior_assessments, job["id"]))
+        )
     for job in history[end:]:
         if job["id"] in source_ids and job["id"] not in included:
             relevant.append(job)
@@ -255,52 +285,65 @@ def _output_record(candidate, assessed_from_head, new_head, status, reason, evid
 
 
 def _unclear(candidates, assessed_from_head, new_head, reason, evidence):
-    return [_output_record(candidate, assessed_from_head, new_head, "unclear",
-                           reason, evidence)
-            for candidate in candidates]
+    return [
+        _output_record(
+            candidate, assessed_from_head, new_head, "unclear", reason, evidence
+        )
+        for candidate in candidates
+    ]
 
 
-def _model_input(checkout, previous_job, current_job, candidates,
-                 assessed_from_head, new_head):
+def _model_input(
+    checkout, previous_job, current_job, candidates, assessed_from_head, new_head
+):
     diff = repository.diff_between_heads(checkout, assessed_from_head, new_head)
     finding_inputs = []
     for index, candidate in enumerate(candidates, 1):
         source_head = candidate.get("source_head") or assessed_from_head
         if repository.has_commit(checkout, source_head):
             source_to_new_diff = repository.diff_path_between_heads(
-                checkout, source_head, new_head, candidate["path"])
+                checkout, source_head, new_head, candidate["path"]
+            )
             old_file_excerpt = repository.file_excerpt_at(
-                checkout, source_head, candidate["path"], candidate["line"])
+                checkout, source_head, candidate["path"], candidate["line"]
+            )
         else:
             source_to_new_diff = "Source head is unavailable in the local checkout."
             old_file_excerpt = source_to_new_diff
-        finding_inputs.append({
-            "index": index,
-            "source_job_id": candidate["source_job_id"],
-            "source_generation": candidate["source_generation"],
-            "finding_id": candidate["finding_id"],
-            "title": candidate["title"],
-            "path": candidate["path"],
-            "source_head": source_head,
-            "body": candidate.get("body", ""),
-            "source_to_new_path_diff": source_to_new_diff,
-            "old_file_excerpt": old_file_excerpt,
-            "new_file_excerpt": repository.file_excerpt_at(
-                checkout, new_head, candidate["path"], candidate["line"]),
-        })
+        finding_inputs.append(
+            {
+                "index": index,
+                "source_job_id": candidate["source_job_id"],
+                "source_generation": candidate["source_generation"],
+                "finding_id": candidate["finding_id"],
+                "title": candidate["title"],
+                "path": candidate["path"],
+                "source_head": source_head,
+                "body": candidate.get("body", ""),
+                "source_to_new_path_diff": source_to_new_diff,
+                "old_file_excerpt": old_file_excerpt,
+                "new_file_excerpt": repository.file_excerpt_at(
+                    checkout, new_head, candidate["path"], candidate["line"]
+                ),
+            }
+        )
     previous_result = previous_job.get("review_result") or {}
-    return json.dumps({
-        "previous_job_id": previous_job["id"],
-        "previous_generation": previous_job["generation"],
-        "old_head": assessed_from_head,
-        "new_head": new_head,
-        "old_base": _base(previous_job),
-        "new_base": _base(current_job),
-        "previous_review_content": _truncate(
-            previous_result.get("content", ""), MAX_CONTENT_BYTES),
-        "old_to_new_diff": diff,
-        "findings": finding_inputs,
-    }, sort_keys=True)
+    return json.dumps(
+        {
+            "previous_job_id": previous_job["id"],
+            "previous_generation": previous_job["generation"],
+            "old_head": assessed_from_head,
+            "new_head": new_head,
+            "old_base": _base(previous_job),
+            "new_base": _base(current_job),
+            "previous_review_content": _truncate(
+                previous_result.get("content", ""), MAX_CONTENT_BYTES
+            ),
+            "old_to_new_diff": diff,
+            "findings": finding_inputs,
+        },
+        sort_keys=True,
+    )
 
 
 def _parse_assessments(text, candidates, assessed_from_head, new_head):
@@ -310,15 +353,24 @@ def _parse_assessments(text, candidates, assessed_from_head, new_head):
     rows = result["findings"]
     if not isinstance(rows, list) or len(rows) != len(candidates):
         raise ValueError("addressed findings response omitted candidates")
-    expected = {(candidate["source_job_id"], candidate["source_generation"],
-                 candidate["finding_id"]): candidate for candidate in candidates}
+    expected = {
+        (
+            candidate["source_job_id"],
+            candidate["source_generation"],
+            candidate["finding_id"],
+        ): candidate
+        for candidate in candidates
+    }
     seen = set()
     output = []
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("invalid addressed finding row")
-        key = (row.get("source_job_id"), row.get("source_generation"),
-               row.get("finding_id"))
+        key = (
+            row.get("source_job_id"),
+            row.get("source_generation"),
+            row.get("finding_id"),
+        )
         if key not in expected or key in seen or row.get("status") not in STATUSES:
             raise ValueError("unexpected addressed finding identity or status")
         status = row["status"]
@@ -327,19 +379,31 @@ def _parse_assessments(text, candidates, assessed_from_head, new_head):
         if not isinstance(reason, str) or not isinstance(evidence, str):
             raise ValueError("addressed finding reason and evidence must be strings")
         if status in {"addressed", "partially_addressed"} and (
-                not reason.strip() or not evidence.strip()):
+            not reason.strip() or not evidence.strip()
+        ):
             raise ValueError("addressed findings require reason and evidence")
         seen.add(key)
-        output.append(_output_record(
-            expected[key], assessed_from_head, new_head, status, reason, evidence))
+        output.append(
+            _output_record(
+                expected[key], assessed_from_head, new_head, status, reason, evidence
+            )
+        )
     if seen != set(expected):
         raise ValueError("addressed findings response repeated candidates")
     return output
 
 
-def assess_completed_review(api_key, checkout, current_job, history,
-                            prior_assessments, prompt, stage_model, budget,
-                            is_current=None):
+def assess_completed_review(
+    api_key,
+    checkout,
+    current_job,
+    history,
+    prior_assessments,
+    prompt,
+    stage_model,
+    budget,
+    is_current=None,
+):
     record = {"assessed_at": _now(), "model": stage_model, "findings": []}
     if not history:
         record.update(status="skipped", reason="no_previous_review")
@@ -348,66 +412,107 @@ def assess_completed_review(api_key, checkout, current_job, history,
     assessed_from_head = _head(previous)
     new_head = _head(current_job)
     if assessed_from_head == new_head:
-        record.update(status="skipped", reason="same_head",
-                      old_head=assessed_from_head, new_head=new_head)
+        record.update(
+            status="skipped",
+            reason="same_head",
+            old_head=assessed_from_head,
+            new_head=new_head,
+        )
         return record
     if _published_findings(history[0]) is None:
-        record.update(status="skipped", reason="findings_export_unsupported",
-                      old_head=assessed_from_head, new_head=new_head)
+        record.update(
+            status="skipped",
+            reason="findings_export_unsupported",
+            old_head=assessed_from_head,
+            new_head=new_head,
+        )
         return record
     candidates = _candidate_findings(history, prior_assessments)
     if not candidates:
-        record.update(status="skipped", reason="no_previous_findings",
-                      old_head=assessed_from_head, new_head=new_head)
+        record.update(
+            status="skipped",
+            reason="no_previous_findings",
+            old_head=assessed_from_head,
+            new_head=new_head,
+        )
         return record
     assessed = candidates[:MAX_CANDIDATES]
     overflow = candidates[MAX_CANDIDATES:]
-    if (not repository.has_commit(checkout, assessed_from_head)
-            or not repository.has_commit(checkout, new_head)):
-        record.update(status="complete", old_head=assessed_from_head,
-                      new_head=new_head, reason="missing_git_object")
+    if not repository.has_commit(
+        checkout, assessed_from_head
+    ) or not repository.has_commit(checkout, new_head):
+        record.update(
+            status="complete",
+            old_head=assessed_from_head,
+            new_head=new_head,
+            reason="missing_git_object",
+        )
         record["findings"] = _unclear(
-            candidates, assessed_from_head, new_head,
+            candidates,
+            assessed_from_head,
+            new_head,
             "Old or new head object is unavailable.",
-            "Ralph cannot compare the old and new heads in the local checkout.")
+            "Ralph cannot compare the old and new heads in the local checkout.",
+        )
         return record
     try:
         input_text = _model_input(
-            checkout, previous, current_job, assessed, assessed_from_head, new_head)
-        data = {"model": stage_model, "store": False,
-                "reasoning": {"effort": "low"},
-                "instructions": prompt,
-                "input": [{"role": "user", "content": input_text}],
-                "max_output_tokens": MAX_OUTPUT_TOKENS,
-                "text": {"format": {"type": "json_schema",
-                                    "name": "addressed_findings",
-                                    "strict": True, "schema": SCHEMA}}}
+            checkout, previous, current_job, assessed, assessed_from_head, new_head
+        )
+        data = {
+            "model": stage_model,
+            "store": False,
+            "reasoning": {"effort": "low"},
+            "instructions": prompt,
+            "input": [{"role": "user", "content": input_text}],
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "addressed_findings",
+                    "strict": True,
+                    "schema": SCHEMA,
+                }
+            },
+        }
         result, payload, elapsed = model.request_response(
-            api_key, data, "addressed_findings", budget=budget,
-            is_current=is_current)
+            api_key, data, "addressed_findings", budget=budget, is_current=is_current
+        )
         text = model.output_text(result.get("output", []))
         record["turn"] = model.response_record(result, payload, elapsed)
         record["raw_output"] = text
         if result.get("status") != "completed" or not text.strip():
             raise ValueError("addressed findings response did not complete")
         record["findings"] = _parse_assessments(
-            text, assessed, assessed_from_head, new_head)
-        record.update(status="complete", old_head=assessed_from_head,
-                      new_head=new_head)
+            text, assessed, assessed_from_head, new_head
+        )
+        record.update(status="complete", old_head=assessed_from_head, new_head=new_head)
     except model.StaleReview:
-        record.update(status="stale", old_head=assessed_from_head,
-                      new_head=new_head)
+        record.update(status="stale", old_head=assessed_from_head, new_head=new_head)
         raise
     except Exception as exc:
-        record.update(status="complete", old_head=assessed_from_head,
-                      new_head=new_head, error_type=type(exc).__name__)
+        record.update(
+            status="complete",
+            old_head=assessed_from_head,
+            new_head=new_head,
+            error_type=type(exc).__name__,
+        )
         record["findings"] = _unclear(
-            assessed, assessed_from_head, new_head,
+            assessed,
+            assessed_from_head,
+            new_head,
             "Ralph could not make a reliable follow-up assessment.",
-            type(exc).__name__)
+            type(exc).__name__,
+        )
     record["findings"].extend(
-        _output_record(candidate, assessed_from_head, new_head, "unclear",
-                       "Deferred because the follow-up candidate limit was reached.",
-                       "candidate_limit")
-        for candidate in overflow)
+        _output_record(
+            candidate,
+            assessed_from_head,
+            new_head,
+            "unclear",
+            "Deferred because the follow-up candidate limit was reached.",
+            "candidate_limit",
+        )
+        for candidate in overflow
+    )
     return record

@@ -13,103 +13,178 @@ class InvalidReview(ValueError):
 
 
 def object_schema(properties):
-    return {"type": "object", "properties": properties,
-            "required": list(properties), "additionalProperties": False}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
 
 
 STRING = {"type": "string"}
 STRINGS = {"type": "array", "items": STRING}
-PROVENANCE = {"type": "string", "enum": ["current_pr", "prior_discussion",
-                                         "history", "web", "agent_inference"]}
-COVERAGE = object_schema({
-    "status": {"type": "string", "enum": ["complete", "partial"]},
-    "limitations": STRINGS,
-})
-LOCATION = {"path": STRING, "line": {"type": "integer"},
-            "side": {"type": "string", "enum": ["head", "base"]}}
+PROVENANCE = {
+    "type": "string",
+    "enum": ["current_pr", "prior_discussion", "history", "web", "agent_inference"],
+}
+COVERAGE = object_schema(
+    {
+        "status": {"type": "string", "enum": ["complete", "partial"]},
+        "limitations": STRINGS,
+    }
+)
+LOCATION = {
+    "path": STRING,
+    "line": {"type": "integer"},
+    "side": {"type": "string", "enum": ["head", "base"]},
+}
 SOURCE_EVIDENCE = object_schema({**LOCATION, "excerpt": STRING})
-CANDIDATE = object_schema({
-    "kind": {"type": "string", "enum": ["defect", "design", "suggestion"]},
-    **LOCATION,
-    **{key: STRING for key in ("title", "claim", "consequence", "evidence",
-                               "correction", "uncertainty")},
-})
-SECURITY_ASSESSMENT = object_schema({
-    "classification": {"type": "string", "enum": ["potential_vulnerability", "non_security",
-                                                  "uncertain"]},
-    "reason": STRING,
-})
-FINDING = object_schema({
-    "kind": CANDIDATE["properties"]["kind"],
-    "severity": {"type": "string", "enum": ["critical", "major", "minor", "suggestion"]},
-    "security": SECURITY_ASSESSMENT,
-    **LOCATION, "title": STRING, "body": STRING,
-    "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE, "minItems": 1},
-})
-DISCOVERY_SCHEMA = object_schema({
-    "coverage": COVERAGE,
-    "requires_sensitive_review": {"type": "boolean"},
-    "findings": {"type": "array", "items": CANDIDATE},
-})
-CONCEPT_ALTERNATIVE = object_schema({
-    "name": STRING,
-    "concept": STRING,
-    "benefit": STRING,
-    "cost": STRING,
-    "unresolved": STRING,
-    "provenance": PROVENANCE,
-    "citations": STRINGS,
-})
-CONCEPT_ASSESSMENT = object_schema({
-    "goal": STRING,
-    "problem": STRING,
-    "baseline": STRING,
-    "delivered_benefit": STRING,
-    "relevant_history": STRING,
-    "assessment": {"type": "string", "enum": ["worth_pursuing", "needs_motivation",
-                                              "rework_approach", "not_worth_pursuing"]},
-    "alternatives": {"type": "array", "items": CONCEPT_ALTERNATIVE},
-    "recommendation": STRING,
-    "proposed_review": {"type": "string", "enum": ["continue", "would_stop",
-                                                   "undetermined"]},
-    "review_reason": STRING,
-    "decisive_question": STRING,
-    "technical_assumptions": STRINGS,
-    "citations": STRINGS,
-})
-ARCHAEOLOGY_SCHEMA = object_schema({
-    "coverage": COVERAGE,
-    "assessment": CONCEPT_ASSESSMENT,
-})
-ALTERNATIVES_SCHEMA = object_schema({
-    "coverage": COVERAGE,
-    "alternatives": {"type": "array", "items": CONCEPT_ALTERNATIVE},
-})
-CONCEPT_VERIFICATION = object_schema({
-    "disposition": {"type": "string", "enum": ["publish", "drop", "unresolved",
-                                               "no_concern"]},
-    "reason": STRING,
-    "assessment": {"anyOf": [CONCEPT_ASSESSMENT, {"type": "null"}]},
-    "proposed_review": CONCEPT_ASSESSMENT["properties"]["proposed_review"],
-    "review_reason": STRING,
-})
-VERIFIER_SCHEMA = object_schema({
-    "coverage": COVERAGE,
-    "concept": CONCEPT_VERIFICATION,
-    "alternatives": {"type": "array", "items": CONCEPT_ALTERNATIVE},
-    "decisions": {"type": "array", "items": object_schema({
-        "candidate_ids": STRINGS,
-        "disposition": {"type": "string", "enum": ["publish", "drop", "unresolved"]},
+CANDIDATE = object_schema(
+    {
+        "kind": {"type": "string", "enum": ["defect", "design", "suggestion"]},
+        **LOCATION,
+        **{
+            key: STRING
+            for key in (
+                "title",
+                "claim",
+                "consequence",
+                "evidence",
+                "correction",
+                "uncertainty",
+            )
+        },
+    }
+)
+SECURITY_ASSESSMENT = object_schema(
+    {
+        "classification": {
+            "type": "string",
+            "enum": ["potential_vulnerability", "non_security", "uncertain"],
+        },
         "reason": STRING,
-        "finding": {"anyOf": [FINDING, {"type": "null"}]},
-    })},
-})
-COLLATOR_SCHEMA = object_schema({
-    "concept_summary": {"anyOf": [STRING, {"type": "null"}]},
-    "findings": {"type": "array", "items": object_schema({
-        "id": STRING, "title": STRING, "body": STRING,
-    })},
-})
+    }
+)
+FINDING = object_schema(
+    {
+        "kind": CANDIDATE["properties"]["kind"],
+        "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "suggestion"],
+        },
+        "security": SECURITY_ASSESSMENT,
+        **LOCATION,
+        "title": STRING,
+        "body": STRING,
+        "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE, "minItems": 1},
+    }
+)
+DISCOVERY_SCHEMA = object_schema(
+    {
+        "coverage": COVERAGE,
+        "requires_sensitive_review": {"type": "boolean"},
+        "findings": {"type": "array", "items": CANDIDATE},
+    }
+)
+CONCEPT_ALTERNATIVE = object_schema(
+    {
+        "name": STRING,
+        "concept": STRING,
+        "benefit": STRING,
+        "cost": STRING,
+        "unresolved": STRING,
+        "provenance": PROVENANCE,
+        "citations": STRINGS,
+    }
+)
+CONCEPT_ASSESSMENT = object_schema(
+    {
+        "goal": STRING,
+        "problem": STRING,
+        "baseline": STRING,
+        "delivered_benefit": STRING,
+        "relevant_history": STRING,
+        "assessment": {
+            "type": "string",
+            "enum": [
+                "worth_pursuing",
+                "needs_motivation",
+                "rework_approach",
+                "not_worth_pursuing",
+            ],
+        },
+        "alternatives": {"type": "array", "items": CONCEPT_ALTERNATIVE},
+        "recommendation": STRING,
+        "proposed_review": {
+            "type": "string",
+            "enum": ["continue", "would_stop", "undetermined"],
+        },
+        "review_reason": STRING,
+        "decisive_question": STRING,
+        "technical_assumptions": STRINGS,
+        "citations": STRINGS,
+    }
+)
+ARCHAEOLOGY_SCHEMA = object_schema(
+    {
+        "coverage": COVERAGE,
+        "assessment": CONCEPT_ASSESSMENT,
+    }
+)
+ALTERNATIVES_SCHEMA = object_schema(
+    {
+        "coverage": COVERAGE,
+        "alternatives": {"type": "array", "items": CONCEPT_ALTERNATIVE},
+    }
+)
+CONCEPT_VERIFICATION = object_schema(
+    {
+        "disposition": {
+            "type": "string",
+            "enum": ["publish", "drop", "unresolved", "no_concern"],
+        },
+        "reason": STRING,
+        "assessment": {"anyOf": [CONCEPT_ASSESSMENT, {"type": "null"}]},
+        "proposed_review": CONCEPT_ASSESSMENT["properties"]["proposed_review"],
+        "review_reason": STRING,
+    }
+)
+VERIFIER_SCHEMA = object_schema(
+    {
+        "coverage": COVERAGE,
+        "concept": CONCEPT_VERIFICATION,
+        "alternatives": {"type": "array", "items": CONCEPT_ALTERNATIVE},
+        "decisions": {
+            "type": "array",
+            "items": object_schema(
+                {
+                    "candidate_ids": STRINGS,
+                    "disposition": {
+                        "type": "string",
+                        "enum": ["publish", "drop", "unresolved"],
+                    },
+                    "reason": STRING,
+                    "finding": {"anyOf": [FINDING, {"type": "null"}]},
+                }
+            ),
+        },
+    }
+)
+COLLATOR_SCHEMA = object_schema(
+    {
+        "concept_summary": {"anyOf": [STRING, {"type": "null"}]},
+        "findings": {
+            "type": "array",
+            "items": object_schema(
+                {
+                    "id": STRING,
+                    "title": STRING,
+                    "body": STRING,
+                }
+            ),
+        },
+    }
+)
 
 
 def _object(value, keys):
@@ -135,21 +210,28 @@ def _safe_http_url(value):
         parsed = urlsplit(value)
     except ValueError:
         return False
-    return (parsed.scheme in {"http", "https"} and bool(parsed.netloc)
-            and bool(parsed.hostname) and parsed.username is None
-            and parsed.password is None)
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(parsed.netloc)
+        and bool(parsed.hostname)
+        and parsed.username is None
+        and parsed.password is None
+    )
 
 
 def _summary_urls(value):
     if not isinstance(value, str):
         return set()
-    return {url for url in re.findall(r"https?://[^\s<>)\]]+", value)
-            if _safe_http_url(url)}
+    return {
+        url for url in re.findall(r"https?://[^\s<>)\]]+", value) if _safe_http_url(url)
+    }
 
 
 def _text(record, keys, empty=()):
     for key in keys:
-        if not isinstance(record[key], str) or (key not in empty and not record[key].strip()):
+        if not isinstance(record[key], str) or (
+            key not in empty and not record[key].strip()
+        ):
             raise InvalidReview("Missing finding text")
 
 
@@ -170,7 +252,9 @@ def _location(value, snapshot):
         raise InvalidReview(f"Finding must identify a changed file: {repr(path)[:120]}")
     files = snapshot.head_files if value["side"] == "head" else snapshot.base_files
     if path not in files:
-        raise InvalidReview(f"Finding path is missing on the {value['side']} side: {repr(path)[:120]}")
+        raise InvalidReview(
+            f"Finding path is missing on the {value['side']} side: {repr(path)[:120]}"
+        )
     if type(value["line"]) is not int or value["line"] < 1:
         raise InvalidReview("Finding must identify a positive line")
 
@@ -179,15 +263,20 @@ def discovery(text, stage, snapshot):
     result = json.loads(text)
     _object(result, DISCOVERY_SCHEMA["properties"])
     _coverage(result["coverage"])
-    if type(result["requires_sensitive_review"]) is not bool or not isinstance(result["findings"], list):
+    if type(result["requires_sensitive_review"]) is not bool or not isinstance(
+        result["findings"], list
+    ):
         raise InvalidReview("Invalid discovery response")
     for index, finding in enumerate(result["findings"], 1):
         _object(finding, CANDIDATE["properties"])
         _location(finding, snapshot)
         if finding["kind"] not in CANDIDATE["properties"]["kind"]["enum"]:
             raise InvalidReview("Invalid candidate kind")
-        _text(finding, ("title", "claim", "consequence", "evidence", "correction", "uncertainty"),
-              empty=("correction", "uncertainty"))
+        _text(
+            finding,
+            ("title", "claim", "consequence", "evidence", "correction", "uncertainty"),
+            empty=("correction", "uncertainty"),
+        )
         finding["id"] = f"{stage}:{index}"
     return result
 
@@ -212,17 +301,32 @@ def _source_evidence(evidence, snapshot):
             actual = read_file(snapshot.checkout, files, source["path"], source["line"])
         except (OSError, subprocess.SubprocessError) as exc:
             raise InvalidReview("Source evidence could not be read") from exc
-        expected = "".join(f"{number}: {line}\n" for number, line in
-                           enumerate(lines, source["line"]))
+        expected = "".join(
+            f"{number}: {line}\n" for number, line in enumerate(lines, source["line"])
+        )
         if not actual.partition("\n")[2].startswith(expected):
             raise InvalidReview("Source evidence does not match the snapshot")
 
 
 def _concept_assessment(value):
     _object(value, CONCEPT_ASSESSMENT["properties"])
-    _text(value, ("goal", "problem", "baseline", "delivered_benefit", "relevant_history",
-                  "recommendation", "review_reason", "decisive_question"))
-    if value["assessment"] not in CONCEPT_ASSESSMENT["properties"]["assessment"]["enum"]:
+    _text(
+        value,
+        (
+            "goal",
+            "problem",
+            "baseline",
+            "delivered_benefit",
+            "relevant_history",
+            "recommendation",
+            "review_reason",
+            "decisive_question",
+        ),
+    )
+    if (
+        value["assessment"]
+        not in CONCEPT_ASSESSMENT["properties"]["assessment"]["enum"]
+    ):
         raise InvalidReview("Invalid concept assessment")
     _review_proposal(value["proposed_review"], value["review_reason"], value)
     _strings(value["technical_assumptions"])
@@ -237,20 +341,28 @@ def _concept_alternatives(alternatives, limit=4):
         _object(alternative, CONCEPT_ALTERNATIVE["properties"])
         _text(alternative, ("name", "concept", "benefit", "cost", "unresolved"))
         _citations(alternative["citations"])
-        if alternative["provenance"] not in CONCEPT_ALTERNATIVE["properties"]["provenance"]["enum"]:
+        if (
+            alternative["provenance"]
+            not in CONCEPT_ALTERNATIVE["properties"]["provenance"]["enum"]
+        ):
             raise InvalidReview("Invalid alternative provenance")
 
 
 def _review_proposal(proposed_review, review_reason, assessment):
-    if proposed_review not in CONCEPT_ASSESSMENT["properties"]["proposed_review"]["enum"]:
+    if (
+        proposed_review
+        not in CONCEPT_ASSESSMENT["properties"]["proposed_review"]["enum"]
+    ):
         raise InvalidReview("Invalid proposed review")
     if not isinstance(review_reason, str) or not review_reason.strip():
         raise InvalidReview("Missing proposed review reason")
-    if (proposed_review == "would_stop"
-            and (assessment is None
-                 or assessment["assessment"] not in {"rework_approach", "not_worth_pursuing"})):
+    if proposed_review == "would_stop" and (
+        assessment is None
+        or assessment["assessment"] not in {"rework_approach", "not_worth_pursuing"}
+    ):
         raise InvalidReview(
-            "would_stop requires a verified rework_approach or not_worth_pursuing assessment")
+            "would_stop requires a verified rework_approach or not_worth_pursuing assessment"
+        )
 
 
 def _concept_citations(assessment):
@@ -266,8 +378,14 @@ def concept_summary(assessment, reason):
     if assessment is None:
         return None
     citations = _concept_citations(assessment)
-    source_text = "" if not citations else " " + " ".join(
-        f"[{index}]({citation})" for index, citation in enumerate(citations, 1))
+    source_text = (
+        ""
+        if not citations
+        else " "
+        + " ".join(
+            f"[{index}]({citation})" for index, citation in enumerate(citations, 1)
+        )
+    )
     return f"{assessment['recommendation']} {reason}{source_text}"
 
 
@@ -302,11 +420,14 @@ def _concept_decision(concept, concept_assessment):
         if concept["assessment"]["assessment"] == "worth_pursuing":
             raise InvalidReview("Favorable concept assessments are not public feedback")
         if len(concept["assessment"]["alternatives"]) > 1:
-            raise InvalidReview("Public concept feedback may include at most one alternative")
+            raise InvalidReview(
+                "Public concept feedback may include at most one alternative"
+            )
     elif concept["assessment"] is not None:
         raise InvalidReview("Only publish may include a concept assessment")
-    _review_proposal(concept["proposed_review"], concept["review_reason"],
-                     concept["assessment"])
+    _review_proposal(
+        concept["proposed_review"], concept["review_reason"], concept["assessment"]
+    )
 
 
 def _published_finding(finding, snapshot):
@@ -319,7 +440,10 @@ def _published_finding(finding, snapshot):
     _text(finding, ("title", "body"))
     security = finding["security"]
     _object(security, SECURITY_ASSESSMENT["properties"])
-    if security["classification"] not in SECURITY_ASSESSMENT["properties"]["classification"]["enum"]:
+    if (
+        security["classification"]
+        not in SECURITY_ASSESSMENT["properties"]["classification"]["enum"]
+    ):
         raise InvalidReview("Invalid security classification")
     _text(security, ("reason",))
     _source_evidence(finding["source_evidence"], snapshot)
@@ -343,10 +467,13 @@ def verification(text, candidates, snapshot, concept_assessment=None):
         _concept_decision(concept, concept_assessment)
     except InvalidReview as exc:
         error = str(exc)
-        concept = {"disposition": "unresolved", "assessment": None,
-                   "reason": f"Concept assessment withheld: {error}",
-                   "proposed_review": "undetermined",
-                   "review_reason": "The verifier output did not satisfy the concept schema."}
+        concept = {
+            "disposition": "unresolved",
+            "assessment": None,
+            "reason": f"Concept assessment withheld: {error}",
+            "proposed_review": "undetermined",
+            "review_reason": "The verifier output did not satisfy the concept schema.",
+        }
         result["concept"] = concept
         result["concept_validation_error"] = error
     if concept["disposition"] == "unresolved":
@@ -359,19 +486,28 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     unsafe_indexes = set()
     validation_errors = []
     for index, decision in enumerate(result["decisions"]):
-        _object(decision, VERIFIER_SCHEMA["properties"]["decisions"]["items"]["properties"])
+        _object(
+            decision, VERIFIER_SCHEMA["properties"]["decisions"]["items"]["properties"]
+        )
         ids = decision["candidate_ids"]
         _strings(ids)
         records.append((decision, ids))
         known_ids = {candidate_id for candidate_id in ids if candidate_id in expected}
         for candidate_id in known_ids:
             candidate_uses.setdefault(candidate_id, []).append(index)
-        repeated_ids = [candidate_id for candidate_id in dict.fromkeys(ids)
-                        if ids.count(candidate_id) > 1]
-        unknown_ids = [candidate_id for candidate_id in ids if candidate_id not in expected]
+        repeated_ids = [
+            candidate_id
+            for candidate_id in dict.fromkeys(ids)
+            if ids.count(candidate_id) > 1
+        ]
+        unknown_ids = [
+            candidate_id for candidate_id in ids if candidate_id not in expected
+        ]
         errors = []
         if repeated_ids:
-            errors.append("Repeated candidate IDs within decision: " + ", ".join(repeated_ids))
+            errors.append(
+                "Repeated candidate IDs within decision: " + ", ".join(repeated_ids)
+            )
         if unknown_ids:
             errors.append("Unknown candidate IDs: " + ", ".join(unknown_ids))
         if errors:
@@ -380,8 +516,12 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     for candidate_id, indexes in candidate_uses.items():
         if len(indexes) > 1:
             unsafe_indexes.update(indexes)
-            validation_errors.append({"candidate_ids": [candidate_id],
-                                      "error": "Candidate ID appears in multiple decisions"})
+            validation_errors.append(
+                {
+                    "candidate_ids": [candidate_id],
+                    "error": "Candidate ID appears in multiple decisions",
+                }
+            )
 
     accepted = []
     normalized_decisions = []
@@ -389,7 +529,9 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     unsafe_without_known_id = False
     for index, (decision, ids) in enumerate(records):
         if index in unsafe_indexes:
-            known_ids = [candidate_id for candidate_id in ids if candidate_id in expected]
+            known_ids = [
+                candidate_id for candidate_id in ids if candidate_id in expected
+            ]
             unsafe_ids.update(known_ids)
             unsafe_without_known_id = unsafe_without_known_id or not known_ids
             continue
@@ -403,8 +545,11 @@ def verification(text, candidates, snapshot, concept_assessment=None):
                 _published_finding(finding, snapshot)
             except InvalidReview as exc:
                 error = str(exc)
-                decision.update(disposition="unresolved", finding=None,
-                                reason=f"Finding withheld: {error}")
+                decision.update(
+                    disposition="unresolved",
+                    finding=None,
+                    reason=f"Finding withheld: {error}",
+                )
                 validation_errors.append({"candidate_ids": ids, "error": error})
                 result["coverage"]["status"] = "partial"
                 result["coverage"]["limitations"].append(f"Finding withheld: {error}")
@@ -419,38 +564,54 @@ def verification(text, candidates, snapshot, concept_assessment=None):
 
     if unsafe_ids:
         candidate_ids = sorted(unsafe_ids, key=candidate_key)
-        normalized_decisions.append({
-            "candidate_ids": candidate_ids,
-            "disposition": "unresolved",
-            "reason": "Decision withheld: invalid candidate ID accounting",
-            "finding": None,
-        })
+        normalized_decisions.append(
+            {
+                "candidate_ids": candidate_ids,
+                "disposition": "unresolved",
+                "reason": "Decision withheld: invalid candidate ID accounting",
+                "finding": None,
+            }
+        )
         result["coverage"]["status"] = "partial"
         result["coverage"]["limitations"].append(
-            "Decision withheld: invalid candidate ID accounting")
+            "Decision withheld: invalid candidate ID accounting"
+        )
     if unsafe_without_known_id:
-        normalized_decisions.append({
-            "candidate_ids": [],
-            "disposition": "unresolved",
-            "reason": "Decision withheld: invalid candidate ID accounting",
-            "finding": None,
-        })
+        normalized_decisions.append(
+            {
+                "candidate_ids": [],
+                "disposition": "unresolved",
+                "reason": "Decision withheld: invalid candidate ID accounting",
+                "finding": None,
+            }
+        )
         result["coverage"]["status"] = "partial"
         result["coverage"]["limitations"].append(
-            "Decision withheld: invalid candidate ID accounting")
+            "Decision withheld: invalid candidate ID accounting"
+        )
 
-    represented = {candidate_id for decision in normalized_decisions
-                   for candidate_id in decision["candidate_ids"]}
-    omitted = [candidate_id for candidate_id in expected_order if candidate_id not in represented]
+    represented = {
+        candidate_id
+        for decision in normalized_decisions
+        for candidate_id in decision["candidate_ids"]
+    }
+    omitted = [
+        candidate_id
+        for candidate_id in expected_order
+        if candidate_id not in represented
+    ]
     if omitted:
-        normalized_decisions.append({
-            "candidate_ids": omitted,
-            "disposition": "unresolved",
-            "reason": "Verifier omitted candidate decisions",
-            "finding": None,
-        })
-        validation_errors.append({"candidate_ids": omitted,
-                                  "error": "Verifier omitted candidate decisions"})
+        normalized_decisions.append(
+            {
+                "candidate_ids": omitted,
+                "disposition": "unresolved",
+                "reason": "Verifier omitted candidate decisions",
+                "finding": None,
+            }
+        )
+        validation_errors.append(
+            {"candidate_ids": omitted, "error": "Verifier omitted candidate decisions"}
+        )
         result["coverage"]["status"] = "partial"
         result["coverage"]["limitations"].append("Verifier omitted candidate decisions")
     result["decisions"] = normalized_decisions
@@ -465,7 +626,8 @@ def collation(text, accepted, concept_assessment=None):
         raise InvalidReview("Invalid collator findings")
     concept_summary = result["concept_summary"]
     if concept_summary is not None and (
-            not isinstance(concept_summary, str) or not concept_summary.strip()):
+        not isinstance(concept_summary, str) or not concept_summary.strip()
+    ):
         raise InvalidReview("Invalid concept summary")
     if concept_assessment is None and concept_summary is not None:
         raise InvalidReview("Collator invented a concept summary")
@@ -504,20 +666,33 @@ def render(findings, limitations=(), concept_summary=None, alternatives=()):
         else:
             finding_groups.setdefault(finding["severity"], []).append(finding)
     rendered_findings = []
-    for severity, heading in (("critical", "Critical"), ("major", "Major"),
-                              ("minor", "Minor"), ("suggestion", "Suggestions")):
+    for severity, heading in (
+        ("critical", "Critical"),
+        ("major", "Major"),
+        ("minor", "Minor"),
+        ("suggestion", "Suggestions"),
+    ):
         group = finding_groups.get(severity, [])
         if group:
-            rendered_findings.append(f"**{heading}**\n\n" + "\n\n".join(
-                f"**{finding['title']}** ({finding['path']}:{finding['line']}, "
-                f"{finding['side']})\n\n{finding['body']}" for finding in group))
+            rendered_findings.append(
+                f"**{heading}**\n\n"
+                + "\n\n".join(
+                    f"**{finding['title']}** ({finding['path']}:{finding['line']}, "
+                    f"{finding['side']})\n\n{finding['body']}"
+                    for finding in group
+                )
+            )
     if rendered_findings:
         sections.append("##### Findings\n\n" + "\n\n".join(rendered_findings))
     rendered_design = []
     if design_findings:
-        rendered_design.append("\n\n".join(
-            f"**{finding['title']}** ({finding['path']}:{finding['line']}, "
-            f"{finding['side']})\n\n{finding['body']}" for finding in design_findings))
+        rendered_design.append(
+            "\n\n".join(
+                f"**{finding['title']}** ({finding['path']}:{finding['line']}, "
+                f"{finding['side']})\n\n{finding['body']}"
+                for finding in design_findings
+            )
+        )
     if concept_summary:
         rendered_design.append(f"**Concept and approach.** {concept_summary}")
     if rendered_design:
@@ -525,23 +700,31 @@ def render(findings, limitations=(), concept_summary=None, alternatives=()):
     if alternatives:
         rendered_alternatives = []
         for alternative in alternatives:
-            text = (f"**{alternative['name']}.** {alternative['concept']} "
-                    f"Benefit: {alternative['benefit']} "
-                    f"Trade-off: {alternative['cost']}")
+            text = (
+                f"**{alternative['name']}.** {alternative['concept']} "
+                f"Benefit: {alternative['benefit']} "
+                f"Trade-off: {alternative['cost']}"
+            )
             if alternative["unresolved"]:
                 text += f" Unresolved: {alternative['unresolved']}"
             if alternative["citations"]:
                 text += " " + " ".join(
                     f"[Source {index}]({citation})"
-                    for index, citation in enumerate(alternative["citations"], 1))
+                    for index, citation in enumerate(alternative["citations"], 1)
+                )
             rendered_alternatives.append(text)
         sections.append("##### Alternatives\n\n" + "\n\n".join(rendered_alternatives))
     if not sections:
-        sections.append("I found no actionable issues in this static review." if not limitations
-                        else "No verified findings are available from this review.")
+        sections.append(
+            "I found no actionable issues in this static review."
+            if not limitations
+            else "No verified findings are available from this review."
+        )
     if limitations:
-        sections.append("Review coverage was incomplete.\n\n"
-                        "<details>\n<summary>Review limitations</summary>\n\n"
-                        + "\n".join(f"- {limitation}" for limitation in dict.fromkeys(limitations))
-                        + "\n\n</details>")
+        sections.append(
+            "Review coverage was incomplete.\n\n"
+            "<details>\n<summary>Review limitations</summary>\n\n"
+            + "\n".join(f"- {limitation}" for limitation in dict.fromkeys(limitations))
+            + "\n\n</details>"
+        )
     return "\n\n".join(sections)

@@ -23,8 +23,11 @@ def _budget_summary(budget, attempt, name, *, failure=False):
 
 def _result(case, runtime, selected_engine, status, *, skipped=False, failure=False):
     if not hasattr(runtime, "_review_id"):
-        runtime._review_id = (runtime.budget.review_id if runtime.budget is not None
-                              else str(uuid.uuid4()))
+        runtime._review_id = (
+            runtime.budget.review_id
+            if runtime.budget is not None
+            else str(uuid.uuid4())
+        )
     snapshot = case.snapshot
     return {
         "schema_version": 1,
@@ -40,9 +43,12 @@ def _result(case, runtime, selected_engine, status, *, skipped=False, failure=Fa
             "status": status,
             "metrics": runtime.metrics(),
             "skipped": skipped,
-            "budget": _budget_summary(runtime.budget, runtime.attempt, "budget", failure=failure),
-            "ppq_budget": _budget_summary(runtime.ppq_budget, runtime.attempt, "ppq_budget",
-                                           failure=failure),
+            "budget": _budget_summary(
+                runtime.budget, runtime.attempt, "budget", failure=failure
+            ),
+            "ppq_budget": _budget_summary(
+                runtime.ppq_budget, runtime.attempt, "ppq_budget", failure=failure
+            ),
             "attempt": runtime.attempt,
         },
     }
@@ -55,8 +61,11 @@ def run_review(case, runtime, selected_engine):
     runtime.check_current()
     result = _result(case, runtime, selected_engine, "completed")
     result["content"] = output.content
-    result["output"] = {"schema_version": output.schema_version,
-                        "data": output.data, "exports": output.exports}
+    result["output"] = {
+        "schema_version": output.schema_version,
+        "data": output.data,
+        "exports": output.exports,
+    }
     return validate_json(result)
 
 
@@ -69,8 +78,15 @@ def failure_result(case, runtime, selected_engine, error, *, status="failed"):
 
 def skipped_result(case, runtime, selected_engine, reason, *, no_changes=False):
     """Record inputs that require no model execution."""
-    result = _result(case, runtime, selected_engine,
-                     "no_changes" if no_changes else "skipped", skipped=True)
-    result["content"] = "No committed changes to review." if no_changes else f"Skipped: {reason}"
+    result = _result(
+        case,
+        runtime,
+        selected_engine,
+        "no_changes" if no_changes else "skipped",
+        skipped=True,
+    )
+    result["content"] = (
+        "No committed changes to review." if no_changes else f"Skipped: {reason}"
+    )
     result["run"]["reason"] = reason
     return validate_json(result)

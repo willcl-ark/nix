@@ -35,40 +35,72 @@ class LinkParser(HTMLParser):
 
 
 class StatsPageTests(unittest.TestCase):
-    def save(self, summary, repository_url="https://code.example.org/org/repo",
-             report_base_url="https://reports.example.org/reviews"):
+    def save(
+        self,
+        summary,
+        repository_url="https://code.example.org/org/repo",
+        report_base_url="https://reports.example.org/reviews",
+    ):
         directory = tempfile.TemporaryDirectory()
-        stats_page.save_stats(Path(directory.name), summary, repository_url, report_base_url)
+        stats_page.save_stats(
+            Path(directory.name), summary, repository_url, report_base_url
+        )
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
-        return root, (root / "index.html").read_text(), json.loads((root / "stats.json").read_text())
+        return (
+            root,
+            (root / "index.html").read_text(),
+            json.loads((root / "stats.json").read_text()),
+        )
 
     def pages(self, root):
-        return {str(path.relative_to(root)): path.read_text()
-                for path in root.rglob("*.html")}
+        return {
+            str(path.relative_to(root)): path.read_text()
+            for path in root.rglob("*.html")
+        }
 
     def agent_pages(self, root):
-        return {path: page for path, page in self.pages(root).items()
-                if path.startswith("agents/") and path != "agents/index.html"}
+        return {
+            path: page
+            for path, page in self.pages(root).items()
+            if path.startswith("agents/") and path != "agents/index.html"
+        }
 
     def test_stage_candidate_details_escape_and_link_metadata(self):
         summary = self.empty_summary()
         report_name = "42-" + "a" * 40 + "-1.html"
-        summary["stages"] = [{
-            "stage": "adversarial_gemini", "configured_model": "google/gemini-4-argon",
-            "findings": [
-                {"number": 42, "candidate_id": "adversarial_gemini:1",
-                 "title": '<script>alert("candidate")</script>',
-                 "disposition": "publish", "accepted": True,
-                 "attribution": "shared", "report_name": report_name},
-                {"number": 43, "candidate_id": "adversarial_gemini:2",
-                 "title": "Unverified claim", "disposition": "unresolved",
-                 "accepted": False, "report_name": "javascript:alert(1)"},
-                {"number": 44, "candidate_id": "adversarial_gemini:3",
-                 "title": "Published without attribution", "disposition": "publish",
-                 "accepted": False},
-            ],
-        }]
+        summary["stages"] = [
+            {
+                "stage": "adversarial_gemini",
+                "configured_model": "google/gemini-4-argon",
+                "findings": [
+                    {
+                        "number": 42,
+                        "candidate_id": "adversarial_gemini:1",
+                        "title": '<script>alert("candidate")</script>',
+                        "disposition": "publish",
+                        "accepted": True,
+                        "attribution": "shared",
+                        "report_name": report_name,
+                    },
+                    {
+                        "number": 43,
+                        "candidate_id": "adversarial_gemini:2",
+                        "title": "Unverified claim",
+                        "disposition": "unresolved",
+                        "accepted": False,
+                        "report_name": "javascript:alert(1)",
+                    },
+                    {
+                        "number": 44,
+                        "candidate_id": "adversarial_gemini:3",
+                        "title": "Published without attribution",
+                        "disposition": "publish",
+                        "accepted": False,
+                    },
+                ],
+            }
+        ]
         root, overview, exported = self.save(summary)
         pages = self.agent_pages(root)
         self.assertEqual(len(pages), 1)
@@ -97,9 +129,12 @@ class StatsPageTests(unittest.TestCase):
     def empty_summary(self):
         return {
             "generated_at": "2026-10-01T00:00:00Z",
-            "limitations": {"missing_timestamps": True, "notes": [
-                "Bot verification is not human validation.",
-            ]},
+            "limitations": {
+                "missing_timestamps": True,
+                "notes": [
+                    "Bot verification is not human validation.",
+                ],
+            },
             "inventory": {
                 "jobs_total": 0,
                 "jobs_by_status": {},
@@ -125,9 +160,17 @@ class StatsPageTests(unittest.TestCase):
                 "published_findings": 0,
                 "coverage": {"complete": 0, "partial": 0, "failed": 0, "unknown": 0},
                 "context_coverage": {
-                    "complete": 0, "partial": 0, "failed": 0, "unknown": 0},
+                    "complete": 0,
+                    "partial": 0,
+                    "failed": 0,
+                    "unknown": 0,
+                },
                 "verification_status": {
-                    "complete": 0, "partial": 0, "failed": 0, "unknown": 0},
+                    "complete": 0,
+                    "partial": 0,
+                    "failed": 0,
+                    "unknown": 0,
+                },
                 "attribution_coverage": {"complete": 0, "missing": 0},
                 "archaeology": {
                     "research_completed": 0,
@@ -178,22 +221,66 @@ class StatsPageTests(unittest.TestCase):
                 "findings": [],
             },
             "distributions": {
-                "saved_review_known_cost_micros": {"count": 0, "median": None, "p90": None, "max": None},
-                "saved_review_reserved_micros": {"count": 0, "median": None, "p90": None, "max": None},
+                "saved_review_known_cost_micros": {
+                    "count": 0,
+                    "median": None,
+                    "p90": None,
+                    "max": None,
+                },
+                "saved_review_reserved_micros": {
+                    "count": 0,
+                    "median": None,
+                    "p90": None,
+                    "max": None,
+                },
                 "saved_review_cost_missing_ledger_count": 0,
-                "saved_review_tools": {"count": 0, "median": None, "p90": None, "max": None},
-                "saved_review_model_seconds": {"count": 0, "median": None, "p90": None, "max": None},
+                "saved_review_tools": {
+                    "count": 0,
+                    "median": None,
+                    "p90": None,
+                    "max": None,
+                },
+                "saved_review_model_seconds": {
+                    "count": 0,
+                    "median": None,
+                    "p90": None,
+                    "max": None,
+                },
                 "saved_review_conceptual_concern_citations": {
-                    "count": 0, "median": None, "p90": None, "max": None},
+                    "count": 0,
+                    "median": None,
+                    "p90": None,
+                    "max": None,
+                },
                 "saved_review_conceptual_concern_alternatives": {
-                    "count": 0, "median": None, "p90": None, "max": None},
+                    "count": 0,
+                    "median": None,
+                    "p90": None,
+                    "max": None,
+                },
             },
             "adversarial_comparison": {
                 "completed_reviews": 0,
-                "sole_accepted": {"adversarial": 0, "adversarial_deepseek": 0, "adversarial_gemini": 0},
-                "shared_accepted": {"adversarial": 0, "adversarial_deepseek": 0, "adversarial_gemini": 0},
-                "known_cost_micros": {"adversarial": 0, "adversarial_deepseek": 0, "adversarial_gemini": 0},
-                "reserved_micros": {"adversarial": 0, "adversarial_deepseek": 0, "adversarial_gemini": 0},
+                "sole_accepted": {
+                    "adversarial": 0,
+                    "adversarial_deepseek": 0,
+                    "adversarial_gemini": 0,
+                },
+                "shared_accepted": {
+                    "adversarial": 0,
+                    "adversarial_deepseek": 0,
+                    "adversarial_gemini": 0,
+                },
+                "known_cost_micros": {
+                    "adversarial": 0,
+                    "adversarial_deepseek": 0,
+                    "adversarial_gemini": 0,
+                },
+                "reserved_micros": {
+                    "adversarial": 0,
+                    "adversarial_deepseek": 0,
+                    "adversarial_gemini": 0,
+                },
                 "note": "Observed reviews with all three adversarial stages completed only; this is not causal recall.",
             },
             "recent_reviews": [],
@@ -209,9 +296,16 @@ class StatsPageTests(unittest.TestCase):
             ],
         }
 
-    def request_totals(self, month=None, request_count=0, known_cost_micros=0,
-                       reserved_micros=0, unknown_cost_request_count=0,
-                       unknown_usage_count=0, incomplete_usage_count=0):
+    def request_totals(
+        self,
+        month=None,
+        request_count=0,
+        known_cost_micros=0,
+        reserved_micros=0,
+        unknown_cost_request_count=0,
+        unknown_usage_count=0,
+        incomplete_usage_count=0,
+    ):
         record = {
             "request_count": request_count,
             "known_cost_micros": known_cost_micros,
@@ -228,98 +322,186 @@ class StatsPageTests(unittest.TestCase):
 
     def rich_summary(self):
         summary = self.empty_summary()
-        summary["inventory"].update({
-            "jobs_total": 3,
-            "jobs_by_status": {"complete": 2, "failed": 1},
-            "saved_results": 2,
-            "analyzed_reviews": 2,
-            "unique_prs": 2,
-            "recorded_failed_attempts": 2,
-        })
-        summary["overview"].update({
-            "saved_reviews": 2,
-            "published_reviews": 2,
-            "saved_findings": 3,
-            "published_findings": 3,
-            "coverage": {"complete": 1, "partial": 1, "failed": 0, "unknown": 0},
-            "context_coverage": {
-                "complete": 1, "partial": 0, "failed": 0, "unknown": 1},
-            "verification_status": {
-                "complete": 1, "partial": 0, "failed": 1, "unknown": 0},
-            "archaeology": {
-                "research_completed": 2,
-                "published_concerns": 1,
-                "assessment_status_counts": {"verified": 1},
-            },
-        })
+        summary["inventory"].update(
+            {
+                "jobs_total": 3,
+                "jobs_by_status": {"complete": 2, "failed": 1},
+                "saved_results": 2,
+                "analyzed_reviews": 2,
+                "unique_prs": 2,
+                "recorded_failed_attempts": 2,
+            }
+        )
+        summary["overview"].update(
+            {
+                "saved_reviews": 2,
+                "published_reviews": 2,
+                "saved_findings": 3,
+                "published_findings": 3,
+                "coverage": {"complete": 1, "partial": 1, "failed": 0, "unknown": 0},
+                "context_coverage": {
+                    "complete": 1,
+                    "partial": 0,
+                    "failed": 0,
+                    "unknown": 1,
+                },
+                "verification_status": {
+                    "complete": 1,
+                    "partial": 0,
+                    "failed": 1,
+                    "unknown": 0,
+                },
+                "archaeology": {
+                    "research_completed": 2,
+                    "published_concerns": 1,
+                    "assessment_status_counts": {"verified": 1},
+                },
+            }
+        )
         summary["spend"] = {
             "current_month": {
                 **self.request_totals("2026-10", 7, 1_234_000, 300_000, 1, 1, 1),
                 "providers": {
-                    "openai": self.request_totals(request_count=4, known_cost_micros=1_000_000,
-                                                  reserved_micros=100_000,
-                                                  unknown_cost_request_count=1),
-                    "ppq": self.request_totals(request_count=3, known_cost_micros=234_000,
-                                               reserved_micros=200_000),
+                    "openai": self.request_totals(
+                        request_count=4,
+                        known_cost_micros=1_000_000,
+                        reserved_micros=100_000,
+                        unknown_cost_request_count=1,
+                    ),
+                    "ppq": self.request_totals(
+                        request_count=3,
+                        known_cost_micros=234_000,
+                        reserved_micros=200_000,
+                    ),
                 },
             },
-            "lifetime": self.request_totals(request_count=9, known_cost_micros=2_000_000,
-                                            reserved_micros=500_000,
-                                            unknown_cost_request_count=1),
+            "lifetime": self.request_totals(
+                request_count=9,
+                known_cost_micros=2_000_000,
+                reserved_micros=500_000,
+                unknown_cost_request_count=1,
+            ),
             "providers": [
-                {"provider": "openai", **self.request_totals(request_count=4,
-                                                             known_cost_micros=1_000_000)},
-                {"provider": "ppq", **self.request_totals(request_count=3,
-                                                          known_cost_micros=234_000)},
+                {
+                    "provider": "openai",
+                    **self.request_totals(request_count=4, known_cost_micros=1_000_000),
+                },
+                {
+                    "provider": "ppq",
+                    **self.request_totals(request_count=3, known_cost_micros=234_000),
+                },
             ],
-            "models": [{
-                "provider": "openai",
-                "model": "gpt-6.1-sol",
-                **self.request_totals(request_count=4, known_cost_micros=1_000_000),
-                "tokens": {"input": 400, "output": 80, "cached": 100, "cache_write": 40},
-            }],
+            "models": [
+                {
+                    "provider": "openai",
+                    "model": "gpt-6.1-sol",
+                    **self.request_totals(request_count=4, known_cost_micros=1_000_000),
+                    "tokens": {
+                        "input": 400,
+                        "output": 80,
+                        "cached": 100,
+                        "cache_write": 40,
+                    },
+                }
+            ],
             "months": [
-                {"month": "2026-09", **self.request_totals(request_count=2,
-                                                           known_cost_micros=500_000)},
-                {"month": "2026-10", **self.request_totals(request_count=7,
-                                                           known_cost_micros=1_234_000)},
+                {
+                    "month": "2026-09",
+                    **self.request_totals(request_count=2, known_cost_micros=500_000),
+                },
+                {
+                    "month": "2026-10",
+                    **self.request_totals(request_count=7, known_cost_micros=1_234_000),
+                },
             ],
         }
         summary["cost_trends"] = {
             "timezone": "UTC",
             "week_start": "Monday",
-            "current_day": {"period": "2026-10-01", **self.request_totals(
-                request_count=4, known_cost_micros=250_000,
-                reserved_micros=50_000, unknown_cost_request_count=1)},
-            "current_week": {"period": "2026-09-28", **self.request_totals(
-                request_count=6, known_cost_micros=750_000,
-                reserved_micros=200_000, unknown_cost_request_count=2)},
-            "current_month": {"period": "2026-10", **self.request_totals(
-                request_count=9, known_cost_micros=1_284_000,
-                reserved_micros=315_000, unknown_cost_request_count=3)},
+            "current_day": {
+                "period": "2026-10-01",
+                **self.request_totals(
+                    request_count=4,
+                    known_cost_micros=250_000,
+                    reserved_micros=50_000,
+                    unknown_cost_request_count=1,
+                ),
+            },
+            "current_week": {
+                "period": "2026-09-28",
+                **self.request_totals(
+                    request_count=6,
+                    known_cost_micros=750_000,
+                    reserved_micros=200_000,
+                    unknown_cost_request_count=2,
+                ),
+            },
+            "current_month": {
+                "period": "2026-10",
+                **self.request_totals(
+                    request_count=9,
+                    known_cost_micros=1_284_000,
+                    reserved_micros=315_000,
+                    unknown_cost_request_count=3,
+                ),
+            },
             "days": [
-                {"period": "2026-09-30", **self.request_totals(
-                    request_count=2, known_cost_micros=500_000,
-                    reserved_micros=150_000, unknown_cost_request_count=1)},
-                {"period": "2026-10-01", **self.request_totals(
-                    request_count=4, known_cost_micros=250_000,
-                    reserved_micros=50_000, unknown_cost_request_count=1)},
+                {
+                    "period": "2026-09-30",
+                    **self.request_totals(
+                        request_count=2,
+                        known_cost_micros=500_000,
+                        reserved_micros=150_000,
+                        unknown_cost_request_count=1,
+                    ),
+                },
+                {
+                    "period": "2026-10-01",
+                    **self.request_totals(
+                        request_count=4,
+                        known_cost_micros=250_000,
+                        reserved_micros=50_000,
+                        unknown_cost_request_count=1,
+                    ),
+                },
             ],
-            "weeks": [{"period": "2026-09-28", **self.request_totals(
-                request_count=6, known_cost_micros=750_000,
-                reserved_micros=200_000, unknown_cost_request_count=2)}],
+            "weeks": [
+                {
+                    "period": "2026-09-28",
+                    **self.request_totals(
+                        request_count=6,
+                        known_cost_micros=750_000,
+                        reserved_micros=200_000,
+                        unknown_cost_request_count=2,
+                    ),
+                }
+            ],
             "months": [
-                {"period": "2026-09", **self.request_totals(
-                    request_count=2, known_cost_micros=500_000,
-                    reserved_micros=150_000, unknown_cost_request_count=1)},
-                {"period": "2026-10", **self.request_totals(
-                    request_count=9, known_cost_micros=1_284_000,
-                    reserved_micros=315_000, unknown_cost_request_count=3)},
+                {
+                    "period": "2026-09",
+                    **self.request_totals(
+                        request_count=2,
+                        known_cost_micros=500_000,
+                        reserved_micros=150_000,
+                        unknown_cost_request_count=1,
+                    ),
+                },
+                {
+                    "period": "2026-10",
+                    **self.request_totals(
+                        request_count=9,
+                        known_cost_micros=1_284_000,
+                        reserved_micros=315_000,
+                        unknown_cost_request_count=3,
+                    ),
+                },
             ],
-            "undated": self.request_totals(request_count=5,
-                                           known_cost_micros=1_034_000,
-                                           reserved_micros=265_000,
-                                           unknown_cost_request_count=2),
+            "undated": self.request_totals(
+                request_count=5,
+                known_cost_micros=1_034_000,
+                reserved_micros=265_000,
+                unknown_cost_request_count=2,
+            ),
         }
         summary["stage_model_leaderboard"] = [
             {
@@ -363,7 +545,12 @@ class StatsPageTests(unittest.TestCase):
                 "executed_runs": 2,
                 "skipped_runs": 0,
                 "status_counts": {"completed": 2},
-                "candidate_counts": {"publish": 3, "drop": 1, "unresolved": 1, "undisposed": 1},
+                "candidate_counts": {
+                    "publish": 3,
+                    "drop": 1,
+                    "unresolved": 1,
+                    "undisposed": 1,
+                },
                 "accepted_findings": 3,
                 "concept_stage": False,
                 "conceptual_concerns": 0,
@@ -378,8 +565,11 @@ class StatsPageTests(unittest.TestCase):
                 "model_seconds": 12.5,
                 "saved_trace_known_estimated_cost_micros": 800_000,
                 "known_cost_per_accepted_finding_micros": 400_000,
-                "ledger": self.request_totals(request_count=5, known_cost_micros=1_200_000,
-                                              reserved_micros=100_000),
+                "ledger": self.request_totals(
+                    request_count=5,
+                    known_cost_micros=1_200_000,
+                    reserved_micros=100_000,
+                ),
             },
             {
                 "stage": "tests",
@@ -388,7 +578,12 @@ class StatsPageTests(unittest.TestCase):
                 "executed_runs": 1,
                 "skipped_runs": 0,
                 "status_counts": {"completed": 1},
-                "candidate_counts": {"publish": 1, "drop": 3, "unresolved": 0, "undisposed": 0},
+                "candidate_counts": {
+                    "publish": 1,
+                    "drop": 3,
+                    "unresolved": 0,
+                    "undisposed": 0,
+                },
                 "accepted_findings": 1,
                 "concept_stage": False,
                 "conceptual_concerns": 0,
@@ -403,8 +598,9 @@ class StatsPageTests(unittest.TestCase):
                 "model_seconds": 4,
                 "saved_trace_known_estimated_cost_micros": 100_000,
                 "known_cost_per_accepted_finding_micros": 234_000,
-                "ledger": self.request_totals(request_count=3, known_cost_micros=234_000,
-                                              reserved_micros=200_000),
+                "ledger": self.request_totals(
+                    request_count=3, known_cost_micros=234_000, reserved_micros=200_000
+                ),
             },
         ]
         summary["routing_tiers"] = {"cheap": 2, "deep": 1}
@@ -424,44 +620,86 @@ class StatsPageTests(unittest.TestCase):
                 "still_present": 0,
                 "unclear": 0,
             },
-            "spend": self.request_totals(request_count=2, known_cost_micros=50_000,
-                                         reserved_micros=10_000),
-            "findings": [{
-                "number": 7,
-                "assessment_job_id": 8,
-                "assessment_generation": 2,
-                "source_job_id": 7,
-                "source_generation": 1,
-                "finding_id": "finding:1",
-                "title": "Merged finding",
-                "path": "src/node.cpp",
-                "old_head": "a" * 40,
-                "new_head": "b" * 40,
-                "status": "addressed",
-                "reason": "The follow-up adds the missing guard.",
-                "evidence": "The comparison shows the guard before use.",
-                "assessed_at": "2026-10-07T12:00:00Z",
-                "model": "gpt-6-luna",
-                "source_report_name": "7-deadbeef.html",
-            }],
+            "spend": self.request_totals(
+                request_count=2, known_cost_micros=50_000, reserved_micros=10_000
+            ),
+            "findings": [
+                {
+                    "number": 7,
+                    "assessment_job_id": 8,
+                    "assessment_generation": 2,
+                    "source_job_id": 7,
+                    "source_generation": 1,
+                    "finding_id": "finding:1",
+                    "title": "Merged finding",
+                    "path": "src/node.cpp",
+                    "old_head": "a" * 40,
+                    "new_head": "b" * 40,
+                    "status": "addressed",
+                    "reason": "The follow-up adds the missing guard.",
+                    "evidence": "The comparison shows the guard before use.",
+                    "assessed_at": "2026-10-07T12:00:00Z",
+                    "model": "gpt-6-luna",
+                    "source_report_name": "7-deadbeef.html",
+                }
+            ],
         }
         summary["distributions"] = {
-            "saved_review_known_cost_micros": {"count": 2, "median": 500_000, "p90": 1_000_000, "max": 1_000_000},
-            "saved_review_reserved_micros": {"count": 2, "median": 150_000, "p90": 200_000, "max": 200_000},
+            "saved_review_known_cost_micros": {
+                "count": 2,
+                "median": 500_000,
+                "p90": 1_000_000,
+                "max": 1_000_000,
+            },
+            "saved_review_reserved_micros": {
+                "count": 2,
+                "median": 150_000,
+                "p90": 200_000,
+                "max": 200_000,
+            },
             "saved_review_cost_missing_ledger_count": 0,
             "saved_review_tools": {"count": 2, "median": 3, "p90": 5, "max": 5},
-            "saved_review_model_seconds": {"count": 2, "median": 12.5, "p90": 20, "max": 20},
+            "saved_review_model_seconds": {
+                "count": 2,
+                "median": 12.5,
+                "p90": 20,
+                "max": 20,
+            },
             "saved_review_conceptual_concern_citations": {
-                "count": 1, "median": 2, "p90": 2, "max": 2},
+                "count": 1,
+                "median": 2,
+                "p90": 2,
+                "max": 2,
+            },
             "saved_review_conceptual_concern_alternatives": {
-                "count": 1, "median": 3, "p90": 3, "max": 3},
+                "count": 1,
+                "median": 3,
+                "p90": 3,
+                "max": 3,
+            },
         }
         summary["adversarial_comparison"] = {
             "completed_reviews": 2,
-            "sole_accepted": {"adversarial": 1, "adversarial_deepseek": 1, "adversarial_gemini": 2},
-            "shared_accepted": {"adversarial": 1, "adversarial_deepseek": 0, "adversarial_gemini": 1},
-            "known_cost_micros": {"adversarial": 1_000_000, "adversarial_deepseek": 234_000, "adversarial_gemini": 300_000},
-            "reserved_micros": {"adversarial": 100_000, "adversarial_deepseek": 200_000, "adversarial_gemini": 0},
+            "sole_accepted": {
+                "adversarial": 1,
+                "adversarial_deepseek": 1,
+                "adversarial_gemini": 2,
+            },
+            "shared_accepted": {
+                "adversarial": 1,
+                "adversarial_deepseek": 0,
+                "adversarial_gemini": 1,
+            },
+            "known_cost_micros": {
+                "adversarial": 1_000_000,
+                "adversarial_deepseek": 234_000,
+                "adversarial_gemini": 300_000,
+            },
+            "reserved_micros": {
+                "adversarial": 100_000,
+                "adversarial_deepseek": 200_000,
+                "adversarial_gemini": 0,
+            },
             "note": "Observed reviews with all three adversarial stages completed only; this is not causal recall.",
         }
         summary["reviews"] = [
@@ -487,8 +725,9 @@ class StatsPageTests(unittest.TestCase):
                     "citation_count": 2,
                     "alternative_count": 3,
                 },
-                "ledger": self.request_totals(request_count=3, known_cost_micros=234_000,
-                                              reserved_micros=200_000),
+                "ledger": self.request_totals(
+                    request_count=3, known_cost_micros=234_000, reserved_micros=200_000
+                ),
                 "tokens": {"input": 10, "output": 2, "cached": 1, "cache_write": 0},
                 "tool_calls": 2,
                 "model_seconds": 4,
@@ -510,8 +749,11 @@ class StatsPageTests(unittest.TestCase):
                 "verification_status": "complete",
                 "findings": {"saved": 2, "published": 2},
                 "archaeology": {"research_completed": True, "published_concern": False},
-                "ledger": self.request_totals(request_count=4, known_cost_micros=1_000_000,
-                                              reserved_micros=100_000),
+                "ledger": self.request_totals(
+                    request_count=4,
+                    known_cost_micros=1_000_000,
+                    reserved_micros=100_000,
+                ),
                 "tokens": {"input": 20, "output": 4, "cached": 2, "cache_write": 1},
                 "tool_calls": 5,
                 "model_seconds": 20,
@@ -548,8 +790,13 @@ class StatsPageTests(unittest.TestCase):
 
     def test_empty_stats_render_stable_public_files(self):
         root, html, public = self.save(self.empty_summary())
-        expected = {"index.html", "agents/index.html", "reviews/index.html",
-                    "addressed/index.html", "usage/index.html"}
+        expected = {
+            "index.html",
+            "agents/index.html",
+            "reviews/index.html",
+            "addressed/index.html",
+            "usage/index.html",
+        }
         self.assertEqual(set(self.pages(root)), expected)
         for name in expected | {"stats.json", "stats.js"}:
             self.assertEqual((root / name).stat().st_mode & 0o777, 0o644)
@@ -558,8 +805,9 @@ class StatsPageTests(unittest.TestCase):
 
     def test_navigation_resolves_from_every_page_and_models_have_distinct_pages(self):
         summary = self.rich_summary()
-        summary["stages"].append({**summary["stages"][0],
-                                  "configured_model": "another/model"})
+        summary["stages"].append(
+            {**summary["stages"][0], "configured_model": "another/model"}
+        )
         root, _, _ = self.save(summary)
         agents = self.agent_pages(root)
         self.assertEqual(len(agents), 3)
@@ -582,24 +830,31 @@ class StatsPageTests(unittest.TestCase):
         summary = self.rich_summary()
         stage = summary["stages"][0]
         stage["stage"] = "script"
-        stage["status_counts"] = {
-            "completed": 3, "skipped": 3, "budget_exhausted": 1}
+        stage["status_counts"] = {"completed": 3, "skipped": 3, "budget_exhausted": 1}
         stage["coverage_counts"] = {"complete": 2, "partial": 1, "unknown": 4}
         stage["accepted_findings"] = 7
         stage["ledger"]["known_cost_micros"] = 250000
         root, _, public = self.save(summary)
-        page = next(page for page in self.agent_pages(root).values()
-                    if "script" in page and "budget_exhausted" in page)
+        page = next(
+            page
+            for page in self.agent_pages(root).values()
+            if "script" in page and "budget_exhausted" in page
+        )
         for value in ("budget_exhausted", "completed", "skipped", "partial", "$0.25"):
             self.assertIn(value, page)
         self.assertEqual(public["stages"][0]["status_counts"], stage["status_counts"])
-        self.assertEqual(public["stages"][0]["coverage_counts"], stage["coverage_counts"])
+        self.assertEqual(
+            public["stages"][0]["coverage_counts"], stage["coverage_counts"]
+        )
 
     def test_completion_excludes_skips_and_handles_all_failed_runs(self):
         summary = self.rich_summary()
         stage = summary["stages"][0]
-        stage.update(executed_runs=4, saved_result_runs=7,
-                     status_counts={"completed": 3, "failed": 1, "skipped": 3})
+        stage.update(
+            executed_runs=4,
+            saved_result_runs=7,
+            status_counts={"completed": 3, "failed": 1, "skipped": 3},
+        )
         root, overview, _ = self.save(summary)
         self.assertIn("75.0%", overview)
         self.assertIn("75.0%", (root / "agents/index.html").read_text())
@@ -618,7 +873,9 @@ class StatsPageTests(unittest.TestCase):
         self.assertNotIn("The follow-up adds the missing guard.", overview)
         self.assertNotIn('id="spend"', overview)
         self.assertNotIn('id="reviews"', overview)
-        self.assertIn("The follow-up adds the missing guard.", pages["addressed/index.html"])
+        self.assertIn(
+            "The follow-up adds the missing guard.", pages["addressed/index.html"]
+        )
         self.assertIn("$0.05", pages["addressed/index.html"])
         self.assertIn("$0.01", pages["addressed/index.html"])
         self.assertIn("2026-09", pages["usage/index.html"])
@@ -630,43 +887,54 @@ class StatsPageTests(unittest.TestCase):
         summary["spend"]["current_month"]["providers"]["<script>x</script>"] = {
             **self.request_totals(request_count=1, known_cost_micros=1)
         }
-        summary["stage_model_leaderboard"][0]["stage"] = "</td><script>alert('stage')</script>"
+        summary["stage_model_leaderboard"][0]["stage"] = (
+            "</td><script>alert('stage')</script>"
+        )
         summary["stages"][0]["stage"] = "</td><script>alert('stage')</script>"
-        summary["reviews"].append({
-            "job_id": 12,
-            "number": "12<script>",
-            "generation": 1,
-            "status": "<img src=x onerror=alert(1)>",
-            "coverage": "unknown",
-            "findings": {"saved": 0, "published": 0},
-            "ledger": self.request_totals(),
-            "recorded_failed_attempts": 0,
-            "report_name": "../bad<script>.html",
-        })
-        summary["addressed_findings"]["findings"].append({
-            "number": 7,
-            "source_report_name": "../bad<script>.html",
-            "old_head": "<bad>",
-            "new_head": "b" * 40,
-            "title": "</td><script>alert('finding')</script>",
-            "path": "src/<node>.cpp",
-            "status": "<img src=x onerror=alert(2)>",
-            "reason": "fixed <maybe>",
-            "evidence": "<script>alert('evidence')</script>",
-            "assessed_at": "<script>alert('time')</script>",
-            "model": "<script>alert('model')</script>",
-        })
-        summary["time_series"].append({
-            "period": "2026-<script>",
-            "reviews": "<script>alert('reviews')</script>",
-            "verified_reviews": 1,
-            "findings": 1,
-            "addressed": 1,
-        })
+        summary["reviews"].append(
+            {
+                "job_id": 12,
+                "number": "12<script>",
+                "generation": 1,
+                "status": "<img src=x onerror=alert(1)>",
+                "coverage": "unknown",
+                "findings": {"saved": 0, "published": 0},
+                "ledger": self.request_totals(),
+                "recorded_failed_attempts": 0,
+                "report_name": "../bad<script>.html",
+            }
+        )
+        summary["addressed_findings"]["findings"].append(
+            {
+                "number": 7,
+                "source_report_name": "../bad<script>.html",
+                "old_head": "<bad>",
+                "new_head": "b" * 40,
+                "title": "</td><script>alert('finding')</script>",
+                "path": "src/<node>.cpp",
+                "status": "<img src=x onerror=alert(2)>",
+                "reason": "fixed <maybe>",
+                "evidence": "<script>alert('evidence')</script>",
+                "assessed_at": "<script>alert('time')</script>",
+                "model": "<script>alert('model')</script>",
+            }
+        )
+        summary["time_series"].append(
+            {
+                "period": "2026-<script>",
+                "reviews": "<script>alert('reviews')</script>",
+                "verified_reviews": 1,
+                "findings": 1,
+                "addressed": 1,
+            }
+        )
         summary["time_series_notes"].append("<script>alert('note')</script>")
 
-        root, html, _ = self.save(summary, repository_url="javascript:alert(1)",
-                                  report_base_url="https://reports.example.org/reviews?x=<script>")
+        root, html, _ = self.save(
+            summary,
+            repository_url="javascript:alert(1)",
+            report_base_url="https://reports.example.org/reviews?x=<script>",
+        )
         addressed_html = (root / "addressed" / "index.html").read_text()
         all_html = "".join(self.pages(root).values())
 
@@ -674,10 +942,17 @@ class StatsPageTests(unittest.TestCase):
         self.assertNotIn("javascript:alert", all_html)
         self.assertNotIn("../bad", all_html)
         self.assertIn("&lt;script&gt;x&lt;/script&gt;", all_html)
-        self.assertIn("&lt;/td&gt;&lt;script&gt;alert(&#x27;stage&#x27;)&lt;/script&gt;", all_html)
+        self.assertIn(
+            "&lt;/td&gt;&lt;script&gt;alert(&#x27;stage&#x27;)&lt;/script&gt;", all_html
+        )
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", all_html)
-        self.assertIn("&lt;/td&gt;&lt;script&gt;alert(&#x27;finding&#x27;)&lt;/script&gt;", addressed_html)
-        self.assertIn("&lt;script&gt;alert(&#x27;evidence&#x27;)&lt;/script&gt;", addressed_html)
+        self.assertIn(
+            "&lt;/td&gt;&lt;script&gt;alert(&#x27;finding&#x27;)&lt;/script&gt;",
+            addressed_html,
+        )
+        self.assertIn(
+            "&lt;script&gt;alert(&#x27;evidence&#x27;)&lt;/script&gt;", addressed_html
+        )
         self.assertIn("&lt;script&gt;alert(&#x27;note&#x27;)&lt;/script&gt;", all_html)
 
     def test_report_and_pr_links_are_constructed_from_safe_parts(self):
@@ -685,23 +960,40 @@ class StatsPageTests(unittest.TestCase):
         addressed_html = (root / "addressed" / "index.html").read_text()
         reviews_html = (root / "reviews" / "index.html").read_text()
         self.assertIn('href="https://code.example.org/org/repo/pulls/9"', reviews_html)
-        self.assertIn('href="https://code.example.org/org/repo/compare/'
-                      + "a" * 40 + ".." + "b" * 40 + '"', addressed_html)
-        self.assertIn('href="https://reports.example.org/reviews/9-feedface.html"', reviews_html)
-        self.assertIn('href="https://reports.example.org/reviews/7-deadbeef.html">Source report</a>', addressed_html)
+        self.assertIn(
+            'href="https://code.example.org/org/repo/compare/'
+            + "a" * 40
+            + ".."
+            + "b" * 40
+            + '"',
+            addressed_html,
+        )
+        self.assertIn(
+            'href="https://reports.example.org/reviews/9-feedface.html"', reviews_html
+        )
+        self.assertIn(
+            'href="https://reports.example.org/reviews/7-deadbeef.html">Source report</a>',
+            addressed_html,
+        )
         self.assertIn('href="../stats.json" download', reviews_html)
         self.assertLess(reviews_html.index("#9"), reviews_html.index("#7"))
 
     def test_all_reviews_are_available_on_searchable_reviews_view(self):
         summary = self.rich_summary()
         template = summary["reviews"][0]
-        summary["reviews"] = [dict(template, job_id=number, number=number,
-                                   report_name=f"{number}-deadbeef.html")
-                              for number in range(1, 76)]
+        summary["reviews"] = [
+            dict(
+                template,
+                job_id=number,
+                number=number,
+                report_name=f"{number}-deadbeef.html",
+            )
+            for number in range(1, 76)
+        ]
         root, html, _ = self.save(summary)
         reviews_html = (root / "reviews" / "index.html").read_text()
         for number in range(1, 76):
-            self.assertIn(f"/pulls/{number}\"", reviews_html)
+            self.assertIn(f'/pulls/{number}"', reviews_html)
         self.assertIn('type="search"', reviews_html)
         self.assertIn("Previous", reviews_html)
         self.assertIn("Next", reviews_html)
@@ -723,14 +1015,17 @@ class StatsPageTests(unittest.TestCase):
     def test_usage_cost_trends_show_total_scope_and_currency_charts(self):
         root, overview, _ = self.save(self.rich_summary())
         page = (root / "usage/index.html").read_text()
-        costs = page.split('<section id="cost-trends">')[1].split('</section>')[0]
+        costs = page.split('<section id="cost-trends">')[1].split("</section>")[0]
         self.assertIn("Total cost", costs)
         self.assertIn("OpenAI reviews, PPQ requests and follow-up assessments", costs)
         self.assertIn("UTC", costs)
         self.assertIn("weeks start Monday", costs)
         self.assertIn("Current periods are to date", costs)
-        for label, amount in (("Today", "$0.25"), ("This week", "$0.75"),
-                              ("This month", "$1.28")):
+        for label, amount in (
+            ("Today", "$0.25"),
+            ("This week", "$0.75"),
+            ("This month", "$1.28"),
+        ):
             self.assertIn(f'{label}</div><div class="kpi-value">{amount}</div>', costs)
         self.assertIn("$0.05 reserved", costs)
         self.assertIn("1 with unknown cost", costs)
@@ -742,12 +1037,21 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("Monthly cost · 12 months", costs)
         self.assertEqual(costs.count('role="img"'), 3)
         self.assertIn('aria-labelledby="cost-days-title cost-days-desc"', costs)
-        self.assertIn('<title>2026-10-01: $0.25 known cost; $0.05 reserved; '
-                      '1 with unknown cost</title>', costs)
-        self.assertIn('<title>2026-09-28: $0.75 known cost; $0.20 reserved; '
-                      '2 with unknown cost</title>', costs)
-        self.assertIn('<title>2026-10: $1.28 known cost; $0.32 reserved; '
-                      '3 with unknown cost</title>', costs)
+        self.assertIn(
+            "<title>2026-10-01: $0.25 known cost; $0.05 reserved; "
+            "1 with unknown cost</title>",
+            costs,
+        )
+        self.assertIn(
+            "<title>2026-09-28: $0.75 known cost; $0.20 reserved; "
+            "2 with unknown cost</title>",
+            costs,
+        )
+        self.assertIn(
+            "<title>2026-10: $1.28 known cost; $0.32 reserved; "
+            "3 with unknown cost</title>",
+            costs,
+        )
         self.assertIn('text-anchor="end">$1.28</text>', costs)
         self.assertEqual(costs.count('text-anchor="end">$0.00</text>'), 3)
         self.assertIn("Review spend and request attempts", page)
@@ -765,13 +1069,15 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("2 with unknown cost", costs)
         self.assertIn("included only in monthly totals", costs)
 
-        summary["cost_trends"].update(current_day=None, current_week=None, days=[], weeks=[])
+        summary["cost_trends"].update(
+            current_day=None, current_week=None, days=[], weeks=[]
+        )
         costs = stats_page._cost_trends_section(summary)
         self.assertIn("Daily and weekly totals are unavailable", costs)
         self.assertIn('Today</div><div class="kpi-value">Unavailable</div>', costs)
         self.assertIn('This month</div><div class="kpi-value">$1.28</div>', costs)
         self.assertEqual(costs.count('role="img"'), 1)
-        self.assertIn('<title>2026-10: $1.28 known cost;', costs)
+        self.assertIn("<title>2026-10: $1.28 known cost;", costs)
 
     def test_missing_cost_timestamps_differ_from_zero_cost_periods(self):
         summary = self.empty_summary()
@@ -780,11 +1086,13 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn('This week</div><div class="kpi-value">Unavailable</div>', costs)
         self.assertIn('This month</div><div class="kpi-value">$0.00</div>', costs)
         self.assertIn("No timestamped requests", costs)
-        self.assertNotIn('<svg', costs)
+        self.assertNotIn("<svg", costs)
         self.assertNotIn("totals are partial", costs)
 
-        for period, current, series in (("2026-10-01", "current_day", "days"),
-                                        ("2026-09-28", "current_week", "weeks")):
+        for period, current, series in (
+            ("2026-10-01", "current_day", "days"),
+            ("2026-09-28", "current_week", "weeks"),
+        ):
             record = {"period": period, **self.request_totals()}
             summary["cost_trends"][current] = record
             summary["cost_trends"][series] = [record]
@@ -792,57 +1100,120 @@ class StatsPageTests(unittest.TestCase):
         self.assertNotIn("Unavailable", costs)
         self.assertNotIn("No timestamped requests", costs)
         self.assertEqual(costs.count('role="img"'), 2)
-        self.assertIn('<title>2026-10-01: $0.00 known cost; $0.00 reserved; '
-                      '0 with unknown cost</title>', costs)
+        self.assertIn(
+            "<title>2026-10-01: $0.00 known cost; $0.00 reserved; "
+            "0 with unknown cost</title>",
+            costs,
+        )
         self.assertIn('text-anchor="end">$1.00</text>', costs)
 
     def test_cost_chart_formats_subcent_costs_and_escapes_periods(self):
         summary = self.empty_summary()
-        summary["cost_trends"]["days"] = [{
-            "period": '<script>alert("period")</script>',
-            **self.request_totals(request_count=1, known_cost_micros=1),
-        }]
+        summary["cost_trends"]["days"] = [
+            {
+                "period": '<script>alert("period")</script>',
+                **self.request_totals(request_count=1, known_cost_micros=1),
+            }
+        ]
         costs = stats_page._cost_trends_section(summary)
         self.assertIn("$0.000001", costs)
         self.assertIn("&lt;script&gt;alert(&quot;period&quot;)&lt;/script&gt;", costs)
-        self.assertNotIn('<script>', costs)
+        self.assertNotIn("<script>", costs)
 
     def test_collect_stats_output_renders_with_nested_schema(self):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
             report_dir = state_dir / "reports"
-            jobs = JobStore(state_dir / "jobs.sqlite3", max_attempts=2,
-                            retry_base_seconds=0)
-            jobs.enqueue(42, "master", "a" * 40, "synchronize",
-                         engine_identity={"name": "current", "code_sha256": None,
-                                          "config_sha256": None, "config": None})
+            jobs = JobStore(
+                state_dir / "jobs.sqlite3", max_attempts=2, retry_base_seconds=0
+            )
+            jobs.enqueue(
+                42,
+                "master",
+                "a" * 40,
+                "synchronize",
+                engine_identity={
+                    "name": "current",
+                    "code_sha256": None,
+                    "config_sha256": None,
+                    "config": None,
+                },
+            )
             job = jobs.claim()
             result = self.collector_result()
             self.assertTrue(jobs.save_result(job, result))
             self.assertTrue(jobs.complete(job))
             report_dir.mkdir()
-            report_name = f'42-{"a" * 40}-{job["id"]}-{job["generation"]}.html'
+            report_name = f"42-{'a' * 40}-{job['id']}-{job['generation']}.html"
             (report_dir / report_name).write_text("public report", encoding="utf-8")
             now = datetime.now(timezone.utc)
             month = now.strftime("%Y-%m")
             requested_at = int(now.timestamp())
-            review_id = f'pr:42:{job["id"]}:{job["generation"]}'
-            self.create_ledger(state_dir / "spend.sqlite3", [
-                ("openai-1", review_id, "independent", "gpt-6.1-sol", month,
-                 "settled", self.usage(), 100, 0, requested_at),
-                ("openai-2", review_id, "adversarial", "gpt-6.1-sol", month,
-                 "settled", self.usage(), 150, 0, requested_at),
-            ])
-            self.create_ledger(state_dir / "ppq-spend.sqlite3", [
-                ("glm-1", review_id, "adversarial_glm", "z-ai/glm-5.3", month,
-                 "unknown", self.usage(complete=False, cache_write_tokens=None),
-                 None, 700, requested_at),
-            ])
+            review_id = f"pr:42:{job['id']}:{job['generation']}"
+            self.create_ledger(
+                state_dir / "spend.sqlite3",
+                [
+                    (
+                        "openai-1",
+                        review_id,
+                        "independent",
+                        "gpt-6.1-sol",
+                        month,
+                        "settled",
+                        self.usage(),
+                        100,
+                        0,
+                        requested_at,
+                    ),
+                    (
+                        "openai-2",
+                        review_id,
+                        "adversarial",
+                        "gpt-6.1-sol",
+                        month,
+                        "settled",
+                        self.usage(),
+                        150,
+                        0,
+                        requested_at,
+                    ),
+                ],
+            )
+            self.create_ledger(
+                state_dir / "ppq-spend.sqlite3",
+                [
+                    (
+                        "glm-1",
+                        review_id,
+                        "adversarial_glm",
+                        "z-ai/glm-5.3",
+                        month,
+                        "unknown",
+                        self.usage(complete=False, cache_write_tokens=None),
+                        None,
+                        700,
+                        requested_at,
+                    ),
+                ],
+            )
             (state_dir / "followup").mkdir()
-            self.create_ledger(state_dir / "followup/spend.sqlite3", [
-                ("followup-1", "followup:42", "followup", "gpt-6.1-sol", month,
-                 "settled", self.usage(), 400, 0, requested_at),
-            ])
+            self.create_ledger(
+                state_dir / "followup/spend.sqlite3",
+                [
+                    (
+                        "followup-1",
+                        "followup:42",
+                        "followup",
+                        "gpt-6.1-sol",
+                        month,
+                        "settled",
+                        self.usage(),
+                        400,
+                        0,
+                        requested_at,
+                    ),
+                ],
+            )
 
             summary = stats.collect_stats(state_dir, report_dir)
             root, html, public = self.save(summary)
@@ -851,16 +1222,25 @@ class StatsPageTests(unittest.TestCase):
         all_html = "".join(self.pages(root).values())
         self.assertIn("adversarial_glm", all_html)
         self.assertIn("glm-5.3", all_html)
-        self.assertIn('href="https://reports.example.org/reviews/' + report_name + '"', all_html)
+        self.assertIn(
+            'href="https://reports.example.org/reviews/' + report_name + '"', all_html
+        )
         self.assertNotIn("PRIVATE", all_html)
         self.assertTrue((root / "index.html").is_file())
-        costs = (root / "usage/index.html").read_text().split(
-            '<section id="cost-trends">')[1].split('</section>')[0]
+        costs = (
+            (root / "usage/index.html")
+            .read_text()
+            .split('<section id="cost-trends">')[1]
+            .split("</section>")[0]
+        )
         for label in ("Today", "This week", "This month"):
             self.assertIn(f'{label}</div><div class="kpi-value">$0.000650</div>', costs)
         self.assertIn("4 attempts · $0.000700 reserved · 1 with unknown cost", costs)
-        self.assertIn(f'<title>{month}: $0.000650 known cost; $0.000700 reserved; '
-                      '1 with unknown cost</title>', costs)
+        self.assertIn(
+            f"<title>{month}: $0.000650 known cost; $0.000700 reserved; "
+            "1 with unknown cost</title>",
+            costs,
+        )
         self.assertEqual(public["spend"]["current_month"]["known_cost_micros"], 250)
 
     def create_ledger(self, path, rows):
@@ -883,29 +1263,37 @@ class StatsPageTests(unittest.TestCase):
                 (token, review_id, stage, model, month, status, usage_json,
                  cost_micros, reserved_micros, requested_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                rows)
+                rows,
+            )
 
-    def usage(self, input_tokens=100, output_tokens=20, complete=True,
-              cache_write_tokens=0):
-        return json.dumps({
-            "input_tokens": input_tokens,
-            "cached_tokens": 10,
-            "cache_write_tokens": cache_write_tokens,
-            "complete": complete,
-            "output_tokens": output_tokens,
-        })
+    def usage(
+        self, input_tokens=100, output_tokens=20, complete=True, cache_write_tokens=0
+    ):
+        return json.dumps(
+            {
+                "input_tokens": input_tokens,
+                "cached_tokens": 10,
+                "cache_write_tokens": cache_write_tokens,
+                "complete": complete,
+                "output_tokens": output_tokens,
+            }
+        )
 
     def collector_result(self):
         debug = {
-                "coverage": {"status": "complete", "limitations": []},
-                "candidate_sources": {
-                    "independent:1": "independent",
-                    "adversarial:1": "adversarial",
-                    "adversarial_glm:1": "adversarial_glm",
-                },
-                "decisions": [{
-                    "candidate_ids": ["independent:1", "adversarial:1",
-                                      "adversarial_glm:1"],
+            "coverage": {"status": "complete", "limitations": []},
+            "candidate_sources": {
+                "independent:1": "independent",
+                "adversarial:1": "adversarial",
+                "adversarial_glm:1": "adversarial_glm",
+            },
+            "decisions": [
+                {
+                    "candidate_ids": [
+                        "independent:1",
+                        "adversarial:1",
+                        "adversarial_glm:1",
+                    ],
                     "disposition": "publish",
                     "reason": "same verified bug",
                     "finding": {
@@ -917,37 +1305,43 @@ class StatsPageTests(unittest.TestCase):
                         "title": "Merged finding",
                         "body": "PRIVATE finding body must not leak",
                     },
-                }],
-                "finding_attribution": [{
+                }
+            ],
+            "finding_attribution": [
+                {
                     "finding_id": "finding:1",
                     "title": "Merged finding",
-                    "candidate_ids": ["independent:1", "adversarial:1",
-                                      "adversarial_glm:1"],
+                    "candidate_ids": [
+                        "independent:1",
+                        "adversarial:1",
+                        "adversarial_glm:1",
+                    ],
                     "raised_by": ["independent", "adversarial", "adversarial_glm"],
                     "raised_by_models": ["gpt-6.1-sol", "glm-5.3"],
                     "verified_by": "verifier",
                     "edited_by": "collator",
-                }],
-                "stages": {
-                    "independent": {
-                        "model": "gpt-6.1-sol",
-                        "status": "completed",
-                        "turns": [{"elapsed_seconds": 1.5}],
-                        "tools": [{"name": "read_file"}],
-                    },
-                    "adversarial": {
-                        "model": "gpt-6.1-sol",
-                        "status": "completed",
-                        "turns": [{"elapsed_seconds": 1.0}],
-                        "tools": [],
-                    },
-                    "adversarial_glm": {
-                        "model": "glm-5.3",
-                        "status": "completed",
-                        "turns": [{"elapsed_seconds": 2.0}],
-                        "tools": [],
-                    },
+                }
+            ],
+            "stages": {
+                "independent": {
+                    "model": "gpt-6.1-sol",
+                    "status": "completed",
+                    "turns": [{"elapsed_seconds": 1.5}],
+                    "tools": [{"name": "read_file"}],
                 },
+                "adversarial": {
+                    "model": "gpt-6.1-sol",
+                    "status": "completed",
+                    "turns": [{"elapsed_seconds": 1.0}],
+                    "tools": [],
+                },
+                "adversarial_glm": {
+                    "model": "glm-5.3",
+                    "status": "completed",
+                    "turns": [{"elapsed_seconds": 2.0}],
+                    "tools": [],
+                },
+            },
         }
         finding = debug["decisions"][0]["finding"]
         return {
@@ -955,19 +1349,38 @@ class StatsPageTests(unittest.TestCase):
             "base_sha": "b" * 40,
             "head_sha": "a" * 40,
             "content": "PRIVATE review body must not leak",
-            "engine": {"name": "current", "code_sha256": None,
-                       "config_sha256": None, "config": None},
-            "output": {"schema_version": 2,
-                       "data": {"schema_version": 2, **debug},
-                       "exports": {"findings": [{
-                           "id": "finding:1", **finding,
-                           "presented_title": finding["title"],
-                           "presented_body": finding["body"],
-                           "raised_by": ["independent", "adversarial", "adversarial_glm"],
-                           "verified_by": "verifier",
-                       }]}},
-            "run": {"status": "completed", "metrics": {}, "attempt": {},
-                    "skipped": False},
+            "engine": {
+                "name": "current",
+                "code_sha256": None,
+                "config_sha256": None,
+                "config": None,
+            },
+            "output": {
+                "schema_version": 2,
+                "data": {"schema_version": 2, **debug},
+                "exports": {
+                    "findings": [
+                        {
+                            "id": "finding:1",
+                            **finding,
+                            "presented_title": finding["title"],
+                            "presented_body": finding["body"],
+                            "raised_by": [
+                                "independent",
+                                "adversarial",
+                                "adversarial_glm",
+                            ],
+                            "verified_by": "verifier",
+                        }
+                    ]
+                },
+            },
+            "run": {
+                "status": "completed",
+                "metrics": {},
+                "attempt": {},
+                "skipped": False,
+            },
         }
 
 

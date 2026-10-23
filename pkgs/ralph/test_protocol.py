@@ -8,33 +8,58 @@ from ralph import protocol
 
 class ProtocolTests(unittest.TestCase):
     def setUp(self):
-        self.snapshot = SimpleNamespace(changed_paths={"src/example.cpp"},
-                                        head_files={"src/example.cpp": "blob"},
-                                        base_files={"src/example.cpp": "old"})
-        self.finding = {"kind": "suggestion", "severity": "suggestion", "path": "src/example.cpp",
-                        "line": 5, "side": "head", "title": "Consolidate duplicate setup",
-                        "body": "Reuse the existing fixture while keeping the regression assertion.",
-                        "security": {"classification": "non_security",
-                                     "reason": "This only removes duplicate fixture setup."},
-                        "source_evidence": [{"path": "src/example.cpp", "line": 5,
-                                             "side": "head", "excerpt": "setup();"}]}
+        self.snapshot = SimpleNamespace(
+            changed_paths={"src/example.cpp"},
+            head_files={"src/example.cpp": "blob"},
+            base_files={"src/example.cpp": "old"},
+        )
+        self.finding = {
+            "kind": "suggestion",
+            "severity": "suggestion",
+            "path": "src/example.cpp",
+            "line": 5,
+            "side": "head",
+            "title": "Consolidate duplicate setup",
+            "body": "Reuse the existing fixture while keeping the regression assertion.",
+            "security": {
+                "classification": "non_security",
+                "reason": "This only removes duplicate fixture setup.",
+            },
+            "source_evidence": [
+                {
+                    "path": "src/example.cpp",
+                    "line": 5,
+                    "side": "head",
+                    "excerpt": "setup();",
+                }
+            ],
+        }
         self.snapshot.checkout = "/unused"
-        reader = patch.object(protocol, "read_file", return_value="src/example.cpp (6 lines):\n5: setup();\n")
+        reader = patch.object(
+            protocol,
+            "read_file",
+            return_value="src/example.cpp (6 lines):\n5: setup();\n",
+        )
         reader.start()
         self.addCleanup(reader.stop)
         self.coverage = {"status": "complete", "limitations": []}
 
     def verification(self, decisions, coverage=None, concept=None):
-        return json.dumps({
-            "coverage": coverage or self.coverage,
-            "concept": concept or {"disposition": "no_concern",
-                                   "reason": "No material concept concern",
-                                   "assessment": None,
-                                   "proposed_review": "continue",
-                                   "review_reason": "The verifier found no material concept concern."},
-            "alternatives": [],
-            "decisions": decisions,
-        })
+        return json.dumps(
+            {
+                "coverage": coverage or self.coverage,
+                "concept": concept
+                or {
+                    "disposition": "no_concern",
+                    "reason": "No material concept concern",
+                    "assessment": None,
+                    "proposed_review": "continue",
+                    "review_reason": "The verifier found no material concept concern.",
+                },
+                "alternatives": [],
+                "decisions": decisions,
+            }
+        )
 
     def collation(self, findings, concept_summary=None):
         return json.dumps({"concept_summary": concept_summary, "findings": findings})
@@ -47,15 +72,17 @@ class ProtocolTests(unittest.TestCase):
             "delivered_benefit": "The PR removes one manual step.",
             "relevant_history": "Prior discussion raised a layering concern.",
             "assessment": "rework_approach",
-            "alternatives": [{
-                "name": "Do nothing",
-                "concept": "Keep the current behavior.",
-                "benefit": "No extra maintenance.",
-                "cost": "The manual step remains.",
-                "unresolved": "Impact is not measured.",
-                "provenance": "agent_inference",
-                "citations": [],
-            }],
+            "alternatives": [
+                {
+                    "name": "Do nothing",
+                    "concept": "Keep the current behavior.",
+                    "benefit": "No extra maintenance.",
+                    "cost": "The manual step remains.",
+                    "unresolved": "Impact is not measured.",
+                    "provenance": "agent_inference",
+                    "citations": [],
+                }
+            ],
             "recommendation": "The alternative is conceptually stronger.",
             "proposed_review": "would_stop",
             "review_reason": "The alternative preserves the benefit with less maintenance cost.",
@@ -67,21 +94,33 @@ class ProtocolTests(unittest.TestCase):
     def test_verifier_groups_sources_and_preserves_every_candidate(self):
         candidates = [{"id": "tests:1"}, {"id": "design:1"}, {"id": "independent:1"}]
         decisions = [
-            {"candidate_ids": ["tests:1", "design:1"], "disposition": "publish",
-             "reason": "Same redundant fixture", "finding": self.finding},
-            {"candidate_ids": ["independent:1"], "disposition": "unresolved",
-             "reason": "Caller evidence missing", "finding": None},
+            {
+                "candidate_ids": ["tests:1", "design:1"],
+                "disposition": "publish",
+                "reason": "Same redundant fixture",
+                "finding": self.finding,
+            },
+            {
+                "candidate_ids": ["independent:1"],
+                "disposition": "unresolved",
+                "reason": "Caller evidence missing",
+                "finding": None,
+            },
         ]
         result, accepted = protocol.verification(
-            self.verification(decisions, {"status": "complete",
-                                          "limitations": ["Caller unavailable"]}),
-            candidates, self.snapshot)
+            self.verification(
+                decisions, {"status": "complete", "limitations": ["Caller unavailable"]}
+            ),
+            candidates,
+            self.snapshot,
+        )
         self.assertEqual(result["coverage"]["status"], "partial")
         self.assertEqual(len(accepted), 1)
         self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
         decisions.pop()
         result, accepted = protocol.verification(
-            self.verification(decisions), candidates, self.snapshot)
+            self.verification(decisions), candidates, self.snapshot
+        )
         self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         omitted = result["decisions"][-1]
         self.assertEqual(omitted["candidate_ids"], ["independent:1"])
@@ -92,14 +131,29 @@ class ProtocolTests(unittest.TestCase):
         for classification in ("potential_vulnerability", "non_security", "uncertain"):
             for kind in ("defect", "design", "suggestion"):
                 for severity in ("critical", "major", "minor", "suggestion"):
-                    with self.subTest(classification=classification, kind=kind, severity=severity):
-                        finding = {**self.finding, "kind": kind, "severity": severity,
-                                   "security": {"classification": classification,
-                                                "reason": "The assessment follows the inspected behavior."}}
-                        decision = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                                    "reason": "Verified", "finding": finding}
+                    with self.subTest(
+                        classification=classification, kind=kind, severity=severity
+                    ):
+                        finding = {
+                            **self.finding,
+                            "kind": kind,
+                            "severity": severity,
+                            "security": {
+                                "classification": classification,
+                                "reason": "The assessment follows the inspected behavior.",
+                            },
+                        }
+                        decision = {
+                            "candidate_ids": ["tests:1"],
+                            "disposition": "publish",
+                            "reason": "Verified",
+                            "finding": finding,
+                        }
                         result, accepted = protocol.verification(
-                            self.verification([decision]), [{"id": "tests:1"}], self.snapshot)
+                            self.verification([decision]),
+                            [{"id": "tests:1"}],
+                            self.snapshot,
+                        )
                         self.assertEqual(accepted, [{**finding, "id": "finding:1"}])
                         self.assertEqual(result["decisions"], [decision])
                         self.assertEqual(result["coverage"], self.coverage)
@@ -107,63 +161,120 @@ class ProtocolTests(unittest.TestCase):
     def test_invalid_security_assessment_withholds_only_its_finding(self):
         invalid_findings = [
             {key: value for key, value in self.finding.items() if key != "security"},
-            *({**self.finding, "security": security} for security in (
-                None, "non_security", [], {},
-                {"classification": "non_security"},
-                {"reason": "Missing classification"},
-                {"classification": "safe", "reason": "Unsupported classification"},
-                {"classification": [], "reason": "Invalid classification type"},
-                {"classification": "uncertain", "reason": ""},
-                {"classification": "uncertain", "reason": " \n"},
-                {"classification": "uncertain", "reason": False},
-                {"classification": "non_security", "reason": "Has extra field", "severity": "low"},
-            )),
+            *(
+                {**self.finding, "security": security}
+                for security in (
+                    None,
+                    "non_security",
+                    [],
+                    {},
+                    {"classification": "non_security"},
+                    {"reason": "Missing classification"},
+                    {"classification": "safe", "reason": "Unsupported classification"},
+                    {"classification": [], "reason": "Invalid classification type"},
+                    {"classification": "uncertain", "reason": ""},
+                    {"classification": "uncertain", "reason": " \n"},
+                    {"classification": "uncertain", "reason": False},
+                    {
+                        "classification": "non_security",
+                        "reason": "Has extra field",
+                        "severity": "low",
+                    },
+                )
+            ),
         ]
-        valid = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                 "reason": "Verified", "finding": self.finding}
+        valid = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
         for finding in invalid_findings:
             with self.subTest(security=finding.get("security")):
-                invalid = {"candidate_ids": ["design:1"], "disposition": "publish",
-                           "reason": "Verified", "finding": finding}
+                invalid = {
+                    "candidate_ids": ["design:1"],
+                    "disposition": "publish",
+                    "reason": "Verified",
+                    "finding": finding,
+                }
                 result, accepted = protocol.verification(
                     self.verification([invalid, valid]),
-                    [{"id": "tests:1"}, {"id": "design:1"}], self.snapshot)
+                    [{"id": "tests:1"}, {"id": "design:1"}],
+                    self.snapshot,
+                )
                 self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
                 self.assertEqual(result["coverage"]["status"], "partial")
                 self.assertTrue(result["coverage"]["limitations"])
                 self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
                 self.assertIsNone(result["decisions"][0]["finding"])
                 self.assertEqual(result["decisions"][1], valid)
-                self.assertEqual(result["validation_errors"][0]["candidate_ids"], ["design:1"])
+                self.assertEqual(
+                    result["validation_errors"][0]["candidate_ids"], ["design:1"]
+                )
 
     def test_collator_preserves_security_and_cannot_reclassify_findings(self):
         for classification in ("potential_vulnerability", "non_security", "uncertain"):
             with self.subTest(classification=classification):
-                finding = {**self.finding, "id": "finding:1",
-                           "security": {"classification": classification,
-                                        "reason": "The verifier's assessment."}}
-                edit = {"id": "finding:1", "title": "Edited title", "body": "Edited body"}
+                finding = {
+                    **self.finding,
+                    "id": "finding:1",
+                    "security": {
+                        "classification": classification,
+                        "reason": "The verifier's assessment.",
+                    },
+                }
+                edit = {
+                    "id": "finding:1",
+                    "title": "Edited title",
+                    "body": "Edited body",
+                }
                 edited, _ = protocol.collation(self.collation([edit]), [finding])
                 self.assertEqual(edited, [{**finding, **edit}])
-                for security in (None, {"classification": "non_security", "reason": "Reclassified"}):
+                for security in (
+                    None,
+                    {"classification": "non_security", "reason": "Reclassified"},
+                ):
                     with self.assertRaises(protocol.InvalidReview):
-                        protocol.collation(self.collation([{**edit, "security": security}]), [finding])
+                        protocol.collation(
+                            self.collation([{**edit, "security": security}]), [finding]
+                        )
 
     def test_collator_cannot_add_remove_or_duplicate_accepted_ids(self):
-        accepted = [{**self.finding, "id": "finding:1"},
-                    {**self.finding, "kind": "design", "id": "finding:2"}]
-        for edits in ([], [{"id": "invented", "title": "New", "body": "Claim"}],
-                      [{"id": "finding:1", "title": "A", "body": "B"}] * 2):
+        accepted = [
+            {**self.finding, "id": "finding:1"},
+            {**self.finding, "kind": "design", "id": "finding:2"},
+        ]
+        for edits in (
+            [],
+            [{"id": "invented", "title": "New", "body": "Claim"}],
+            [{"id": "finding:1", "title": "A", "body": "B"}] * 2,
+        ):
             with self.subTest(edits=edits), self.assertRaises(protocol.InvalidReview):
                 protocol.collation(self.collation(edits), accepted)
-        edited, concept_summary = protocol.collation(self.collation([
-            {"id": "finding:1", "title": "Short title", "body": "Edited wording"},
-            {"id": "finding:2", "title": "Design title", "body": "Design wording"}]), accepted)
+        edited, concept_summary = protocol.collation(
+            self.collation(
+                [
+                    {
+                        "id": "finding:1",
+                        "title": "Short title",
+                        "body": "Edited wording",
+                    },
+                    {
+                        "id": "finding:2",
+                        "title": "Design title",
+                        "body": "Design wording",
+                    },
+                ]
+            ),
+            accepted,
+        )
         self.assertIsNone(concept_summary)
         self.assertEqual(edited[0]["path"], self.finding["path"])
         self.assertEqual(edited[0]["severity"], "suggestion")
         self.assertEqual(edited[1]["kind"], "design")
-        self.assertIn("incomplete", protocol.render(edited, ["A selected audit was unavailable."]))
+        self.assertIn(
+            "incomplete", protocol.render(edited, ["A selected audit was unavailable."])
+        )
 
     def test_render_no_findings_with_limitations_does_not_call_review_partial(self):
         rendered = protocol.render([], ["A selected audit was unavailable."])
@@ -173,45 +284,71 @@ class ProtocolTests(unittest.TestCase):
 
     def test_render_collapses_limitations_as_deduplicated_bullets(self):
         limitation = "adversarial: Pinned dependency unavailable."
-        rendered = protocol.render([], [limitation, limitation,
-                                       "verifier: Caller unavailable."])
+        rendered = protocol.render(
+            [], [limitation, limitation, "verifier: Caller unavailable."]
+        )
         self.assertIn("Review coverage was incomplete.\n\n<details>", rendered)
         self.assertIn("<summary>Review limitations</summary>\n\n", rendered)
-        self.assertIn(f"- {limitation}\n- verifier: Caller unavailable.\n\n</details>",
-                      rendered)
+        self.assertIn(
+            f"- {limitation}\n- verifier: Caller unavailable.\n\n</details>", rendered
+        )
         self.assertEqual(rendered.count(limitation), 1)
         self.assertNotIn("<details>", protocol.render([]))
 
     def test_render_groups_findings_before_design_and_alternatives(self):
         findings = [
             {**self.finding, "kind": "suggestion", "title": "General suggestion"},
-            {**self.finding, "kind": "defect", "severity": "minor", "title": "Minor bug"},
+            {
+                **self.finding,
+                "kind": "defect",
+                "severity": "minor",
+                "title": "Minor bug",
+            },
             {**self.finding, "kind": "design", "title": "Design concern"},
-            {**self.finding, "kind": "defect", "severity": "critical", "title": "Critical bug"},
+            {
+                **self.finding,
+                "kind": "defect",
+                "severity": "critical",
+                "title": "Critical bug",
+            },
         ]
         rendered = protocol.render(findings)
         self.assertEqual(rendered.count("Design concern"), 1)
-        self.assertLess(rendered.index("##### Findings"), rendered.index("Critical bug"))
+        self.assertLess(
+            rendered.index("##### Findings"), rendered.index("Critical bug")
+        )
         self.assertLess(rendered.index("Critical bug"), rendered.index("Minor bug"))
-        self.assertLess(rendered.index("Minor bug"), rendered.index("General suggestion"))
-        self.assertLess(rendered.index("General suggestion"), rendered.index("Design and approach"))
+        self.assertLess(
+            rendered.index("Minor bug"), rendered.index("General suggestion")
+        )
+        self.assertLess(
+            rendered.index("General suggestion"), rendered.index("Design and approach")
+        )
         self.assertNotIn("Design and approach", protocol.render([findings[0]]))
 
     def test_verifier_withholds_invalid_kind(self):
-        decision = {"candidate_ids": ["design:1"], "disposition": "publish",
-                    "reason": "Verified", "finding": {**self.finding, "kind": "other"}}
+        decision = {
+            "candidate_ids": ["design:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": {**self.finding, "kind": "other"},
+        }
         result, accepted = protocol.verification(
-            self.verification([decision]),
-            [{"id": "design:1"}], self.snapshot)
+            self.verification([decision]), [{"id": "design:1"}], self.snapshot
+        )
         self.assertEqual(accepted, [])
         self.assertIn("Invalid finding kind", result["validation_errors"][0]["error"])
 
     def test_finding_must_refer_to_changed_file_on_correct_side(self):
-        decision = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                    "reason": "Verified", "finding": {**self.finding, "path": "missing.cpp"}}
+        decision = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": {**self.finding, "path": "missing.cpp"},
+        }
         result, accepted = protocol.verification(
-            self.verification([decision]),
-            [{"id": "tests:1"}], self.snapshot)
+            self.verification([decision]), [{"id": "tests:1"}], self.snapshot
+        )
         self.assertEqual(accepted, [])
         self.assertEqual(result["coverage"]["status"], "partial")
         self.assertIn("changed file", result["decisions"][0]["reason"])
@@ -222,32 +359,53 @@ class ProtocolTests(unittest.TestCase):
 
     def test_invalid_publish_finding_does_not_discard_valid_finding(self):
         candidates = [{"id": "tests:1"}, {"id": "design:1"}]
-        valid = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                 "reason": "Verified", "finding": self.finding}
-        invalid = {"candidate_ids": ["design:1"], "disposition": "publish",
-                   "reason": "Verified", "finding": {**self.finding, "path": "missing.cpp"}}
+        valid = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
+        invalid = {
+            "candidate_ids": ["design:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": {**self.finding, "path": "missing.cpp"},
+        }
         for decisions in ([valid, invalid], [invalid, valid]):
             with self.subTest(decisions=decisions):
                 result, accepted = protocol.verification(
-                    self.verification(decisions),
-                    candidates, self.snapshot)
+                    self.verification(decisions), candidates, self.snapshot
+                )
                 self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
                 self.assertEqual(result["coverage"]["status"], "partial")
-                self.assertTrue(any("changed file" in limit
-                                    for limit in result["coverage"]["limitations"]))
-                withheld = next(item for item in result["decisions"]
-                                if item["candidate_ids"] == ["design:1"])
+                self.assertTrue(
+                    any(
+                        "changed file" in limit
+                        for limit in result["coverage"]["limitations"]
+                    )
+                )
+                withheld = next(
+                    item
+                    for item in result["decisions"]
+                    if item["candidate_ids"] == ["design:1"]
+                )
                 self.assertEqual(withheld["disposition"], "unresolved")
                 self.assertIsNone(withheld["finding"])
                 self.assertIn("changed file", withheld["reason"])
-                self.assertEqual(result["validation_errors"][0]["candidate_ids"], ["design:1"])
+                self.assertEqual(
+                    result["validation_errors"][0]["candidate_ids"], ["design:1"]
+                )
 
     def test_invalid_new_finding_without_candidate_ids_is_withheld(self):
-        decision = {"candidate_ids": [], "disposition": "publish", "reason": "New issue",
-                    "finding": {**self.finding, "path": "missing.cpp"}}
+        decision = {
+            "candidate_ids": [],
+            "disposition": "publish",
+            "reason": "New issue",
+            "finding": {**self.finding, "path": "missing.cpp"},
+        }
         result, accepted = protocol.verification(
-            self.verification([decision]),
-            [], self.snapshot)
+            self.verification([decision]), [], self.snapshot
+        )
         self.assertEqual(accepted, [])
         self.assertEqual(result["coverage"]["status"], "partial")
         self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
@@ -264,24 +422,36 @@ class ProtocolTests(unittest.TestCase):
         self.snapshot.base_files = {}
         for change, message in cases:
             with self.subTest(change=change):
-                decision = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                            "reason": "Verified", "finding": {**self.finding, **change}}
+                decision = {
+                    "candidate_ids": ["tests:1"],
+                    "disposition": "publish",
+                    "reason": "Verified",
+                    "finding": {**self.finding, **change},
+                }
                 result, accepted = protocol.verification(
-                    self.verification([decision]),
-                    [{"id": "tests:1"}], self.snapshot)
+                    self.verification([decision]), [{"id": "tests:1"}], self.snapshot
+                )
                 self.assertEqual(accepted, [])
                 self.assertIn(message, result["validation_errors"][0]["error"])
 
     def test_unknown_candidate_id_withholds_only_involved_decision(self):
         candidates = [{"id": "tests:1"}, {"id": "design:1"}]
-        valid = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                 "reason": "Verified", "finding": self.finding}
-        invalid = {"candidate_ids": ["design:1", "unknown:1"],
-                   "disposition": "publish", "reason": "Verified",
-                   "finding": {**self.finding, "title": "Unknown source"}}
+        valid = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
+        invalid = {
+            "candidate_ids": ["design:1", "unknown:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": {**self.finding, "title": "Unknown source"},
+        }
 
         result, accepted = protocol.verification(
-            self.verification([valid, invalid]), candidates, self.snapshot)
+            self.verification([valid, invalid]), candidates, self.snapshot
+        )
 
         self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         self.assertEqual(result["coverage"]["status"], "partial")
@@ -292,14 +462,22 @@ class ProtocolTests(unittest.TestCase):
 
     def test_repeated_candidate_id_withholds_involved_decision(self):
         candidates = [{"id": "tests:1"}, {"id": "design:1"}]
-        valid = {"candidate_ids": ["design:1"], "disposition": "drop",
-                 "reason": "The claim does not hold.", "finding": None}
-        repeated = {"candidate_ids": ["tests:1", "tests:1"],
-                    "disposition": "publish", "reason": "Verified",
-                    "finding": self.finding}
+        valid = {
+            "candidate_ids": ["design:1"],
+            "disposition": "drop",
+            "reason": "The claim does not hold.",
+            "finding": None,
+        }
+        repeated = {
+            "candidate_ids": ["tests:1", "tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
 
         result, accepted = protocol.verification(
-            self.verification([repeated, valid]), candidates, self.snapshot)
+            self.verification([repeated, valid]), candidates, self.snapshot
+        )
 
         self.assertEqual(accepted, [])
         self.assertEqual(result["decisions"][0], valid)
@@ -309,32 +487,54 @@ class ProtocolTests(unittest.TestCase):
 
     def test_overlapping_candidate_ids_withhold_all_overlapping_decisions(self):
         candidates = [{"id": "tests:1"}, {"id": "design:1"}, {"id": "docs:1"}]
-        overlap_a = {"candidate_ids": ["tests:1", "design:1"],
-                     "disposition": "publish", "reason": "Verified",
-                     "finding": self.finding}
-        overlap_b = {"candidate_ids": ["design:1", "docs:1"],
-                     "disposition": "drop", "reason": "Rejected", "finding": None}
-        new = {"candidate_ids": [], "disposition": "publish", "reason": "New issue",
-               "finding": {**self.finding, "title": "New verifier issue"}}
+        overlap_a = {
+            "candidate_ids": ["tests:1", "design:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
+        overlap_b = {
+            "candidate_ids": ["design:1", "docs:1"],
+            "disposition": "drop",
+            "reason": "Rejected",
+            "finding": None,
+        }
+        new = {
+            "candidate_ids": [],
+            "disposition": "publish",
+            "reason": "New issue",
+            "finding": {**self.finding, "title": "New verifier issue"},
+        }
 
         result, accepted = protocol.verification(
-            self.verification([overlap_a, overlap_b, new]), candidates, self.snapshot)
+            self.verification([overlap_a, overlap_b, new]), candidates, self.snapshot
+        )
 
         self.assertEqual(accepted, [{**new["finding"], "id": "finding:1"}])
         self.assertEqual(result["decisions"][0], new)
-        self.assertEqual(result["decisions"][1]["candidate_ids"],
-                         ["tests:1", "design:1", "docs:1"])
+        self.assertEqual(
+            result["decisions"][1]["candidate_ids"], ["tests:1", "design:1", "docs:1"]
+        )
         self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
-        self.assertTrue(any("multiple decisions" in error["error"]
-                            for error in result["validation_errors"]))
+        self.assertTrue(
+            any(
+                "multiple decisions" in error["error"]
+                for error in result["validation_errors"]
+            )
+        )
 
     def test_omitted_candidate_is_returned_unresolved(self):
         candidates = [{"id": "tests:1"}, {"id": "design:1"}]
-        valid = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                 "reason": "Verified", "finding": self.finding}
+        valid = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
 
         result, accepted = protocol.verification(
-            self.verification([valid]), candidates, self.snapshot)
+            self.verification([valid]), candidates, self.snapshot
+        )
 
         self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         self.assertEqual(result["decisions"][1]["candidate_ids"], ["design:1"])
@@ -342,56 +542,92 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("omitted", result["validation_errors"][0]["error"])
 
     def test_publish_without_candidate_ids_preserves_new_verifier_finding(self):
-        decision = {"candidate_ids": [], "disposition": "publish", "reason": "New issue",
-                    "finding": self.finding}
+        decision = {
+            "candidate_ids": [],
+            "disposition": "publish",
+            "reason": "New issue",
+            "finding": self.finding,
+        }
 
         result, accepted = protocol.verification(
-            self.verification([decision]), [], self.snapshot)
+            self.verification([decision]), [], self.snapshot
+        )
 
         self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         self.assertEqual(result["decisions"], [decision])
         self.assertEqual(result["validation_errors"], [])
 
     def test_concept_publish_is_separate_from_finding_decisions(self):
-        concept = {"disposition": "publish", "reason": "Layering concern is supported",
-                   "assessment": self.concept_assessment(),
-                   "proposed_review": "would_stop",
-                   "review_reason": "The verified alternative avoids the layering concern."}
+        concept = {
+            "disposition": "publish",
+            "reason": "Layering concern is supported",
+            "assessment": self.concept_assessment(),
+            "proposed_review": "would_stop",
+            "review_reason": "The verified alternative avoids the layering concern.",
+        }
         result, accepted = protocol.verification(
-            self.verification([], concept=concept), [], self.snapshot,
-            concept_assessment=self.concept_assessment())
+            self.verification([], concept=concept),
+            [],
+            self.snapshot,
+            concept_assessment=self.concept_assessment(),
+        )
 
         self.assertEqual(accepted, [])
         self.assertEqual(result["concept"]["disposition"], "publish")
         self.assertEqual(result["concept"]["proposed_review"], "would_stop")
-        self.assertEqual(result["concept"]["assessment"]["recommendation"],
-                         "The alternative is conceptually stronger.")
+        self.assertEqual(
+            result["concept"]["assessment"]["recommendation"],
+            "The alternative is conceptually stronger.",
+        )
 
     def test_concept_assessment_can_have_no_alternatives(self):
         assessment = {**self.concept_assessment(), "alternatives": []}
-        result = protocol.archaeology(json.dumps({
-            "coverage": self.coverage,
-            "assessment": assessment,
-        }))
+        result = protocol.archaeology(
+            json.dumps(
+                {
+                    "coverage": self.coverage,
+                    "assessment": assessment,
+                }
+            )
+        )
 
         self.assertEqual(result["assessment"]["alternatives"], [])
 
     def test_favorable_concept_is_valid_research_but_cannot_be_published(self):
-        assessment = {**self.concept_assessment(), "assessment": "worth_pursuing",
-                      "proposed_review": "continue"}
-        research = protocol.archaeology(json.dumps({
-            "coverage": self.coverage, "assessment": assessment,
-        }))
+        assessment = {
+            **self.concept_assessment(),
+            "assessment": "worth_pursuing",
+            "proposed_review": "continue",
+        }
+        research = protocol.archaeology(
+            json.dumps(
+                {
+                    "coverage": self.coverage,
+                    "assessment": assessment,
+                }
+            )
+        )
         self.assertEqual(research["assessment"], assessment)
-        decision = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                    "reason": "Verified", "finding": self.finding}
-        concept = {"disposition": "publish", "reason": "The approach is sound.",
-                   "assessment": assessment, "proposed_review": "continue",
-                   "review_reason": "Continue the implementation review."}
+        decision = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
+        concept = {
+            "disposition": "publish",
+            "reason": "The approach is sound.",
+            "assessment": assessment,
+            "proposed_review": "continue",
+            "review_reason": "Continue the implementation review.",
+        }
 
         result, accepted = protocol.verification(
-            self.verification([decision], concept=concept), [{"id": "tests:1"}],
-            self.snapshot, concept_assessment=assessment)
+            self.verification([decision], concept=concept),
+            [{"id": "tests:1"}],
+            self.snapshot,
+            concept_assessment=assessment,
+        )
 
         self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         self.assertEqual(result["concept"]["disposition"], "unresolved")
@@ -400,17 +636,29 @@ class ProtocolTests(unittest.TestCase):
 
     def test_publishing_multiple_alternatives_preserves_verified_code_finding(self):
         assessment = self.concept_assessment()
-        assessment["alternatives"].append({**assessment["alternatives"][0],
-                                           "name": "Reuse an existing interface"})
-        decision = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                    "reason": "Verified", "finding": self.finding}
-        concept = {"disposition": "publish", "reason": "The approach needs revision.",
-                   "assessment": assessment, "proposed_review": "would_stop",
-                   "review_reason": "The alternatives reduce the layering cost."}
+        assessment["alternatives"].append(
+            {**assessment["alternatives"][0], "name": "Reuse an existing interface"}
+        )
+        decision = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
+        concept = {
+            "disposition": "publish",
+            "reason": "The approach needs revision.",
+            "assessment": assessment,
+            "proposed_review": "would_stop",
+            "review_reason": "The alternatives reduce the layering cost.",
+        }
 
         result, accepted = protocol.verification(
-            self.verification([decision], concept=concept), [{"id": "tests:1"}],
-            self.snapshot, concept_assessment=assessment)
+            self.verification([decision], concept=concept),
+            [{"id": "tests:1"}],
+            self.snapshot,
+            concept_assessment=assessment,
+        )
 
         self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         self.assertEqual(result["concept"]["disposition"], "unresolved")
@@ -418,14 +666,19 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNotNone(result["concept_validation_error"])
 
     def test_nonpublish_concept_preserves_verified_review_proposal(self):
-        concept = {"disposition": "no_concern",
-                   "reason": "The concern is not established.",
-                   "assessment": None,
-                   "proposed_review": "continue",
-                   "review_reason": "The verifier did not find a decisive concept blocker."}
+        concept = {
+            "disposition": "no_concern",
+            "reason": "The concern is not established.",
+            "assessment": None,
+            "proposed_review": "continue",
+            "review_reason": "The verifier did not find a decisive concept blocker.",
+        }
         result, accepted = protocol.verification(
-            self.verification([], concept=concept), [], self.snapshot,
-            concept_assessment=self.concept_assessment())
+            self.verification([], concept=concept),
+            [],
+            self.snapshot,
+            concept_assessment=self.concept_assessment(),
+        )
 
         self.assertEqual(accepted, [])
         self.assertIsNone(result["concept"]["assessment"])
@@ -433,15 +686,19 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["status"], "complete")
 
     def test_would_stop_requires_rework_or_rejection_assessment(self):
-        concept = {"disposition": "publish",
-                   "reason": "The concern is supposedly verified.",
-                   "assessment": {**self.concept_assessment(),
-                                  "assessment": "worth_pursuing"},
-                   "proposed_review": "would_stop",
-                   "review_reason": "This should not be enough to stop review."}
+        concept = {
+            "disposition": "publish",
+            "reason": "The concern is supposedly verified.",
+            "assessment": {**self.concept_assessment(), "assessment": "worth_pursuing"},
+            "proposed_review": "would_stop",
+            "review_reason": "This should not be enough to stop review.",
+        }
         result, accepted = protocol.verification(
-            self.verification([], concept=concept), [], self.snapshot,
-            concept_assessment=self.concept_assessment())
+            self.verification([], concept=concept),
+            [],
+            self.snapshot,
+            concept_assessment=self.concept_assessment(),
+        )
 
         self.assertEqual(accepted, [])
         self.assertEqual(result["concept"]["disposition"], "unresolved")
@@ -449,16 +706,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("would_stop", result["concept_validation_error"])
 
     def test_invalid_concept_is_withheld_without_discarding_findings(self):
-        bad_concept = {"disposition": "publish", "reason": "Bad citation",
-                       "assessment": self.concept_assessment(["not-a-url"]),
-                       "proposed_review": "would_stop",
-                       "review_reason": "The citation should fail validation."}
-        decision = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                    "reason": "Verified", "finding": self.finding}
+        bad_concept = {
+            "disposition": "publish",
+            "reason": "Bad citation",
+            "assessment": self.concept_assessment(["not-a-url"]),
+            "proposed_review": "would_stop",
+            "review_reason": "The citation should fail validation.",
+        }
+        decision = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
         result, accepted = protocol.verification(
             self.verification([decision], concept=bad_concept),
-            [{"id": "tests:1"}], self.snapshot,
-            concept_assessment=self.concept_assessment())
+            [{"id": "tests:1"}],
+            self.snapshot,
+            concept_assessment=self.concept_assessment(),
+        )
 
         self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         self.assertEqual(result["concept"]["disposition"], "unresolved")
@@ -466,27 +732,49 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("Citations", result["concept"]["reason"])
 
     def test_collator_must_preserve_exact_concept_citations(self):
-        assessment = self.concept_assessment(["https://code.example.org/org/repo/pulls/1"])
+        assessment = self.concept_assessment(
+            ["https://code.example.org/org/repo/pulls/1"]
+        )
         accepted = []
         with self.assertRaisesRegex(protocol.InvalidReview, "citation"):
-            protocol.collation(self.collation(accepted, "See https://code.example.org/org/repo/pulls/10"),
-                               accepted, assessment)
+            protocol.collation(
+                self.collation(
+                    accepted, "See https://code.example.org/org/repo/pulls/10"
+                ),
+                accepted,
+                assessment,
+            )
         edited, summary = protocol.collation(
-            self.collation(accepted, "See [source](https://code.example.org/org/repo/pulls/1)"),
-            accepted, assessment)
+            self.collation(
+                accepted, "See [source](https://code.example.org/org/repo/pulls/1)"
+            ),
+            accepted,
+            assessment,
+        )
         self.assertEqual(edited, [])
         self.assertIn("pulls/1", summary)
 
     def test_malformed_concept_envelope_preserves_verified_findings(self):
-        decision = {"candidate_ids": ["tests:1"], "disposition": "publish",
-                    "reason": "Verified", "finding": self.finding}
-        for concept in (None, {}, {"disposition": [], "reason": "Bad", "assessment": None}):
+        decision = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
+        for concept in (
+            None,
+            {},
+            {"disposition": [], "reason": "Bad", "assessment": None},
+        ):
             with self.subTest(concept=concept):
                 response = json.loads(self.verification([decision]))
                 response["concept"] = concept
                 result, accepted = protocol.verification(
-                    json.dumps(response), [{"id": "tests:1"}], self.snapshot,
-                    concept_assessment=self.concept_assessment())
+                    json.dumps(response),
+                    [{"id": "tests:1"}],
+                    self.snapshot,
+                    concept_assessment=self.concept_assessment(),
+                )
                 self.assertEqual(len(accepted), 1)
                 self.assertEqual(result["concept"]["disposition"], "unresolved")
                 self.assertEqual(result["coverage"]["status"], "partial")
@@ -504,7 +792,9 @@ class ProtocolTests(unittest.TestCase):
         concept = self.concept_assessment()
         summary = protocol.concept_summary(concept, "The cost outweighs the benefit.")
         response = self.collation([], summary + " https://example.invalid/invented")
-        with self.assertRaisesRegex(protocol.InvalidReview, "unverified concept citation"):
+        with self.assertRaisesRegex(
+            protocol.InvalidReview, "unverified concept citation"
+        ):
             protocol.collation(response, [], concept)
 
 
