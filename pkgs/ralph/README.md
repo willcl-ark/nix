@@ -101,6 +101,14 @@ engine and native schema version 2, through
 Older results retain their saved review text and declared exports; the current
 diagnostic adapter does not interpret their native stage details.
 
+Inside the current engine, [pipeline.py](ralph/pipeline.py) keeps scheduling,
+stage requests, verification and editing in separate functions. It returns a
+`ReviewResult` containing Markdown, final finding records and the verified
+concept concern. [current_engine.py](ralph/current_engine.py) builds exports
+from that result; diagnostic dictionaries retain stage details and partial
+attempts. Finding records preserve original and presented wording, and exports
+keep verification order even if the editor reorders the prose.
+
 The diagrams and implementation details below describe the `current` engine.
 
 These diagrams describe the checked-in defaults. [models.json](audits/models.json)
@@ -111,35 +119,23 @@ viewers; their source remains readable in a plain text editor.
 
 ## Audit selection
 
+Enabled routing combines the router's proposal with mandatory path coverage.
+
 ```mermaid
-flowchart TD
-    input["PR description, commits, patch and complete changed paths"] --> mode{"Routing mode / input"}
-    mode -->|"explicit full mode"| full["Sensitive: all audits and all profiles"]
-    mode -->|"oversized patch"| general["General audits and profiles; no automatic script specialist"]
-    mode -->|"enabled or shadow"| router["Luna router proposes tier, audits and profiles"]
-    router --> uncertain{"Invalid output, failed routing or missing context?"}
-    uncertain -->|yes| general
-    uncertain -->|no| rules["Union with mandatory path audits and profiles; enforce tier floor"]
-    rules --> shadow{"Shadow mode?"}
-    shadow -->|yes| full
-    shadow -->|no| plan["Selected plan"]
-    full --> plan
-    general --> plan
-    plan --> script{"Router selected substantive script behavior?"}
-    script -->|yes| expert["Script specialist before advisory research"]
-    script -->|no| overview["Always run independent overview"]
-    expert --> overview
-    overview --> escalate{"Overview requests sensitive and tier is lower?"}
-    escalate -->|yes| all["Add general audits and profiles; sensitive tier"]
-    escalate -->|no| selected["Keep selected coverage"]
-    all --> stages["Run selected discovery stages"]
-    selected --> stages
-    stages --> later{"Focused audit requests sensitive and tier is lower?"}
-    later -->|yes| more["Add adversarial, state and concurrency; use all profiles if none selected"]
-    more --> stages
-    later -->|no| verify["Verify pooled candidates"]
-    router -->|"Budget exhausted"| stop["Stop review attempt"]
+flowchart LR
+    input["Patch + changed paths"] --> router["Router proposal<br/>or conservative fallback"]
+    router --> rules["Required audits<br/>+ risk floor"]
+    rules --> plan["Selected review plan"]
 ```
+
+| Selection or escalation | Result |
+| --- | --- |
+| Enabled routing | Add mandatory path audits and profiles; never lower the path-based risk floor. |
+| Explicit full mode | Select every audit and profile, including script. |
+| Shadow mode | Record the routing proposal, then select every audit and profile, including script. This also applies after routing fallback. |
+| Invalid or failed routing, missing context, or oversized patch | Use the sensitive general plan with all profiles, excluding script. Full and shadow modes still include script. Budget exhaustion stops the attempt. |
+| Overview requests sensitive review from a lower tier | Add all general audits and profiles, excluding script. |
+| A focused audit requests sensitive review from a lower tier | Add adversarial, state and concurrency; keep selected profiles, or use all profiles if none were selected. |
 
 The router can add coverage but cannot remove path-mandated coverage. A sensitive
 tier always adds adversarial review, even when no domain profile is selected.
@@ -204,44 +200,57 @@ Custom model maps must include `script`; there is no fallback to an old map.
 
 ## Stages, models and evidence
 
+Read each row from left to right, then continue with the next row. Arrows show
+execution order, not shared findings. Dashed boxes run only when selected or
+enabled. Model names and limits are listed in the table below.
+
+**1. Select coverage and gather optional context**
+
 ```mermaid
-flowchart TD
-    route["Router: gpt-6-luna"] --> script{"Script specialist selected?"}
-    script -->|yes| expert["script: gpt-6.1-sol / code and history"]
-    expert --> history{"Archaeology enabled?"}
-    script -->|no| history
-    history -->|yes| archaeology["Archaeologist: gpt-6-luna / review input, code and research"]
-    history -->|no| independent["Independent overview: gpt-6-luna"]
-    archaeology --> independent
-    independent --> sensitive{"Sensitive tier?"}
-    sensitive -->|yes| pair["Concurrent adversarial passes: same evidence and profiles"]
-    pair --> sol["adversarial: gpt-6.1-sol / OpenAI"]
-    pair --> deepseek["adversarial_deepseek: DeepSeek V4 Pro 0813 / PPQ"]
-    pair --> gemini["adversarial_gemini: Gemini 4 Argon / PPQ"]
-    sol --> focused["Selected focused audits, sequential"]
-    deepseek --> focused
-    gemini --> focused
-    sensitive -->|no| focused
-    focused --> order["concurrency → state → public_contract → build → tests → dead_code → design"]
-    order --> verifier["Verifier: gpt-6-luna / code and research evidence"]
-    verifier --> accepted{"Accepted findings or supported concept assessment?"}
-    accepted -->|yes| collator["Collator: gpt-6-luna / verified prose only"]
-    accepted -->|no| render["Python renders concept, findings and coverage limitations"]
-    collator --> render
+flowchart LR
+    route["Route"] --> script["Script audit<br/>if selected"]
+    script --> history["Archaeology<br/>if enabled"]
+    history --> alternatives["Blind alternatives<br/>if enabled + valid concept"]
+    classDef optional stroke-dasharray: 5 4
+    class script,history,alternatives optional
 ```
 
-Skipped audits do not make model calls. Escalation can add pending stages during
-discovery. Sol, DeepSeek and Gemini run concurrently when a PPQ key is supplied; without that
-key, the Python pipeline runs Sol alone. The companion service CLI requires both keys.
-The selected script specialist runs immediately after routing. When archaeology
-is enabled, the archaeologist follows it before other code discovery. Otherwise
-review proceeds directly to the independent overview. Its assessment is advisory
-only: negative, failed or incomplete concept research never skips an independent,
-adversarial or focused code stage selected for the review.
+**2. Discover independent candidates**
+
+```mermaid
+flowchart LR
+    overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Sol + DeepSeek + Gemini<br/>in parallel when selected"]
+    adversarial --> focused["Selected focused audits<br/>run sequentially"]
+    focused --> pool["Candidate pool"]
+    classDef optional stroke-dasharray: 5 4
+    class adversarial,focused optional
+```
+
+Focused audit order: concurrency, state, public_contract, build, tests,
+dead_code, design. Discovery can escalate coverage and add pending audits.
+DeepSeek and Gemini require PPQ; without it the adversarial stage runs Sol alone.
+
+**3. Verify, edit and render**
+
+```mermaid
+flowchart LR
+    verify["Verify candidates<br/>+ concept evidence"] --> edit["Edit accepted findings<br/>+ concept objection"]
+    edit --> render["Render review<br/>+ coverage limitations"]
+    classDef optional stroke-dasharray: 5 4
+    class edit optional
+```
+
+Editing runs only when findings or a concept objection survive verification.
+An independently verified optional alternative goes straight to rendering.
+
+Skipped audits do not make model calls. The companion service CLI requires both
+OpenAI and PPQ keys. Concept research is advisory: negative, failed or incomplete
+research never skips an independent, adversarial or focused code stage selected
+for the review.
 Reviewers do not see other discovery passes' candidates. The verifier sees the
-pooled candidates, original review input, any archaeology candidate, and named
-inspection gaps from incomplete discovery. Code
-discovery does not receive the archaeology output or current PR discussion.
+pooled candidates, original review input, any archaeology and blind-alternative
+candidates, and named inspection gaps from incomplete discovery. Code discovery
+does not receive concept research output or current PR discussion.
 
 | Stage | Default model | Reasoning effort | Per-response output token ceiling | Evidence access |
 | --- | --- | --- | --- | --- |
@@ -255,19 +264,21 @@ discovery does not receive the archaeology output or current PR discussion.
 | dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
-| design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and merge-base developer notes |
+| design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
 | verifier, all tiers | gpt-6-luna | xhigh | 128,000 | Original input, candidates, concept candidate, code and research tools |
 | archaeologist | gpt-6-luna | low | 4,000 | Original input, base/head code tools, current discussion and research tools |
+| alternatives | Same as archaeologist | low | 4,000 | Neutral problem, goal and baseline; base-only code tools |
 | collator | gpt-6-luna | low | 6,000 | Accepted findings and conceptual assessment; no tools |
 
 Final verifier requests with tools disabled have a 600-second socket timeout.
 Other model requests retain the 180-second timeout.
 
 Code tools find paths, read head/base files, read diffs and search code. The full
-tool set also reads base history and, when the caller supplies a discussion
-reader or frozen evidence, other PR discussions. Current PR discussion
-is excluded from code discovery. The archaeologist and verifier can read current
-discussion and original upstream review threads. Frozen evaluations replay only
+tool set also reads base history and, when a live discussion reader is supplied,
+other PR discussions. Current PR discussion is excluded from code discovery.
+In frozen runs, discussion tools are available only to the archaeologist and
+verifier. These stages can read current discussion and original upstream review
+threads from the supplied evidence. Frozen evaluations replay only
 captured research evidence and disable live discussion or web fallback. If a
 research call is missing from the frozen manifest, the tool returns an
 unavailable-evidence message and the model continues from code and frozen input.
@@ -318,37 +329,31 @@ Sources: [pipeline.py](ralph/pipeline.py),
 
 ## How findings survive or get rejected
 
+The successful path is short. Validation and recovery rules are listed below
+so they can be read without following crossing arrows.
+
 ```mermaid
-flowchart TD
-    archaeology["When enabled: archaeologist sourced concept candidate"] --> conceptcheck["Verifier checks historical claims and technical premises"]
-    conceptcheck --> conceptdecision{"Supported conceptual assessment?"}
-    conceptdecision -->|yes| concept["Separate assessment: no severity or code location"]
-    conceptdecision -->|no| withheld["Withhold assessment; retain valid findings"]
-    concept --> edit
-    discovery["Discovery emits structured candidate claims and evidence"] --> valid{"Candidate response passes Python validation?"}
-    valid -->|no| failed["Discard that stage's candidates; record limitation"]
-    valid -->|yes| pool["Assign stage:index IDs and pool candidates"]
-    pool --> verifier["Verifier checks code, callers, base behavior and counterevidence"]
-    verifier --> group["Group claims sharing a root cause; account for every ID once"]
-    group --> decision{"Evidence-based disposition"}
-    decision -->|drop| drop["Disproved or unsupported claim: withhold"]
-    decision -->|unresolved| unresolved["Missing decisive evidence: withhold and report limitation"]
-    decision -->|publish| finding["Structured finding with kind, severity and location"]
-    finding --> check{"Published finding passes Python validation?"}
-    check -->|no| unresolved
-    check -->|yes| accepted["Assign finding:N ID; accept"]
-    verifier --> reviewed["Record candidate and verified review recommendation"]
-    verifier --> new["Verifier may discover a new issue with no candidate IDs"]
-    new --> finding
-    accepted --> edit["Collator edits verified findings and conceptual prose"]
-    edit --> ids{"Exactly every accepted ID once?"}
-    ids -->|yes| edited["Use edited prose with original metadata"]
-    ids -->|"no, failure or exhausted budget"| fallback["Use all original verified findings"]
-    edited --> final["Render and publish"]
-    fallback --> final
-    group -->|"Unknown, repeated or omitted candidate IDs"| invalid["Withhold affected decisions; mark candidates unresolved; retain valid findings"]
-    verifier -->|"Malformed envelope or decision structure"| rejected["Reject whole verifier response; publish no findings"]
+flowchart LR
+    pool["Valid candidates"] --> verify["Verify claims"]
+    verify --> accept["Validate findings<br/>+ assign IDs"]
+    accept --> edit["Edit wording"]
+    edit --> render["Render verified feedback"]
 ```
+
+| Check or outcome | What survives |
+| --- | --- |
+| Malformed discovery response | Discard that stage's candidates and record a limitation; keep other stages. |
+| Malformed verifier envelope or decision structure | Reject the verifier response; publish no findings from it. |
+| Unknown, repeated or omitted candidate IDs | Withhold affected decisions and mark affected or omitted candidates unresolved; retain independently valid findings. |
+| Claim is disproved or unsupported | Drop the claim. |
+| Decisive evidence is missing, or a finding fails validation | Withhold that finding and record a limitation; retain valid findings. |
+| Concept objection is unsupported or invalid | Withhold the objection; retain verified code findings. |
+| Editing fails, exceeds its budget, or changes the accepted ID set | Keep all accepted findings with their original verified wording and metadata. |
+
+The verifier may merge candidates or discover an issue with no candidate IDs.
+It checks conceptual feedback separately from code findings. Supported concept
+objections can be edited without code findings; an independently verified
+optional alternative is rendered directly.
 
 Candidate findings are leads, not votes. Agreement between Sol, DeepSeek, Gemini and focused
 reviewers gives a claim no extra weight. A defect needs a reachable trigger and
