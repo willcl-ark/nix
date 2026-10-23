@@ -1,3 +1,4 @@
+import hashlib
 import json
 import unittest
 import urllib.error
@@ -412,6 +413,54 @@ class ModelBudgetTests(unittest.TestCase):
                           ("reserve", "independent", "auto"),
                           ("reserve", "independent", "none"),
                           ("settle", "token", "forced-final")])
+
+    def test_budget_fallback_records_failures_for_the_final_request(self):
+        first = {"id": "first-tool", "model": "gpt-6-luna", "status": "completed",
+                 "output": [{"type": "function_call", "call_id": "call-1",
+                             "name": "read_file",
+                             "arguments": '{"path":"src/a.cpp","start_line":1}'}]}
+        errors = [
+            (model.StaleReview("head changed"), "stale", False),
+            (BudgetExceeded("final request exceeds limit"), "budget_exhausted", False),
+            (TimeoutError("final request timed out"), "failed", True),
+            (urllib.error.HTTPError("url", 429, "rejected", {}, None), "failed", True),
+        ]
+        for error, status, has_failure_turn in errors:
+            with self.subTest(error=type(error).__name__):
+                debug = {}
+                with patch.object(model, "request_response", side_effect=[
+                        (first, b"first request", 0.01), BudgetExceeded("limit"), error
+                ]) as request, patch.object(model, "read_file", return_value="1: evidence"):
+                    with self.assertRaises(type(error)) as raised:
+                        model.openai_review(
+                            "secret", "patch", self.snapshot, debug, prompt="Review.",
+                            model="gpt-6-luna", max_output_tokens=model.MAX_OUTPUT_TOKENS,
+                            tools=model.ARCHAEOLOGY_TOOLS, allow_web_search=True,
+                            timeout=30, final_timeout=90)
+                self.assertIs(raised.exception, error)
+                self.assertEqual(debug["status"], status)
+                self.assertEqual(debug["error"], type(error).__name__)
+                self.assertEqual(len(debug["turns"]), 2 if has_failure_turn else 1)
+                self.assertEqual(debug["turns"][0]["response_id"], "first-tool")
+                self.assertEqual(request.call_count, 3)
+                final = request.call_args.args[1]
+                self.assertEqual(final["tool_choice"], "none")
+                self.assertEqual(final["input"][-1]["content"],
+                                 model.FINISH_WITH_AVAILABLE_EVIDENCE)
+                self.assertNotIn("web_search", {tool["type"] for tool in final["tools"]})
+                self.assertNotIn("max_tool_calls", final)
+                self.assertNotIn("include", final)
+                self.assertEqual(request.call_args.kwargs["timeout"], 90)
+                if has_failure_turn:
+                    failure = debug["turns"][-1]
+                    payload = json.dumps(final).encode()
+                    self.assertEqual(failure["request_sha256"],
+                                     hashlib.sha256(payload).hexdigest())
+                    self.assertEqual(failure["request_bytes"], len(payload))
+                    self.assertEqual(failure["error"], type(error).__name__)
+                    self.assertFalse(failure["usage_known"])
+                    if isinstance(error, urllib.error.HTTPError):
+                        self.assertEqual(failure["http_status"], 429)
 
     def test_request_budget_applies_scaled_stage_headroom(self):
         class LedgerSpy:

@@ -353,50 +353,37 @@ def openai_review(api_key, review, snapshot, debug=None, *,
         sent_tool_choice = tool_choice
         budget_forced_final = False
         try:
-            result, payload, elapsed = request_response(
-                api_key, data, stage_name, on_response, budget, is_current,
-                timeout=(final_timeout if tool_choice == "none" else timeout),
-                **request_options)
+            try:
+                result, payload, elapsed = request_response(
+                    api_key, data, stage_name, on_response, budget, is_current,
+                    timeout=(final_timeout if tool_choice == "none" else timeout),
+                    **request_options)
+            except BudgetExceeded:
+                if tool_choice == "none" or (first_tool_required and calls_used == 0):
+                    raise
+                final_inputs = inputs + [{"role": "user",
+                                          "content": FINISH_WITH_AVAILABLE_EVIDENCE}]
+                final_tools = [tool for tool in tools
+                               if tool.get("type") not in WEB_SEARCH_TOOL_TYPES]
+                data = {**data, "input": final_inputs, "tool_choice": "none",
+                        "tools": final_tools}
+                data.pop("max_tool_calls", None)
+                data.pop("include", None)
+                input_data = json.dumps(final_inputs).encode()
+                sent_tool_choice = "none"
+                budget_forced_final = True
+                result, payload, elapsed = request_response(
+                    api_key, data, stage_name, on_response, budget, is_current,
+                    timeout=final_timeout, **request_options)
+                inputs = final_inputs
         except StaleReview:
             if stage_debug is not None:
                 stage_debug.update(status="stale", error="StaleReview")
             raise
         except BudgetExceeded:
-            if tool_choice == "none" or (first_tool_required and calls_used == 0):
-                if stage_debug is not None:
-                    stage_debug.update(status="budget_exhausted", error="BudgetExceeded")
-                raise
-            final_inputs = inputs + [{"role": "user",
-                                      "content": FINISH_WITH_AVAILABLE_EVIDENCE}]
-            final_tools = [tool for tool in tools
-                           if tool.get("type") not in WEB_SEARCH_TOOL_TYPES]
-            data = {**data, "input": final_inputs, "tool_choice": "none",
-                    "tools": final_tools}
-            data.pop("max_tool_calls", None)
-            data.pop("include", None)
-            input_data = json.dumps(final_inputs).encode()
-            sent_tool_choice = "none"
-            budget_forced_final = True
-            try:
-                result, payload, elapsed = request_response(
-                    api_key, data, stage_name, on_response, budget, is_current,
-                    timeout=final_timeout, **request_options)
-            except StaleReview:
-                if stage_debug is not None:
-                    stage_debug.update(status="stale", error="StaleReview")
-                raise
-            except BudgetExceeded:
-                if stage_debug is not None:
-                    stage_debug.update(status="budget_exhausted", error="BudgetExceeded")
-                raise
-            except Exception as exc:
-                failure = request_failure_record(data, exc)
-                if debug is not None:
-                    debug["turns"].append(failure)
-                    stage_debug["status"] = "failed"
-                    stage_debug["error"] = failure["error"]
-                raise
-            inputs = final_inputs
+            if stage_debug is not None:
+                stage_debug.update(status="budget_exhausted", error="BudgetExceeded")
+            raise
         except Exception as exc:
             failure = request_failure_record(data, exc)
             if debug is not None:
