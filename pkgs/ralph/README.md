@@ -346,7 +346,8 @@ flowchart TD
     ids -->|"no, failure or exhausted budget"| fallback["Use all original verified findings"]
     edited --> final["Render and publish"]
     fallback --> final
-    group -->|"Unknown, repeated or omitted candidate IDs"| invalid["Reject whole verifier response; publish no findings"]
+    group -->|"Unknown, repeated or omitted candidate IDs"| invalid["Withhold affected decisions; mark candidates unresolved; retain valid findings"]
+    verifier -->|"Malformed envelope or decision structure"| rejected["Reject whole verifier response; publish no findings"]
 ```
 
 Candidate findings are leads, not votes. Agreement between Sol, DeepSeek, Gemini and focused
@@ -404,8 +405,10 @@ about an actual triggering call must include that caller. Python checks the exce
 against immutable snapshot blobs and withholds mismatches. Matching source text
 does not prove the claim or its consequence; the verifier must check those.
 Malformed discovery rejects the entire stage result. A malformed published
-finding becomes unresolved while other valid findings survive. Structural or
-candidate-accounting errors reject the entire verifier response.
+finding becomes unresolved while other valid findings survive. Malformed
+verifier envelopes or decision structures reject the entire verifier response.
+Unknown or repeated candidate IDs withhold affected decisions while preserving
+independently valid findings. Affected and omitted candidates become unresolved.
 
 Partial coverage does not discard otherwise valid findings. An unresolved
 candidate or failed stage adds a limitation. The collator cannot add, merge or
