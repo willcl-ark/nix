@@ -7,7 +7,7 @@ import re
 import sqlite3
 import subprocess
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from urllib.parse import quote
@@ -264,6 +264,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         "inventory": inventory,
         "overview": overview,
         "spend": spend,
+        "cost_trends": _cost_trends(requests + followup_requests, now),
         "stage_model_leaderboard": _stage_leaderboard(stages),
         "stages": _stage_records(stages),
         "routing_tiers": dict(sorted(routing_tiers.items())),
@@ -357,7 +358,7 @@ def _provider_ledger_rows(provider, path):
         with _connect_readonly(path) as db:
             rows = db.execute(
                 "SELECT review_id, stage, model, month, status, usage_json, "
-                "cost_micros, reserved_micros FROM requests ORDER BY rowid")
+                "cost_micros, reserved_micros, requested_at FROM requests ORDER BY rowid")
             return [_ledger_record(provider, row) for row in rows], False
     except sqlite3.Error:
         return [], True
@@ -376,6 +377,7 @@ def _ledger_record(provider, row):
         "stage": row["stage"] or "unknown",
         "model": _normalize_model(row["model"] or "unknown"),
         "month": row["month"] or "unknown",
+        "requested_at": row["requested_at"],
         "status": row["status"] or "unknown",
         "cost_micros": _nonnegative_int(row["cost_micros"]),
         "reserved_micros": _nonnegative_int(row["reserved_micros"]),
@@ -1093,6 +1095,62 @@ def _spend_summary(requests, current_month):
             {"month": month, **_final_request_totals(record)}
             for month, record in sorted(by_month.items())
         ],
+    }
+
+
+def _cost_totals(record):
+    record = record or _new_provider_totals()
+    return {key: record[key] for key in (
+        "request_count", "known_cost_micros", "reserved_micros",
+        "unknown_cost_request_count")}
+
+
+def _cost_periods(records, periods):
+    if not records:
+        return []
+    first = min(records)
+    return [{"period": period, **_cost_totals(records.get(period))}
+            for period in periods if period >= first]
+
+
+def _cost_trends(requests, now):
+    by_day = defaultdict(_new_provider_totals)
+    by_week = defaultdict(_new_provider_totals)
+    by_month = defaultdict(_new_provider_totals)
+    undated = _new_provider_totals()
+    for request in requests:
+        _add_request(by_month[request["month"]], request)
+        try:
+            day = datetime.fromtimestamp(request["requested_at"], timezone.utc).date()
+        except (OverflowError, OSError, TypeError, ValueError):
+            _add_request(undated, request)
+            continue
+        monday = day - timedelta(days=day.weekday())
+        _add_request(by_day[day.isoformat()], request)
+        _add_request(by_week[monday.isoformat()], request)
+
+    today = now.date()
+    monday = today - timedelta(days=today.weekday())
+    days = _cost_periods(by_day, [
+        (today - timedelta(days=offset)).isoformat() for offset in range(29, -1, -1)])
+    weeks = _cost_periods(by_week, [
+        (monday - timedelta(weeks=offset)).isoformat() for offset in range(11, -1, -1)])
+    month_periods = []
+    for offset in range(11, -1, -1):
+        year, month = divmod(now.year * 12 + now.month - 1 - offset, 12)
+        month_periods.append(f"{year:04d}-{month + 1:02d}")
+    current_month = now.strftime("%Y-%m")
+    return {
+        "timezone": "UTC",
+        "week_start": "Monday",
+        "current_day": days[-1] if days else None,
+        "current_week": weeks[-1] if weeks else None,
+        "current_month": {"period": current_month,
+                          **_cost_totals(by_month.get(current_month))},
+        "days": days,
+        "weeks": weeks,
+        "months": _cost_periods(by_month, month_periods),
+        "undated": _cost_totals(undated),
     }
 
 

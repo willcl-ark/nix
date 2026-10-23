@@ -1,9 +1,10 @@
 """Persistent request reservations and spend accounting."""
 import json
+import os
 import re
 import sqlite3
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
@@ -144,6 +145,34 @@ def _month_now():
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
+def migrate_state(path):
+    """Back up and add request timestamps, leaving historical dates unknown."""
+    if not Path(path).exists():
+        return False
+    backup_path = f"{path}.pre-timestamps.bak"
+    with closing(sqlite3.connect(path, timeout=30, isolation_level=None)) as db:
+        db.execute("BEGIN IMMEDIATE")
+        columns = {row[1] for row in db.execute("PRAGMA table_info(requests)")}
+        if "requested_at" in columns:
+            return False
+        if not columns:
+            raise ValueError("spend database does not contain a requests table")
+        fd = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+        try:
+            # The write reservation keeps other writers out while this read
+            # connection takes a consistent backup of the original schema.
+            with closing(sqlite3.connect(path, timeout=30)) as source:
+                with closing(sqlite3.connect(backup_path)) as backup:
+                    source.backup(backup)
+        except BaseException:
+            os.unlink(backup_path)
+            raise
+        db.execute("ALTER TABLE requests ADD COLUMN requested_at INTEGER")
+        db.commit()
+    return True
+
+
 class Ledger:
     """A SQLite ledger that reserves monthly spend before API requests."""
 
@@ -167,10 +196,12 @@ class Ledger:
                 status TEXT NOT NULL,
                 usage_json TEXT,
                 cost_micros INTEGER,
-                reserved_micros INTEGER NOT NULL
+                reserved_micros INTEGER NOT NULL,
+                requested_at INTEGER
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS requests_month ON requests(month)")
             db.execute("CREATE INDEX IF NOT EXISTS requests_review ON requests(review_id)")
+        migrate_state(self.path)
 
     @contextmanager
     def _connection(self):
@@ -236,7 +267,8 @@ class Ledger:
         floor = _micros(reserve_floor_usd) + int(reserve_floor_micros)
         if floor < 0:
             raise ValueError("reserve_floor_micros must be nonnegative")
-        month = _month_now()
+        requested_at = datetime.now(timezone.utc)
+        month = requested_at.strftime("%Y-%m")
         token = str(uuid.uuid4())
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -260,8 +292,12 @@ class Ledger:
                 if current + amount + floor > self.monthly_limit_micros:
                     db.rollback()
                     raise BudgetExceeded("monthly spend limit would be exceeded")
-            db.execute("INSERT INTO requests VALUES (?, ?, ?, ?, ?, NULL, 'reserved', NULL, NULL, ?)",
-                       (token, review_id, stage, model, month, amount))
+            db.execute("INSERT INTO requests "
+                       "(token, review_id, stage, model, month, status, "
+                       "reserved_micros, requested_at) "
+                       "VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?)",
+                       (token, review_id, stage, model, month, amount,
+                        int(requested_at.timestamp())))
             db.commit()
         return token
 

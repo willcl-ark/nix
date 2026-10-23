@@ -204,7 +204,7 @@ def _analysis(summary):
         sentence = (
             f"{_fmt_int(saved_reviews)} saved reviews; {_fmt_int(unique_prs)} pull requests have been queued. "
             f"{_fmt_int(_field(archaeology, 'research_completed'))} completed archaeology research. "
-            f"Current month known spend is {_fmt_money_micros(known)}."
+            f"Current month known review spend is {_fmt_money_micros(known)}."
         )
     else:
         sentence = "No saved reviews are in this summary yet."
@@ -238,7 +238,7 @@ def _top_kpis(summary):
              "Bot verified; not human confirmed"),
         _kpi("Addressed after review", _fmt_int(counts.get("addressed")),
              f"{_fmt_int(counts.get('partially_addressed'))} partially addressed"),
-        _kpi("This month", _fmt_money_micros(month.get("known_cost_micros")),
+        _kpi("Review cost this month", _fmt_money_micros(month.get("known_cost_micros")),
              f"{_fmt_money_micros(month.get('reserved_micros'))} reserved"),
     ])
 
@@ -407,6 +407,71 @@ def _spend_rows(records):
     )
 
 
+def _cost_trends_section(summary):
+    trends = _mapping(summary.get("cost_trends"))
+    cards = []
+    for key, label in (("current_day", "Today"), ("current_week", "This week"),
+                       ("current_month", "This month")):
+        period = _mapping(trends.get(key))
+        if period:
+            value = _fmt_money_micros(period.get("known_cost_micros"))
+            detail = (
+                f"{_fmt_int(period.get('request_count'))} attempts · "
+                f"{_fmt_money_micros(period.get('reserved_micros'))} reserved · "
+                f"{_fmt_int(period.get('unknown_cost_request_count'))} with unknown cost"
+            )
+        else:
+            value = "Unavailable"
+            detail = "No timestamped requests."
+        cards.append(_kpi(label, value, detail))
+
+    undated = _mapping(trends.get("undated"))
+    coverage_note = ""
+    if _number(undated.get("request_count")):
+        coverage = "partial" if trends.get("days") else "unavailable"
+        coverage_note = _section_note(
+            f"Daily and weekly totals are {coverage}. "
+            f"{_fmt_int(undated.get('request_count'))} requests have no timestamp and are "
+            f"included only in monthly totals: "
+            f"{_fmt_money_micros(undated.get('known_cost_micros'))} known cost, "
+            f"{_fmt_money_micros(undated.get('reserved_micros'))} reserved, "
+            f"{_fmt_int(undated.get('unknown_cost_request_count'))} with unknown cost."
+        )
+
+    charts = []
+    for key, title, description in (
+        ("days", "Daily cost · 30 days", "Known cost per UTC day over the last 30 days."),
+        ("weeks", "Weekly cost · 12 weeks",
+         "Known cost per UTC week over the last 12 weeks. Weeks start Monday."),
+        ("months", "Monthly cost · 12 months",
+         "Known cost per accounting month over the last 12 months, including undated requests."),
+    ):
+        records = _list(trends.get(key))
+        if records:
+            charts.append(_chart_svg(f"cost-{key}", title, description, records,
+                                     "known_cost_micros", currency=True))
+        else:
+            message = ("No monthly request accounting was recorded." if key == "months"
+                       else "No timestamped requests.")
+            charts.append(f'<figure class="chart"><figcaption>{_escape(title)}</figcaption>'
+                          f'<p class="note">{_escape(message)}</p></figure>')
+    return (
+        '<section id="cost-trends"><h2>Total cost</h2>'
+        + _section_note(
+            "Known costs from OpenAI reviews, PPQ requests and follow-up assessments, "
+            "including retries. All periods use UTC; weeks start Monday. "
+            "Current periods are to date."
+        )
+        + '<div class="cards cost-cards">' + ''.join(cards) + '</div>'
+        + _section_note(
+            "Unknown costs and reserved amounts are excluded from the totals and charts. "
+            "Charts show the available history in each window."
+        )
+        + coverage_note
+        + '<div class="charts">' + ''.join(charts) + '</div></section>'
+    )
+
+
 def _monthly_trend(summary):
     months = _list(_mapping(summary.get("spend")).get("months"))
     if not months:
@@ -437,9 +502,10 @@ def _spend_section(summary):
     current_providers = current.get("providers")
     lifetime_providers = lifetime.get("providers")
     return (
-        '<section id="spend"><h2>Spend and request attempts</h2>'
+        '<section id="spend"><h2>Review spend and request attempts</h2>'
         + _section_note(
-            "Spend includes recorded ledger attempts, including failed or superseded requests. "
+            "Review spend includes OpenAI and PPQ ledger attempts, including failed or "
+            "superseded requests, and excludes follow-up assessments. "
             "Unknown costs and reservations are kept separate from known settled cost."
         )
         + '<div class="split">'
@@ -746,15 +812,17 @@ def _time_series(summary):
     return sorted(records, key=lambda item: item["period"])
 
 
-def _chart_svg(chart_id, title, description, records, field):
+def _chart_svg(chart_id, title, description, records, field, currency=False):
     width = 280
     height = 132
-    left = 34
     right = 12
     top = 12
     bottom = 30
+    formatter = _fmt_money_micros if currency else _fmt_int
     values = [_number(record.get(field)) for record in records]
-    max_value = max((value for value in values if value is not None), default=0) or 1
+    max_value = (max((value for value in values if value is not None), default=0)
+                 or (1_000_000 if currency else 1))
+    left = max(34, len(formatter(max_value)) * 6 + 12)
     x_span = width - left - right
     y_span = height - top - bottom
     points = []
@@ -776,12 +844,18 @@ def _chart_svg(chart_id, title, description, records, field):
             segment.append(point)
     lines = "".join(f'<polyline class="chart-line" points="{segment}"></polyline>'
                     for segment in segments)
-    circles = "".join(
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3"><title>{_escape(records[index]["period"])}: '
-        f'{_fmt_int(records[index].get(field))}</title></circle>'
-        for index, point in enumerate(points) if point is not None
-        for x, y in (point,)
-    )
+    circles = []
+    for index, point in enumerate(points):
+        if point is None:
+            continue
+        record = records[index]
+        tooltip = f"{record['period']}: {formatter(record.get(field))}"
+        if currency:
+            tooltip += (f" known cost; {_fmt_money_micros(record.get('reserved_micros'))} reserved; "
+                        f"{_fmt_int(record.get('unknown_cost_request_count'))} with unknown cost")
+        x, y = point
+        circles.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3">'
+                       f'<title>{_escape(tooltip)}</title></circle>')
     first = records[0]["period"]
     last = records[-1]["period"]
     title_id = f"{chart_id}-title"
@@ -795,11 +869,11 @@ def _chart_svg(chart_id, title, description, records, field):
         f'<line class="chart-axis" x1="{left}" y1="{top + y_span}" x2="{width - right}" y2="{top + y_span}"></line>'
         f'<line class="chart-axis" x1="{left}" y1="{top}" x2="{left}" y2="{top + y_span}"></line>'
         + lines
-        + f'{circles}'
+        + ''.join(circles)
         + f'<text x="{left}" y="{height - 10}">{_escape(first)}</text>'
         + f'<text x="{width - right}" y="{height - 10}" text-anchor="end">{_escape(last)}</text>'
-        + f'<text x="{left - 6}" y="{top + 4}" text-anchor="end">{_fmt_int(max_value)}</text>'
-        '<text x="28" y="105" text-anchor="end">0</text>'
+        + f'<text x="{left - 6}" y="{top + 4}" text-anchor="end">{formatter(max_value)}</text>'
+        + f'<text x="{left - 6}" y="105" text-anchor="end">{formatter(0)}</text>'
         '</svg>'
         '</figure>'
     )
@@ -876,6 +950,7 @@ p { margin: .6rem 0 1rem; }
 .subline { display: block; font-size: .8rem; margin-top: .25rem; overflow-wrap: anywhere; }
 .subtitle { margin-bottom: 1.6rem; }
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.cards.cost-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
 .card, section { background: #fff; border: 1px solid #dfe6ee; border-radius: .65rem; padding: 1.35rem; }
 section { margin-top: 1.25rem; }
 .card { border-top: 3px solid #207d84; }
@@ -910,7 +985,7 @@ a:focus-visible, summary:focus-visible, button:focus-visible, input:focus-visibl
 [hidden] { display: none !important; }
 footer { max-width: 90rem; margin: auto; padding: 0 1.2rem 2rem; color: #64748b; font-size: .8rem; }
 .preview { background: #fef3c7; color: #624500; padding: .5rem; }
-.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
 .chart { margin: 0; padding: .75rem; }
 .chart figcaption { font-weight: 600; }
 .chart svg { display: block; width: 100%; height: auto; }
@@ -1079,6 +1154,7 @@ def _usage_html(summary):
     overview = _mapping(summary.get('overview'))
     costs = _mapping(_mapping(summary.get('distributions')).get('saved_review_known_cost_micros'))
     body = ('<h1>Usage</h1><p class="subtitle">Spend, request accounting and operational diagnostics.</p>'
+            + _cost_trends_section(summary)
             + '<div class="cards">' + _kpi('Median review cost', _fmt_money_micros(costs.get('median')),
                 f"Matched saved-review cohort: {_fmt_int(costs.get('count'))}") + '</div>'
             + _spend_section(summary) + _model_section(summary)

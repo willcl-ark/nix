@@ -466,7 +466,7 @@ def main():
                         help="Maximum concurrent pull request reviews")
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--migrate-state", action="store_true",
-                        help="Back up and convert the existing job database once")
+                        help="Back up and upgrade existing state databases once")
     parser.add_argument("--engine", default="current",
                         help="Review engine name (default: current)")
     parser.add_argument("--engine-config", type=Path,
@@ -506,10 +506,14 @@ def main():
             parser.error("--state-dir is required with --migrate-state")
         from .jobs import migrate_state
         try:
-            migrated = migrate_state(args.state_dir / "jobs.sqlite3")
+            jobs_path = args.state_dir / "jobs.sqlite3"
+            migrated = jobs_path.exists() and migrate_state(jobs_path)
+            for filename in ("spend.sqlite3", "ppq-spend.sqlite3", "followup/spend.sqlite3"):
+                if spend.migrate_state(args.state_dir / filename):
+                    migrated = True
         except (OSError, sqlite3.Error, ValueError) as exc:
-            parser.error(f"could not migrate job database: {exc}")
-        print("job database migrated" if migrated else "job database already migrated")
+            parser.error(f"could not migrate state databases: {exc}")
+        print("state databases migrated" if migrated else "state databases already current")
         return 0
     required = ("state_dir", "origin", "repository", "forgejo_api",
                 "openai_key_file", "ppq_key_file", "webhook_secret_file",

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 import hashlib
 import hmac
 import http.client
+import io
 import json
 import sqlite3
 import struct
@@ -68,6 +69,42 @@ class ServiceTests(unittest.TestCase):
                     "metrics": {}, "skipped": bool(debug.get("skip")),
                     "budget": {}, "ppq_budget": None, "attempt": debug},
         }
+
+    def test_migrate_state_upgrades_all_ledgers_without_a_jobs_database(self):
+        (self.state_dir / "jobs.sqlite3").unlink()
+        filenames = ("spend.sqlite3", "ppq-spend.sqlite3", "followup/spend.sqlite3")
+        for filename in filenames:
+            path = self.state_dir / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.unlink(missing_ok=True)
+            with sqlite3.connect(path) as db:
+                db.execute("""CREATE TABLE requests (
+                    token TEXT PRIMARY KEY, review_id TEXT NOT NULL,
+                    stage TEXT NOT NULL, model TEXT NOT NULL, month TEXT NOT NULL,
+                    response_id TEXT, status TEXT NOT NULL, usage_json TEXT,
+                    cost_micros INTEGER, reserved_micros INTEGER NOT NULL
+                )""")
+                db.execute("INSERT INTO requests VALUES ('old', 'pr:1:1:1', 'audit', "
+                           "'gpt-6-luna', '2026-09', NULL, 'settled', NULL, 100, 0)")
+        args = ["ralph-service", "--state-dir", str(self.state_dir), "--migrate-state"]
+        with patch("sys.argv", args), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(service.main(), 0)
+            self.assertEqual(service.main(), 0)
+        self.assertFalse((self.state_dir / "jobs.sqlite3").exists())
+        for filename in filenames:
+            path = self.state_dir / filename
+            self.assertTrue(Path(f"{path}.pre-timestamps.bak").is_file())
+            with sqlite3.connect(path) as db:
+                self.assertEqual(db.execute(
+                    "SELECT month, cost_micros, requested_at FROM requests").fetchone(),
+                    ("2026-09", 100, None))
+
+    def test_migrate_state_accepts_fresh_state_without_creating_databases(self):
+        state_dir = self.state_dir / "fresh"
+        args = ["ralph-service", "--state-dir", str(state_dir), "--migrate-state"]
+        with patch("sys.argv", args), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(service.main(), 0)
+        self.assertFalse(state_dir.exists())
 
     def post_webhook(self, store):
         secret = b"secret"

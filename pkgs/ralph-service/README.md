@@ -75,6 +75,15 @@ In particular, preserve follow-up initialization metadata, `assessments.sqlite3`
 its spend database and checkout. The package split adds no state migration or
 second queue. The existing explicit pre-engine converter remains available.
 
+Daily and weekly cost tracking requires the request-timestamp migration in
+`ralph-service --state-dir DIR --migrate-state`. The NixOS module runs it before
+starting the service. It backs up and upgrades both review spend databases and
+`followup/spend.sqlite3`, skipping missing or already upgraded databases.
+Backups use the `.pre-timestamps.bak` suffix. Historical costs retain their
+accounting month and an unknown timestamp; the Usage page includes them in
+monthly totals and identifies their absence from daily and weekly charts.
+Stats reads never modify private state.
+
 Unfinished jobs use the currently configured engine when claimed, including
 retries and restart recovery. Saved results retain their original identity and
 retry publication without running the engine again.

@@ -226,7 +226,7 @@ report link. Existing comments and private traces are not backfilled.
 
 When reports are configured, a timer also refreshes `reportDir/stats/index.html`
 and its public JSON download every five minutes. The dashboard reads durable
-review jobs and both review spend ledgers without model calls or credentials. It
+review jobs and the review and follow-up spend ledgers without model calls or credentials. It
 ranks agents and models by verifier-accepted findings, separates sole and shared
 contributions, and shows execution opportunities, candidate dispositions,
 coverage, routing, token usage, costs, and review details. Shared findings earn
@@ -236,6 +236,16 @@ counts. Candidate and verifier `would_stop` counts are shown with downstream
 findings and costs so a human can judge false proposed stops and useful findings
 that appeared after a proposed stop. Archaeology costs and execution remain
 visible outside the finding leaderboard.
+
+The Usage page shows total API cost for today, this week and this month, with
+daily, weekly and monthly charts covering the last 30 days, 12 weeks and 12
+months. These totals include OpenAI reviews, PPQ reviews and follow-up requests.
+Periods use request start times in UTC, Monday-starting weeks and calendar
+months; current periods are to date. Older requests have only an accounting
+month, so their costs remain in monthly totals and are identified as undated
+instead of being assigned invented days. Reservations and requests with unknown
+cost remain separate from recorded costs. Review-only breakdowns retain their
+existing scope.
 
 Addressed-finding checks run outside the main review service. When reports are
 configured, `ralph-followup.timer` runs every five minutes with its own budget,
@@ -446,6 +456,12 @@ uses its own prompt and model, configured with `followupPromptFile` and
 `addressed_findings.md`. Change these configurations together with the companion
 package, retaining all existing state and follow-up initialization metadata.
 The package split adds no database migration.
+
+Cost history adds a request timestamp to each of the three spend databases.
+The service startup hook runs the one-time migration, preserving old rows with
+unknown timestamps and taking SQLite backups named `*.pre-timestamps.bak`.
+For manual upgrades, run `ralph-service --state-dir /var/lib/ralph --migrate-state`
+before generating stats with the new package. Missing databases are skipped.
 
 Custom prompt directories must include `dead_code.md`, `consensus.md`, `wallet.md`, `p2p.md`,
 `concurrency.md`, `build.md` and `archaeologist.md`. Custom model maps must

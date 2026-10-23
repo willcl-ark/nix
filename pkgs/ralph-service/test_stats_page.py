@@ -144,6 +144,17 @@ class StatsPageTests(unittest.TestCase):
                 "models": [],
                 "months": [],
             },
+            "cost_trends": {
+                "timezone": "UTC",
+                "week_start": "Monday",
+                "current_day": None,
+                "current_week": None,
+                "current_month": {"period": "2026-10", **self.request_totals()},
+                "days": [],
+                "weeks": [],
+                "months": [],
+                "undated": self.request_totals(),
+            },
             "stage_model_leaderboard": [],
             "stages": [],
             "routing_tiers": {},
@@ -273,6 +284,42 @@ class StatsPageTests(unittest.TestCase):
                 {"month": "2026-10", **self.request_totals(request_count=7,
                                                            known_cost_micros=1_234_000)},
             ],
+        }
+        summary["cost_trends"] = {
+            "timezone": "UTC",
+            "week_start": "Monday",
+            "current_day": {"period": "2026-10-01", **self.request_totals(
+                request_count=4, known_cost_micros=250_000,
+                reserved_micros=50_000, unknown_cost_request_count=1)},
+            "current_week": {"period": "2026-09-28", **self.request_totals(
+                request_count=6, known_cost_micros=750_000,
+                reserved_micros=200_000, unknown_cost_request_count=2)},
+            "current_month": {"period": "2026-10", **self.request_totals(
+                request_count=9, known_cost_micros=1_284_000,
+                reserved_micros=315_000, unknown_cost_request_count=3)},
+            "days": [
+                {"period": "2026-09-30", **self.request_totals(
+                    request_count=2, known_cost_micros=500_000,
+                    reserved_micros=150_000, unknown_cost_request_count=1)},
+                {"period": "2026-10-01", **self.request_totals(
+                    request_count=4, known_cost_micros=250_000,
+                    reserved_micros=50_000, unknown_cost_request_count=1)},
+            ],
+            "weeks": [{"period": "2026-09-28", **self.request_totals(
+                request_count=6, known_cost_micros=750_000,
+                reserved_micros=200_000, unknown_cost_request_count=2)}],
+            "months": [
+                {"period": "2026-09", **self.request_totals(
+                    request_count=2, known_cost_micros=500_000,
+                    reserved_micros=150_000, unknown_cost_request_count=1)},
+                {"period": "2026-10", **self.request_totals(
+                    request_count=9, known_cost_micros=1_284_000,
+                    reserved_micros=315_000, unknown_cost_request_count=3)},
+            ],
+            "undated": self.request_totals(request_count=5,
+                                           known_cost_micros=1_034_000,
+                                           reserved_micros=265_000,
+                                           unknown_cost_request_count=2),
         }
         summary["stage_model_leaderboard"] = [
             {
@@ -673,6 +720,93 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("Verification", all_html)
         self.assertIn("Median review cost", all_html)
 
+    def test_usage_cost_trends_show_total_scope_and_currency_charts(self):
+        root, overview, _ = self.save(self.rich_summary())
+        page = (root / "usage/index.html").read_text()
+        costs = page.split('<section id="cost-trends">')[1].split('</section>')[0]
+        self.assertIn("Total cost", costs)
+        self.assertIn("OpenAI reviews, PPQ requests and follow-up assessments", costs)
+        self.assertIn("UTC", costs)
+        self.assertIn("weeks start Monday", costs)
+        self.assertIn("Current periods are to date", costs)
+        for label, amount in (("Today", "$0.25"), ("This week", "$0.75"),
+                              ("This month", "$1.28")):
+            self.assertIn(f'{label}</div><div class="kpi-value">{amount}</div>', costs)
+        self.assertIn("$0.05 reserved", costs)
+        self.assertIn("1 with unknown cost", costs)
+        self.assertIn("$0.32 reserved", costs)
+        self.assertIn("3 with unknown cost", costs)
+        self.assertNotIn("$1.60", costs)
+        self.assertIn("Daily cost · 30 days", costs)
+        self.assertIn("Weekly cost · 12 weeks", costs)
+        self.assertIn("Monthly cost · 12 months", costs)
+        self.assertEqual(costs.count('role="img"'), 3)
+        self.assertIn('aria-labelledby="cost-days-title cost-days-desc"', costs)
+        self.assertIn('<title>2026-10-01: $0.25 known cost; $0.05 reserved; '
+                      '1 with unknown cost</title>', costs)
+        self.assertIn('<title>2026-09-28: $0.75 known cost; $0.20 reserved; '
+                      '2 with unknown cost</title>', costs)
+        self.assertIn('<title>2026-10: $1.28 known cost; $0.32 reserved; '
+                      '3 with unknown cost</title>', costs)
+        self.assertIn('text-anchor="end">$1.28</text>', costs)
+        self.assertEqual(costs.count('text-anchor="end">$0.00</text>'), 3)
+        self.assertIn("Review spend and request attempts", page)
+        self.assertIn("excludes follow-up assessments", page)
+        self.assertIn("Review cost this month", overview)
+        self.assertIn("$1.23", overview)
+
+    def test_undated_costs_explain_partial_daily_and_weekly_coverage(self):
+        summary = self.rich_summary()
+        costs = stats_page._cost_trends_section(summary)
+        self.assertIn("Daily and weekly totals are partial", costs)
+        self.assertIn("5 requests have no timestamp", costs)
+        self.assertIn("$1.03 known cost", costs)
+        self.assertIn("$0.27 reserved", costs)
+        self.assertIn("2 with unknown cost", costs)
+        self.assertIn("included only in monthly totals", costs)
+
+        summary["cost_trends"].update(current_day=None, current_week=None, days=[], weeks=[])
+        costs = stats_page._cost_trends_section(summary)
+        self.assertIn("Daily and weekly totals are unavailable", costs)
+        self.assertIn('Today</div><div class="kpi-value">Unavailable</div>', costs)
+        self.assertIn('This month</div><div class="kpi-value">$1.28</div>', costs)
+        self.assertEqual(costs.count('role="img"'), 1)
+        self.assertIn('<title>2026-10: $1.28 known cost;', costs)
+
+    def test_missing_cost_timestamps_differ_from_zero_cost_periods(self):
+        summary = self.empty_summary()
+        costs = stats_page._cost_trends_section(summary)
+        self.assertIn('Today</div><div class="kpi-value">Unavailable</div>', costs)
+        self.assertIn('This week</div><div class="kpi-value">Unavailable</div>', costs)
+        self.assertIn('This month</div><div class="kpi-value">$0.00</div>', costs)
+        self.assertIn("No timestamped requests", costs)
+        self.assertNotIn('<svg', costs)
+        self.assertNotIn("totals are partial", costs)
+
+        for period, current, series in (("2026-10-01", "current_day", "days"),
+                                        ("2026-09-28", "current_week", "weeks")):
+            record = {"period": period, **self.request_totals()}
+            summary["cost_trends"][current] = record
+            summary["cost_trends"][series] = [record]
+        costs = stats_page._cost_trends_section(summary)
+        self.assertNotIn("Unavailable", costs)
+        self.assertNotIn("No timestamped requests", costs)
+        self.assertEqual(costs.count('role="img"'), 2)
+        self.assertIn('<title>2026-10-01: $0.00 known cost; $0.00 reserved; '
+                      '0 with unknown cost</title>', costs)
+        self.assertIn('text-anchor="end">$1.00</text>', costs)
+
+    def test_cost_chart_formats_subcent_costs_and_escapes_periods(self):
+        summary = self.empty_summary()
+        summary["cost_trends"]["days"] = [{
+            "period": '<script>alert("period")</script>',
+            **self.request_totals(request_count=1, known_cost_micros=1),
+        }]
+        costs = stats_page._cost_trends_section(summary)
+        self.assertIn("$0.000001", costs)
+        self.assertIn("&lt;script&gt;alert(&quot;period&quot;)&lt;/script&gt;", costs)
+        self.assertNotIn('<script>', costs)
+
     def test_collect_stats_output_renders_with_nested_schema(self):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
@@ -689,17 +823,25 @@ class StatsPageTests(unittest.TestCase):
             report_dir.mkdir()
             report_name = f'42-{"a" * 40}-{job["id"]}-{job["generation"]}.html'
             (report_dir / report_name).write_text("public report", encoding="utf-8")
-            month = datetime.now(timezone.utc).strftime("%Y-%m")
+            now = datetime.now(timezone.utc)
+            month = now.strftime("%Y-%m")
+            requested_at = int(now.timestamp())
             review_id = f'pr:42:{job["id"]}:{job["generation"]}'
             self.create_ledger(state_dir / "spend.sqlite3", [
                 ("openai-1", review_id, "independent", "gpt-6.1-sol", month,
-                 "settled", self.usage(), 100, 0),
+                 "settled", self.usage(), 100, 0, requested_at),
                 ("openai-2", review_id, "adversarial", "gpt-6.1-sol", month,
-                 "settled", self.usage(), 150, 0),
+                 "settled", self.usage(), 150, 0, requested_at),
             ])
             self.create_ledger(state_dir / "ppq-spend.sqlite3", [
                 ("glm-1", review_id, "adversarial_glm", "z-ai/glm-5.3", month,
-                 "unknown", self.usage(complete=False, cache_write_tokens=None), None, 700),
+                 "unknown", self.usage(complete=False, cache_write_tokens=None),
+                 None, 700, requested_at),
+            ])
+            (state_dir / "followup").mkdir()
+            self.create_ledger(state_dir / "followup/spend.sqlite3", [
+                ("followup-1", "followup:42", "followup", "gpt-6.1-sol", month,
+                 "settled", self.usage(), 400, 0, requested_at),
             ])
 
             summary = stats.collect_stats(state_dir, report_dir)
@@ -712,6 +854,14 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn('href="https://reports.example.org/reviews/' + report_name + '"', all_html)
         self.assertNotIn("PRIVATE", all_html)
         self.assertTrue((root / "index.html").is_file())
+        costs = (root / "usage/index.html").read_text().split(
+            '<section id="cost-trends">')[1].split('</section>')[0]
+        for label in ("Today", "This week", "This month"):
+            self.assertIn(f'{label}</div><div class="kpi-value">$0.000650</div>', costs)
+        self.assertIn("4 attempts · $0.000700 reserved · 1 with unknown cost", costs)
+        self.assertIn(f'<title>{month}: $0.000650 known cost; $0.000700 reserved; '
+                      '1 with unknown cost</title>', costs)
+        self.assertEqual(public["spend"]["current_month"]["known_cost_micros"], 250)
 
     def create_ledger(self, path, rows):
         with sqlite3.connect(path) as db:
@@ -725,10 +875,14 @@ class StatsPageTests(unittest.TestCase):
                 status TEXT NOT NULL,
                 usage_json TEXT,
                 cost_micros INTEGER,
-                reserved_micros INTEGER NOT NULL
+                reserved_micros INTEGER NOT NULL,
+                requested_at INTEGER
             )""")
             db.executemany(
-                "INSERT INTO requests VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+                """INSERT INTO requests
+                (token, review_id, stage, model, month, status, usage_json,
+                 cost_micros, reserved_micros, requested_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 rows)
 
     def usage(self, input_tokens=100, output_tokens=20, complete=True,

@@ -264,8 +264,9 @@ class StatsTests(unittest.TestCase):
             },
         }
 
-    def create_ledger(self, filename, rows):
+    def create_ledger(self, filename, rows, timestamps=None):
         path = self.state_dir / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as db:
             db.execute("""CREATE TABLE requests (
                 token TEXT PRIMARY KEY,
@@ -277,11 +278,14 @@ class StatsTests(unittest.TestCase):
                 status TEXT NOT NULL,
                 usage_json TEXT,
                 cost_micros INTEGER,
-                reserved_micros INTEGER NOT NULL
+                reserved_micros INTEGER NOT NULL,
+                requested_at INTEGER
             )""")
             db.executemany(
-                "INSERT INTO requests VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
-                rows)
+                "INSERT INTO requests (token, review_id, stage, model, month, "
+                "status, usage_json, cost_micros, reserved_micros, requested_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [(*row, (timestamps or {}).get(row[0])) for row in rows])
 
     def usage(self, input_tokens=100, output_tokens=20, complete=True,
               cache_write_tokens=0):
@@ -292,6 +296,118 @@ class StatsTests(unittest.TestCase):
             "complete": complete,
             "output_tokens": output_tokens,
         })
+
+    def test_cost_trends_use_utc_periods_and_all_three_ledgers_once(self):
+        def timestamp(value):
+            return int(datetime.fromisoformat(value).timestamp())
+
+        self.create_ledger("spend.sqlite3", [
+            ("dec", "pr:1:1:1", "audit", "gpt-6-luna", "2026-12",
+             "settled", self.usage(), 11, 0),
+            ("jan", "pr:1:1:1", "audit", "gpt-6-luna", "2027-01",
+             "settled", self.usage(), 13, 0),
+            ("sunday", "pr:1:1:1", "audit", "gpt-6-luna", "2027-01",
+             "settled", self.usage(), 17, 0),
+            ("monday", "pr:1:1:1", "audit", "gpt-6-luna", "2027-01",
+             "settled", self.usage(), 19, 0),
+            ("old-dec", "pr:1:1:1", "audit", "gpt-6-luna", "2026-12",
+             "settled", self.usage(), 23, 0),
+            ("old-jan", "pr:1:1:1", "audit", "gpt-6-luna", "2027-01",
+             "settled", self.usage(), 37, 0),
+        ], timestamps={
+            "dec": timestamp("2026-12-31T23:59:59+00:00"),
+            "jan": timestamp("2027-01-01T00:00:00+00:00"),
+            "sunday": timestamp("2027-01-04T00:59:59+01:00"),
+            "monday": timestamp("2027-01-04T01:00:00+01:00"),
+        })
+        monday = timestamp("2027-01-04T00:00:00+00:00")
+        self.create_ledger("ppq-spend.sqlite3", [
+            ("ppq", "pr:1:1:1", "adversarial", "glm-5.3", "2027-01",
+             "settled", self.usage(), 29, 0),
+            ("reserved", "pr:1:1:1", "adversarial", "glm-5.3", "2027-01",
+             "reserved", None, None, 500),
+            ("unknown", "pr:1:1:1", "adversarial", "glm-5.3", "2027-01",
+             "unknown", None, None, 700),
+        ], timestamps=dict.fromkeys(("ppq", "reserved", "unknown"), monday))
+        self.create_ledger("followup/spend.sqlite3", [
+            ("followup", "followup:1", "addressed", "gpt-6-luna", "2027-01",
+             "settled", self.usage(), 31, 0),
+            ("released", "followup:1", "addressed", "gpt-6-luna", "2027-01",
+             "released", None, None, 0),
+            ("duplicate", "followup:1", "addressed", "gpt-6-luna", "2027-01",
+             "duplicate", None, None, 0),
+        ], timestamps=dict.fromkeys(("followup", "released", "duplicate"), monday))
+        with patch.object(stats, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2027, 1, 4, 0, 0, 30, tzinfo=timezone.utc)
+            summary = stats.collect_stats(self.state_dir, self.report_dir)
+
+        trends = summary["cost_trends"]
+        self.assertEqual(trends["timezone"], "UTC")
+        self.assertEqual(trends["week_start"], "Monday")
+        self.assertEqual(trends["current_day"], {
+            "period": "2027-01-04", "request_count": 7, "known_cost_micros": 79,
+            "reserved_micros": 1200, "unknown_cost_request_count": 2})
+        self.assertEqual(trends["current_week"], trends["current_day"])
+        self.assertEqual(trends["current_month"], {
+            "period": "2027-01", "request_count": 10, "known_cost_micros": 146,
+            "reserved_micros": 1200, "unknown_cost_request_count": 2})
+        self.assertEqual([(row["period"], row["known_cost_micros"])
+                          for row in trends["days"]], [
+            ("2026-12-31", 11), ("2027-01-01", 13), ("2027-01-02", 0),
+            ("2027-01-03", 17), ("2027-01-04", 79)])
+        self.assertEqual([(row["period"], row["known_cost_micros"])
+                          for row in trends["weeks"]], [
+            ("2026-12-28", 41), ("2027-01-04", 79)])
+        self.assertEqual([(row["period"], row["known_cost_micros"])
+                          for row in trends["months"]], [("2026-12", 34), ("2027-01", 146)])
+        self.assertEqual(trends["undated"], {
+            "request_count": 2, "known_cost_micros": 60,
+            "reserved_micros": 0, "unknown_cost_request_count": 0})
+        self.assertEqual(summary["spend"]["lifetime"]["known_cost_micros"], 149)
+
+    def test_cost_trends_bound_windows_and_fill_only_observed_history(self):
+        self.create_ledger("spend.sqlite3", [
+            ("old", "pr:1:1:1", "audit", "gpt-6-luna", "2025-01",
+             "settled", self.usage(), 100, 0),
+        ], timestamps={"old": int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp())})
+        with patch.object(stats, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2027, 1, 4, tzinfo=timezone.utc)
+            trends = stats.collect_stats(self.state_dir, self.report_dir)["cost_trends"]
+        self.assertEqual(len(trends["days"]), 30)
+        self.assertEqual(trends["days"][0]["period"], "2026-12-06")
+        self.assertEqual(len(trends["weeks"]), 12)
+        self.assertEqual(trends["weeks"][0]["period"], "2026-10-19")
+        self.assertEqual(len(trends["months"]), 12)
+        self.assertEqual(trends["months"][0]["period"], "2026-02")
+        for period in ("current_day", "current_week", "current_month"):
+            self.assertEqual(trends[period]["request_count"], 0)
+            self.assertEqual(trends[period]["known_cost_micros"], 0)
+
+    def test_cost_trends_do_not_invent_dates_for_old_rows(self):
+        self.create_ledger("spend.sqlite3", [
+            ("old", "pr:1:1:1", "audit", "gpt-6-luna", "2026-12",
+             "settled", self.usage(), 100, 0),
+        ])
+        with patch.object(stats, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2027, 1, 4, tzinfo=timezone.utc)
+            trends = stats.collect_stats(self.state_dir, self.report_dir)["cost_trends"]
+        self.assertEqual(trends["days"], [])
+        self.assertEqual(trends["weeks"], [])
+        self.assertIsNone(trends["current_day"])
+        self.assertIsNone(trends["current_week"])
+        self.assertEqual(trends["undated"]["known_cost_micros"], 100)
+        self.assertEqual(trends["months"][0]["known_cost_micros"], 100)
+
+    def test_cost_trends_empty_ledgers_have_no_history(self):
+        for filename in ("spend.sqlite3", "ppq-spend.sqlite3", "followup/spend.sqlite3"):
+            self.create_ledger(filename, [])
+        trends = stats.collect_stats(self.state_dir, self.report_dir)["cost_trends"]
+        for period in ("days", "weeks", "months"):
+            self.assertEqual(trends[period], [])
+        self.assertIsNone(trends["current_day"])
+        self.assertIsNone(trends["current_week"])
+        self.assertEqual(trends["current_month"]["request_count"], 0)
+        self.assertEqual(trends["undated"]["request_count"], 0)
 
     def test_collects_public_stats_from_jobs_and_both_ledgers(self):
         month = datetime.now(timezone.utc).strftime("%Y-%m")
@@ -449,9 +565,17 @@ class StatsTests(unittest.TestCase):
         self.assertTrue(summary["inventory"]["missing_sources"]["openai_ledger"])
         self.assertTrue(
             summary["inventory"]["missing_sources"]["followup_assessments"])
+        self.assertEqual(summary["cost_trends"]["days"], [])
+        self.assertEqual(summary["cost_trends"]["months"], [])
 
         job = self.enqueue(50, "a" * 40)
         self.save_complete(job, self.result())
+        for filename in ("spend.sqlite3", "ppq-spend.sqlite3", "followup/spend.sqlite3"):
+            self.create_ledger(filename, [
+                ("old", "pr:50:1:1", "audit", "gpt-6-luna", "2026-09",
+                 "settled", self.usage(), 100, 0),
+            ])
+        ledger_bytes = {path: path.read_bytes() for path in self.state_dir.rglob("*.sqlite3")}
         real_connect = sqlite3.connect
         calls = []
 
@@ -466,6 +590,8 @@ class StatsTests(unittest.TestCase):
         for database, kwargs in calls:
             self.assertIn("mode=ro", database)
             self.assertTrue(kwargs["uri"])
+        for path, original in ledger_bytes.items():
+            self.assertEqual(path.read_bytes(), original)
 
     def test_current_month_provider_totals_do_not_reuse_lifetime_providers(self):
         month = datetime.now(timezone.utc).strftime("%Y-%m")

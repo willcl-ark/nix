@@ -448,9 +448,7 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       preStart = ''
-        if [ -e ${lib.escapeShellArg "${cfg.stateDir}/jobs.sqlite3"} ]; then
-          ${lib.getExe' cfg.package "ralph-service"} --state-dir ${lib.escapeShellArg cfg.stateDir} --migrate-state
-        fi
+        ${lib.getExe' cfg.package "ralph-service"} --state-dir ${lib.escapeShellArg cfg.stateDir} --migrate-state
       '';
 
       serviceConfig = {
