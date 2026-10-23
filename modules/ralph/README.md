@@ -109,33 +109,34 @@ findings or assign severity. Its `assessment` is one of `worth_pursuing`,
 selected code stage. The verifier checks decisive claims and technical
 assumptions before publishing supported, actionable objections to the PR's
 premise or approach, including when no code findings survive. It also records
-its own final review recommendation. The public "Concept and approach" section
-is a short paragraph and may include at most one alternative demonstrated to be
-better under the PR's actual requirements, accounting for its costs. It omits
-concerns already covered by design findings. Favorable assessments and rejected
-or inconclusive alternatives stay in the detailed trace; comments have no
-separate alternatives list. Unsupported assessments are withheld; editor
-failure retains the verified wording.
+its own final review recommendation. Public "Concept and approach" feedback is
+a short paragraph that omits concerns already covered by design findings.
+Separately, an "Alternatives" section may contain at most one independently
+verified suggestion that improves a meaningful dimension under the PR's actual
+requirements, with its tradeoffs stated. It can appear even when the PR's overall
+approach is sound. Favorable assessments and rejected or inconclusive alternatives
+stay in the detailed trace. Unsupported assessments are withheld; editor failure
+retains the verified wording. Alternatives use verifier-approved structured
+fields directly.
 
 After a valid concept candidate, blind alternatives are enabled by default. This
 uses the existing archaeologist model with base-only code tools and neutral
 problem, goal and baseline inputs. Its result goes to the verifier, not to
 discovery, and code review still runs every selected stage.
 
-The Luna design pass uses extra-high reasoning. Both adversarial reviews and
-Luna verification of sensitive reviews use high reasoning. These stages each
-have a 25,000-token allowance per response for reasoning and visible output
-combined. This is initial headroom, not a measured optimum or a request for
-longer findings. Concurrency uses medium reasoning with 8,000 tokens. Other
-stages use low reasoning; ordinary verification retains 8,000 tokens.
-Debug output records the settings and actual usage. OpenAI stages share their
-per-review spending ceiling. The PPQ passes share a separate ledger and have no spending ceiling by default.
+The [core stage table](../../pkgs/ralph/README.md#stages-models-and-evidence)
+lists the default models, reasoning effort, response token ceilings and evidence
+access for every stage. Token ceilings cover reasoning and visible output
+combined. Debug output records the settings and actual usage. OpenAI stages
+share their per-review spending ceiling. The two PPQ passes share a separate
+ledger and have no spending ceiling by default.
 
-Accepted design concerns appear under "Design and approach", after critical
-bugs and before the remaining findings. Empty sections are omitted. The Luna
-writing pass edits wording but cannot remove accepted findings or change their
-classification. It retains its 6,000-token output limit; an incomplete or
-invalid edit falls back to the verifier's wording without truncating findings.
+The public review presents findings first, then accepted design and concept
+concerns under "Design and approach", then optional "Alternatives". Empty
+sections are omitted. The Luna writing pass edits wording but cannot remove
+accepted findings or change their classification. It retains its 6,000-token
+output limit; an incomplete or invalid edit falls back to the verifier's wording
+without truncating findings.
 
 Routine discovery stages get up to 12 tool inspections, standard stages 24,
 and sensitive stages 48. The adversarial passes and verifier each get
@@ -157,9 +158,11 @@ accepted findings and a separately verified conceptual assessment. Python checks
 finding IDs and preserves verified
 locations and severity. A bad verifier finding is withheld without discarding
 other valid findings, and debug output identifies the validation error. Partial
-coverage alone does not discard findings. Broken candidate accounting or a
-failed verifier still prevents publication of unverified findings. If only
-editing fails, the verified wording is used.
+coverage alone does not discard findings. Unknown or repeated candidate IDs
+withhold affected decisions while preserving independently valid findings;
+affected and omitted candidates become unresolved. A malformed verifier envelope
+or decision structure rejects the entire response. If only editing fails, the
+verified wording is used.
 
 Each verified finding also carries a security classification and reason in
 structured results and report diagnostics. `potential_vulnerability`,
@@ -168,10 +171,11 @@ the finding deserves publication. This uses the existing verifier call and
 does not select additional audits or change publication behavior.
 
 The default OpenAI per-review spending ceiling is USD 1.00. It is an allowance for
-complex reviews, not a target spend. Lightweight routing still skips both adversarial passes and
-irrelevant specialist stages. Before each API request ralph reserves a
-conservative input/output cost estimate, holding some allowance for verification
-based on its actual model, input, response limit and bounded evidence headroom.
+complex reviews, not a target spend. Lightweight routing still skips all three
+adversarial passes and irrelevant specialist stages. Before each API request
+ralph reserves a conservative input/output cost estimate, holding some allowance
+for verification based on its actual model, input, response limit and bounded
+evidence headroom.
 The pipeline refreshes that protection as candidates accumulate or risk changes.
 Tool-enabled requests also preserve room for a final response. When another
 inspection cannot fit, the model is asked to finish from available evidence if

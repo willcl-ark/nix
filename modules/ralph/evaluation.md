@@ -90,8 +90,10 @@ for a maintainer to act. For clean cases, count unsupported defect claims as
 false positives. A proposed stop is false when the PR still deserved code review
 or later stages found useful code findings. Keep design feedback and concept
 assessment quality separate from correctness recall. Public concept feedback
-should contain only supported, actionable objections and at most one alternative
-shown to be better under the PR's requirements and costs. Check for duplicated
+should contain only supported, actionable objections. The separate "Alternatives"
+section may contain at most one independently verified suggestion that improves
+a meaningful dimension under the PR's requirements, with its tradeoffs stated.
+It can appear even when the PR's overall approach is sound. Check for duplicated
 design findings and unnecessary prose. Score favorable assessments and rejected
 or inconclusive alternatives from the detailed trace, where they are retained.
 
