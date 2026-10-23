@@ -1,7 +1,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from ralph import model
 
@@ -10,7 +10,7 @@ class ConceptToolTests(unittest.TestCase):
     def setUp(self):
         self.snapshot = SimpleNamespace(checkout="checkout", head_files={"new.cpp": "head"},
                                         base_files={"old.cpp": "base"}, changed_paths={"new.cpp"},
-                                        merge_base="base-sha", head_sha="head-sha")
+                                        merge_base="other", diff_base_sha="base-sha", head_sha="head-sha")
         self.prompts = SimpleNamespace(instructions="Review.", models={"independent": "gpt-6-luna"})
 
     def run_tools(self, calls, **kwargs):
@@ -29,7 +29,7 @@ class ConceptToolTests(unittest.TestCase):
 
         with patch.object(model, "request_response", side_effect=request):
             model.openai_review("key", "Problem and baseline.", self.snapshot,
-                                SimpleNamespace(), self.prompts, current_pr=42, **kwargs)
+                                self.prompts, **kwargs)
         return requests
 
     def test_concept_can_inspect_actual_base_and_head_behavior(self):
@@ -45,7 +45,7 @@ class ConceptToolTests(unittest.TestCase):
         with patch.object(model, "search_code", return_value="base matches") as search, \
                 patch.object(model, "read_file", return_value="base contents") as read, \
                 patch.object(model, "read_diff") as diff, \
-                patch.object(model.forgejo, "read_current_pr_discussion") as discussion:
+                patch.object(model, "read_commit") as discussion:
             requests = self.run_tools([
                 ("find_base_paths", {"query": ".cpp"}),
                 ("search_base_code", {"query": "existing facility"}),
@@ -66,18 +66,30 @@ class ConceptToolTests(unittest.TestCase):
     def test_frozen_research_never_advertises_hosted_web_or_calls_live_readers(self):
         evidence = {"frozen": "fixture"}
         for allow_live in (False, True):
+            live = Mock()
             with self.subTest(allow_live=allow_live), \
                     patch.object(model.research, "lookup", return_value="Frozen discussion") as lookup, \
-                    patch.object(model.forgejo, "read_current_pr_discussion") as live:
+                    patch.object(model, "read_commit") as unused:
                 requests = self.run_tools([
                     ("read_current_pr_discussion", {"kind": "comments", "page": 1, "review_id": 0}),
-                ], tools=model.ARCHAEOLOGY_TOOLS, allow_discussions=allow_live,
+                ], tools=model.ARCHAEOLOGY_TOOLS, discussion_lookup=live if allow_live else None, allow_web_search=True,
                     research_evidence=evidence)
             live.assert_not_called()
             lookup.assert_called_once_with(evidence, "read_current_pr_discussion",
                                            {"kind": "comments", "page": 1, "review_id": 0})
             self.assertNotIn("web_search", {tool["type"] for tool in requests[0]["tools"]})
             self.assertEqual(requests[-1]["input"][-1]["output"], "Frozen discussion")
+
+    def test_frozen_miss_without_pr_number_does_not_fall_back_to_reader(self):
+        evidence = {"schema_version": 1, "captured_at": "2026-10-23T00:00:00Z",
+                    "cutoff": "2026-10-23T00:00:00Z", "entries": []}
+        live = Mock()
+        requests = self.run_tools([
+            ("read_current_pr_discussion", {"kind": "comments", "page": 1, "review_id": 0}),
+        ], tools=model.ARCHAEOLOGY_TOOLS, discussion_lookup=live,
+            allow_web_search=True, research_evidence=evidence)
+        live.assert_not_called()
+        self.assertEqual(requests[-1]["input"][-1]["output"], model.research.MISSING_RESEARCH)
 
 
 if __name__ == "__main__":

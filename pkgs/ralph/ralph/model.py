@@ -6,7 +6,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import forgejo, research
+from . import research
 from .repository import (find_paths, read_file, read_diff, search_code, blame_base,
                          read_commit)
 from .spend import BudgetExceeded, web_search_calls
@@ -39,10 +39,10 @@ TOOLS = [
          "start_line": {"type": "integer", "description": "First line, starting at 1"}},
          "required": ["path", "start_line"], "additionalProperties": False}},
     {"type": "function", "name": "read_base_file", "strict": True,
-     "description": "Read numbered lines from a tracked text file at the PR merge base. "
+     "description": "Read numbered lines from a tracked text file at the comparison base. "
                     "Use to compare behavior before the PR.",
      "parameters": {"type": "object", "properties": {
-         "path": {"type": "string", "description": "Repository-relative file path at the merge base"},
+         "path": {"type": "string", "description": "Repository-relative file path at the comparison base"},
          "start_line": {"type": "integer", "description": "First line, starting at 1"}},
          "required": ["path", "start_line"], "additionalProperties": False}},
     {"type": "function", "name": "read_diff", "strict": True,
@@ -82,18 +82,18 @@ TOOLS = [
          "required": ["path", "start_line"], "additionalProperties": False}},
     {"type": "function", "name": "read_commit", "strict": True,
      "description": "Read an ancestor commit's message and bounded diff for one "
-                    "tracked file at the PR merge base.",
+                    "tracked file at the comparison base.",
      "parameters": {"type": "object", "properties": {
          "commit": {"type": "string", "description": "Full commit SHA from blame_base"},
          "path": {"type": "string", "description": "Repository-relative file path"}},
          "required": ["commit", "path"], "additionalProperties": False}},
     {"type": "function", "name": "find_base_paths", "strict": True,
-     "description": "Find tracked file paths at the pinned PR merge base, before the change.",
+     "description": "Find tracked file paths at the pinned comparison base, before the change.",
      "parameters": {"type": "object", "properties": {
          "query": {"type": "string"}},
          "required": ["query"], "additionalProperties": False}},
     {"type": "function", "name": "search_base_code", "strict": True,
-     "description": "Search tracked text at the pinned PR merge base for a literal string.",
+     "description": "Search tracked text at the pinned comparison base for a literal string.",
      "parameters": {"type": "object", "properties": {
          "query": {"type": "string"}},
          "required": ["query"], "additionalProperties": False}},
@@ -136,13 +136,14 @@ FINISH_WITH_AVAILABLE_EVIDENCE = (
     "still lacks decisive support.")
 
 
-def available_tools(tools, allow_discussions=True, research_evidence=None):
+def available_tools(tools, discussion_lookup=None, research_evidence=None,
+                    allow_web_search=False):
     """Frozen research may expose discussion readers, but never live web search."""
     return [tool for tool in tools
             if not (tool.get("type") in WEB_SEARCH_TOOL_TYPES
-                    and (not allow_discussions or research_evidence is not None))
+                    and (not allow_web_search or research_evidence is not None))
             and not (tool.get("name") in LIVE_RESEARCH_TOOL_NAMES
-                     and not allow_discussions and research_evidence is None)]
+                     and discussion_lookup is None and research_evidence is None)]
 
 class StaleReview(Exception):
     """The review no longer targets the current pull request head."""
@@ -301,18 +302,18 @@ def run_audit(api_key, name, prompt, review, prompt_config, notes="", on_respons
         return answer, record
     return answer, record
 
-def openai_review(api_key, review, snapshot, bot_config, prompt_config, debug=None,
-                  current_pr=None, prompt=None, model=None, tools=None,
+def openai_review(api_key, review, snapshot, prompt_config=None, debug=None, *,
+                  prompt=None, model=None, tools=None,
                   max_tool_calls=MAX_TOOL_CALLS, first_tool_required=True,
                   max_output_tokens=MAX_OUTPUT_TOKENS, stage_name="independent",
                   on_response=None, budget=None, response_schema=None,
-                  reasoning_effort="low", allow_discussions=True,
+                  reasoning_effort="low", discussion_lookup=None, allow_web_search=False,
                   is_current=None, api_base="https://api.openai.com/v1",
                   research_evidence=None, timeout=180, final_timeout=180):
     prompt = prompt_config.instructions if prompt is None else prompt
     model = prompt_config.models["independent"] if model is None else model
     tools = available_tools(TOOLS if tools is None else tools,
-                            allow_discussions, research_evidence)
+                            discussion_lookup, research_evidence, allow_web_search)
     allowed_tools = {tool["name"] for tool in tools if tool.get("type") == "function"}
     checkout = snapshot.checkout
     files = snapshot.head_files
@@ -488,43 +489,33 @@ def openai_review(api_key, review, snapshot, bot_config, prompt_config, debug=No
                                                args.get("start_line"))
                         elif call["name"] == "read_diff":
                             answer = read_diff(checkout, snapshot.changed_paths,
-                                               snapshot.merge_base, snapshot.head_sha,
+                                               snapshot.diff_base_sha, snapshot.head_sha,
                                                args.get("path"), args.get("start_line"))
                         elif call["name"] == "search_code":
                             answer = search_code(checkout, snapshot.head_sha, args.get("query"))
                         elif call["name"] == "search_base_code":
-                            answer = search_code(checkout, snapshot.merge_base, args.get("query"))
+                            answer = search_code(checkout, snapshot.diff_base_sha, args.get("query"))
                         elif call["name"] in LIVE_RESEARCH_TOOL_NAMES:
-                            if current_pr is None:
-                                answer = "Discussion lookup unavailable without the current PR number."
-                            elif context_calls >= MAX_CONTEXT_CALLS:
+                            if context_calls >= MAX_CONTEXT_CALLS:
                                 answer = "Discussion lookup limit reached."
                             else:
                                 context_calls += 1
                                 if research_evidence is not None:
                                     answer = research.lookup(research_evidence, call["name"], args)
-                                elif call["name"] == "search_discussions":
-                                    answer = forgejo.search_discussions(bot_config, args.get("query"), current_pr)
-                                elif call["name"] == "read_discussion":
-                                    answer = forgejo.read_discussion(bot_config, args.get("number"), current_pr)
-                                elif call["name"] == "read_current_pr_discussion":
-                                    answer = forgejo.read_current_pr_discussion(
-                                        bot_config, current_pr, args.get("kind"),
-                                        args.get("page"), args.get("review_id"))
+                                elif discussion_lookup is not None:
+                                    answer = discussion_lookup(call["name"], args)
                                 else:
-                                    answer = forgejo.read_github_discussion(
-                                        bot_config, args.get("url"), args.get("kind"),
-                                        args.get("page"))
+                                    answer = "Discussion lookup unavailable."
                         elif call["name"] in {"blame_base", "read_commit"}:
                             if history_calls >= MAX_HISTORY_CALLS:
                                 answer = "History lookup limit reached."
                             else:
                                 history_calls += 1
                                 if call["name"] == "blame_base":
-                                    answer = blame_base(checkout, snapshot.base_files, snapshot.merge_base,
+                                    answer = blame_base(checkout, snapshot.base_files, snapshot.diff_base_sha,
                                                         args.get("path"), args.get("start_line"))
                                 else:
-                                    answer = read_commit(checkout, snapshot.base_files, snapshot.merge_base,
+                                    answer = read_commit(checkout, snapshot.base_files, snapshot.diff_base_sha,
                                                          args.get("commit"), args.get("path"))
                         else:
                             answer = "Unknown tool."

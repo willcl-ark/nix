@@ -200,11 +200,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.debug["stages"]["script"]["status"], "skipped")
 
     def setUp(self):
-        self.config = config.BotConfig("https://example.invalid/repo.git", "o/r",
-                                      "https://example.invalid/api/v1/repos/o/r")
+        self.source = {"kind": "pull_request", "url": "https://example.invalid/o/r/pulls/42", "number": 42}
         self.prompts = config.PromptConfig.load()
         self.snapshot = repository.RepositorySnapshot(
-            Path("/unused"), "b"*40, "a"*40, "b"*40,
+            Path("/unused"), "b"*40, "a"*40, "b"*40, "b"*40,
             {"src/example.cpp": "blob"}, {"src/example.cpp": "base"},
             frozenset({"src/example.cpp"}))
         self.published = {"kind": "suggestion", "severity": "suggestion", "path": "src/example.cpp", "line": 3,
@@ -255,7 +254,8 @@ class PipelineTests(unittest.TestCase):
         ]}), {"status": "completed"}
 
     def run_review(self, reviewer, editor=None, budget=None, ppq_api_key=None, ppq_budget=None,
-                   allow_discussions=True, research_evidence=None, blind_alternatives=False):
+                   allow_discussions=True, research_evidence=None, blind_alternatives=False,
+                   archaeology_enabled=None):
         def wrapped_reviewer(*args, **kwargs):
             if kwargs["stage_name"] == "archaeologist":
                 if getattr(self, "record_archaeologist_call", False):
@@ -272,14 +272,17 @@ class PipelineTests(unittest.TestCase):
                 patch.object(model, "run_audit", side_effect=editor or self.edit), \
                 patch.object(protocol, "read_file", return_value="src/example.cpp (3 lines):\n3: setup();\n"), \
                 patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
-            case = engine.ReviewCase(42, "PR diff", self.snapshot,
-                                     self.config.repository_url, research_evidence)
+            case = engine.ReviewCase("PR diff", self.snapshot,
+                                     self.source, research_evidence)
             runtime = engine.Runtime(
-                case=case, bot_config=self.config, api_key="key",
+                case=case, api_key="key",
                 ppq_api_key=ppq_api_key, budget=budget, ppq_budget=ppq_budget,
-                allow_discussions=allow_discussions, attempt=self.debug)
+                discussion_lookup=(lambda name, args: "Discussion") if allow_discussions else None,
+                attempt=self.debug)
             return pipeline.review_with_independent_passes(
-                case, runtime, self.prompts, blind_alternatives=blind_alternatives)
+                case, runtime, self.prompts, blind_alternatives=blind_alternatives,
+                archaeology=(allow_discussions or research_evidence is not None)
+                if archaeology_enabled is None else archaeology_enabled)
 
     def test_parallel_adversarial_models_share_context_and_attribute_merged_finding(self):
         self.tier, self.audits = "sensitive", []
@@ -378,7 +381,7 @@ class PipelineTests(unittest.TestCase):
             efforts[stage] = kwargs["reasoning_effort"]
             output_limits[stage] = kwargs["max_output_tokens"]
             if stage == "design":
-                args[5]["turns"].append({"input_tokens": 100, "output_tokens": 10})
+                args[4]["turns"].append({"input_tokens": 100, "output_tokens": 10})
                 raise TimeoutError()
             if stage == "verifier":
                 return verification()
@@ -457,7 +460,7 @@ class PipelineTests(unittest.TestCase):
         for profile in self.profiles:
             self.assertIn(self.prompts.audit_prompts[profile], prompts["adversarial"])
         self.assertNotIn(self.prompts.audit_prompts["p2p"], prompts["adversarial"])
-        self.assertIn("Merge-base developer notes:\nPolicy", inputs["design"])
+        self.assertIn("Comparison-base developer notes:\nPolicy", inputs["design"])
         self.assertNotIn("Duplicate setup", inputs["state"])
         self.assertIn("Duplicate setup", inputs["verifier"])
 
@@ -528,33 +531,24 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.debug["concept_assessment"]["status"], "failed")
         self.assertEqual(self.debug["stages"]["archaeologist"]["status"], "invalid")
 
-    def test_archaeology_runs_when_discussions_are_disabled(self):
+    def test_archaeology_off_skips_dependent_stages_and_preserves_code_review(self):
         self.tier, self.audits = "routine", []
-        archaeology_inputs = []
+        calls = []
 
         def review(*args, **kwargs):
+            calls.append(kwargs["stage_name"])
             return verification() if kwargs["stage_name"] == "verifier" else discovery()
 
-        def wrapped_reviewer(*args, **kwargs):
-            if kwargs["stage_name"] == "archaeologist":
-                archaeology_inputs.append(args[1])
-                self.assertFalse(kwargs["allow_discussions"])
-                return archaeology()
-            return review(*args, **kwargs)
-
-        with patch.object(pipeline.routing, "plan_review", side_effect=self.plan), \
-                patch.object(model, "openai_review", side_effect=wrapped_reviewer), \
-                patch.object(model, "run_audit", side_effect=self.edit), \
-                patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
-            case = engine.ReviewCase(42, "PR diff", self.snapshot,
-                                     self.config.repository_url)
-            runtime = engine.Runtime(case=case, bot_config=self.config,
-                                     api_key="key", allow_discussions=False,
-                                     attempt=self.debug)
-            pipeline.review_with_independent_passes(case, runtime, self.prompts)
-
-        self.assertEqual(self.debug["stages"]["archaeologist"]["status"], "completed")
-        self.assertIn("Discussion lookup is disabled", archaeology_inputs[0])
+        content = self.run_review(review, allow_discussions=False, blind_alternatives=True)
+        self.assertNotIn("archaeologist", calls)
+        self.assertNotIn("alternatives", calls)
+        self.assertIn("independent", calls)
+        self.assertIn("verifier", calls)
+        self.assertEqual(self.debug["stages"]["archaeologist"]["status"], "skipped")
+        self.assertEqual(self.debug["stages"]["alternatives"]["status"], "skipped")
+        self.assertEqual(self.debug["concept_assessment"]["status"], "skipped")
+        self.assertEqual(self.debug["coverage"]["context"]["status"], "not_requested")
+        self.assertIn("no actionable issues", content)
 
     def test_verifier_protection_tracks_candidates_and_sensitive_escalation(self):
         self.tier, self.audits = "standard", ["tests"]
@@ -591,7 +585,8 @@ class PipelineTests(unittest.TestCase):
 
     def test_research_evidence_is_forwarded_and_removes_hosted_web_from_protection(self):
         self.tier, self.audits = "routine", []
-        research_evidence = {"threads": []}
+        research_evidence = {"schema_version": 1, "captured_at": "2026-10-23T00:00:00Z",
+                             "cutoff": "2026-10-23T00:00:00Z", "entries": []}
         self.capture_research_evidence = True
         self.research_forwards = []
         self.research_inputs = {}
@@ -619,8 +614,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertIn(("archaeologist", research_evidence), self.research_forwards)
         self.assertIn(("verifier", research_evidence), self.research_forwards)
-        self.assertTrue(all(item is None for stage, item in self.research_forwards
-                            if stage not in {"archaeologist", "verifier"}))
+        self.assertTrue(all(item == research_evidence for stage, item in self.research_forwards))
         self.assertIn("Known frozen calls", self.research_inputs["archaeologist"])
         self.assertIn("Known frozen calls", self.research_inputs["verifier"])
         self.assertNotIn("Known frozen calls", self.research_inputs["independent"])
@@ -823,9 +817,9 @@ class PipelineTests(unittest.TestCase):
         content = self.run_review(review, allow_discussions=False)
 
         self.assertNotIn("Concept and approach", content)
-        self.assertEqual(self.debug["concept_assessment"]["status"], "no_concern")
-        self.assertEqual(self.debug["stages"]["archaeologist"]["status"], "completed")
-        self.assertTrue(all(tool.get("type") != "web_search" for tool in archaeology_tools))
+        self.assertEqual(self.debug["concept_assessment"]["status"], "skipped")
+        self.assertEqual(self.debug["stages"]["archaeologist"]["status"], "skipped")
+        self.assertEqual(archaeology_tools, [])
 
 
 if __name__ == "__main__":

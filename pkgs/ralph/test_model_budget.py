@@ -45,7 +45,7 @@ class ModelBudgetTests(unittest.TestCase):
         self.prompt_config = SimpleNamespace(instructions="Review.", models=self.models)
         self.snapshot = SimpleNamespace(checkout=".", head_files=[],
                                         base_files=[], changed_paths=[],
-                                        merge_base="base", head_sha="head")
+                                        merge_base="other", diff_base_sha="base", head_sha="head")
 
     def test_settles_before_callback_and_refunds_only_definite_http_rejections(self):
         budget = FakeBudget()
@@ -128,7 +128,7 @@ class ModelBudgetTests(unittest.TestCase):
                     side_effect=[Response(item) for item in results]) as send, patch.object(
                     model, "read_file", return_value="1: evidence"):
                 self.assertEqual(model.openai_review(
-                    "secret", "patch", self.snapshot, SimpleNamespace(), self.prompt_config,
+                    "secret", "patch", self.snapshot, self.prompt_config,
                     model=model_name, response_schema=schema,
                     api_base="https://api.ppq.ai/v1"), "{}")
                 first, final = [json.loads(call.args[0].data)
@@ -151,10 +151,10 @@ class ModelBudgetTests(unittest.TestCase):
         ]
         with patch.object(model.urllib.request, "urlopen",
                           side_effect=[Response(item) for item in results]) as send, \
-                patch.object(model.forgejo, "search_discussions") as lookup:
+                patch.object(model, "read_commit") as lookup:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, SimpleNamespace(), self.prompt_config,
-                allow_discussions=False)
+                "secret", "patch", self.snapshot, self.prompt_config,
+                allow_web_search=False)
         lookup.assert_not_called()
         self.assertEqual(answer, "No findings.")
         sent = json.loads(send.call_args_list[0].args[0].data)
@@ -185,7 +185,7 @@ class ModelBudgetTests(unittest.TestCase):
                           side_effect=[Response(item) for item in results]) as send, \
                 patch.object(model, "read_file", return_value="1: evidence") as read:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, SimpleNamespace(), self.prompt_config,
+                "secret", "patch", self.snapshot, self.prompt_config,
                 debug, max_tool_calls=2, budget=budget,
                 reasoning_effort="xhigh", max_output_tokens=25_000)
         self.assertEqual(answer, raw)
@@ -213,7 +213,7 @@ class ModelBudgetTests(unittest.TestCase):
                           side_effect=[Response(item) for item in results]) as send, \
                 patch.object(model, "read_file", return_value="1: evidence") as read:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, SimpleNamespace(), self.prompt_config,
+                "secret", "patch", self.snapshot, self.prompt_config,
                 max_tool_calls=12)
         self.assertEqual(answer, "Review complete.")
         self.assertEqual(read.call_count, 12)
@@ -239,9 +239,9 @@ class ModelBudgetTests(unittest.TestCase):
         with patch.object(model.urllib.request, "urlopen",
                           side_effect=[Response(item) for item in results]) as send:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, SimpleNamespace(), self.prompt_config,
+                "secret", "patch", self.snapshot, self.prompt_config,
                 debug, tools=model.ARCHAEOLOGY_TOOLS, max_tool_calls=12,
-                stage_name="archaeologist")
+                stage_name="archaeologist", allow_web_search=True)
 
         self.assertEqual(answer, "Review complete.")
         first = json.loads(send.call_args_list[0].args[0].data)
@@ -263,7 +263,7 @@ class ModelBudgetTests(unittest.TestCase):
                 patch.object(model, "read_file", return_value="1: content"):
             with self.assertRaises(model.StaleReview):
                 model.openai_review(
-                    "secret", "patch", self.snapshot, SimpleNamespace(), self.prompt_config,
+                    "secret", "patch", self.snapshot, self.prompt_config,
                     budget=budget, is_current=lambda: next(states))
         send.assert_called_once()
         self.assertEqual([event[0] for event in budget.events], ["reserve", "settle"])
@@ -286,8 +286,8 @@ class ModelBudgetTests(unittest.TestCase):
         self.assertEqual(stage["raw_output"], raw)
         self.assertEqual(stage["turns"][0]["response_id"], "response-partial")
 
-    def test_trace_prices_each_turn_and_clips_public_raw_output(self):
-        raw = "X" * (trace.MAX_PUBLIC_STAGE_OUTPUT_BYTES + 1)
+    def test_trace_prices_each_turn(self):
+        raw = "X" * 4001
         stage = {"model": "gpt-6-luna", "status": "completed",
                  "raw_output": raw, "tools": [], "turns": [
                      {"model": "gpt-6-luna-2026-09-29", "response_id": "r1",
@@ -312,17 +312,10 @@ class ModelBudgetTests(unittest.TestCase):
             "run": {"status": "completed", "metrics": {}, "budget": debug["budget"],
                     "attempt": {}},
         }
-        public = trace.review_trace(result)
         self.assertEqual(metrics["known_usage_count"], 1)
         self.assertEqual(metrics["unknown_usage_count"], 1)
         self.assertEqual(metrics["incomplete_usage_count"], 1)
         self.assertFalse(metrics["usage_complete"])
-        self.assertEqual(len(public["stages"]["state"]["raw_output"].encode()),
-                         trace.MAX_PUBLIC_STAGE_OUTPUT_BYTES)
-        self.assertTrue(public["stages"]["state"]["raw_output_truncated"])
-        self.assertEqual(public["routing"], debug["routing"])
-        self.assertEqual(public["coverage"], debug["coverage"])
-        self.assertEqual(public["budget"], debug["budget"])
 
     def test_budget_rejection_has_no_request_turn(self):
         class RejectedBudget:
@@ -337,7 +330,7 @@ class ModelBudgetTests(unittest.TestCase):
         stage = {"model": "gpt-6-luna", "status": "running", "turns": [], "tools": []}
         with patch.object(model.urllib.request, "urlopen") as send:
             with self.assertRaises(BudgetExceeded):
-                model.openai_review("secret", "patch", self.snapshot, SimpleNamespace(),
+                model.openai_review("secret", "patch", self.snapshot,
                                     self.prompt_config, stage, budget=budget)
         send.assert_not_called()
         self.assertEqual(budget.choices, ["required"])
@@ -383,7 +376,7 @@ class ModelBudgetTests(unittest.TestCase):
                           side_effect=[Response(first), Response(final)]) as send, \
                 patch.object(model, "read_file", return_value="1: evidence") as read:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, SimpleNamespace(),
+                "secret", "patch", self.snapshot,
                 self.prompt_config, debug, budget=budget, response_schema=schema,
                 api_base="https://api.ppq.ai/v1")
         self.assertEqual(answer, raw)

@@ -9,7 +9,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ralph import config, engine, evaluate, forgejo, pipeline, research, spend, trace
+from ralph import config as core_config
+from ralph import research as frozen_research
+from ralph import trace as core_trace
+from ralph_service import config, evaluate, forgejo, research, trace
+from ralph import engine, pipeline, spend
 
 
 class StatsCliTests(unittest.TestCase):
@@ -51,7 +55,7 @@ class EvaluateTests(unittest.TestCase):
         self.git(self.work, "push", "origin", "HEAD:refs/pull/42/head")
         self.bot_config = config.BotConfig(str(self.origin), "example/repo",
             "https://git.example.org/api/v1/repos/example/repo")
-        self.prompt_config = config.PromptConfig.load()
+        self.prompt_config = core_config.PromptConfig.load()
         self.review_engine = engine.load("current", {
             "prompts": {"instructions": self.prompt_config.instructions,
                         "audit_prompts": self.prompt_config.audit_prompts,
@@ -99,7 +103,7 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(case["research_evidence_sha256"],
                          evaluate.digest(case["research_evidence"]))
         self.assertIn("read_current_pr_discussion",
-                      research.inventory(case["research_evidence"]))
+                      frozen_research.inventory(case["research_evidence"]))
         self.assertEqual(case["source_code_sha256"], evaluate.source_code_sha256())
         self.assertEqual(self.git(self.checkout, "rev-parse", case["head_pin"]),
                          case["head_sha"])
@@ -127,16 +131,17 @@ class EvaluateTests(unittest.TestCase):
         ledger = spend.Ledger(self.root / "state" / "spend.sqlite3")
 
         def review(review_case, runtime, prompt_config, routing_mode,
-                   blind_alternatives):
+                   blind_alternatives, archaeology):
             self.assertEqual(review_case.review, case["review_input"])
             self.assertNotIn("Expected issue", review_case.review)
             self.assertEqual(review_case.snapshot.head_sha, case["head_sha"])
             self.assertEqual(review_case.snapshot.merge_base, case["merge_base"])
             self.assertEqual(prompt_config.models, self.prompt_config.models)
-            self.assertIs(runtime.allow_discussions, False)
+            self.assertIsNone(runtime.discussion_lookup)
+            self.assertIs(runtime.allow_web_search, False)
             self.assertIsNotNone(review_case.research_evidence)
             self.assertIn("read_current_pr_discussion",
-                          research.inventory(review_case.research_evidence))
+                          frozen_research.inventory(review_case.research_evidence))
             self.assertEqual(routing_mode, "shadow")
             runtime.debug["stage_outputs"] = {"verifier": "raw verifier"}
             seen.append(review_case.snapshot)
@@ -206,7 +211,7 @@ class EvaluateTests(unittest.TestCase):
         ledger = spend.Ledger(self.root / "state" / "spend.sqlite3")
 
         def fail(review_case, runtime, prompt_config, routing_mode,
-                 blind_alternatives):
+                 blind_alternatives, archaeology):
             budget = runtime.budget
             token = budget.reserve("router", {"model": "gpt-6-luna",
                                               "max_output_tokens": 100})
@@ -236,7 +241,7 @@ class EvaluateTests(unittest.TestCase):
         ledger = spend.Ledger(self.root / "state" / "spend.sqlite3")
 
         def review(review_case, runtime, prompt_config, routing_mode,
-                   blind_alternatives):
+                   blind_alternatives, archaeology):
             self.assertEqual(review_case.review, frozen["review_input"])
             self.assertEqual(prompt_config.models["verifier"], "gpt-6.1-sol")
             return "Review with override."
@@ -293,7 +298,7 @@ class EvaluateTests(unittest.TestCase):
         seen = []
 
         def review(review_case, runtime, prompt_config, routing_mode,
-                   blind_alternatives):
+                   blind_alternatives, archaeology):
             seen.append(blind_alternatives)
             return "Review."
 
@@ -345,7 +350,7 @@ class EvaluateTests(unittest.TestCase):
         else:
             artifact["output"] = None
         run = {"status": status,
-               "metrics": trace.review_metrics(debug, None)
+               "metrics": core_trace.review_metrics(debug, None)
                if engine_name == "current" else
                {"estimated_cost_usd": 0.0, "unknown_usage_count": 0,
                 "incomplete_usage_count": 0},

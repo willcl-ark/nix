@@ -12,8 +12,9 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from urllib.parse import quote
 
-from . import trace
-from .spend import SNAPSHOT_MODEL
+from ralph import trace as core_trace
+
+from ralph.spend import SNAPSHOT_MODEL
 
 
 MICRODOLLARS = Decimal("1000000")
@@ -120,8 +121,8 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         if result is None:
             continue
         inventory["saved_results"] += 1
-        debug = trace.current_diagnostics(result)
-        exported_findings = trace.findings_export(result)
+        debug = core_trace.current_diagnostics(result)
+        exported_findings = core_trace.findings_export(result)
         skipped = _skipped_result(result)
         if skipped:
             inventory["skipped_results"] += 1
@@ -207,7 +208,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
                             if debug else None),
             "ledger": observed_ledger_totals,
             "tokens": observed_ledger_totals["tokens"],
-            "runtime_metrics": trace.result_metrics(result) or {},
+            "runtime_metrics": core_trace.result_metrics(result) or {},
             "tool_calls": metrics["tool_calls"],
             "model_seconds": metrics["model_seconds"],
             "saved_trace_known_estimated_cost_micros": (
@@ -844,14 +845,14 @@ def _strings(value):
 
 
 def _published_findings(result):
-    findings = trace.findings_export(result)
+    findings = core_trace.findings_export(result)
     if findings is None:
         return None
     return [item for item in findings if isinstance(item, dict)]
 
 
 def _published_finding_ids(result):
-    findings = trace.findings_export(result)
+    findings = core_trace.findings_export(result)
     if findings is None:
         return set()
     return {item["id"] for item in findings
@@ -867,7 +868,7 @@ def _has_attribution(result, findings):
 
 
 def _concept_summary(debug):
-    concept = trace.concept_assessment(debug)
+    concept = core_trace.concept_assessment(debug)
     if not concept:
         return {"published_concern": False}
     verification = concept.get("verification") if isinstance(concept.get("verification"), dict) else {}
@@ -880,7 +881,7 @@ def _concept_summary(debug):
             citations.extend(alternative["citations"])
     status = concept.get("status") if isinstance(concept.get("status"), str) else "unknown"
     stage = concept.get("stage") if isinstance(concept.get("stage"), str) else None
-    published_concern = trace.published_concept_concern(debug)
+    published_concern = core_trace.published_concept_concern(debug)
     return {
         "published_concern": published_concern,
         "status": status,
@@ -928,7 +929,7 @@ def _add_finding_counts(overview, findings):
 
 def _saved_review_metrics(debug, result):
     if not debug:
-        common = trace.result_metrics(result)
+        common = core_trace.result_metrics(result)
         if common is None:
             return {"tool_calls": None, "model_seconds": None,
                     "saved_trace_known_estimated_cost_micros": None}
@@ -953,7 +954,7 @@ def _saved_review_metrics(debug, result):
         for turn in turns:
             if isinstance(turn, dict) and isinstance(turn.get("elapsed_seconds"), (int, float)):
                 model_seconds += Decimal(str(turn["elapsed_seconds"]))
-    for metric in trace.stage_metrics(debug).values():
+    for metric in core_trace.stage_metrics(debug).values():
         saved_cost += _usd_to_micros(metric.get("known_estimated_cost_usd", 0))
     return {
         "model_turns": model_turns,
@@ -1145,7 +1146,7 @@ def _stage_findings(debug, name, stage, row, report_name):
         output = {}
     originals = output.get("findings", []) if isinstance(output, dict) else []
     originals = originals if isinstance(originals, list) else []
-    attribution = trace.finding_attribution(debug)
+    attribution = core_trace.finding_attribution(debug)
     records = []
     for identifier, source in sorted(sources.items()):
         if source != name:
@@ -1176,8 +1177,8 @@ def _stage_findings(debug, name, stage, row, report_name):
 
 
 def _add_stage_results(stages, debug, row, report_name):
-    metrics = trace.stage_metrics(debug)
-    attribution_known = bool(trace.finding_attribution(debug))
+    metrics = core_trace.stage_metrics(debug)
+    attribution_known = bool(core_trace.finding_attribution(debug))
     has_publish = any(isinstance(decision, dict)
                       and decision.get("disposition") == "publish"
                       for decision in debug.get("decisions", []))
@@ -1325,7 +1326,7 @@ def _add_adversarial_comparison(paired, debug, requests):
                and stages[name].get("status") == "completed"
                for name in ADVERSARIAL_STAGES):
         return
-    metrics = trace.stage_metrics(debug)
+    metrics = core_trace.stage_metrics(debug)
     paired["completed_reviews"] += 1
     for name in ADVERSARIAL_STAGES:
         paired["sole_accepted"][name] += metrics.get(name, {}).get(

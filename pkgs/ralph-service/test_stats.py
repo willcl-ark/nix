@@ -8,9 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from ralph import stats
-from ralph import trace
-from ralph.jobs import JobStore
+from ralph import trace as core_trace
+from ralph_service import stats
+
+from ralph_service import trace
+
+from ralph_service.jobs import JobStore
 
 
 class StatsTests(unittest.TestCase):
@@ -62,7 +65,7 @@ class StatsTests(unittest.TestCase):
                            "data": {"schema_version": 1, **debug},
                            "exports": {"findings": exported}},
                 "run": {"status": "completed",
-                        "metrics": trace.review_metrics(debug, None),
+                        "metrics": core_trace.review_metrics(debug, None),
                         "budget": debug.get("budget"), "attempt": {},
                         "skipped": bool(debug.get("skip"))},
             }
@@ -421,7 +424,7 @@ class StatsTests(unittest.TestCase):
         metrics = {name: {"sole_source_findings": index,
                           "shared_findings": 1}
                    for index, name in enumerate(stats.ADVERSARIAL_STAGES, 1)}
-        with patch.object(trace, "stage_metrics", return_value=metrics):
+        with patch.object(core_trace, "stage_metrics", return_value=metrics):
             stats._add_adversarial_comparison(comparison, debug, requests)
             debug["stages"]["adversarial_gemini"]["status"] = "failed"
             stats._add_adversarial_comparison(comparison, debug, requests)

@@ -7,7 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-from ralph import jobs
+from ralph_service import jobs
+
 
 ENGINE = {"name": "current", "code_sha256": "a" * 64,
           "config_sha256": "b" * 64, "config": {}}

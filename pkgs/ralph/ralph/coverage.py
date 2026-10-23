@@ -129,7 +129,9 @@ def summarize(debug):
     return {
         "status": _status([*inspections, verification]),
         "limitations": list(dict.fromkeys(limitations)),
-        "context": {"status": _status(contexts), "limitations": context_limits},
+        "context": {"status": ("not_requested" if not contexts
+                                and (debug.get("concept_assessment") or {}).get("status") == "skipped"
+                                else _status(contexts)), "limitations": context_limits},
         "verification": {"status": verification, "limitations": verification_limits},
         "issues": issues,
         "notes": notes,

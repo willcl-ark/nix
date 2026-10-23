@@ -1,5 +1,11 @@
-"""Git collection and bounded reads from a pull request snapshot."""
+"""Local committed comparisons and bounded reads from immutable Git objects."""
+import os
 import re
+import select
+import time
+import tempfile
+import uuid
+from contextlib import contextmanager
 import subprocess
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -15,29 +21,86 @@ MAX_FOLLOWUP_PATH_DIFF_BYTES = 20_000
 SHA = re.compile(r"^[0-9a-f]{40}$")
 BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
 
+def git_environment():
+    # Never let object reads contact a promisor remote or invoke repository hooks.
+    return {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_LITERAL_PATHSPECS": "1", "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull, "GIT_ATTR_NOSYSTEM": "1", "LC_ALL": "C"}
+
+
+def git_command(checkout, *args):
+    return ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null",
+            "-C", str(checkout), *args]
+
+
 def git(checkout, *args):
     return subprocess.run(
-        ["git", "-C", str(checkout), *args], check=True, capture_output=True,
-        text=True, timeout=180,
+        git_command(checkout, *args), check=True, capture_output=True,
+        text=True, timeout=180, env=git_environment(),
     ).stdout
+
+@contextmanager
+def object_git_command(checkout, args, attr_source):
+    if attr_source is None:
+        yield git_command(checkout, *args), git_environment()
+        return
+    # --attr-source selects committed attributes but still reads info/attributes.
+    # An empty bare metadata directory excludes local overrides and diff drivers.
+    objects = git(checkout, "rev-parse", "--path-format=absolute", "--git-path", "objects").strip()
+    with tempfile.TemporaryDirectory(prefix="ralph-git-") as directory:
+        git(directory, "init", "--bare", "--template=", "-q")
+        env = git_environment()
+        env.update(GIT_DIR=directory, GIT_COMMON_DIR=directory, GIT_OBJECT_DIRECTORY=objects)
+        env.pop("GIT_WORK_TREE", None)
+        env.pop("GIT_INDEX_FILE", None)
+        yield git_command(directory, f"--attr-source={attr_source}", *args), env
+
+
+def bounded_git(checkout, *args, max_bytes, attr_source=None):
+    """Read at most the requested bytes plus one truncation sentinel."""
+    with object_git_command(checkout, args, attr_source) as (command, env):
+        process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, env=env)
+        output = bytearray()
+        deadline = time.monotonic() + 180
+        try:
+            while len(output) <= max_bytes:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    raise subprocess.TimeoutExpired(process.args, 180)
+                chunk = os.read(process.stdout.fileno(), min(65536, max_bytes + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+            raise
+        finally:
+            if process.poll() is None and (len(output) > max_bytes or time.monotonic() >= deadline):
+                process.kill()
+            process.wait(timeout=10)
+            process.stdout.close()
+        if len(output) <= max_bytes and process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, process.args)
+        output = bytes(output)
+        return output
+
 
 def has_commit(checkout, commit):
     if not isinstance(commit, str) or not SHA.fullmatch(commit):
         return False
     return subprocess.run(
-        ["git", "-C", str(checkout), "cat-file", "-e", f"{commit}^{{commit}}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+        git_command(checkout, "cat-file", "-e", f"{commit}^{{commit}}"),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, env=git_environment(),
     ).returncode == 0
 
 def diff_between_heads(checkout, old_head, new_head, max_bytes=MAX_FOLLOWUP_DIFF_BYTES):
     if (not isinstance(old_head, str) or not SHA.fullmatch(old_head)
             or not isinstance(new_head, str) or not SHA.fullmatch(new_head)):
         raise ValueError("invalid head SHA")
-    output = subprocess.run(
-        ["git", "-C", str(checkout), "diff", "--no-ext-diff", "--no-color",
-         f"{old_head}..{new_head}"],
-        check=True, capture_output=True, timeout=180,
-    ).stdout
+    output = bounded_git(checkout, "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+                         f"{old_head}..{new_head}", max_bytes=max_bytes, attr_source=new_head)
     return output[:max_bytes].decode(errors="replace") + (
         "\n[Diff truncated]" if len(output) > max_bytes else "")
 
@@ -47,11 +110,9 @@ def diff_path_between_heads(checkout, old_head, new_head, path,
             or not isinstance(new_head, str) or not SHA.fullmatch(new_head)
             or not isinstance(path, str) or "\x00" in path):
         return "Invalid path diff request."
-    output = subprocess.run(
-        ["git", "-C", str(checkout), "diff", "--no-ext-diff", "--no-color",
-         f"{old_head}..{new_head}", "--", path],
-        check=True, capture_output=True, timeout=180,
-    ).stdout
+    output = bounded_git(checkout, "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+                         f"{old_head}..{new_head}", "--", path, max_bytes=max_bytes,
+                         attr_source=new_head)
     return output[:max_bytes].decode(errors="replace") + (
         "\n[Path diff truncated]" if len(output) > max_bytes else "")
 
@@ -67,48 +128,6 @@ def file_excerpt_at(checkout, commit, path, line, context=30):
     return (f"{path} at {commit} near line {line}:\n"
             + read_file(checkout, files, path, max(1, line - context)))
 
-def prepare_checkout(checkout, bot_config):
-    if not (checkout / ".git").exists():
-        checkout.mkdir(parents=True, exist_ok=True)
-        git(checkout, "init", "-q")
-        git(checkout, "remote", "add", "origin", bot_config.origin)
-    if git(checkout, "remote", "get-url", "origin").strip() != bot_config.origin:
-        raise ValueError("checkout origin does not match configured repository")
-
-def collect_review(checkout, number, base_ref, expected_head, title, description, bot_config,
-                   *, ref_prefix="refs/ralph"):
-    prepare_checkout(checkout, bot_config)
-    base_fetch_ref = f"{ref_prefix}/base"
-    head_fetch_ref = f"{ref_prefix}/head"
-    if base_ref.startswith("sha:"):
-        base_source = base_ref.removeprefix("sha:")
-        if not SHA.fullmatch(base_source):
-            raise ValueError("invalid historical base")
-    else:
-        base_source = f"refs/heads/{base_ref}"
-    git(checkout, "fetch", "--no-tags", "--filter=blob:none", "origin",
-        f"+{base_source}:{base_fetch_ref}",
-        f"+refs/pull/{number}/head:{head_fetch_ref}")
-    actual_head = git(checkout, "rev-parse", head_fetch_ref).strip()
-    base_sha = git(checkout, "rev-parse", base_fetch_ref).strip()
-    if actual_head != expected_head:
-        return base_sha, actual_head, None, "PR head changed before review"
-    merge_base = git(checkout, "merge-base", base_sha, actual_head).strip()
-    commits = git(checkout, "log", "--reverse", "--format=%H%n%B%n%x00", f"{merge_base}..{actual_head}")
-    patch = git(checkout, "diff", "--no-ext-diff", "--binary", f"{merge_base}..{actual_head}")
-    prelude = (f"PR title: {title}\nPR description:\n{description}\n"
-               f"Commits:\n{commits}\n")
-    review = f"{prelude}Patch:\n{patch}"
-    if len(review.encode()) > MAX_REVIEW_BYTES:
-        changed = git(checkout, "diff", "--no-ext-diff", "--name-status",
-                      f"{merge_base}..{actual_head}")
-        review = (f"{prelude}Patch exceeds {MAX_REVIEW_BYTES} input bytes. "
-                  "Use read_diff to inspect changed files.\nChanged files:\n"
-                  f"{changed}")
-        if len(review.encode()) > MAX_REVIEW_BYTES:
-            return base_sha, actual_head, None, f"Review input exceeds {MAX_REVIEW_BYTES} bytes"
-    return base_sha, actual_head, review, None
-
 def release_review_refs(checkout, ref_prefix):
     """Delete the base and head fetch refs for one finished review attempt."""
     base_ref = f"{ref_prefix}/base"
@@ -116,9 +135,9 @@ def release_review_refs(checkout, ref_prefix):
     git(checkout, "check-ref-format", base_ref)
     git(checkout, "check-ref-format", head_ref)
     subprocess.run(
-        ["git", "-C", str(checkout), "update-ref", "--stdin"],
+        git_command(checkout, "update-ref", "--stdin"),
         input=f"start\ndelete {base_ref}\ndelete {head_ref}\nprepare\ncommit\n",
-        check=True, capture_output=True, text=True, timeout=180,
+        check=True, capture_output=True, text=True, timeout=180, env=git_environment(),
     )
 
 def tracked_files(checkout, ref="HEAD"):
@@ -160,8 +179,8 @@ def read_file(checkout, files, path, start_line):
     if size > MAX_FILE_BYTES:
         return f"File exceeds {MAX_FILE_BYTES} bytes."
     content = subprocess.run(
-        ["git", "-C", str(checkout), "cat-file", "blob", files[path]],
-        check=True, capture_output=True, timeout=30,
+        git_command(checkout, "cat-file", "blob", files[path]),
+        check=True, capture_output=True, timeout=30, env=git_environment(),
     ).stdout.decode(errors="replace")
     if "\x00" in content:
         return "Binary file cannot be read as text."
@@ -181,52 +200,73 @@ def read_diff(checkout, changed_paths, base, head, path, start_line):
             or not isinstance(start_line, int) or isinstance(start_line, bool)
             or not 1 <= start_line <= 100_000):
         return "Invalid changed path or diff line."
-    process = subprocess.Popen(
-        ["git", "-C", str(checkout), "diff", "--no-ext-diff", "--no-color",
-         f"{base}..{head}", "--", path],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-    )
-    result = f"{path} (diff lines from {start_line}):\n"
-    found = False
-    stopped_early = False
-    try:
-        for number, line in enumerate(process.stdout, 1):
-            if number < start_line:
-                continue
-            found = True
-            item = f"{number}: {line}"
-            if len((result + item).encode()) > MAX_TOOL_BYTES:
-                result += f"[Diff line {number} exceeds output limit; continue at {number + 1}]\n"
-                stopped_early = True
-                break
-            result += item
-            if number >= start_line + 149:
-                stopped_early = True
-                break
-    finally:
-        if stopped_early and process.poll() is None:
-            process.kill()
-        process.wait(timeout=10)
-        process.stdout.close()
-    if not stopped_early and process.returncode:
-        raise subprocess.CalledProcessError(process.returncode, process.args)
-    return result if found else result + "No diff lines."
+    args = ("diff", "--no-ext-diff", "--no-textconv", "--no-color",
+            f"{base}..{head}", "--", path)
+    with object_git_command(checkout, args, head) as (command, env):
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+        )
+        result = f"{path} (diff lines from {start_line}):\n"
+        found = False
+        stopped_early = False
+        number, pending = 1, b""
+        oversized = False
+        deadline = time.monotonic() + 180
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    raise subprocess.TimeoutExpired(process.args, 180)
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                for piece in chunk.splitlines(keepends=True):
+                    if number >= start_line and not oversized:
+                        pending += piece
+                        oversized = len(pending) > MAX_TOOL_BYTES
+                    if not piece.endswith(b"\n"):
+                        continue
+                    if number >= start_line:
+                        found = True
+                        item = f"{number}: " + pending.decode(errors="replace")
+                        if oversized or len((result + item).encode()) > MAX_TOOL_BYTES:
+                            result += (f"[Diff line {number} exceeds output limit; "
+                                       f"continue at {number + 1}]\n")
+                            stopped_early = True
+                            break
+                        result += item
+                        if number >= start_line + 149:
+                            stopped_early = True
+                            break
+                    number += 1
+                    pending, oversized = b"", False
+                if stopped_early:
+                    break
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+            raise
+        finally:
+            if process.poll() is None and (stopped_early or time.monotonic() >= deadline):
+                process.kill()
+            process.wait(timeout=10)
+            process.stdout.close()
+        if not stopped_early and process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, process.args)
+        return result if found else result + "No diff lines."
 
 def search_code(checkout, head, query):
     if (not isinstance(query, str) or not 3 <= len(query) <= 100
             or "\n" in query or "\r" in query or "\x00" in query):
         return "Search query must be 3 to 100 characters on one line."
-    process = subprocess.Popen(
-        ["git", "-C", str(checkout), "grep", "-n", "-I", "-F", "-e", query,
-         head, "--"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-    )
     try:
-        output = process.stdout.read(MAX_TOOL_BYTES + 1)
-    finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait(timeout=10)
-        process.stdout.close()
+        output = bounded_git(checkout, "grep", "--no-recurse-submodules", "-n", "-I", "-F",
+                             "-e", query, head, "--", max_bytes=MAX_TOOL_BYTES)
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode != 1:
+            raise
+        output = b""
     if not output:
         return "No matches in tracked text files."
     return output[:MAX_TOOL_BYTES].decode(errors="replace") + (
@@ -236,12 +276,13 @@ def blame_base(checkout, base_files, base, path, start_line):
     if (not isinstance(path, str) or path not in base_files
             or not isinstance(start_line, int) or isinstance(start_line, bool)
             or not 1 <= start_line <= 100_000):
-        return "Invalid path or line at the PR merge base."
+        return "Invalid path or line at the comparison base."
     try:
-        output = git(checkout, "blame", "--no-progress", "--line-porcelain",
-                     "-L", f"{start_line},+20", base, "--", path)
+        output = bounded_git(checkout, "blame", "--no-textconv", "--no-progress",
+                             "--line-porcelain", "-L", f"{start_line},+20", base,
+                             "--", path, max_bytes=MAX_FILE_BYTES, attr_source=base).decode(errors="replace")
     except subprocess.CalledProcessError:
-        return "No lines at that location in the PR merge base."
+        return "No lines at that location in the comparison base."
     summaries = {}
     lines = []
     current = None
@@ -253,7 +294,7 @@ def blame_base(checkout, base_files, base, path, start_line):
             summaries[current[0]] = line[8:]
         elif line.startswith("\t") and current:
             lines.append((current[0], current[1], line[1:]))
-    result = f"{path} at merge base {base}:\n"
+    result = f"{path} at comparison base {base}:\n"
     for commit, number, content in lines:
         item = f"{number}: {commit} {summaries.get(commit, '')}: {content}\n"
         if len((result + item).encode()) > MAX_TOOL_BYTES:
@@ -264,34 +305,26 @@ def blame_base(checkout, base_files, base, path, start_line):
 def read_commit(checkout, base_files, base, commit, path):
     if (not isinstance(commit, str) or not SHA.fullmatch(commit)
             or not isinstance(path, str) or path not in base_files):
-        return "Invalid commit or path at the PR merge base."
+        return "Invalid commit or path at the comparison base."
     ancestor = subprocess.run(
-        ["git", "-C", str(checkout), "merge-base", "--is-ancestor", commit, base],
-        capture_output=True, timeout=30,
+        git_command(checkout, "merge-base", "--is-ancestor", commit, base),
+        capture_output=True, timeout=30, env=git_environment(),
     )
     if ancestor.returncode:
-        return "Commit is not an ancestor of the PR merge base."
-    process = subprocess.Popen(
-        ["git", "-C", str(checkout), "show", "--format=fuller",
-         "--no-ext-diff", "--no-color", commit, "--", path],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-    )
-    try:
-        output = process.stdout.read(MAX_TOOL_BYTES + 1)
-    finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait(timeout=10)
-        process.stdout.close()
+        return "Commit is not an ancestor of the comparison base."
+    output = bounded_git(checkout, "show", "--format=fuller", "--no-ext-diff",
+                         "--no-textconv", "--no-color", commit, "--", path,
+                         max_bytes=MAX_TOOL_BYTES, attr_source=commit)
     return output[:MAX_TOOL_BYTES].decode(errors="replace") + (
         "\n[Commit output truncated]" if len(output) > MAX_TOOL_BYTES else "")
 
 def audit_developer_notes(snapshot):
-    checkout, base = snapshot.checkout, snapshot.merge_base
+    checkout, base = snapshot.checkout, snapshot.diff_base_sha
     try:
-        notes = git(checkout, "show", f"{base}:doc/developer-notes.md")
+        notes = bounded_git(checkout, "show", f"{base}:doc/developer-notes.md",
+                            max_bytes=MAX_AUDIT_DOC_BYTES).decode(errors="replace")
     except subprocess.CalledProcessError:
-        return "Developer notes are unavailable at the PR merge base."
+        return "Developer notes are unavailable at the comparison base."
     content = notes.encode()[:MAX_AUDIT_DOC_BYTES].decode(errors="replace")
     return content + ("\n[Developer notes truncated]"
                       if len(notes.encode()) > MAX_AUDIT_DOC_BYTES else "")
@@ -304,7 +337,7 @@ def is_test_path(path):
 def focused_review_input(review, snapshot, name):
     if f"Patch exceeds {MAX_REVIEW_BYTES} input bytes. Use read_diff" not in review:
         return review
-    checkout, base, head = snapshot.checkout, snapshot.merge_base, snapshot.head_sha
+    checkout, base, head = snapshot.checkout, snapshot.diff_base_sha, snapshot.head_sha
     paths = sorted(snapshot.changed_paths)
     if name == "tests":
         paths.sort(key=lambda path: not is_test_path(path))
@@ -313,8 +346,9 @@ def focused_review_input(review, snapshot, name):
     excerpt = []
     size = 0
     for path in paths:
-        patch = git(checkout, "diff", "--no-ext-diff", "--no-color",
-                    f"{base}..{head}", "--", path)
+        patch = bounded_git(checkout, "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+                            f"{base}..{head}", "--", path,
+                            max_bytes=MAX_FOCUSED_DIFF_BYTES, attr_source=head).decode(errors="replace")
         if size + len(patch.encode()) > MAX_FOCUSED_DIFF_BYTES:
             excerpt.append(patch.encode()[:MAX_FOCUSED_DIFF_BYTES - size]
                            .decode(errors="replace"))
@@ -325,35 +359,136 @@ def focused_review_input(review, snapshot, name):
         size += len(patch.encode())
     return review + "\nRelevant diff excerpt:\n" + "".join(excerpt)
 
-def current_head(bot_config, number):
-    result = subprocess.run(
-        ["git", "ls-remote", bot_config.origin, f"refs/pull/{number}/head"],
-        check=True, capture_output=True, text=True, timeout=180,
-    ).stdout.strip()
-    fields = result.split()
-    if len(fields) != 2 or not SHA.fullmatch(fields[0]) or fields[1] != f"refs/pull/{number}/head":
-        raise ValueError("Git returned invalid PR head")
-    return fields[0]
-
-
 @dataclass(frozen=True)
 class RepositorySnapshot:
     checkout: Path
     base_sha: str
     head_sha: str
-    merge_base: str
+    merge_base: str | None
+    diff_base_sha: str
     head_files: object
     base_files: object
     changed_paths: frozenset[str]
 
 
-def snapshot_repository(checkout, base_sha, head_sha):
-    """Pin every repository read to object IDs captured after the fetch."""
-    merge_base = git(checkout, "merge-base", base_sha, head_sha).strip()
+def resolve_commit(checkout, revision):
+    if not isinstance(revision, str) or not revision or revision.startswith("-"):
+        raise ValueError("Revision must name an explicit commit")
+    result = subprocess.run(
+        git_command(checkout, "-c", "core.warnAmbiguousRefs=true", "rev-parse", "--verify",
+                    "--end-of-options", f"{revision}^{{commit}}"),
+        capture_output=True, text=True, timeout=30, env=git_environment(),
+    )
+    if result.returncode or "ambiguous" in result.stderr.lower():
+        raise ValueError(f"Revision is unavailable, ambiguous, or not a commit: {revision}")
+    commit = result.stdout.strip()
+    if not SHA.fullmatch(commit):
+        raise ValueError("Unsupported Git object ID")
+    return commit
+
+
+def verify_local_objects(checkout, base_sha, head_sha):
+    """Require complete reachable trees and history without any object fetching."""
+    try:
+        if git(checkout, "rev-parse", "--is-shallow-repository").strip() == "true":
+            raise ValueError("Local Git history is shallow; acquire complete history first")
+        subprocess.run(
+            git_command(checkout, "rev-list", "--objects", "--quiet", "--missing=error",
+                        base_sha, head_sha), check=True, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=300, env=git_environment(),
+        )
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("Local Git objects or history are missing; acquire them first") from exc
+
+
+
+def snapshot_repository(checkout, base_sha, head_sha, *, exact_endpoints=False):
+    """Build immutable evidence after the caller has retained the endpoint objects."""
+    checkout = Path(checkout).resolve()
+    base_sha = resolve_commit(checkout, base_sha)
+    head_sha = resolve_commit(checkout, head_sha)
+    verify_local_objects(checkout, base_sha, head_sha)
+    try:
+        bases = git(checkout, "merge-base", "--all", base_sha, head_sha).splitlines()
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode != 1:
+            raise
+        bases = []
+    merge_base = bases[0] if len(bases) == 1 else None
+    if not exact_endpoints and merge_base is None:
+        raise ValueError("Branch comparison requires a unique merge base")
+    diff_base = base_sha if exact_endpoints else merge_base
     head_files = MappingProxyType(tracked_files_at(checkout, head_sha))
-    base_files = MappingProxyType(tracked_files_at(checkout, merge_base))
-    changed = git(checkout, "diff", "--no-ext-diff", "--no-renames", "--name-only", "-z",
-                  f"{merge_base}..{head_sha}")
-    return RepositorySnapshot(checkout, base_sha, head_sha, merge_base,
+    base_files = MappingProxyType(tracked_files_at(checkout, diff_base))
+    changed = git(checkout, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+                  "--name-only", "-z", diff_base, head_sha, "--")
+    return RepositorySnapshot(checkout, base_sha, head_sha, merge_base, diff_base,
                               head_files, base_files,
                               frozenset(path for path in changed.split("\x00") if path))
+
+
+@contextmanager
+def pin_snapshot(snapshot):
+    """Retain endpoint histories until all work using this snapshot has stopped."""
+    prefix = f"refs/ralph/local/{uuid.uuid4().hex}"
+    subprocess.run(
+        git_command(snapshot.checkout, "update-ref", "--stdin"),
+        input=(f"start\ncreate {prefix}/base {snapshot.base_sha}\n"
+               f"create {prefix}/head {snapshot.head_sha}\nprepare\ncommit\n"),
+        check=True, capture_output=True, text=True, timeout=30, env=git_environment(),
+    )
+    try:
+        yield snapshot
+    finally:
+        release_review_refs(snapshot.checkout, prefix)
+
+
+@contextmanager
+def local_snapshot(checkout, target, *, base=None):
+    """Resolve local branch/range input once and retain it for a review lifetime."""
+    checkout = Path(checkout).resolve()
+    try:
+        git(checkout, "rev-parse", "--git-dir")
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise ValueError("Review path is not a Git repository") from exc
+    if not isinstance(target, str) or "..." in target:
+        raise ValueError("Use an explicit base..head range or a branch with --base")
+    if ".." in target:
+        if base is not None or target.count("..") != 1:
+            raise ValueError("A range cannot be combined with --base")
+        base_ref, head_ref = target.split("..")
+        if not base_ref or not head_ref:
+            raise ValueError("Both range endpoints must be explicit commits")
+        exact = True
+    else:
+        if base is None:
+            raise ValueError("Branch comparison requires --base")
+        base_ref, head_ref, exact = base, target, False
+    base_sha = resolve_commit(checkout, base_ref)
+    head_sha = resolve_commit(checkout, head_ref)
+    # Pin before traversing history, so concurrent branch movement cannot unretain it.
+    endpoints = RepositorySnapshot(checkout, base_sha, head_sha, None, base_sha,
+                                   MappingProxyType({}), MappingProxyType({}), frozenset())
+    with pin_snapshot(endpoints):
+        yield snapshot_repository(checkout, base_sha, head_sha, exact_endpoints=exact)
+
+
+def build_review_input(snapshot, title="", description=""):
+    """Return bounded committed review evidence and an optional skip reason."""
+    checkout, base, head = snapshot.checkout, snapshot.diff_base_sha, snapshot.head_sha
+    commits = bounded_git(checkout, "log", "--reverse", "--format=%H%n%B%n%x00",
+                          f"{base}..{head}", max_bytes=MAX_REVIEW_BYTES).decode(errors="replace")
+    prelude = f"Title: {title}\nDescription:\n{description}\nCommits:\n{commits}\n"
+    patch = bounded_git(checkout, "diff", "--no-ext-diff", "--no-textconv", "--binary",
+                        base, head, "--", max_bytes=MAX_REVIEW_BYTES,
+                        attr_source=head).decode(errors="replace")
+    review = f"{prelude}Patch:\n{patch}"
+    if len(review.encode()) > MAX_REVIEW_BYTES:
+        changed = bounded_git(checkout, "diff", "--no-ext-diff", "--no-textconv", "--name-status",
+                              base, head, "--", max_bytes=MAX_REVIEW_BYTES,
+                        attr_source=head).decode(errors="replace")
+        review = (f"{prelude}Patch exceeds {MAX_REVIEW_BYTES} input bytes. "
+                  "Use read_diff to inspect changed files.\nChanged files:\n" + changed)
+        if len(review.encode()) > MAX_REVIEW_BYTES:
+            return None, f"Review input exceeds {MAX_REVIEW_BYTES} bytes"
+    return review, None

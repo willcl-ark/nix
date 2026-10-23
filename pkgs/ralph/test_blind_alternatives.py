@@ -51,12 +51,12 @@ class BlindAlternativesTests(unittest.TestCase):
                 patch.object(model, "openai_review", side_effect=review), \
                 patch.object(model, "run_audit", side_effect=edit), \
                 patch.object(pipeline, "audit_developer_notes", return_value="Policy"):
-            case = engine.ReviewCase(42, "SECRET PR TITLE AND PATCH", fixture.snapshot,
-                                     fixture.config.repository_url)
-            runtime = engine.Runtime(case=case, bot_config=fixture.config,
+            case = engine.ReviewCase("SECRET PR TITLE AND PATCH", fixture.snapshot,
+                                     fixture.source)
+            runtime = engine.Runtime(case=case, discussion_lookup=lambda name, args: "Discussion",
                                      api_key="key", attempt=fixture.debug)
             content = pipeline.review_with_independent_passes(
-                case, runtime, fixture.prompts)
+                case, runtime, fixture.prompts, archaeology=True)
         self.assertLess(list(outputs).index("alternatives"), list(outputs).index("independent"))
         for stage in ("independent", "design"):
             self.assertNotIn(option["concept"], outputs[stage])

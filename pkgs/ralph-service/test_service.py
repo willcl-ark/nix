@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import hashlib
 import hmac
 import http.client
@@ -18,9 +19,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-from ralph import (badge, config, current_engine, engine, forgejo, model,
-                   pipeline, repository, service, spend)
-from ralph.jobs import JobStore
+from ralph import config as core_config
+from ralph import repository as local_repository
+from ralph_service import badge, config, forgejo, repository, service
+from ralph import current_engine, engine, model, pipeline, spend
+from ralph_service.jobs import JobStore
 
 
 class ServiceTests(unittest.TestCase):
@@ -34,7 +37,7 @@ class ServiceTests(unittest.TestCase):
         self.bot_config = config.BotConfig(
             "https://git.example.org/owner/repo.git", "owner/repo",
             "https://git.example.org/api/v1/repos/owner/repo")
-        self.prompt_config = config.PromptConfig.load()
+        self.prompt_config = core_config.PromptConfig.load()
         self.review_engine = engine.load("current", {
             "prompts": {"instructions": self.prompt_config.instructions,
                         "audit_prompts": self.prompt_config.audit_prompts,
@@ -209,7 +212,7 @@ class ServiceTests(unittest.TestCase):
 
         def snapshot(*args):
             self.assertTrue(service.CHECKOUT_LOCK.locked())
-            return object()
+            return SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)
 
         def review(*args, **kwargs):
             barrier.wait(timeout=5)
@@ -220,12 +223,12 @@ class ServiceTests(unittest.TestCase):
               patch.object(service.forgejo, "pull_request_context",
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review", side_effect=collect),
-              patch.object(service.repository, "snapshot_repository", side_effect=snapshot),
+              patch.object(service.local_repository, "snapshot_repository", side_effect=snapshot),
               patch.object(pipeline, "review_with_independent_passes",
                            side_effect=review),
               patch.object(service.forgejo, "publish_review",
                            return_value="published") as publish,
-              patch.object(service.repository, "release_review_refs") as release,
+              patch.object(service.local_repository, "release_review_refs") as release,
               ThreadPoolExecutor(max_workers=2) as pool):
             self.assertEqual(list(pool.map(self.process, claimed)),
                              ["published", "published"])
@@ -242,8 +245,8 @@ class ServiceTests(unittest.TestCase):
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review",
                            return_value=("b" * 40, "a" * 40, "review input", None)),
-              patch.object(service.repository, "snapshot_repository",
-                           return_value=object()),
+              patch.object(service.local_repository, "snapshot_repository",
+                           return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
                            return_value="Review content") as review,
               patch.object(service.forgejo, "publish_review",
@@ -254,13 +257,27 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(review.call_args.args[1].budget.review_id,
                              f'pr:42:{job["id"]}:{job["generation"]}')
             self.assertEqual(review.call_args.args[3], "enabled")
+            case, runtime = review.call_args.args[:2]
+            self.assertEqual(case.source,
+                             {"kind": "pull_request", "number": 42,
+                              "url": f"{self.bot_config.repository_url}/pulls/42"})
+            self.assertTrue(callable(runtime.discussion_lookup))
 
         restarted = JobStore(self.state_dir / "jobs.sqlite3",
                              retry_base_seconds=0)
         retry_job = restarted.claim()
         self.assertEqual(retry_job["review_result"]["content"], "Review content")
+        saved = retry_job["review_result"]
+        self.assertEqual(set(saved), {"schema_version", "engine", "base_sha", "head_sha",
+                                      "merge_base", "content", "output", "run"})
+        self.assertEqual(saved["base_sha"], "b" * 40)
+        self.assertEqual(saved["merge_base"], "c" * 40)
+        self.assertEqual(saved["run"]["review_id"],
+                         f'pr:42:{job["id"]}:{job["generation"]}')
         self.jobs = restarted
         with (patch.object(service.repository, "current_head", return_value="a" * 40),
+              patch.object(service.runner, "run_review",
+                           side_effect=AssertionError("runner called again")),
               patch.object(pipeline, "review_with_independent_passes",
                            side_effect=AssertionError("model called again")),
               patch.object(service.forgejo, "publish_review",
@@ -298,8 +315,8 @@ class ServiceTests(unittest.TestCase):
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review",
                            return_value=("b" * 40, "a" * 40, "review input", None)),
-              patch.object(service.repository, "snapshot_repository",
-                           return_value=object()),
+              patch.object(service.local_repository, "snapshot_repository",
+                           return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(service.forgejo, "publish_review",
                            side_effect=[urllib.error.URLError("connection lost"),
                                         "unchanged"]) as publish):
@@ -378,8 +395,8 @@ class ServiceTests(unittest.TestCase):
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review",
                            return_value=("c" * 40, "a" * 40, "input", None)),
-              patch.object(service.repository, "snapshot_repository",
-                           return_value=object()),
+              patch.object(service.local_repository, "snapshot_repository",
+                           return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
                            side_effect=stale_review)):
             self.assertEqual(self.process(old), "stale")
@@ -395,8 +412,8 @@ class ServiceTests(unittest.TestCase):
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review",
                            return_value=("c" * 40, "a" * 40, "input", None)),
-              patch.object(service.repository, "snapshot_repository",
-                           return_value=object()),
+              patch.object(service.local_repository, "snapshot_repository",
+                           return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
                            return_value="New base review") as review,
               patch.object(service.forgejo, "publish_review",
@@ -441,8 +458,8 @@ class ServiceTests(unittest.TestCase):
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review",
                            return_value=("c" * 40, "a" * 40, "input", None)),
-              patch.object(service.repository, "snapshot_repository",
-                           return_value=object()),
+              patch.object(service.local_repository, "snapshot_repository",
+                           return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
                            side_effect=model.StaleReview("head changed"))):
             with self.assertLogs(level="ERROR"):
@@ -455,8 +472,8 @@ class ServiceTests(unittest.TestCase):
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review",
                            return_value=("c" * 40, "a" * 40, "input", None)),
-              patch.object(service.repository, "snapshot_repository",
-                           return_value=object()),
+              patch.object(service.local_repository, "snapshot_repository",
+                           return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
                            return_value="Review content"),
               patch.object(service.forgejo, "publish_review", return_value="updated")):
@@ -526,8 +543,8 @@ class ServiceTests(unittest.TestCase):
                            return_value=("Title", "Description")),
               patch.object(service.repository, "collect_review",
                            return_value=("b" * 40, "a" * 40, "review input", None)),
-              patch.object(service.repository, "snapshot_repository",
-                           return_value=object()),
+              patch.object(service.local_repository, "snapshot_repository",
+                           return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
                            side_effect=review) as reviewed,
               patch.object(service.forgejo, "publish_review", side_effect=publish),
@@ -565,6 +582,8 @@ class ServiceTests(unittest.TestCase):
         with (patch.object(service.repository, "current_head", return_value="a" * 40),
               patch.object(service.engine, "load",
                            side_effect=AssertionError("old engine loaded")),
+              patch.object(service.runner, "run_review",
+                           side_effect=AssertionError("runner called again")),
               patch.object(pipeline, "review_with_independent_passes",
                            side_effect=AssertionError("model called again")),
               patch.object(self.jobs, "bind_engine",
@@ -646,7 +665,7 @@ class WebhookTests(unittest.TestCase):
             "bitcoin/bitcoin",
             "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin",
         )
-        self.prompt_config = config.PromptConfig.load()
+        self.prompt_config = core_config.PromptConfig.load()
         self.review_engine = engine.load("current", {
             "prompts": {"instructions": self.prompt_config.instructions,
                         "audit_prompts": self.prompt_config.audit_prompts,
@@ -654,8 +673,8 @@ class WebhookTests(unittest.TestCase):
             "routing_mode": "enabled", "blind_alternatives": True})
 
     def snapshot(self, files=None, checkout=Path("/unused")):
-        return repository.RepositorySnapshot(
-            checkout, "b" * 40, "a" * 40, "b" * 40,
+        return local_repository.RepositorySnapshot(
+            checkout, "b" * 40, "a" * 40, "b" * 40, "b" * 40,
             files or {}, {}, frozenset())
 
     def queued_job(self, *, force=False):
@@ -795,7 +814,7 @@ class WebhookTests(unittest.TestCase):
                 patch.object(forgejo, "pull_request_context", return_value=("Title", "Body")), \
                 patch.object(repository, "collect_review",
                              return_value=("b" * 40, "a" * 40, "review input", None)), \
-                patch.object(repository, "snapshot_repository", return_value=self.snapshot()), \
+                patch.object(local_repository, "snapshot_repository", return_value=self.snapshot()), \
                 patch.object(pipeline, "review_with_independent_passes",
                              return_value="New review.") as review_model, \
                 patch.object(forgejo, "publish_review", return_value="updated") as publish:
@@ -818,7 +837,7 @@ class WebhookTests(unittest.TestCase):
                              return_value=("Title", "Body")), \
                 patch.object(repository, "collect_review",
                              return_value=("b" * 40, "a" * 40, "review input", None)) as collect, \
-                patch.object(repository, "snapshot_repository") as snapshot, \
+                patch.object(local_repository, "snapshot_repository") as snapshot, \
                 patch.object(pipeline, "review_with_independent_passes") as review_model:
             self.assertEqual(service.process_job(
                 job, jobs, state_dir, "openai-key", "forgejo-token", "ralph",

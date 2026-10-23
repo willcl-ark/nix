@@ -1,0 +1,61 @@
+{
+  lib,
+  stdenvNoCC,
+  python3,
+  git,
+  makeWrapper,
+  ralph,
+}:
+
+stdenvNoCC.mkDerivation {
+  pname = "ralph-service";
+  version = "0.1.0";
+
+  src = ./.;
+
+  nativeBuildInputs = [
+    git
+    makeWrapper
+    python3
+  ];
+
+  doCheck = true;
+  checkPhase = ''
+    runHook preCheck
+    export HOME="$TMPDIR"
+    export PYTHONDONTWRITEBYTECODE=1
+    export PYTHONPATH="${ralph}/libexec/ralph"
+    ${python3.interpreter} -m unittest discover -s . -p 'test_*.py'
+    runHook postCheck
+  '';
+
+  installPhase = ''
+    runHook preInstall
+    for launcher in bot.py evaluate.py followup.py; do
+      install -Dm755 "$launcher" $out/libexec/ralph-service/"$launcher"
+    done
+    for module in ralph_service/*.py; do
+      install -Dm644 "$module" $out/libexec/ralph-service/"$module"
+    done
+    install -Dm644 audits/addressed_findings.md $out/libexec/ralph-service/audits/addressed_findings.md
+    makeWrapper ${python3.interpreter} $out/bin/ralph-service \
+      --add-flags $out/libexec/ralph-service/bot.py \
+      --prefix PYTHONPATH : ${ralph}/libexec/ralph \
+      --prefix PATH : ${lib.makeBinPath [ git ]}
+    makeWrapper ${python3.interpreter} $out/bin/ralph-evaluate \
+      --add-flags $out/libexec/ralph-service/evaluate.py \
+      --prefix PYTHONPATH : ${ralph}/libexec/ralph \
+      --prefix PATH : ${lib.makeBinPath [ git ]}
+    makeWrapper ${python3.interpreter} $out/bin/ralph-followup \
+      --add-flags $out/libexec/ralph-service/followup.py \
+      --prefix PYTHONPATH : ${ralph}/libexec/ralph \
+      --prefix PATH : ${lib.makeBinPath [ git ]}
+    runHook postInstall
+  '';
+
+  meta = {
+    description = "Forgejo review service and evaluation consumers for Ralph";
+    mainProgram = "ralph-service";
+    platforms = lib.platforms.unix;
+  };
+}

@@ -9,9 +9,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from . import config, followup, spend
+from . import followup
+from ralph.config import load_prompt_file
+from ralph.spend import supports_model
+from ralph import spend
 
 
+DEFAULT_PROMPT_FILE = Path(__file__).resolve().parent.parent / "audits/addressed_findings.md"
+DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_BATCH_SIZE = 5
 FOLLOWUP_DIR = "followup"
 ASSESSMENTS_DB = "assessments.sqlite3"
@@ -172,11 +177,12 @@ def prepare_checkout(checkout, origin):
 def fetch_heads(checkout, origin, job_id, old_head, new_head):
     prepare_checkout(checkout, origin)
     ref_prefix = f"refs/ralph/followup/{job_id}"
-    _git(checkout, "fetch", "--no-tags", "--filter=blob:none", "origin",
+    # Hydrate blobs omitted by earlier follow-up fetches before offline reads.
+    _git(checkout, "fetch", "--refetch", "--no-tags", "--no-filter", "origin",
          f"+{old_head}:{ref_prefix}/old", f"+{new_head}:{ref_prefix}/new")
 
 
-def assess_job(api_key, state_dir, origin, prompt_config, ledger, jobs, job,
+def assess_job(api_key, state_dir, origin, prompt, stage_model, ledger, jobs, job,
                prior_assessments):
     history = history_before(jobs, job)
     checkout = state_dir / FOLLOWUP_DIR / CHECKOUT_DIR
@@ -190,7 +196,7 @@ def assess_job(api_key, state_dir, origin, prompt_config, ledger, jobs, job,
                 logging.warning("Could not fetch follow-up commits for job %d: %s",
                                 job["id"], type(exc).__name__)
     return followup.assess_completed_review(
-        api_key, checkout, job, history, prior_assessments, prompt_config,
+        api_key, checkout, job, history, prior_assessments, prompt, stage_model,
         spend.RequestBudget(ledger, _review_id(job)))
 
 
@@ -198,7 +204,7 @@ def _review_id(job):
     return f'pr:{job["number"]}:{job["id"]}:{job["generation"]}'
 
 
-def run_once(state_dir, origin, api_key, prompt_config, budget_usd,
+def run_once(state_dir, origin, api_key, prompt, stage_model, budget_usd,
              batch_size=DEFAULT_BATCH_SIZE):
     state_dir = Path(state_dir)
     followup_dir = state_dir / FOLLOWUP_DIR
@@ -225,14 +231,14 @@ def run_once(state_dir, origin, api_key, prompt_config, budget_usd,
         if assessed >= batch_size:
             break
         try:
-            result = assess_job(api_key, state_dir, origin, prompt_config, ledger,
+            result = assess_job(api_key, state_dir, origin, prompt, stage_model, ledger,
                                 jobs, job, prior_assessments)
         except Exception as exc:
             logging.warning("Could not assess follow-up job %d: %s",
                             job["id"], type(exc).__name__)
             result = {
                 "assessed_at": followup._now(),
-                "model": prompt_config.models["addressed_findings"],
+                "model": stage_model,
                 "status": "complete",
                 "error_type": type(exc).__name__,
                 "findings": [],
@@ -251,10 +257,8 @@ def main(argv=None):
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--origin", required=True)
     parser.add_argument("--openai-key-file", type=Path, required=True)
-    parser.add_argument("--prompt-file", type=Path, default=config.DEFAULT_PROMPT_FILE)
-    parser.add_argument("--audit-prompt-dir", type=Path,
-                        default=config.DEFAULT_AUDIT_DIR)
-    parser.add_argument("--models-json", type=Path)
+    parser.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT_FILE)
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--budget-usd", type=float, default=0.10)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     args = parser.parse_args(argv)
@@ -264,8 +268,19 @@ def main(argv=None):
     api_key = args.openai_key_file.read_text().strip()
     if not api_key:
         parser.error("openai key file must not be empty")
-    prompt_config = config.PromptConfig.load(
-        args.prompt_file, args.audit_prompt_dir, args.models_json)
-    run_once(args.state_dir, args.origin, api_key, prompt_config,
+    try:
+        prompt, stage_model = load_settings(args.prompt_file, args.model)
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
+    run_once(args.state_dir, args.origin, api_key, prompt, stage_model,
              args.budget_usd, batch_size=args.batch_size)
     return 0
+
+
+def load_settings(prompt_file=DEFAULT_PROMPT_FILE, stage_model=DEFAULT_MODEL):
+    prompt = load_prompt_file(prompt_file)
+    if not prompt.strip():
+        raise ValueError("follow-up prompt must not be empty")
+    if not supports_model(stage_model):
+        raise ValueError("unsupported follow-up model")
+    return prompt, stage_model

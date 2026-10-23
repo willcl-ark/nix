@@ -10,7 +10,11 @@ from dataclasses import replace
 from unittest.mock import patch
 
 
-from ralph import config, forgejo, model, repository, trace
+from ralph import config as core_config
+from ralph import repository as local_repository
+from ralph import trace as core_trace
+from ralph_service import config, forgejo, repository, trace, research
+from ralph import model
 
 
 class BotTests(unittest.TestCase):
@@ -20,11 +24,11 @@ class BotTests(unittest.TestCase):
             "bitcoin/bitcoin",
             "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin",
         )
-        self.prompt_config = config.PromptConfig.load()
+        self.prompt_config = core_config.PromptConfig.load()
 
     def snapshot(self, files=None, checkout=Path("/unused")):
-        return repository.RepositorySnapshot(
-            checkout, "b" * 40, "a" * 40, "b" * 40,
+        return local_repository.RepositorySnapshot(
+            checkout, "b" * 40, "a" * 40, "b" * 40, "b" * 40,
             files or {}, {}, frozenset())
 
     def review_result(self, debug, *, head_sha="a" * 40, content="Public comment",
@@ -79,13 +83,13 @@ class BotTests(unittest.TestCase):
     def test_model_config_requires_adversarial_stage_and_prompt(self):
         with tempfile.TemporaryDirectory() as directory:
             audit_dir = Path(directory)
-            for name in config.PROMPT_NAMES:
+            for name in core_config.PROMPT_NAMES:
                 (audit_dir / f"{name}.md").write_text(f"{name} instructions\n")
             models = {name: "gpt-6.1-sol" if name in
                       ("independent", "adversarial") else "gpt-6-luna"
-                      for name in config.MODEL_NAMES}
+                      for name in core_config.MODEL_NAMES}
             (audit_dir / "models.json").write_text(json.dumps(models))
-            loaded = config.PromptConfig.load(config.DEFAULT_PROMPT_FILE, audit_dir)
+            loaded = core_config.PromptConfig.load(core_config.DEFAULT_PROMPT_FILE, audit_dir)
             self.assertEqual(loaded.audit_prompts["router"], "router instructions")
             self.assertEqual(loaded.audit_prompts["adversarial"],
                              "adversarial instructions")
@@ -94,71 +98,68 @@ class BotTests(unittest.TestCase):
             del models["adversarial"]
             (audit_dir / "models.json").write_text(json.dumps(models))
             with self.assertRaisesRegex(ValueError, "each review stage"):
-                config.PromptConfig.load(config.DEFAULT_PROMPT_FILE, audit_dir)
+                core_config.PromptConfig.load(core_config.DEFAULT_PROMPT_FILE, audit_dir)
 
 
     def test_collect_review_skips_stale_head_without_model_call(self):
-        outputs = iter(["", "b" * 40, "c" * 40])
-        with patch.object(repository, "prepare_checkout"), patch.object(repository, "git", side_effect=lambda *a: next(outputs)):
+        with patch.object(repository, "prepare_checkout"), \
+                patch.object(local_repository, "git", return_value="false"), \
+                patch.object(local_repository, "resolve_commit",
+                             side_effect=["b" * 40, "c" * 40]), \
+                patch.object(local_repository, "snapshot_repository") as snapshot:
             base, head, review, skip = repository.collect_review(
-                Path("/unused"), 42, "master", "a" * 40, "Title", "Description", self.bot_config)
+                Path("/unused"), 42, "master", "a" * 40,
+                "Title", "Description", self.bot_config)
         self.assertEqual((base, head, review), ("c" * 40, "b" * 40, None))
         self.assertIn("changed", skip)
+        snapshot.assert_not_called()
 
     def test_collect_review_uses_merge_base(self):
-        head = "a" * 40
-        base = "b" * 40
-        merge_base = "c" * 40
-        calls = []
-
-        def fake_git(checkout, *args):
-            calls.append(args)
-            if args[0] == "rev-parse":
-                return head if args[1].endswith("head") else base
-            if args[0] == "merge-base":
-                return merge_base
-            if args[0] == "log":
-                return "Explain the commit rationale\n\x00"
-            if args[0] == "diff":
-                return "+change\n"
-            return ""
-
-        with patch.object(repository, "prepare_checkout"), patch.object(repository, "git", side_effect=fake_git):
-            result = repository.collect_review(Path("/unused"), 42, "master", head,
-                                        "PR title", "Why this change is needed", self.bot_config)
-        self.assertEqual(result[0:2], (base, head))
-        self.assertIn("+change", result[2])
-        self.assertEqual(len(result), 4)
-        self.assertIn("Explain the commit rationale", result[2])
-        self.assertIn("PR title: PR title", result[2])
-        self.assertIn("PR description:\nWhy this change is needed", result[2])
-        self.assertIn(("diff", "--no-ext-diff", "--binary", f"{merge_base}..{head}"), calls)
+        snapshot = self.snapshot()
+        with patch.object(repository, "prepare_checkout"), \
+                patch.object(local_repository, "git", return_value="false") as git, \
+                patch.object(local_repository, "resolve_commit",
+                             side_effect=[snapshot.head_sha, snapshot.base_sha]), \
+                patch.object(local_repository, "snapshot_repository",
+                             return_value=snapshot) as build_snapshot, \
+                patch.object(local_repository, "build_review_input",
+                             return_value=("review input", None)) as build_input:
+            result = repository.collect_review(
+                Path("/unused"), 42, "master", snapshot.head_sha,
+                "PR title", "Why this change is needed", self.bot_config)
+        self.assertEqual(result, (snapshot.base_sha, snapshot.head_sha,
+                                  "review input", None))
+        build_snapshot.assert_called_once_with(Path("/unused"), snapshot.base_sha,
+                                               snapshot.head_sha)
+        build_input.assert_called_once_with(snapshot, "PR title",
+                                            "Why this change is needed")
+        self.assertTrue(any("--no-filter" in call.args for call in git.call_args_list))
 
     def test_historical_review_after_merge_uses_pinned_base(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             origin, work, checkout = (root / name for name in ("origin.git", "work", "checkout"))
-            repository.git(root, "init", "--bare", str(origin))
-            repository.git(root, "init", str(work))
-            repository.git(work, "config", "user.name", "Test")
-            repository.git(work, "config", "user.email", "test@example.com")
-            repository.git(work, "remote", "add", "origin", str(origin))
+            local_repository.git(root, "init", "--bare", str(origin))
+            local_repository.git(root, "init", str(work))
+            local_repository.git(work, "config", "user.name", "Test")
+            local_repository.git(work, "config", "user.email", "test@example.com")
+            local_repository.git(work, "remote", "add", "origin", str(origin))
             path = work / "code.cpp"
             path.write_text("original behavior\n")
-            repository.git(work, "add", ".")
-            repository.git(work, "commit", "-qm", "Base")
-            ancestor = repository.git(work, "rev-parse", "HEAD").strip()
+            local_repository.git(work, "add", ".")
+            local_repository.git(work, "commit", "-qm", "Base")
+            ancestor = local_repository.git(work, "rev-parse", "HEAD").strip()
             path.write_text("PR behavior\n")
-            repository.git(work, "commit", "-qam", "PR")
-            head = repository.git(work, "rev-parse", "HEAD").strip()
-            repository.git(work, "push", "origin", "HEAD:refs/pull/42/head")
-            repository.git(work, "checkout", "-b", "target", ancestor)
+            local_repository.git(work, "commit", "-qam", "PR")
+            head = local_repository.git(work, "rev-parse", "HEAD").strip()
+            local_repository.git(work, "push", "origin", "HEAD:refs/pull/42/head")
+            local_repository.git(work, "checkout", "-b", "target", ancestor)
             (work / "unrelated.cpp").write_text("target branch change\n")
-            repository.git(work, "add", ".")
-            repository.git(work, "commit", "-qm", "Target advanced before merge")
-            historical_base = repository.git(work, "rev-parse", "HEAD").strip()
-            repository.git(work, "merge", "--no-ff", head, "-m", "Merge PR")
-            repository.git(work, "push", "origin", "HEAD:refs/heads/master")
+            local_repository.git(work, "add", ".")
+            local_repository.git(work, "commit", "-qm", "Target advanced before merge")
+            historical_base = local_repository.git(work, "rev-parse", "HEAD").strip()
+            local_repository.git(work, "merge", "--no-ff", head, "-m", "Merge PR")
+            local_repository.git(work, "push", "origin", "HEAD:refs/heads/master")
             bot_config = replace(self.bot_config, origin=str(origin))
             current = repository.collect_review(checkout, 42, "master", head,
                 "Title", "Description", bot_config)
@@ -169,10 +170,10 @@ class BotTests(unittest.TestCase):
                 self.assertIsNone(historical[3])
                 self.assertIn("+PR behavior", historical[2])
                 self.assertNotIn("unrelated.cpp", historical[2])
-                snapshot = repository.snapshot_repository(checkout, historical[0], historical[1])
+                snapshot = local_repository.snapshot_repository(checkout, historical[0], historical[1])
                 self.assertEqual(snapshot.merge_base, ancestor)
                 self.assertEqual(set(snapshot.changed_paths), {"code.cpp"})
-                self.assertIn("original behavior", repository.read_file(
+                self.assertIn("original behavior", local_repository.read_file(
                     checkout, snapshot.base_files, "code.cpp", 1))
 
     def test_concurrent_review_refs_preserve_pinned_snapshots(self):
@@ -181,27 +182,27 @@ class BotTests(unittest.TestCase):
             origin = root / "origin.git"
             work = root / "work"
             checkout = root / "checkout"
-            repository.git(root, "init", "--bare", str(origin))
-            repository.git(root, "init", str(work))
-            repository.git(work, "config", "user.name", "Test")
-            repository.git(work, "config", "user.email", "test@example.com")
-            repository.git(work, "remote", "add", "origin", str(origin))
+            local_repository.git(root, "init", "--bare", str(origin))
+            local_repository.git(root, "init", str(work))
+            local_repository.git(work, "config", "user.name", "Test")
+            local_repository.git(work, "config", "user.email", "test@example.com")
+            local_repository.git(work, "remote", "add", "origin", str(origin))
             path = work / "code.cpp"
             path.write_text("base behavior\n")
-            repository.git(work, "add", "code.cpp")
-            repository.git(work, "commit", "-qm", "Base")
-            base = repository.git(work, "rev-parse", "HEAD").strip()
-            repository.git(work, "push", "origin", "HEAD:refs/heads/master")
+            local_repository.git(work, "add", "code.cpp")
+            local_repository.git(work, "commit", "-qm", "Base")
+            base = local_repository.git(work, "rev-parse", "HEAD").strip()
+            local_repository.git(work, "push", "origin", "HEAD:refs/heads/master")
 
             path.write_text("first PR behavior\n")
-            repository.git(work, "commit", "-qam", "First PR")
-            first_head = repository.git(work, "rev-parse", "HEAD").strip()
-            repository.git(work, "push", "origin", "HEAD:refs/pull/1/head")
-            repository.git(work, "reset", "--hard", base)
+            local_repository.git(work, "commit", "-qam", "First PR")
+            first_head = local_repository.git(work, "rev-parse", "HEAD").strip()
+            local_repository.git(work, "push", "origin", "HEAD:refs/pull/1/head")
+            local_repository.git(work, "reset", "--hard", base)
             path.write_text("second PR behavior\n")
-            repository.git(work, "commit", "-qam", "Second PR")
-            second_head = repository.git(work, "rev-parse", "HEAD").strip()
-            repository.git(work, "push", "origin", "HEAD:refs/pull/2/head")
+            local_repository.git(work, "commit", "-qam", "Second PR")
+            second_head = local_repository.git(work, "rev-parse", "HEAD").strip()
+            local_repository.git(work, "push", "origin", "HEAD:refs/pull/2/head")
 
             bot_config = config.BotConfig(str(origin), "example/repo",
                 "https://git.example.org/api/v1/repos/example/repo")
@@ -210,55 +211,49 @@ class BotTests(unittest.TestCase):
             first = repository.collect_review(checkout, 1, "master", first_head,
                 "First", "First PR", bot_config, ref_prefix=first_prefix)
             self.assertIsNone(first[3])
-            first_snapshot = repository.snapshot_repository(checkout, first[0], first[1])
+            first_snapshot = local_repository.snapshot_repository(checkout, first[0], first[1])
             second = repository.collect_review(checkout, 2, "master", second_head,
                 "Second", "Second PR", bot_config, ref_prefix=second_prefix)
             self.assertIsNone(second[3])
-            second_snapshot = repository.snapshot_repository(checkout, second[0], second[1])
-            repository.git(checkout, "update-ref", "refs/ralph/head", base)
+            second_snapshot = local_repository.snapshot_repository(checkout, second[0], second[1])
+            local_repository.git(checkout, "update-ref", "refs/ralph/head", base)
 
-            self.assertIn("first PR behavior", repository.read_file(checkout,
+            self.assertIn("first PR behavior", local_repository.read_file(checkout,
                 first_snapshot.head_files, "code.cpp", 1))
-            self.assertIn("+first PR behavior", repository.read_diff(checkout,
+            self.assertIn("+first PR behavior", local_repository.read_diff(checkout,
                 first_snapshot.changed_paths, first_snapshot.merge_base,
                 first_snapshot.head_sha, "code.cpp", 1))
-            self.assertIn("second PR behavior", repository.read_file(checkout,
+            self.assertIn("second PR behavior", local_repository.read_file(checkout,
                 second_snapshot.head_files, "code.cpp", 1))
-            repository.git(checkout, "gc", "--prune=now")
-            self.assertIn("first PR behavior", repository.read_file(checkout,
+            local_repository.git(checkout, "gc", "--prune=now")
+            self.assertIn("first PR behavior", local_repository.read_file(checkout,
                 first_snapshot.head_files, "code.cpp", 1))
-            repository.git(checkout, "update-ref", "refs/review-cases/example/head", first_head)
+            local_repository.git(checkout, "update-ref", "refs/review-cases/example/head", first_head)
 
-            repository.release_review_refs(checkout, first_prefix)
-            self.assertEqual(repository.git(checkout, "for-each-ref", "--format=%(refname)",
+            local_repository.release_review_refs(checkout, first_prefix)
+            self.assertEqual(local_repository.git(checkout, "for-each-ref", "--format=%(refname)",
                 first_prefix), "")
-            self.assertEqual(repository.git(checkout, "rev-parse", f"{second_prefix}/head").strip(),
+            self.assertEqual(local_repository.git(checkout, "rev-parse", f"{second_prefix}/head").strip(),
                 second_head)
-            self.assertEqual(repository.git(checkout, "rev-parse", f"{second_prefix}/base").strip(),
+            self.assertEqual(local_repository.git(checkout, "rev-parse", f"{second_prefix}/base").strip(),
                 base)
-            self.assertEqual(repository.git(checkout, "rev-parse", "refs/ralph/head").strip(),
+            self.assertEqual(local_repository.git(checkout, "rev-parse", "refs/ralph/head").strip(),
                 base)
-            self.assertEqual(repository.git(checkout, "rev-parse",
+            self.assertEqual(local_repository.git(checkout, "rev-parse",
                 "refs/review-cases/example/head").strip(), first_head)
 
     def test_large_patch_offers_per_file_diff_instead_of_skipping(self):
-        head = "a" * 40
+        snapshot = self.snapshot()
 
-        def fake_git(checkout, *args):
-            if args[0] == "rev-parse":
-                return head
-            if args[0] == "merge-base":
-                return "b" * 40
+        def bounded(checkout, *args, **kwargs):
             if args[0] == "diff" and "--binary" in args:
-                return "+change\n" * 30_000
+                return b"+change\n" * 30_000
             if args[0] == "diff" and "--name-status" in args:
-                return "M\tsrc/main.cpp\n"
-            return ""
+                return b"M\tsrc/main.cpp\n"
+            return b""
 
-        with patch.object(repository, "prepare_checkout"), patch.object(repository, "git",
-                                                                   side_effect=fake_git):
-            _base, _head, review, skip = repository.collect_review(
-                Path("/unused"), 42, "master", head, "Title", "Description", self.bot_config)
+        with patch.object(local_repository, "bounded_git", side_effect=bounded):
+            review, skip = local_repository.build_review_input(snapshot, "Title", "Description")
         self.assertIsNone(skip)
         self.assertIn("Use read_diff", review)
         self.assertIn("M\tsrc/main.cpp", review)
@@ -433,7 +428,7 @@ class BotTests(unittest.TestCase):
         with patch.object(urllib.request, "urlopen", side_effect=send), \
                 patch.object(forgejo, "public_discussion_request") as fetch:
             self.assertEqual(model.openai_review("key", "patch", self.snapshot(),
-                                                self.bot_config, self.prompt_config, current_pr=42), "No findings.")
+                                                self.prompt_config, discussion_lookup=research.discussion_lookup(self.bot_config, 42)), "No findings.")
         fetch.assert_not_called()
         self.assertIn("current PR's discussion is excluded",
                       requests[1]["input"][-1]["output"])
@@ -448,23 +443,23 @@ class BotTests(unittest.TestCase):
             commit = ["git", "-C", directory, "-c", "user.name=Test",
                       "-c", "user.email=test@example.com", "commit", "-qm"]
             subprocess.run(commit + ["Guard the old case"], check=True)
-            base = repository.git(checkout, "rev-parse", "HEAD").strip()
+            base = local_repository.git(checkout, "rev-parse", "HEAD").strip()
             path.write_text("new guard\nunchanged\n")
             subprocess.run(["git", "-C", directory, "add", "code.cpp"], check=True)
             subprocess.run(commit + ["PR change"], check=True)
-            head = repository.git(checkout, "rev-parse", "HEAD").strip()
-            base_files = repository.tracked_files_at(checkout, base)
+            head = local_repository.git(checkout, "rev-parse", "HEAD").strip()
+            base_files = local_repository.tracked_files_at(checkout, base)
 
-            blame = repository.blame_base(checkout, base_files, base, "code.cpp", 1)
+            blame = local_repository.blame_base(checkout, base_files, base, "code.cpp", 1)
             self.assertIn(base, blame)
             self.assertIn("old guard", blame)
             self.assertIn("Guard the old case", blame)
-            details = repository.read_commit(checkout, base_files, base, base, "code.cpp")
+            details = local_repository.read_commit(checkout, base_files, base, base, "code.cpp")
             self.assertIn("Guard the old case", details)
             self.assertIn("+old guard", details)
-            self.assertIn("not an ancestor", repository.read_commit(
+            self.assertIn("not an ancestor", local_repository.read_commit(
                 checkout, base_files, base, head, "code.cpp"))
-            self.assertIn("Invalid", repository.blame_base(
+            self.assertIn("Invalid", local_repository.blame_base(
                 checkout, base_files, base, "../code.cpp", 1))
 
     def test_openai_request_disables_storage(self):
@@ -481,7 +476,7 @@ class BotTests(unittest.TestCase):
 
         with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
             self.assertEqual(model.openai_review("test-key", "patch", self.snapshot(),
-                                                  self.bot_config, self.prompt_config),
+                                                  self.prompt_config),
                              "No findings.")
         request = send.call_args.args[0]
         sent = json.loads(request.data)
@@ -505,12 +500,12 @@ class BotTests(unittest.TestCase):
             prompt_file = Path(directory) / "prompt.md"
             prompt_file.write_text("Custom review prompt\n")
             debug = {}
-            custom_prompts = config.PromptConfig(config.load_prompt_file(prompt_file),
+            custom_prompts = core_config.PromptConfig(core_config.load_prompt_file(prompt_file),
                                                  self.prompt_config.audit_prompts,
                                                  self.prompt_config.models)
             with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
                 self.assertEqual(model.openai_review("test-key", "patch", self.snapshot(),
-                                                      self.bot_config, custom_prompts, debug),
+                                                      custom_prompts, debug),
                                  "No findings.")
         request = send.call_args.args[0]
         sent = json.loads(request.data)
@@ -568,19 +563,19 @@ class BotTests(unittest.TestCase):
     def test_large_patch_gives_tests_relevant_diff_excerpt(self):
         calls = []
 
-        def git(checkout, *args):
+        def git(checkout, *args, **kwargs):
             calls.append(args)
             if args[-1] == "test/functional/example.py":
                 return ("diff --git a/test/functional/example.py b/"
                         "test/functional/example.py\n"
-                        + "x" * repository.MAX_FOCUSED_DIFF_BYTES)
-            return "diff --git a/src/net.cpp b/src/net.cpp\n"
+                        + "x" * local_repository.MAX_FOCUSED_DIFF_BYTES).encode()
+            return b"diff --git a/src/net.cpp b/src/net.cpp\n"
 
-        with patch.object(repository, "git", side_effect=git):
-            review = repository.focused_review_input(
+        with patch.object(local_repository, "bounded_git", side_effect=git):
+            review = local_repository.focused_review_input(
                 "Patch exceeds 200000 input bytes. Use read_diff to inspect changed files.",
-                repository.RepositorySnapshot(
-                    Path("/unused"), "b" * 40, "a" * 40, "b" * 40,
+                local_repository.RepositorySnapshot(
+                    Path("/unused"), "b" * 40, "a" * 40, "b" * 40, "b" * 40,
                     {}, {}, frozenset({"test/functional/example.py", "src/net.cpp"})),
                 "tests")
         self.assertIn("test/functional/example.py", review)
@@ -609,8 +604,8 @@ class BotTests(unittest.TestCase):
 
     def test_developer_notes_are_read_at_merge_base(self):
         base = "b" * 40
-        with patch.object(repository, "git", return_value="Base-only rules\n") as git:
-            self.assertEqual(repository.audit_developer_notes(self.snapshot()),
+        with patch.object(local_repository, "bounded_git", return_value=b"Base-only rules\n") as git:
+            self.assertEqual(local_repository.audit_developer_notes(self.snapshot()),
                              "Base-only rules\n")
         self.assertEqual(git.call_args.args[1:],
                          ("show", f"{base}:doc/developer-notes.md"))
@@ -647,7 +642,7 @@ class BotTests(unittest.TestCase):
                 patch.object(model, "read_file", return_value="1: full context") as read:
             self.assertEqual(model.openai_review("key", "patch",
                                                   self.snapshot({"src/main.cpp": "a" * 40}),
-                                                  self.bot_config, self.prompt_config, debug),
+                                                  self.prompt_config, debug),
                              "No findings.")
         read.assert_called_once()
         self.assertEqual(requests[1]["input"][1], call)
@@ -687,7 +682,7 @@ class BotTests(unittest.TestCase):
                  "stage_outputs": {"tests": "</pre><script>alert(1)</script>"}}
         body = forgejo.review_body(self.bot_config, "b" * 40, "a" * 40,
                                    "Review text.")
-        metrics = trace.review_metrics(debug, self.prompt_config)
+        metrics = core_trace.review_metrics(debug, self.prompt_config)
         result = self.review_result(debug)
         public_trace = trace.review_trace(result)
         self.assertEqual(metrics["estimated_cost_usd"], 0.000011)
@@ -742,7 +737,7 @@ class BotTests(unittest.TestCase):
             "state": {"status": "skipped", "turns": [], "tools": []},
         }}
 
-        metrics = trace.review_metrics(debug, self.prompt_config)
+        metrics = core_trace.review_metrics(debug, self.prompt_config)
         self.assertEqual(metrics["model_turns"], 6)
         self.assertEqual(metrics["tool_calls"], 2)
         self.assertEqual(metrics["audit_calls"], 1)
@@ -772,13 +767,13 @@ class BotTests(unittest.TestCase):
             subprocess.run(["git", "-C", directory, "-c", "user.name=Test",
                             "-c", "user.email=test@example.com", "commit", "-qm",
                             "fixture"], check=True)
-            files = repository.tracked_files(checkout)
+            files = local_repository.tracked_files(checkout)
             self.assertIn("code.cpp", files)
             self.assertNotIn("link.cpp", files)
-            self.assertIn("2: void caller()", repository.read_file(checkout, files, "code.cpp", 2))
-            self.assertIn("Only tracked", repository.read_file(checkout, files, "../code.cpp", 1))
-            self.assertIn("Only tracked", repository.read_file(checkout, files, "link.cpp", 1))
-            self.assertIn("HEAD:code.cpp:1:void target", repository.search_code(checkout, "HEAD", "target"))
+            self.assertIn("2: void caller()", local_repository.read_file(checkout, files, "code.cpp", 2))
+            self.assertIn("Only tracked", local_repository.read_file(checkout, files, "../code.cpp", 1))
+            self.assertIn("Only tracked", local_repository.read_file(checkout, files, "link.cpp", 1))
+            self.assertIn("HEAD:code.cpp:1:void target", local_repository.search_code(checkout, "HEAD", "target"))
 
     def test_path_base_and_diff_tools_read_only_git_content(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -791,46 +786,47 @@ class BotTests(unittest.TestCase):
             commit = ["git", "-C", directory, "-c", "user.name=Test",
                       "-c", "user.email=test@example.com", "commit", "-qm"]
             subprocess.run(commit + ["base"], check=True)
-            base = repository.git(checkout, "rev-parse", "HEAD").strip()
+            base = local_repository.git(checkout, "rev-parse", "HEAD").strip()
             (checkout / "code.cpp").write_text("new behavior\nunchanged\n")
             subprocess.run(["git", "-C", directory, "add", "code.cpp"], check=True)
             subprocess.run(commit + ["change"], check=True)
+            head = local_repository.git(checkout, "rev-parse", "HEAD").strip()
 
-            files = repository.tracked_files(checkout)
-            base_files = repository.tracked_files_at(checkout, base)
-            changed = set(repository.git(checkout, "diff", "--name-only", "-z",
-                                  f"{base}..HEAD").split("\x00"))
-            self.assertEqual(repository.find_paths(files, "CODE"), "code.cpp\n")
-            self.assertEqual(repository.find_paths(files, "missing"), "No matching tracked files.")
+            files = local_repository.tracked_files(checkout)
+            base_files = local_repository.tracked_files_at(checkout, base)
+            changed = set(local_repository.git(checkout, "diff", "--name-only", "-z",
+                                  f"{base}..{head}").split("\x00"))
+            self.assertEqual(local_repository.find_paths(files, "CODE"), "code.cpp\n")
+            self.assertEqual(local_repository.find_paths(files, "missing"), "No matching tracked files.")
             self.assertNotIn("link.cpp", base_files)
-            self.assertIn("1: old behavior", repository.read_file(checkout, base_files,
+            self.assertIn("1: old behavior", local_repository.read_file(checkout, base_files,
                                                            "code.cpp", 1))
-            self.assertIn("1: new behavior", repository.read_file(checkout, files,
+            self.assertIn("1: new behavior", local_repository.read_file(checkout, files,
                                                            "code.cpp", 1))
-            diff = repository.read_diff(checkout, changed, base, "HEAD", "code.cpp", 1)
+            diff = local_repository.read_diff(checkout, changed, base, head, "code.cpp", 1)
             self.assertIn("-old behavior", diff)
             self.assertIn("+new behavior", diff)
-            self.assertIn("No diff lines", repository.read_diff(checkout, changed, base, "HEAD",
+            self.assertIn("No diff lines", local_repository.read_diff(checkout, changed, base, head,
                                                          "code.cpp", 100))
-            self.assertIn("Invalid", repository.read_diff(checkout, changed, base, "HEAD",
+            self.assertIn("Invalid", local_repository.read_diff(checkout, changed, base, head,
                                                    "link.cpp", 1))
 
 
     def test_snapshot_retains_both_paths_of_a_rename(self):
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
-            repository.git(checkout, "init", "-q")
+            local_repository.git(checkout, "init", "-q")
             (checkout / "before.cpp").write_text("unchanged content\n")
-            repository.git(checkout, "add", ".")
+            local_repository.git(checkout, "add", ".")
             commit = ("-c", "user.name=Test", "-c", "user.email=test@example.com",
                       "commit", "-qm")
-            repository.git(checkout, *commit, "base")
-            base = repository.git(checkout, "rev-parse", "HEAD").strip()
-            repository.git(checkout, "mv", "before.cpp", "after.cpp")
-            repository.git(checkout, *commit, "rename")
-            head = repository.git(checkout, "rev-parse", "HEAD").strip()
+            local_repository.git(checkout, *commit, "base")
+            base = local_repository.git(checkout, "rev-parse", "HEAD").strip()
+            local_repository.git(checkout, "mv", "before.cpp", "after.cpp")
+            local_repository.git(checkout, *commit, "rename")
+            head = local_repository.git(checkout, "rev-parse", "HEAD").strip()
 
-            snapshot = repository.snapshot_repository(checkout, base, head)
+            snapshot = local_repository.snapshot_repository(checkout, base, head)
             self.assertEqual(snapshot.changed_paths, {"before.cpp", "after.cpp"})
             self.assertIn("before.cpp", snapshot.base_files)
             self.assertIn("after.cpp", snapshot.head_files)
@@ -928,7 +924,7 @@ class BotTests(unittest.TestCase):
         class Result:
             stdout = "a" * 40 + "\trefs/pull/42/head\n"
 
-        with patch.object(repository.subprocess, "run", return_value=Result()) as run:
+        with patch.object(local_repository.subprocess, "run", return_value=Result()) as run:
             self.assertEqual(repository.current_head(self.bot_config, 42), "a" * 40)
         self.assertEqual(run.call_args.args[0],
                          ["git", "ls-remote", self.bot_config.origin, "refs/pull/42/head"])

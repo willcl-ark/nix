@@ -5,7 +5,9 @@ import json
 import re
 from datetime import datetime, timezone
 
-from . import model, repository, trace
+from ralph import trace as core_trace
+from ralph import repository
+from ralph import model
 
 
 MAX_CANDIDATES = 12
@@ -73,7 +75,7 @@ def _base(job):
 
 def _published_findings(job):
     result = job.get("review_result") or {}
-    exported = trace.findings_export(result)
+    exported = core_trace.findings_export(result)
     if exported is None:
         return None
     findings = []
@@ -336,9 +338,8 @@ def _parse_assessments(text, candidates, assessed_from_head, new_head):
 
 
 def assess_completed_review(api_key, checkout, current_job, history,
-                            prior_assessments, prompt_config, budget,
+                            prior_assessments, prompt, stage_model, budget,
                             is_current=None):
-    stage_model = prompt_config.models["addressed_findings"]
     record = {"assessed_at": _now(), "model": stage_model, "findings": []}
     if not history:
         record.update(status="skipped", reason="no_previous_review")
@@ -375,7 +376,7 @@ def assess_completed_review(api_key, checkout, current_job, history,
             checkout, previous, current_job, assessed, assessed_from_head, new_head)
         data = {"model": stage_model, "store": False,
                 "reasoning": {"effort": "low"},
-                "instructions": prompt_config.audit_prompts["addressed_findings"],
+                "instructions": prompt,
                 "input": [{"role": "user", "content": input_text}],
                 "max_output_tokens": MAX_OUTPUT_TOKENS,
                 "text": {"format": {"type": "json_schema",

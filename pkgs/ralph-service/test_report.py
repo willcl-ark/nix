@@ -6,7 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ralph import report, trace
+from ralph_service import report, trace
+
 
 
 class ReportTests(unittest.TestCase):

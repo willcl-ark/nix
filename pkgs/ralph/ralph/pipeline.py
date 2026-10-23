@@ -39,7 +39,8 @@ def stage_settings(name, tier):
 
 
 def review_with_independent_passes(case, runtime, prompt_config,
-                                  routing_mode="enabled", blind_alternatives=True):
+                                  routing_mode="enabled", blind_alternatives=True,
+                                  archaeology=False):
     review = case.review
     snapshot = case.snapshot
     debug = runtime.debug
@@ -47,13 +48,15 @@ def review_with_independent_passes(case, runtime, prompt_config,
     is_current = runtime.is_current
     ppq_api_key = runtime.ppq_api_key
     ppq_budget = runtime.ppq_budget
-    allow_discussions = runtime.allow_discussions
+    discussion_lookup = runtime.discussion_lookup
+    allow_web_search = runtime.allow_web_search
     research_evidence = case.research_evidence
     if ppq_budget is not None:
         for stage in PPQ_ADVERSARIAL_STAGES:
             ppq_budget.exempt(stage)
     if research_evidence is not None:
-        allow_discussions = False
+        discussion_lookup = None
+        allow_web_search = False
     stages = debug.setdefault("stages", {})
     outputs = debug.setdefault("stage_outputs", {})
     candidates = []
@@ -85,8 +88,8 @@ def review_with_independent_passes(case, runtime, prompt_config,
     def protect_verification():
         if budget is not None:
             effort, output_tokens = stage_settings("verifier", plan["tier"])
-            tools = model.available_tools(model.VERIFIER_TOOLS, allow_discussions,
-                                          research_evidence)
+            tools = model.available_tools(model.VERIFIER_TOOLS, discussion_lookup,
+                                          research_evidence, allow_web_search)
             debug["verification_budget"] = budget.protect({
                 "model": prompt_config.models["verifier"], "store": False,
                 "reasoning": {"effort": effort},
@@ -112,7 +115,9 @@ def review_with_independent_passes(case, runtime, prompt_config,
                  else model.TOOLS if name in FULL_CONTEXT_STAGES
                  else model.FOCUSED_TOOLS)
         evidence = research_evidence if name in {"archaeologist", "verifier"} else None
-        return model.available_tools(tools, allow_discussions and name not in {"script", "dead_code"}, evidence)
+        return model.available_tools(
+            tools, discussion_lookup if name not in {"script", "dead_code"} else None,
+            evidence, allow_web_search)
 
     def run_stage(name, input_text, prompt, schema, *, tools=True):
         if name not in ADVERSARIAL_STAGES:
@@ -184,7 +189,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
         if name == "design":
             if notes is None:
                 notes = audit_developer_notes(snapshot)
-            input_text += "\n\nMerge-base developer notes:\n" + notes
+            input_text += "\n\nComparison-base developer notes:\n" + notes
         try:
             answer = run_stage(name, input_text, prompt, protocol.DISCOVERY_SCHEMA)
             result = protocol.discovery(answer, name, snapshot)
@@ -209,15 +214,10 @@ def review_with_independent_passes(case, runtime, prompt_config,
 
     def run_archaeologist():
         prompt = prompt_config.audit_prompts["archaeologist"]
-        unavailable = (
-            "\n\nDiscussion lookup is disabled for this review. Explain which "
-            "history was unavailable and assess the concept from the PR rationale, "
-            "patch context, and any non-discussion evidence you can inspect."
-            if not allow_discussions and research_evidence is None else "")
         input_text = (
-            f"Current PR: {case.repository_url}/pulls/{case.number}\n"
+            f"Current PR: {case.source['url']}\n"
             f"Changed paths: {json.dumps(sorted(snapshot.changed_paths))}\n\n"
-            f"{review}{unavailable}"
+            f"{review}"
         )
         input_text = with_research_inventory(input_text)
         try:
@@ -254,11 +254,19 @@ def review_with_independent_passes(case, runtime, prompt_config,
         script_sensitive = collect("script", discover("script"))
         completed.add("script")
 
-    concept_candidate = run_archaeologist()
+    if archaeology:
+        concept_candidate = run_archaeologist()
+    else:
+        reason = "Archaeology was not requested."
+        debug["concept_assessment"] = {"status": "skipped", "reason": reason}
+        for name in ("archaeologist", "alternatives"):
+            stages[name] = {
+                "model": prompt_config.models["archaeologist"], "status": "skipped",
+                "reason": reason, "turns": [], "tools": []}
     if blind_alternatives and concept_candidate is not None:
         protect_verification()
         # Only the goal and baseline cross this boundary, never the PR solution
-        # or discussion. The tools expose only the pinned merge-base tree.
+        # or discussion. The tools expose only the pinned comparison-base tree.
         alternative_input = json.dumps({key: concept_candidate[key]
                                         for key in ("problem", "goal", "baseline")})
         try:
@@ -274,7 +282,7 @@ def review_with_independent_passes(case, runtime, prompt_config,
             record = stages["alternatives"]
             if record["status"] == "completed":
                 record.update(status="invalid", error_type=type(exc).__name__)
-    elif blind_alternatives:
+    elif blind_alternatives and archaeology:
         stages["alternatives"] = {
             "model": prompt_config.models["archaeologist"], "status": "skipped",
             "reason": "No valid problem and baseline from concept review.",

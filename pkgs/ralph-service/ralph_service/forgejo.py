@@ -5,7 +5,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .repository import MAX_TOOL_BYTES, current_head
+from ralph.repository import MAX_TOOL_BYTES
+from .repository import current_head
 
 MAX_DISCUSSION_RESPONSE_BYTES = 500_000
 MAX_COMMENT_PAGES = 1000

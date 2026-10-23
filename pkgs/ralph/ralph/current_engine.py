@@ -49,11 +49,14 @@ def configure(value):
         raise ValueError("audit prompt files must not be empty")
     normalized = {"prompts": asdict(prompt_config),
                   "routing_mode": value.get("routing_mode", "enabled"),
-                  "blind_alternatives": value.get("blind_alternatives", True)}
+                  "blind_alternatives": value.get("blind_alternatives", True),
+                  "archaeology": value.get("archaeology", False)}
     if normalized["routing_mode"] not in {"enabled", "shadow", "full"}:
         raise ValueError("Unknown routing mode")
     if type(normalized["blind_alternatives"]) is not bool:
         raise ValueError("blind_alternatives must be a boolean")
+    if type(normalized["archaeology"]) is not bool:
+        raise ValueError("archaeology must be a boolean")
     return normalized
 
 
@@ -94,10 +97,15 @@ def exports(debug):
 
 
 def run(case, runtime, configured):
+    if configured["archaeology"]:
+        if (not isinstance(case.source, dict) or case.source.get("kind") != "pull_request"
+                or not case.source.get("url")
+                or (case.research_evidence is None and runtime.discussion_lookup is None)):
+            raise ValueError("archaeology requires PR context and discussion evidence or a reader")
     runtime.debug.setdefault("schema_version", 1)
     prompt_config = config.PromptConfig(**configured["prompts"])
     content = pipeline.review_with_independent_passes(
         case, runtime, prompt_config, configured["routing_mode"],
-        configured["blind_alternatives"])
+        configured["blind_alternatives"], configured["archaeology"])
     data = {**runtime.debug, "schema_version": 1}
     return Output(content, data, exports(runtime.debug))

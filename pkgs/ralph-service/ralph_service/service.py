@@ -14,9 +14,13 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import badge, config, engine, forgejo, model, report, repository, spend, trace
+from ralph import trace as core_trace
+from . import badge, config, forgejo, report, repository, trace
+from ralph import repository as local_repository
+from ralph import engine, model, spend, runner
+from .research import discussion_lookup
 from .jobs import JobStore
-from .repository import BRANCH, SHA
+from ralph.repository import BRANCH, SHA
 
 MAX_BODY = 1024 * 1024
 CHECKOUT_LOCK = threading.Lock()
@@ -190,7 +194,7 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
                         jobs.complete(job)
                         outcome = "already-reviewed"
                         return outcome
-                    snapshot = (None if skip else repository.snapshot_repository(
+                    snapshot = (None if skip else local_repository.snapshot_repository(
                         checkout, base_sha, head_sha))
                     merge_base = getattr(snapshot, "merge_base", None)
                 debug = {"skip": skip} if skip else {}
@@ -198,34 +202,38 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
                 if skip:
                     output = engine.Output(f"Skipped: {skip}", {}, {})
                 else:
-                    case = engine.ReviewCase(number, review, snapshot,
-                                             bot_config.repository_url or "", None)
+                    case = engine.ReviewCase(
+                        review, snapshot,
+                        source={"kind": "pull_request", "number": number,
+                                "url": f"{bot_config.repository_url}/pulls/{number}"})
                     runtime = engine.Runtime(
-                        case=case, bot_config=bot_config, api_key=api_key,
+                        case=case, api_key=api_key,
                         ppq_api_key=ppq_api_key, budget=budget,
                         ppq_budget=ppq_budget, is_current=is_current,
-                        allow_discussions=allow_discussions, attempt=debug)
-                    output = review_engine.run(case, runtime)
+                        discussion_lookup=(discussion_lookup(bot_config, number)
+                                           if allow_discussions else None),
+                        allow_web_search=allow_discussions, attempt=debug)
+                    saved = runner.run_review(case, runtime, review_engine)
+                    if saved.pop("diff_base_sha") != saved["merge_base"]:
+                        raise ValueError("service review must use the merge base")
                 debug = runtime.attempt if runtime else debug
-                content = output.content
+                if skip:
+                    saved = {
+                        "schema_version": 1, "engine": engine_identity,
+                        "base_sha": base_sha, "head_sha": head_sha,
+                        "merge_base": merge_base, "content": output.content,
+                        "output": {"schema_version": output.schema_version,
+                                   "data": output.data, "exports": output.exports},
+                        "run": {"review_id": budget.review_id, "status": "completed",
+                                "metrics": {}, "skipped": True,
+                                "budget": budget.summary(),
+                                "ppq_budget": (ppq_budget.summary()
+                                               if ppq_budget is not None else None),
+                                "attempt": debug},
+                    }
+                content = saved["content"]
                 run_status = "completed"
-                saved = {
-                    "schema_version": 1,
-                    "engine": engine_identity,
-                    "base_sha": base_sha,
-                    "head_sha": head_sha,
-                    "merge_base": getattr(snapshot, "merge_base", None),
-                    "content": content,
-                    "output": {"schema_version": output.schema_version,
-                               "data": output.data, "exports": output.exports},
-                    "run": {"review_id": budget.review_id, "status": "completed",
-                            "metrics": runtime.metrics() if runtime else {},
-                            "skipped": bool(skip),
-                            "budget": budget.summary(),
-                            "ppq_budget": (ppq_budget.summary()
-                                           if ppq_budget is not None else None),
-                            "attempt": debug},
-                }
+                result_record = saved
                 if not jobs.save_result(job, saved):
                     outcome = "superseded"
                     return outcome
@@ -286,7 +294,7 @@ def process_job(job, jobs, state_dir, api_key, forgejo_token, bot_login,
         if (checkout / ".git").exists():
             try:
                 with CHECKOUT_LOCK:
-                    repository.release_review_refs(checkout, ref_prefix)
+                    local_repository.release_review_refs(checkout, ref_prefix)
             except (OSError, subprocess.SubprocessError) as exc:
                 logging.warning("Could not release review refs for PR %d: %s",
                                 number, type(exc).__name__)
@@ -385,12 +393,12 @@ def make_handler(secret, jobs, bot_config, engine_identity=None):
                 logging.exception("Could not read review badge status")
                 self.send_error(503)
                 return
-            debug = trace.current_diagnostics(result) if result else {}
+            debug = core_trace.current_diagnostics(result) if result else {}
             if result is None or debug.get("skip") or "decisions" not in debug:
                 image = badge.GREY
             elif (any(decision.get("disposition") == "publish"
                       for decision in debug.get("decisions", []))
-                  or trace.published_concept_concern(debug)):
+                  or core_trace.published_concept_concern(debug)):
                 image = badge.ORANGE
             else:
                 image = badge.GREY
@@ -527,6 +535,8 @@ def main():
         "models_json": args.models_json,
         "routing_mode": args.routing_mode,
     }.items() if value is not None})
+    if args.engine == "current":
+        engine_config.setdefault("archaeology", True)
     try:
         review_engine = engine.load(args.engine, engine_config)
     except (ImportError, TypeError, ValueError) as exc:

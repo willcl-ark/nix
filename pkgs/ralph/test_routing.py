@@ -33,9 +33,8 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn("dead_code", plan["audits"])
 
     def runtime(self):
-        case = SimpleNamespace(snapshot=None, number=1)
-        bot_config = SimpleNamespace()
-        return engine.Runtime(case=case, bot_config=bot_config, api_key="key")
+        case = engine.ReviewCase("Patch", None)
+        return engine.Runtime(case=case, api_key="key")
 
     def test_script_specialist_requires_semantic_selection(self):
         for path in ("src/policy/policy.cpp", "src/script/interpreter.cpp",

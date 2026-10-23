@@ -8,14 +8,18 @@
 
 let
   cfg = config.services.ralph;
-  defaultPackage = pkgs.callPackage ../../../pkgs/ralph { };
+  defaultPackage = pkgs.callPackage ../../../pkgs/ralph-service {
+    ralph = pkgs.callPackage ../../../pkgs/ralph { };
+  };
   currentEngine = cfg.engine == "current";
   currentEngineConfigDefaults = lib.optionalAttrs currentEngine (
     {
       routing_mode = cfg.routingMode;
     }
-    // lib.optionalAttrs (!(cfg.engineConfig ? prompts)) {
+    // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.promptFile != null) {
       prompt_file = toString cfg.promptFile;
+    }
+    // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.auditPromptDir != null) {
       audit_prompt_dir = toString cfg.auditPromptDir;
     }
     // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.modelsJson != null) {
@@ -112,8 +116,8 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = defaultPackage;
-      defaultText = lib.literalExpression "pkgs.callPackage ../../../pkgs/ralph { }";
-      description = "ralph package to run.";
+      defaultText = lib.literalExpression "pkgs.callPackage ../../../pkgs/ralph-service { ralph = pkgs.callPackage ../../../pkgs/ralph { }; }";
+      description = "ralph-service companion package to run.";
     };
 
     origin = lib.mkOption {
@@ -148,17 +152,15 @@ in
     };
 
     promptFile = lib.mkOption {
-      type = lib.types.path;
-      default = "${cfg.package}/share/ralph/prompt.md";
-      defaultText = lib.literalExpression "\"\${config.services.ralph.package}/share/ralph/prompt.md\"";
-      description = "Markdown file containing the review prompt.";
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Optional review prompt override. Unset uses the core package default.";
     };
 
     auditPromptDir = lib.mkOption {
-      type = lib.types.path;
-      default = "${cfg.package}/share/ralph/audits";
-      defaultText = lib.literalExpression "\"\${config.services.ralph.package}/share/ralph/audits\"";
-      description = "Directory containing review stage prompts and models.json.";
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Optional review stage prompt directory override. Unset uses the core package defaults.";
     };
 
     modelsJson = lib.mkOption {
@@ -198,6 +200,18 @@ in
         of previously published findings. Uses its own ledger and never consumes
         the main review's per-review or monthly allowance.
       '';
+    };
+
+    followupPromptFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Optional addressed-finding prompt override. Unset uses the companion package default.";
+    };
+
+    followupModel = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Optional addressed-finding model override. Independent of the main review model map.";
     };
 
     monthlyBudgetUsd = lib.mkOption {
@@ -390,16 +404,16 @@ in
               cfg.origin
               "--openai-key-file"
               cfg.openaiKeyFile
-              "--prompt-file"
-              cfg.promptFile
-              "--audit-prompt-dir"
-              cfg.auditPromptDir
               "--budget-usd"
               (toString cfg.followupBudgetUsd)
             ]
-            ++ lib.optionals (cfg.modelsJson != null) [
-              "--models-json"
-              cfg.modelsJson
+            ++ lib.optionals (cfg.followupPromptFile != null) [
+              "--prompt-file"
+              cfg.followupPromptFile
+            ]
+            ++ lib.optionals (cfg.followupModel != null) [
+              "--model"
+              cfg.followupModel
             ]
           )
         }";
@@ -435,12 +449,12 @@ in
       wants = [ "network-online.target" ];
       preStart = ''
         if [ -e ${lib.escapeShellArg "${cfg.stateDir}/jobs.sqlite3"} ]; then
-          ${lib.getExe cfg.package} --state-dir ${lib.escapeShellArg cfg.stateDir} --migrate-state
+          ${lib.getExe' cfg.package "ralph-service"} --state-dir ${lib.escapeShellArg cfg.stateDir} --migrate-state
         fi
       '';
 
       serviceConfig = {
-        ExecStart = "${lib.getExe cfg.package} ${lib.escapeShellArgs args}";
+        ExecStart = "${lib.getExe' cfg.package "ralph-service"} ${lib.escapeShellArgs args}";
         User = cfg.user;
         Group = cfg.group;
         StateDirectory = lib.removePrefix "/var/lib/" cfg.stateDir;

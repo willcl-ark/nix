@@ -4,7 +4,9 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from ralph import report, trace
+from ralph import trace as core_trace
+from ralph_service import report, trace
+
 
 
 class TraceAttributionTests(unittest.TestCase):
@@ -38,10 +40,10 @@ class TraceAttributionTests(unittest.TestCase):
             "stages": {"archaeologist": {"status": "completed"},
                        "alternatives": {"status": "completed"}},
         }
-        self.assertIsNotNone(trace.published_concept_assessment(debug))
-        self.assertFalse(trace.published_concept_concern(debug))
-        self.assertEqual(trace.stage_metrics(debug)["archaeologist"]["conceptual_concerns"], 0)
-        self.assertTrue(trace.stage_metrics(debug)["alternatives"]["concept_stage"])
+        self.assertIsNotNone(core_trace.published_concept_assessment(debug))
+        self.assertFalse(core_trace.published_concept_concern(debug))
+        self.assertEqual(core_trace.stage_metrics(debug)["archaeologist"]["conceptual_concerns"], 0)
+        self.assertTrue(core_trace.stage_metrics(debug)["alternatives"]["concept_stage"])
 
     def test_stage_metrics_credit_merged_candidates_without_unique_overcount(self):
         debug = {
@@ -82,7 +84,7 @@ class TraceAttributionTests(unittest.TestCase):
             },
         }
 
-        metrics = trace.stage_metrics(debug)
+        metrics = core_trace.stage_metrics(debug)
 
         self.assertEqual(metrics["independent"]["candidate_counts"]["publish"], 1)
         self.assertEqual(metrics["adversarial"]["candidate_counts"]["publish"], 1)
@@ -115,7 +117,7 @@ class TraceAttributionTests(unittest.TestCase):
                                     "turns": [], "tools": []}},
         }
 
-        metrics = trace.stage_metrics(debug)
+        metrics = core_trace.stage_metrics(debug)
 
         self.assertEqual(metrics["verifier"]["candidate_counts"]["publish"], 0)
         self.assertEqual(metrics["verifier"]["accepted_findings"], 1)
@@ -179,7 +181,7 @@ class TraceAttributionTests(unittest.TestCase):
                                        "turns": [], "tools": []}},
         }
 
-        metrics = trace.stage_metrics(debug)
+        metrics = core_trace.stage_metrics(debug)
 
         self.assertEqual(metrics["independent"]["candidate_counts"]["undisposed"], 2)
         self.assertNotIn("missing", metrics)
@@ -198,7 +200,7 @@ class TraceAttributionTests(unittest.TestCase):
                             ]},
         }}
 
-        metrics = trace.stage_metrics(debug)
+        metrics = core_trace.stage_metrics(debug)
 
         self.assertEqual(metrics["independent"]["calls"], 2)
         self.assertEqual(metrics["independent"]["tool_calls"], 1)

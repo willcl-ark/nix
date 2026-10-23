@@ -25,7 +25,7 @@ valid input and assertion that would expose it, reusing existing fixtures where
 practical.
 
 For a fix, identify which regression assertion would fail without the fix and
-why. Check whether it distinguishes merge-base behavior from head, accounting
+why. Check whether it distinguishes comparison-base behavior from head, accounting
 for any test-harness changes needed to make the comparison meaningful.
 Supplementary tests may protect adjacent behavior; name the regression each
 would catch. For each functional test step, ask what must hold about

@@ -14,10 +14,14 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, engine, forgejo, repository, research, spend, stats, stats_page, trace
+from ralph import trace as core_trace
+from . import config, forgejo, repository, research, stats, stats_page
+from ralph import repository as local_repository
+from ralph import engine, spend, runner
+from ralph import research as frozen_research
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def private_dir(path):
@@ -63,7 +67,7 @@ def timestamp():
 
 
 def source_code_sha256():
-    sources = sorted(Path(__file__).resolve().parent.glob("*.py"))
+    sources = sorted(Path(engine.__file__).resolve().parent.glob("*.py"))
     checksum = hashlib.sha256()
     for path in sources:
         checksum.update(path.name.encode())
@@ -90,7 +94,7 @@ def verify_local_objects(checkout, base_sha, head_sha):
     """Reject partial clones that would fetch Git objects during replay."""
     if not checkout.is_absolute():
         raise ValueError("Frozen checkout path must be absolute")
-    if not repository.SHA.fullmatch(base_sha) or not repository.SHA.fullmatch(head_sha):
+    if not local_repository.SHA.fullmatch(base_sha) or not local_repository.SHA.fullmatch(head_sha):
         raise ValueError("Frozen Git object IDs are invalid")
     result = subprocess.run(
         ["git", "-C", str(checkout), "rev-list", "--objects", "--missing=print",
@@ -122,11 +126,11 @@ def pull_request_details(bot_config, token, number):
     api_head = ((pull.get("head") or {}).get("sha") or "")
     title = pull.get("title") or ""
     description = pull.get("body") or ""
-    if (not isinstance(base_ref, str) or not repository.BRANCH.fullmatch(base_ref)
+    if (not isinstance(base_ref, str) or not local_repository.BRANCH.fullmatch(base_ref)
             or base_ref.startswith("-") or ".." in base_ref or "//" in base_ref
             or base_ref.endswith("/") or base_ref.endswith(".lock")):
         raise ValueError(f"PR {number} has an invalid base branch")
-    if api_head and (not isinstance(api_head, str) or not repository.SHA.fullmatch(api_head)):
+    if api_head and (not isinstance(api_head, str) or not local_repository.SHA.fullmatch(api_head)):
         raise ValueError(f"PR {number} has an invalid API head SHA")
     if not isinstance(title, str) or not isinstance(description, str):
         raise ValueError(f"PR {number} has invalid title or description")
@@ -152,7 +156,7 @@ def capture_case(forgejo_token, checkout, output_dir, number, bot_config,
             f"PR {number} text cannot be frozen at cutoff {discussion_cutoff}: "
             "current metadata is after the cutoff or incomplete")
     expected_head = repository.current_head(bot_config, number)
-    if not repository.SHA.fullmatch(expected_head):
+    if not local_repository.SHA.fullmatch(expected_head):
         raise ValueError(f"PR {number} has no mirrored pull head")
     base_sha, head_sha, review, skip = repository.collect_review(
         checkout, number, details["base_ref"], expected_head,
@@ -163,18 +167,18 @@ def capture_case(forgejo_token, checkout, output_dir, number, bot_config,
     base_pin = f"refs/review-cases/{case_id}/base"
     head_pin = f"refs/review-cases/{case_id}/head"
     try:
-        repository.git(checkout, "update-ref", base_pin, base_sha)
-        repository.git(checkout, "update-ref", head_pin, head_sha)
+        local_repository.git(checkout, "update-ref", base_pin, base_sha)
+        local_repository.git(checkout, "update-ref", head_pin, head_sha)
         # collect_review uses a partial fetch. Request the captured object IDs,
         # so a force push cannot quietly replace the case with a newer head.
         try:
-            repository.git(checkout, "fetch", "--refetch", "--no-tags",
+            local_repository.git(checkout, "fetch", "--refetch", "--no-tags",
                            "--no-filter", "origin", base_sha, head_sha)
         except subprocess.CalledProcessError as exc:
             raise ValueError("Captured Git objects could not be fetched after PR refs moved") from exc
         with offline_git():
             verify_local_objects(checkout, base_sha, head_sha)
-            snapshot = repository.snapshot_repository(checkout, base_sha, head_sha)
+            snapshot = local_repository.snapshot_repository(checkout, base_sha, head_sha)
         research_evidence = research.capture(
             bot_config, number, research_requests, discussion_cutoff, captured_at)
         frozen_config = {"bot": asdict(bot_config),
@@ -230,7 +234,6 @@ def run_case(manifest_path, api_key, output_dir, ledger, routing_mode=None,
     ppq_budget = None
     attempt = {}
     runtime = None
-    output = None
     review_id = None
     base_sha = head_sha = merge_base = None
     try:
@@ -246,7 +249,7 @@ def run_case(manifest_path, api_key, output_dir, ledger, routing_mode=None,
         frozen_config = manifest["config"]
         if digest(frozen_config) != manifest["config_sha256"]:
             raise ValueError("Frozen configuration hash mismatch")
-        research_evidence = research.validate(manifest.get("research_evidence"))
+        research_evidence = frozen_research.validate(manifest.get("research_evidence"))
         if digest(research_evidence) != manifest.get("research_evidence_sha256"):
             raise ValueError("Frozen research evidence hash mismatch")
         bot_config = config.BotConfig(**frozen_config["bot"])
@@ -274,6 +277,7 @@ def run_case(manifest_path, api_key, output_dir, ledger, routing_mode=None,
             if blind_alternatives is not None:
                 selected_config["blind_alternatives"] = blind_alternatives
             selected_config.setdefault("blind_alternatives", True)
+            selected_config.setdefault("archaeology", True)
         use_captured_config = (not explicit_engine_config
                                and selected_name == captured_engine["name"]
                                and not current_only)
@@ -299,7 +303,7 @@ def run_case(manifest_path, api_key, output_dir, ledger, routing_mode=None,
         artifact["code_changed_since_capture"] = code_hash != manifest["source_code_sha256"]
         artifact["engine_code_changed_since_capture"] = (
             engine_identity["code_sha256"] != captured_engine["code_sha256"])
-        artifact["research_evidence_inventory"] = research.inventory(research_evidence)
+        artifact["research_evidence_inventory"] = frozen_research.inventory(research_evidence)
         checkout = Path(manifest["checkout"])
         base_sha, head_sha = manifest["base_sha"], manifest["head_sha"]
         merge_base = manifest["merge_base"]
@@ -309,7 +313,7 @@ def run_case(manifest_path, api_key, output_dir, ledger, routing_mode=None,
         with offline_git():
             verify_local_objects(checkout, base_sha, head_sha)
             verify_case_pins(checkout, manifest)
-            snapshot = repository.snapshot_repository(checkout, base_sha, head_sha)
+            snapshot = local_repository.snapshot_repository(checkout, base_sha, head_sha)
             if snapshot.merge_base != manifest["merge_base"]:
                 raise ValueError("Frozen merge base mismatch")
             review_id = f"eval:{case_id}:{uuid.uuid4().hex}"
@@ -317,29 +321,22 @@ def run_case(manifest_path, api_key, output_dir, ledger, routing_mode=None,
             ppq_budget = (spend.RequestBudget(ppq_ledger, review_id)
                           if ppq_ledger is not None else None)
             artifact["review_id"] = review_id
-            case = engine.ReviewCase(manifest["pr"], review, snapshot,
-                                     bot_config.repository_url or "",
-                                     research_evidence)
+            case = engine.ReviewCase(
+                review, snapshot,
+                source={"kind": "pull_request", "number": manifest["pr"],
+                        "url": f"{bot_config.repository_url}/pulls/{manifest['pr']}"},
+                research_evidence=research_evidence)
             runtime = engine.Runtime(
-                case=case, bot_config=bot_config, api_key=api_key,
+                case=case, api_key=api_key,
                 ppq_api_key=ppq_api_key, budget=budget, ppq_budget=ppq_budget,
-                allow_discussions=False, attempt=attempt)
-            output = loaded_engine.run(case, runtime)
+                allow_web_search=False, attempt=attempt)
+            result = runner.run_review(case, runtime, loaded_engine)
+            if result.pop("diff_base_sha") != snapshot.merge_base:
+                raise ValueError("frozen PR review must use the merge base")
             attempt = runtime.attempt
-            artifact.update({
-                "schema_version": 1, "case_id": case_id, "pr": manifest["pr"],
-                "engine": engine_identity, "base_sha": base_sha,
-                "head_sha": head_sha, "merge_base": snapshot.merge_base,
-                "content": output.content,
-                "output": {"schema_version": output.schema_version,
-                           "data": output.data, "exports": output.exports},
-                "run": {"review_id": review_id, "status": "completed",
-                        "metrics": runtime.metrics(), "budget": budget.summary(),
-                        "ppq_budget": (ppq_budget.summary()
-                                       if ppq_budget is not None else None),
-                        "attempt": attempt},
-                "review_input_sha256": manifest["review_input_sha256"],
-            })
+            artifact.update(result)
+            artifact.update({"case_id": case_id, "pr": manifest["pr"],
+                             "review_input_sha256": manifest["review_input_sha256"]})
     except Exception as exc:
         artifact["error"] = {"type": type(exc).__name__, "message": str(exc)}
     finally:
@@ -427,14 +424,14 @@ def _run_has_budget_exhaustion(artifact):
     error = artifact.get("error") or {}
     if error.get("type") == "BudgetExceeded":
         return True
-    debug = trace.current_diagnostics(artifact)
+    debug = core_trace.current_diagnostics(artifact)
     stages = debug.get("stages") or {}
     return any(stage.get("status") == "budget_exhausted"
                for stage in stages.values() if isinstance(stage, dict))
 
 
 def _run_has_partial_coverage(artifact):
-    debug = trace.current_diagnostics(artifact)
+    debug = core_trace.current_diagnostics(artifact)
     coverage = debug.get("coverage") or {}
     return coverage.get("status") in {"partial", "failed"}
 
@@ -445,7 +442,7 @@ def _summary_group_key(artifact):
         return key
     config = artifact.get("effective_config")
     if not isinstance(config, dict):
-        config = {"engine": trace.result_engine(artifact)}
+        config = {"engine": core_trace.result_engine(artifact)}
     return digest(config)
 
 
@@ -529,7 +526,7 @@ def _concept_would_stop(label):
 
 
 def _downstream_summary(debug):
-    metrics = trace.stage_metrics(debug)
+    metrics = core_trace.stage_metrics(debug)
     accepted = sum(1 for decision in debug.get("decisions", [])
                    if isinstance(decision, dict)
                    and decision.get("disposition") == "publish")
@@ -546,7 +543,7 @@ def _downstream_summary(debug):
 
 
 def _add_would_stop_metrics(group, debug):
-    concept = trace.concept_assessment(debug)
+    concept = core_trace.concept_assessment(debug)
     records = {"candidate": concept.get("candidate") if isinstance(concept, dict) else None}
     verification = concept.get("verification") if isinstance(concept, dict) else None
     if isinstance(verification, dict):
@@ -576,7 +573,7 @@ def _add_would_stop_metrics(group, debug):
 
 def _add_stage_metrics(group, debug):
     stages = debug.get("stages") or {}
-    traced = trace.stage_metrics(debug)
+    traced = core_trace.stage_metrics(debug)
     for name, record in traced.items():
         metrics = group["stage_metrics"][name]
         metrics["concept_stage"] = metrics["concept_stage"] or bool(
@@ -721,10 +718,10 @@ def summarize_runs(paths):
             group["budget_exhausted"] += 1
         if "expected_findings" in artifact:
             group["labels_present"] += 1
-        debug = trace.current_diagnostics(artifact)
+        debug = core_trace.current_diagnostics(artifact)
         group["current_diagnostics_status_counts"][
             "supported" if debug else "unsupported"] += 1
-        metrics = trace.result_metrics(artifact) or {}
+        metrics = core_trace.result_metrics(artifact) or {}
         run_cost = metrics.get("estimated_cost_usd", 0.0)
         group["known_costs"].append(run_cost)
         if metrics.get("unknown_usage_count", 0):
@@ -736,7 +733,7 @@ def summarize_runs(paths):
         wall = _iso_seconds(artifact.get("started_at"), artifact.get("finished_at"))
         if wall is not None:
             group["wall_seconds"].append(wall)
-        findings = trace.findings_export(artifact)
+        findings = core_trace.findings_export(artifact)
         if findings is None:
             group["findings_export_status_counts"]["unsupported"] += 1
         else:
@@ -746,8 +743,8 @@ def summarize_runs(paths):
                      if isinstance(decision, dict)]
         group["decision_counts"].update(
             decision.get("disposition", "unknown") for decision in decisions)
-        assessment = trace.concept_assessment(debug)
-        if trace.published_concept_concern(debug):
+        assessment = core_trace.concept_assessment(debug)
+        if core_trace.published_concept_concern(debug):
             group["published_conceptual_concerns"] += 1
         if assessment:
             group["conceptual_concern_status_counts"][assessment.get("status", "unknown")] += 1
@@ -848,6 +845,8 @@ def main(argv=None):
                 "audit_prompt_dir": args.audit_prompt_dir,
                 "models_json": args.models_json,
             }.items() if value is not None})
+            if args.engine == "current":
+                engine_config.setdefault("archaeology", True)
             review_engine = engine.load(args.engine, engine_config)
         except (OSError, json.JSONDecodeError, ImportError, TypeError, ValueError) as exc:
             parser.error(f"could not configure review engine: {exc}")

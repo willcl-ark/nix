@@ -28,7 +28,7 @@ attributing it to a limit. Keep the returned findings and coverage limitations
 concise; do not narrate the investigation or repeat the patch summary.
 
 Use find_paths, read_file, read_base_file, read_diff, and search_code to follow
-the affected paths. Compare the merge base with the PR head so you do not
+the affected paths. Compare the comparison base with the PR head so you do not
 report an existing defect as new. Before reporting a counterexample, check
 callers, guards, and tests that might disprove it. Use blame_base, read_commit,
 or earlier discussion only to settle a specific question. Discard a claim if

@@ -8,7 +8,9 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from ralph import trace as core_trace
 from . import trace
+
 
 
 REPORT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -198,7 +200,7 @@ def _public_stage_outputs(debug):
 
 def _public_attribution(debug):
     attribution = []
-    for finding in trace.finding_attribution(debug):
+    for finding in core_trace.finding_attribution(debug):
         if not isinstance(finding, dict):
             continue
         record = _filtered(finding, ATTRIBUTION_FIELDS)
@@ -247,7 +249,7 @@ def _public_concept_citation(citation):
 
 
 def _public_concept_assessment(debug):
-    assessment = trace.concept_assessment(debug)
+    assessment = core_trace.concept_assessment(debug)
     if not assessment:
         return None
     record = {}
@@ -322,10 +324,10 @@ def _public_concept_brief(assessment):
 
 
 def _public_record(number, result, report_id):
-    debug = trace.current_diagnostics(result)
-    engine = trace.result_engine(result)
-    findings = trace.findings_export(result)
-    metrics = trace.result_metrics(result)
+    debug = core_trace.current_diagnostics(result)
+    engine = core_trace.result_engine(result)
+    findings = core_trace.findings_export(result)
+    metrics = core_trace.result_metrics(result)
     record = {
         "report_id": report_id,
         "pr": number,
@@ -354,12 +356,12 @@ def _public_record(number, result, report_id):
         prompts = config.get("prompts") if isinstance(config, dict) else None
         models = (prompts.get("models") if isinstance(prompts, dict) else None)
         record["models"] = models if isinstance(models, dict) else None
-        record["metrics"] = trace.review_metrics(debug, trace._prompt_config(result))
+        record["metrics"] = core_trace.review_metrics(debug, trace._prompt_config(result))
         record["metrics"].update(metrics or {})
         record["coverage"] = _public_coverage(debug.get("coverage")) or _unknown_coverage()
         record["stages"] = _public_stages(debug)
         record["stage_outputs"] = _public_stage_outputs(debug)
-        record["stage_metrics"] = trace.stage_metrics(debug)
+        record["stage_metrics"] = core_trace.stage_metrics(debug)
         record["concept_assessment"] = _public_concept_assessment(debug)
         record["finding_attribution"] = _public_attribution(debug)
         record["decisions"] = _public_decisions(debug)

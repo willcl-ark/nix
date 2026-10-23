@@ -3,7 +3,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ralph import forgejo, research
+from ralph import research as frozen_research
+from ralph_service import forgejo, research
+
 
 
 class ResearchEvidenceTests(unittest.TestCase):
@@ -49,13 +51,13 @@ class ResearchEvidenceTests(unittest.TestCase):
         self.assertEqual(len(evidence["entries"]), 2)
         self.assertTrue(all(entry["captured_at"] == evidence["captured_at"]
                             for entry in evidence["entries"]))
-        comments = research.lookup(evidence, "read_current_pr_discussion",
+        comments = frozen_research.lookup(evidence, "read_current_pr_discussion",
                                    {"kind": "comments", "page": 1, "review_id": 0})
         self.assertIn("Old comment", comments)
         self.assertNotIn("Edited too late", comments)
         self.assertNotIn("Missing metadata", comments)
         self.assertIn("omitted", comments)
-        self.assertIn("read_current_pr_discussion", research.inventory(evidence))
+        self.assertIn("read_current_pr_discussion", frozen_research.inventory(evidence))
 
     def test_lookup_has_no_live_fallback_for_missing_snapshot(self):
         evidence = {"schema_version": research.SCHEMA_VERSION,
@@ -64,10 +66,10 @@ class ResearchEvidenceTests(unittest.TestCase):
                     "entries": []}
         with patch.object(forgejo, "public_discussion_request",
                           side_effect=AssertionError("network used")):
-            result = research.lookup(
+            result = frozen_research.lookup(
                 evidence, "read_current_pr_discussion",
                 {"kind": "inline", "page": 1, "review_id": 7})
-        self.assertEqual(result, research.MISSING_RESEARCH)
+        self.assertEqual(result, frozen_research.MISSING_RESEARCH)
 
     def test_validation_rejects_mutated_output_and_naive_timestamps(self):
         evidence = {"schema_version": research.SCHEMA_VERSION,

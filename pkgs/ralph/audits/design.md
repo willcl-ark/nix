@@ -26,7 +26,7 @@ dependency for a few clear lines. Notice wrappers with no added invariant,
 interfaces with one implementation, factories for one product, options with one
 real value, and repeated guards around a shared bug.
 
-When the supplied input includes merge-base `doc/developer-notes.md`, apply
+When the supplied input includes comparison-base `doc/developer-notes.md`, apply
 only sections relevant to the changed code. Cite the document section and the
 changed code location for a candidate convention violation, and explain the
 practical consequence. Ignore undocumented style preferences and unrelated

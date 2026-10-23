@@ -41,7 +41,7 @@ class JobStore:
             if "engine_identity" not in columns:
                 raise RuntimeError(
                     "job database needs explicit engine migration; "
-                    "run ralph --state-dir DIR --migrate-state")
+                    "run ralph-service --state-dir DIR --migrate-state")
             db.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_pending_per_pr
                     ON jobs(number) WHERE status = 'pending'
@@ -292,8 +292,8 @@ def migrate_state(path):
             os.unlink(backup_path)
             raise
 
-    from .current_engine import exports as current_exports
-    from .trace import review_metrics
+    from ralph.current_engine import exports as current_exports
+    from ralph.trace import review_metrics
 
     db = sqlite3.connect(path, timeout=30, isolation_level=None)
     try:

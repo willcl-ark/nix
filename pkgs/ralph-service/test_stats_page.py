@@ -7,8 +7,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ralph import stats, stats_page
-from ralph.jobs import JobStore
+from ralph_service import stats, stats_page
+
+from ralph_service.jobs import JobStore
 
 
 class LinkParser(HTMLParser):

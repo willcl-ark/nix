@@ -14,10 +14,9 @@ _DEFAULT_BUDGET = object()
 
 @dataclass(frozen=True)
 class ReviewCase:
-    number: int
     review: str
     snapshot: RepositorySnapshot
-    repository_url: str
+    source: dict | None = None
     research_evidence: object | None = None
 
 
@@ -32,17 +31,20 @@ class Output:
 class Runtime:
     """Per-run access to model requests, spend, cancellation, and diagnostics."""
 
-    def __init__(self, *, case, bot_config, api_key, ppq_api_key=None,
+    def __init__(self, *, case, api_key, ppq_api_key=None,
                  budget=None, ppq_budget=None, is_current=None,
-                 allow_discussions=True, attempt=None):
+                 discussion_lookup=None, allow_web_search=False, attempt=None):
+        from . import research
+
+        research.validate(case.research_evidence)
         self.case = case
-        self.bot_config = bot_config
         self.api_key = api_key
         self.ppq_api_key = ppq_api_key
         self.budget = budget
         self.ppq_budget = ppq_budget
         self.is_current = is_current
-        self.allow_discussions = allow_discussions
+        self.discussion_lookup = discussion_lookup
+        self.allow_web_search = allow_web_search
         self.attempt = attempt if attempt is not None else {}
         self.debug = self.attempt
         self._records = []
@@ -72,21 +74,24 @@ class Runtime:
         selected_api_base = api_base or (
             "https://api.ppq.ai/v1" if is_ppq else "https://api.openai.com/v1")
         return openai_review(
-            api_key, input_text, self.case.snapshot, self.bot_config, None,
-            record, current_pr=self.case.number, prompt=prompt, model=model_name,
+            api_key, input_text, self.case.snapshot, None,
+            record, prompt=prompt, model=model_name,
             tools=tools, max_tool_calls=max_tool_calls,
             max_output_tokens=max_output_tokens,
             reasoning_effort=reasoning_effort,
             first_tool_required=first_tool_required, stage_name=stage_name,
             budget=selected_budget,
             response_schema=response_schema,
-            allow_discussions=self.allow_discussions,
+            discussion_lookup=self.discussion_lookup,
+            allow_web_search=self.allow_web_search,
             is_current=self.is_current,
             **({"api_base": selected_api_base}
                if selected_api_base != "https://api.openai.com/v1" else {}),
             timeout=timeout,
             final_timeout=final_timeout,
-            research_evidence=research_evidence)
+            research_evidence=(self.case.research_evidence
+                               if self.case.research_evidence is not None
+                               else research_evidence))
 
     def audit(self, stage_name, prompt, input_text, *, model_name,
               max_output_tokens, response_schema, reasoning_effort="low",

@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from ralph import config, followup, model
+from ralph_service import config, followup
+from ralph import model
 from ralph.spend import BudgetExceeded
 
 
@@ -71,9 +72,7 @@ def finding_debug(title="Old point", path="src/a.cpp", body="Fix it."):
 
 class FollowupTests(unittest.TestCase):
     def setUp(self):
-        self.prompt_config = config.PromptConfig("instructions", {
-            "addressed_findings": "Assess addressed findings.",
-        }, {name: "gpt-6-luna" for name in config.MODEL_NAMES})
+        self.prompt_config = ("Assess addressed findings.", "gpt-6-luna")
         self.current = completed_job(8, 4, NEW_HEAD, {})
         self.previous = completed_job(7, 3, OLD_HEAD, finding_debug())
         self.budget = Mock()
@@ -82,7 +81,7 @@ class FollowupTests(unittest.TestCase):
         return followup.assess_completed_review(
             "api-key", Path("/checkout"), self.current,
             [self.previous] if history is None else history,
-            prior or {}, self.prompt_config, self.budget)
+            prior or {}, *self.prompt_config, self.budget)
 
     def test_no_previous_review_skips_without_model_call(self):
         with patch.object(followup.model, "request_response") as request:
@@ -95,7 +94,7 @@ class FollowupTests(unittest.TestCase):
         current = completed_job(8, 4, OLD_HEAD, {})
         result = followup.assess_completed_review(
             "api-key", Path("/checkout"), current, [self.previous], {},
-            self.prompt_config, self.budget)
+            *self.prompt_config, self.budget)
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(result["reason"], "same_head")
 
@@ -193,7 +192,7 @@ class FollowupTests(unittest.TestCase):
                              return_value=(response(json.dumps(assessments)), b"{}", 0.1)):
             result = followup.assess_completed_review(
                 "api-key", Path("/checkout"), self.current,
-                [previous, source], prior, self.prompt_config, self.budget)
+                [previous, source], prior, *self.prompt_config, self.budget)
         rows = [(item["source_job_id"], item["source_generation"],
                  item["finding_id"], item["old_head"], item["status"])
                 for item in result["findings"]]
@@ -229,7 +228,7 @@ class FollowupTests(unittest.TestCase):
             result = followup.assess_completed_review(
                 "api-key", Path("/checkout"), self.current,
                 [forced_same_head, partial, source], prior,
-                self.prompt_config, self.budget)
+                *self.prompt_config, self.budget)
         self.assertEqual(result["findings"][0]["source_job_id"], 1)
         self.assertEqual(result["findings"][0]["old_head"], SOURCE_HEAD)
 
@@ -245,7 +244,7 @@ class FollowupTests(unittest.TestCase):
         with patch.object(followup.model, "request_response") as request:
             result = followup.assess_completed_review(
                 "api-key", Path("/checkout"), self.current, [repeated, source],
-                prior, self.prompt_config, self.budget)
+                prior, *self.prompt_config, self.budget)
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(result["reason"], "no_previous_findings")
         request.assert_not_called()
@@ -255,7 +254,7 @@ class FollowupTests(unittest.TestCase):
         with patch.object(followup.model, "request_response") as request:
             result = followup.assess_completed_review(
                 "api-key", Path("/checkout"), self.current, [unsupported], {},
-                self.prompt_config, self.budget)
+                *self.prompt_config, self.budget)
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(result["reason"], "findings_export_unsupported")
         request.assert_not_called()
@@ -278,7 +277,7 @@ class FollowupTests(unittest.TestCase):
                              return_value=(response(json.dumps(assessments)), b"{}", 0.1)):
             result = followup.assess_completed_review(
                 "api-key", Path("/checkout"), self.current, [previous, older],
-                {}, self.prompt_config, self.budget)
+                {}, *self.prompt_config, self.budget)
         self.assertEqual(
             [(item["source_job_id"], item["finding_id"]) for item in result["findings"]],
             [(7, "finding:1")])
@@ -312,7 +311,7 @@ class FollowupTests(unittest.TestCase):
                              return_value=(response(json.dumps(assessed)), b"{}", 0.1)):
             result = followup.assess_completed_review(
                 "api-key", Path("/checkout"), self.current, [previous], {},
-                self.prompt_config, self.budget)
+                *self.prompt_config, self.budget)
         self.assertEqual(len(result["findings"]), followup.MAX_CANDIDATES + 1)
         self.assertEqual(result["findings"][-1]["status"], "unclear")
         self.assertEqual(result["findings"][-1]["evidence"], "candidate_limit")

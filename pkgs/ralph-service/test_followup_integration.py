@@ -8,11 +8,56 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ralph import config, followup_runner, model, spend, stats
-from ralph.jobs import JobStore
+from ralph_service import config, followup_runner, stats
+from ralph import model, repository, spend
+from ralph_service.jobs import JobStore
 
 
 class FollowupIntegrationTests(unittest.TestCase):
+    def test_fetch_heads_hydrates_existing_filtered_checkout_for_offline_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            origin = root / "origin"
+            origin.mkdir()
+
+            def git(checkout, *args):
+                return subprocess.run(
+                    ["git", "-C", str(checkout), *args], check=True,
+                    capture_output=True, text=True,
+                    env=repository.git_environment(),
+                ).stdout.strip()
+
+            git(origin, "init", "-q")
+            git(origin, "config", "uploadpack.allowFilter", "true")
+            source = origin / "sample.cpp"
+            source.write_text("return value / divisor;\n")
+            git(origin, "add", "sample.cpp")
+            commit = ("-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                      "commit", "-qm")
+            git(origin, *commit, "Original implementation")
+            old_head = git(origin, "rev-parse", "HEAD")
+            source.write_text("if (divisor == 0) return error;\nreturn value / divisor;\n")
+            git(origin, "add", "sample.cpp")
+            git(origin, *commit, "Reject zero before division")
+            new_head = git(origin, "rev-parse", "HEAD")
+            checkout = root / "checkout"
+            followup_runner.prepare_checkout(checkout, origin.as_uri())
+            git(checkout, "fetch", "--filter=blob:none", "origin", old_head)
+            self.assertIn("?", git(checkout, "rev-list", "--objects", "--missing=print",
+                                    old_head))
+
+            followup_runner.fetch_heads(checkout, origin.as_uri(), 1, old_head, new_head)
+            missing = git(checkout, "rev-list", "--objects", "--missing=print",
+                          old_head, new_head)
+            self.assertFalse(any(line.startswith("?") for line in missing.splitlines()))
+            origin.rename(root / "unavailable-origin")
+            self.assertIn("+if (divisor == 0)",
+                          repository.diff_between_heads(checkout, old_head, new_head))
+            self.assertIn("return value / divisor;",
+                          repository.file_excerpt_at(checkout, old_head, "sample.cpp", 1))
+            self.assertIn("if (divisor == 0)",
+                          repository.file_excerpt_at(checkout, new_head, "sample.cpp", 1))
+
     def test_background_assessment_reaches_stats_without_changing_review_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -36,7 +81,7 @@ class FollowupIntegrationTests(unittest.TestCase):
             state.mkdir()
             jobs = JobStore(state / "jobs.sqlite3")
             spend.Ledger(state / "spend.sqlite3", review_limit_usd=0.01)
-            prompts = config.PromptConfig.load()
+            prompts = followup_runner.load_settings()
             finding = {
                 "title": "Handle a zero divisor", "path": "sample.cpp",
                 "line": 1, "side": "head", "body": "Reject a zero divisor.",
@@ -75,7 +120,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                 "finding_attribution": [{"finding_id": "finding:1", **finding}],
                 "decisions": [{"disposition": "publish", "finding": finding}],
             })
-            followup_runner.run_once(state, str(origin), "key", prompts, 0.10)
+            followup_runner.run_once(state, str(origin), "key", *prompts, 0.10)
             source.write_text("if (divisor == 0) return error;\nreturn value / divisor;\n")
             git("add", "sample.cpp")
             git("-c", "user.name=Test", "-c", "user.email=test@example.invalid",
@@ -100,7 +145,7 @@ class FollowupIntegrationTests(unittest.TestCase):
             with patch.object(model.urllib.request, "urlopen",
                               return_value=io.BytesIO(json.dumps(response).encode())) as send:
                 self.assertEqual(followup_runner.run_once(
-                    state, str(origin), "key", prompts, 0.10), 1)
+                    state, str(origin), "key", *prompts, 0.10), 1)
                 send.assert_called_once()
             self.assertEqual(before, [hashlib.sha256(path.read_bytes()).digest()
                                       for path in protected])
@@ -113,7 +158,7 @@ class FollowupIntegrationTests(unittest.TestCase):
             self.assertEqual(addressed["findings"][0]["new_head"], new_head)
             with patch.object(model.urllib.request, "urlopen") as send:
                 self.assertEqual(followup_runner.run_once(
-                    state, str(origin), "key", prompts, 0.10), 0)
+                    state, str(origin), "key", *prompts, 0.10), 0)
                 send.assert_not_called()
 
 

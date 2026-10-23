@@ -21,7 +21,7 @@ announcement or retry. Check both repeated work and legitimate retries after
 state changes.
 Own the overview of the PR. Establish the user problem and required behavior,
 then trace how the changed production path relates to its callers, tests, and
-public documentation. Compare the change with the merge base and report only
+public documentation. Compare the change with the comparison base and report only
 observations supported by the checkout. Check whether the commits have coherent
 purposes and whether a later commit repairs a problem introduced earlier.
 Assess whether the change addresses the stated problem. Raise scope, test,
