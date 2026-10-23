@@ -5,7 +5,6 @@ import importlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 from .repository import RepositorySnapshot
 
@@ -74,7 +73,7 @@ class Runtime:
         selected_api_base = api_base or (
             "https://api.ppq.ai/v1" if is_ppq else "https://api.openai.com/v1")
         return openai_review(
-            api_key, input_text, self.case.snapshot, None,
+            api_key, input_text, self.case.snapshot,
             record, prompt=prompt, model=model_name,
             tools=tools, max_tool_calls=max_tool_calls,
             max_output_tokens=max_output_tokens,
@@ -102,7 +101,6 @@ class Runtime:
         self._records.append(debug_record)
         return run_audit(
             self.api_key, stage_name, prompt, input_text,
-            SimpleNamespace(models={stage_name: model_name}),
             budget=self.budget, response_schema=response_schema,
             reasoning_effort=reasoning_effort, is_current=self.is_current,
             debug=debug_record, model_name=model_name,

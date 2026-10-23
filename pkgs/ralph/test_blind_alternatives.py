@@ -41,7 +41,7 @@ class BlindAlternativesTests(unittest.TestCase):
                 })
             return fixtures.discovery()
 
-        def edit(api_key, name, prompt, input_text, prompt_config, **kwargs):
+        def edit(api_key, name, prompt, input_text, **kwargs):
             self.assertEqual(name, "collator")
             payload = json.loads(input_text)
             self.assertEqual(payload["concept_assessment"]["alternatives"], [option])

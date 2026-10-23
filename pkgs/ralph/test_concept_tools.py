@@ -11,7 +11,6 @@ class ConceptToolTests(unittest.TestCase):
         self.snapshot = SimpleNamespace(checkout="checkout", head_files={"new.cpp": "head"},
                                         base_files={"old.cpp": "base"}, changed_paths={"new.cpp"},
                                         merge_base="other", diff_base_sha="base-sha", head_sha="head-sha")
-        self.prompts = SimpleNamespace(instructions="Review.", models={"independent": "gpt-6-luna"})
 
     def run_tools(self, calls, **kwargs):
         responses = [
@@ -28,8 +27,9 @@ class ConceptToolTests(unittest.TestCase):
             return responses.pop(0), json.dumps(data).encode(), 0.01
 
         with patch.object(model, "request_response", side_effect=request):
-            model.openai_review("key", "Problem and baseline.", self.snapshot,
-                                self.prompts, **kwargs)
+            model.openai_review(
+                "key", "Problem and baseline.", self.snapshot, prompt="Review.",
+                model="gpt-6-luna", max_output_tokens=model.MAX_OUTPUT_TOKENS, **kwargs)
         return requests
 
     def test_concept_can_inspect_actual_base_and_head_behavior(self):

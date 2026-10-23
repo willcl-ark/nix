@@ -245,21 +245,15 @@ def hosted_search_outputs(result):
             if isinstance(item, dict) and item.get("type") == "web_search_call"]
 
 
-def run_audit(api_key, name, prompt, review, prompt_config, notes="", on_response=None,
-              budget=None, response_schema=None, reasoning_effort="low",
-              is_current=None, debug=None, model_name=None,
-              max_output_tokens=None):
-    model = model_name or prompt_config.models[name]
-    output_tokens = (max_output_tokens if max_output_tokens is not None else
-                     MAX_COLLATOR_OUTPUT_TOKENS if name == "collator"
-                     else MAX_AUDIT_OUTPUT_TOKENS)
-    input_text = review + ("\n\nMerge-base doc/developer-notes.md:\n" + notes
-                           if name == "developer_notes" else "")
+def run_audit(api_key, name, prompt, review, *, model_name, max_output_tokens,
+              on_response=None, budget=None, response_schema=None,
+              reasoning_effort="low", is_current=None, debug=None):
+    model = model_name
     data = {"model": model, "store": False,
             "reasoning": {"effort": reasoning_effort},
             "instructions": prompt,
-            "input": [{"role": "user", "content": input_text}],
-            "max_output_tokens": output_tokens}
+            "input": [{"role": "user", "content": review}],
+            "max_output_tokens": max_output_tokens}
     if response_schema is not None:
         data["text"] = {"format": {"type": "json_schema", "name": name,
                                     "strict": True, "schema": response_schema}}
@@ -302,16 +296,14 @@ def run_audit(api_key, name, prompt, review, prompt_config, notes="", on_respons
         return answer, record
     return answer, record
 
-def openai_review(api_key, review, snapshot, prompt_config=None, debug=None, *,
-                  prompt=None, model=None, tools=None,
+def openai_review(api_key, review, snapshot, debug=None, *,
+                  prompt, model, max_output_tokens, tools=None,
                   max_tool_calls=MAX_TOOL_CALLS, first_tool_required=True,
-                  max_output_tokens=MAX_OUTPUT_TOKENS, stage_name="independent",
+                  stage_name="independent",
                   on_response=None, budget=None, response_schema=None,
                   reasoning_effort="low", discussion_lookup=None, allow_web_search=False,
                   is_current=None, api_base="https://api.openai.com/v1",
                   research_evidence=None, timeout=180, final_timeout=180):
-    prompt = prompt_config.instructions if prompt is None else prompt
-    model = prompt_config.models["independent"] if model is None else model
     tools = available_tools(TOOLS if tools is None else tools,
                             discussion_lookup, research_evidence, allow_web_search)
     allowed_tools = {tool["name"] for tool in tools if tool.get("type") == "function"}

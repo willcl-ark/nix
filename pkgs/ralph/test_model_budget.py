@@ -103,8 +103,10 @@ class ModelBudgetTests(unittest.TestCase):
                   "required": ["finding"], "additionalProperties": False}
         with patch.object(model.urllib.request, "urlopen", return_value=Response(result)) as send:
             answer, record = model.run_audit(
-                "secret", "state", "Inspect state", "PR text", self.prompt_config,
-                response_schema=schema, reasoning_effort="medium", debug=debug)
+                "secret", "state", "Inspect state", "PR text",
+                model_name=self.prompt_config.models["state"],
+                max_output_tokens=model.MAX_AUDIT_OUTPUT_TOKENS, response_schema=schema,
+                reasoning_effort="medium", debug=debug)
         request = json.loads(send.call_args.args[0].data)
         self.assertEqual(request["reasoning"]["effort"], "medium")
         self.assertEqual(request["text"]["format"], {
@@ -128,9 +130,9 @@ class ModelBudgetTests(unittest.TestCase):
                     side_effect=[Response(item) for item in results]) as send, patch.object(
                     model, "read_file", return_value="1: evidence"):
                 self.assertEqual(model.openai_review(
-                    "secret", "patch", self.snapshot, self.prompt_config,
-                    model=model_name, response_schema=schema,
-                    api_base="https://api.ppq.ai/v1"), "{}")
+                    "secret", "patch", self.snapshot, prompt=self.prompt_config.instructions,
+                    max_output_tokens=model.MAX_OUTPUT_TOKENS, model=model_name,
+                    response_schema=schema, api_base="https://api.ppq.ai/v1"), "{}")
                 first, final = [json.loads(call.args[0].data)
                                 for call in send.call_args_list]
                 self.assertEqual(first["tool_choice"], "required")
@@ -153,8 +155,9 @@ class ModelBudgetTests(unittest.TestCase):
                           side_effect=[Response(item) for item in results]) as send, \
                 patch.object(model, "read_commit") as lookup:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, self.prompt_config,
-                allow_web_search=False)
+                "secret", "patch", self.snapshot, prompt=self.prompt_config.instructions,
+                model=self.prompt_config.models["independent"],
+                max_output_tokens=model.MAX_OUTPUT_TOKENS, allow_web_search=False)
         lookup.assert_not_called()
         self.assertEqual(answer, "No findings.")
         sent = json.loads(send.call_args_list[0].args[0].data)
@@ -185,8 +188,8 @@ class ModelBudgetTests(unittest.TestCase):
                           side_effect=[Response(item) for item in results]) as send, \
                 patch.object(model, "read_file", return_value="1: evidence") as read:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, self.prompt_config,
-                debug, max_tool_calls=2, budget=budget,
+                "secret", "patch", self.snapshot, debug, prompt=self.prompt_config.instructions,
+                model=self.prompt_config.models["independent"], max_tool_calls=2, budget=budget,
                 reasoning_effort="xhigh", max_output_tokens=25_000)
         self.assertEqual(answer, raw)
         self.assertEqual(read.call_count, 2)
@@ -213,8 +216,9 @@ class ModelBudgetTests(unittest.TestCase):
                           side_effect=[Response(item) for item in results]) as send, \
                 patch.object(model, "read_file", return_value="1: evidence") as read:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, self.prompt_config,
-                max_tool_calls=12)
+                "secret", "patch", self.snapshot, prompt=self.prompt_config.instructions,
+                model=self.prompt_config.models["independent"],
+                max_output_tokens=model.MAX_OUTPUT_TOKENS, max_tool_calls=12)
         self.assertEqual(answer, "Review complete.")
         self.assertEqual(read.call_count, 12)
         choices = [json.loads(call.args[0].data)["tool_choice"] for call in send.call_args_list]
@@ -239,9 +243,10 @@ class ModelBudgetTests(unittest.TestCase):
         with patch.object(model.urllib.request, "urlopen",
                           side_effect=[Response(item) for item in results]) as send:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot, self.prompt_config,
-                debug, tools=model.ARCHAEOLOGY_TOOLS, max_tool_calls=12,
-                stage_name="archaeologist", allow_web_search=True)
+                "secret", "patch", self.snapshot, debug, prompt=self.prompt_config.instructions,
+                model=self.prompt_config.models["independent"],
+                max_output_tokens=model.MAX_OUTPUT_TOKENS, tools=model.ARCHAEOLOGY_TOOLS,
+                max_tool_calls=12, stage_name="archaeologist", allow_web_search=True)
 
         self.assertEqual(answer, "Review complete.")
         first = json.loads(send.call_args_list[0].args[0].data)
@@ -263,8 +268,10 @@ class ModelBudgetTests(unittest.TestCase):
                 patch.object(model, "read_file", return_value="1: content"):
             with self.assertRaises(model.StaleReview):
                 model.openai_review(
-                    "secret", "patch", self.snapshot, self.prompt_config,
-                    budget=budget, is_current=lambda: next(states))
+                    "secret", "patch", self.snapshot, prompt=self.prompt_config.instructions,
+                    model=self.prompt_config.models["independent"],
+                    max_output_tokens=model.MAX_OUTPUT_TOKENS, budget=budget,
+                    is_current=lambda: next(states))
         send.assert_called_once()
         self.assertEqual([event[0] for event in budget.events], ["reserve", "settle"])
 
@@ -279,7 +286,9 @@ class ModelBudgetTests(unittest.TestCase):
         stage = {"model": "gpt-6-luna", "status": "running", "turns": [], "tools": []}
         with patch.object(model.urllib.request, "urlopen", return_value=Response(response)):
             answer, record = model.run_audit(
-                "secret", "state", "Inspect", "patch", self.prompt_config, debug=stage)
+                "secret", "state", "Inspect", "patch",
+                model_name=self.prompt_config.models["state"],
+                max_output_tokens=model.MAX_AUDIT_OUTPUT_TOKENS, debug=stage)
         self.assertEqual(answer, raw)
         self.assertEqual(record["raw_output"], raw)
         self.assertEqual(record["incomplete_reason"], "max_output_tokens")
@@ -330,8 +339,11 @@ class ModelBudgetTests(unittest.TestCase):
         stage = {"model": "gpt-6-luna", "status": "running", "turns": [], "tools": []}
         with patch.object(model.urllib.request, "urlopen") as send:
             with self.assertRaises(BudgetExceeded):
-                model.openai_review("secret", "patch", self.snapshot,
-                                    self.prompt_config, stage, budget=budget)
+                model.openai_review(
+                    "secret", "patch", self.snapshot, stage,
+                    prompt=self.prompt_config.instructions,
+                    model=self.prompt_config.models["independent"],
+                    max_output_tokens=model.MAX_OUTPUT_TOKENS, budget=budget)
         send.assert_not_called()
         self.assertEqual(budget.choices, ["required"])
         self.assertEqual(stage["turns"], [])
@@ -376,8 +388,9 @@ class ModelBudgetTests(unittest.TestCase):
                           side_effect=[Response(first), Response(final)]) as send, \
                 patch.object(model, "read_file", return_value="1: evidence") as read:
             answer = model.openai_review(
-                "secret", "patch", self.snapshot,
-                self.prompt_config, debug, budget=budget, response_schema=schema,
+                "secret", "patch", self.snapshot, debug, prompt=self.prompt_config.instructions,
+                model=self.prompt_config.models["independent"],
+                max_output_tokens=model.MAX_OUTPUT_TOKENS, budget=budget, response_schema=schema,
                 api_base="https://api.ppq.ai/v1")
         self.assertEqual(answer, raw)
         self.assertEqual(read.call_count, 1)

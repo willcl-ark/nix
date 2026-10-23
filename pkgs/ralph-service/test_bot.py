@@ -427,8 +427,11 @@ class BotTests(unittest.TestCase):
 
         with patch.object(urllib.request, "urlopen", side_effect=send), \
                 patch.object(forgejo, "public_discussion_request") as fetch:
-            self.assertEqual(model.openai_review("key", "patch", self.snapshot(),
-                                                self.prompt_config, discussion_lookup=research.discussion_lookup(self.bot_config, 42)), "No findings.")
+            self.assertEqual(model.openai_review(
+                "key", "patch", self.snapshot(), prompt=self.prompt_config.instructions,
+                model=self.prompt_config.models["independent"],
+                max_output_tokens=model.MAX_OUTPUT_TOKENS,
+                discussion_lookup=research.discussion_lookup(self.bot_config, 42)), "No findings.")
         fetch.assert_not_called()
         self.assertIn("current PR's discussion is excluded",
                       requests[1]["input"][-1]["output"])
@@ -475,8 +478,10 @@ class BotTests(unittest.TestCase):
                     "content": [{"type": "output_text", "text": "No findings."}]}]}).encode()
 
         with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
-            self.assertEqual(model.openai_review("test-key", "patch", self.snapshot(),
-                                                  self.prompt_config),
+            self.assertEqual(model.openai_review(
+                "test-key", "patch", self.snapshot(), prompt=self.prompt_config.instructions,
+                model=self.prompt_config.models["independent"],
+                max_output_tokens=model.MAX_OUTPUT_TOKENS),
                              "No findings.")
         request = send.call_args.args[0]
         sent = json.loads(request.data)
@@ -504,8 +509,10 @@ class BotTests(unittest.TestCase):
                                                  self.prompt_config.audit_prompts,
                                                  self.prompt_config.models)
             with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
-                self.assertEqual(model.openai_review("test-key", "patch", self.snapshot(),
-                                                      custom_prompts, debug),
+                self.assertEqual(model.openai_review(
+                    "test-key", "patch", self.snapshot(), debug,
+                    prompt=custom_prompts.instructions, model=custom_prompts.models["independent"],
+                    max_output_tokens=model.MAX_OUTPUT_TOKENS),
                                  "No findings.")
         request = send.call_args.args[0]
         sent = json.loads(request.data)
@@ -528,8 +535,10 @@ class BotTests(unittest.TestCase):
                     "usage": {"input_tokens": 100, "output_tokens": 20}}).encode()
 
         with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
-            answer, record = model.run_audit("key", "public_contract", "Check policy",
-                                           "PR patch", self.prompt_config)
+            answer, record = model.run_audit(
+                "key", "public_contract", "Check policy", "PR patch",
+                model_name=self.prompt_config.models["public_contract"],
+                max_output_tokens=model.MAX_AUDIT_OUTPUT_TOKENS)
         payload = json.loads(send.call_args.args[0].data)
         self.assertEqual(payload["model"], self.prompt_config.models["public_contract"])
         self.assertEqual(payload["reasoning"], {"effort": "low"})
@@ -554,7 +563,10 @@ class BotTests(unittest.TestCase):
                     "content": [{"type": "output_text", "text": "A" * 5000}]}]}).encode()
 
         with patch.object(urllib.request, "urlopen", return_value=Response()) as send:
-            answer, record = model.run_audit("key", "collator", "Edit review", "Leads", self.prompt_config)
+            answer, record = model.run_audit(
+                "key", "collator", "Edit review", "Leads",
+                model_name=self.prompt_config.models["collator"],
+                max_output_tokens=model.MAX_COLLATOR_OUTPUT_TOKENS)
         payload = json.loads(send.call_args.args[0].data)
         self.assertEqual(payload["max_output_tokens"], model.MAX_COLLATOR_OUTPUT_TOKENS)
         self.assertEqual(len(answer), 5000)
@@ -596,7 +608,10 @@ class BotTests(unittest.TestCase):
                     "usage": {"input_tokens": 1000, "output_tokens": 4000}}).encode()
 
         with patch.object(urllib.request, "urlopen", return_value=Response()):
-            answer, record = model.run_audit("key", "state", "Check state", "PR patch", self.prompt_config)
+            answer, record = model.run_audit(
+                "key", "state", "Check state", "PR patch",
+                model_name=self.prompt_config.models["state"],
+                max_output_tokens=model.MAX_AUDIT_OUTPUT_TOKENS)
         self.assertEqual(answer, "")
         self.assertEqual(record["status"], "incomplete")
         self.assertEqual(record["incomplete_reason"], "max_output_tokens")
@@ -640,9 +655,11 @@ class BotTests(unittest.TestCase):
         debug = {}
         with patch.object(urllib.request, "urlopen", side_effect=send), \
                 patch.object(model, "read_file", return_value="1: full context") as read:
-            self.assertEqual(model.openai_review("key", "patch",
-                                                  self.snapshot({"src/main.cpp": "a" * 40}),
-                                                  self.prompt_config, debug),
+            self.assertEqual(model.openai_review(
+                "key", "patch", self.snapshot({"src/main.cpp": "a" * 40}), debug,
+                prompt=self.prompt_config.instructions,
+                model=self.prompt_config.models["independent"],
+                max_output_tokens=model.MAX_OUTPUT_TOKENS),
                              "No findings.")
         read.assert_called_once()
         self.assertEqual(requests[1]["input"][1], call)

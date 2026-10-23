@@ -242,7 +242,7 @@ class PipelineTests(unittest.TestCase):
         args[4]["routing"] = {"selected": result}
         return result
 
-    def edit(self, api_key, name, prompt, input_text, prompt_config, **kwargs):
+    def edit(self, api_key, name, prompt, input_text, **kwargs):
         self.assertEqual(name, "collator")
         payload = json.loads(input_text)
         findings = payload["findings"]
@@ -383,7 +383,7 @@ class PipelineTests(unittest.TestCase):
             efforts[stage] = kwargs["reasoning_effort"]
             output_limits[stage] = kwargs["max_output_tokens"]
             if stage == "design":
-                args[4]["turns"].append({"input_tokens": 100, "output_tokens": 10})
+                args[3]["turns"].append({"input_tokens": 100, "output_tokens": 10})
                 raise TimeoutError()
             if stage == "verifier":
                 return verification()
