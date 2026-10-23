@@ -290,6 +290,41 @@ def blind_alternatives(text):
     return result
 
 
+def _concept_decision(concept, concept_assessment):
+    _object(concept, CONCEPT_VERIFICATION["properties"])
+    if concept["disposition"] not in ("publish", "drop", "unresolved", "no_concern"):
+        raise InvalidReview("Invalid concept disposition")
+    _text(concept, ("reason", "review_reason"))
+    if concept["disposition"] == "publish":
+        if concept_assessment is None:
+            raise InvalidReview("Concept assessment had no archaeology candidate")
+        _concept_assessment(concept["assessment"])
+        if concept["assessment"]["assessment"] == "worth_pursuing":
+            raise InvalidReview("Favorable concept assessments are not public feedback")
+        if len(concept["assessment"]["alternatives"]) > 1:
+            raise InvalidReview("Public concept feedback may include at most one alternative")
+    elif concept["assessment"] is not None:
+        raise InvalidReview("Only publish may include a concept assessment")
+    _review_proposal(concept["proposed_review"], concept["review_reason"],
+                     concept["assessment"])
+
+
+def _published_finding(finding, snapshot):
+    _object(finding, FINDING["properties"])
+    _location(finding, snapshot)
+    if finding["severity"] not in FINDING["properties"]["severity"]["enum"]:
+        raise InvalidReview("Invalid severity")
+    if finding["kind"] not in FINDING["properties"]["kind"]["enum"]:
+        raise InvalidReview("Invalid finding kind")
+    _text(finding, ("title", "body"))
+    security = finding["security"]
+    _object(security, SECURITY_ASSESSMENT["properties"])
+    if security["classification"] not in SECURITY_ASSESSMENT["properties"]["classification"]["enum"]:
+        raise InvalidReview("Invalid security classification")
+    _text(security, ("reason",))
+    _source_evidence(finding["source_evidence"], snapshot)
+
+
 def verification(text, candidates, snapshot, concept_assessment=None):
     result = json.loads(text)
     _object(result, VERIFIER_SCHEMA["properties"])
@@ -305,22 +340,7 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     concept = result["concept"]
     result["concept_validation_error"] = None
     try:
-        _object(concept, CONCEPT_VERIFICATION["properties"])
-        if concept["disposition"] not in ("publish", "drop", "unresolved", "no_concern"):
-            raise InvalidReview("Invalid concept disposition")
-        _text(concept, ("reason", "review_reason"))
-        if concept["disposition"] == "publish":
-            if concept_assessment is None:
-                raise InvalidReview("Concept assessment had no archaeology candidate")
-            _concept_assessment(concept["assessment"])
-            if concept["assessment"]["assessment"] == "worth_pursuing":
-                raise InvalidReview("Favorable concept assessments are not public feedback")
-            if len(concept["assessment"]["alternatives"]) > 1:
-                raise InvalidReview("Public concept feedback may include at most one alternative")
-        elif concept["assessment"] is not None:
-            raise InvalidReview("Only publish may include a concept assessment")
-        _review_proposal(concept["proposed_review"], concept["review_reason"],
-                         concept["assessment"])
+        _concept_decision(concept, concept_assessment)
     except InvalidReview as exc:
         error = str(exc)
         concept = {"disposition": "unresolved", "assessment": None,
@@ -380,19 +400,7 @@ def verification(text, candidates, snapshot, concept_assessment=None):
         finding = decision["finding"]
         if disposition == "publish":
             try:
-                _object(finding, FINDING["properties"])
-                _location(finding, snapshot)
-                if finding["severity"] not in FINDING["properties"]["severity"]["enum"]:
-                    raise InvalidReview("Invalid severity")
-                if finding["kind"] not in FINDING["properties"]["kind"]["enum"]:
-                    raise InvalidReview("Invalid finding kind")
-                _text(finding, ("title", "body"))
-                security = finding["security"]
-                _object(security, SECURITY_ASSESSMENT["properties"])
-                if security["classification"] not in SECURITY_ASSESSMENT["properties"]["classification"]["enum"]:
-                    raise InvalidReview("Invalid security classification")
-                _text(security, ("reason",))
-                _source_evidence(finding["source_evidence"], snapshot)
+                _published_finding(finding, snapshot)
             except InvalidReview as exc:
                 error = str(exc)
                 decision.update(disposition="unresolved", finding=None,
