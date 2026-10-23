@@ -145,7 +145,7 @@ class EvaluateTests(unittest.TestCase):
             self.assertEqual(routing_mode, "shadow")
             runtime.debug["stage_outputs"] = {"verifier": "raw verifier"}
             seen.append(review_case.snapshot)
-            return "Final review."
+            return pipeline.ReviewResult("Final review.", [], False)
 
         with patch.object(forgejo, "forgejo_request", side_effect=AssertionError("Forgejo used")), \
                 patch.object(pipeline, "review_with_independent_passes", side_effect=review):
@@ -244,7 +244,7 @@ class EvaluateTests(unittest.TestCase):
                    blind_alternatives, archaeology):
             self.assertEqual(review_case.review, frozen["review_input"])
             self.assertEqual(prompt_config.models["verifier"], "gpt-6.1-sol")
-            return "Review with override."
+            return pipeline.ReviewResult("Review with override.", [], False)
 
         with patch.object(pipeline, "review_with_independent_passes", side_effect=review):
             path = evaluate.run_case(manifest, "openai-key", self.root / "runs",
@@ -279,7 +279,7 @@ class EvaluateTests(unittest.TestCase):
         smaller = spend.Ledger(self.root / "state" / "spend.sqlite3",
                                review_limit_usd=0.40)
         with patch.object(pipeline, "review_with_independent_passes",
-                          return_value="Review."):
+                          return_value=pipeline.ReviewResult("Review.", [], False)):
             standard = evaluate.run_case(manifest, "key", self.root / "runs", ledger)
             routed = evaluate.run_case(manifest, "key", self.root / "runs", ledger,
                                        routing_mode="full")
@@ -300,7 +300,7 @@ class EvaluateTests(unittest.TestCase):
         def review(review_case, runtime, prompt_config, routing_mode,
                    blind_alternatives, archaeology):
             seen.append(blind_alternatives)
-            return "Review."
+            return pipeline.ReviewResult("Review.", [], False)
 
         with patch.object(pipeline, "review_with_independent_passes", side_effect=review):
             blind = evaluate.run_case(manifest, "key", self.root / "runs", ledger)
@@ -619,7 +619,7 @@ class EvaluateTests(unittest.TestCase):
         output = io.StringIO()
         with patch.object(forgejo, "forgejo_request", side_effect=AssertionError("Forgejo used")), \
                 patch.object(pipeline, "review_with_independent_passes",
-                             return_value="Local replay."), \
+                             return_value=pipeline.ReviewResult("Local replay.", [], False)), \
                 contextlib.redirect_stdout(output):
             self.assertEqual(evaluate.main([
                 "run", "--state-dir", str(self.root / "state"),

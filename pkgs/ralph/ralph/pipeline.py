@@ -40,6 +40,13 @@ def stage_settings(name, tier):
 
 
 @dataclass
+class ReviewResult:
+    content: str
+    findings: list
+    concept_concern: bool
+
+
+@dataclass
 class VerifiedReview:
     findings: list
     candidate_ids: dict
@@ -146,6 +153,28 @@ def _edit_findings(run_stage, prompt_config, verified, debug):
                               "status": "skipped", "turns": [], "tools": [],
                               "reason": "No accepted findings to edit"}
     return findings, concept_summary
+
+
+def _published_findings(verified, edited, candidate_sources, models, was_edited):
+    presented = {finding["id"]: finding for finding in edited}
+    published = []
+    # Exports retain verification order even when the editor reorders prose.
+    for finding in verified.findings:
+        identifier = finding["id"]
+        sources = sorted({candidate_sources[candidate_id]
+                          for candidate_id in verified.candidate_ids[identifier]})
+        published.append({
+            **finding,
+            "presented_title": presented[identifier]["title"],
+            "presented_body": presented[identifier]["body"],
+            "raised_by": sources or ["verifier"],
+            "raised_by_models": sorted({models[stage] for stage in sources})
+                                or [models["verifier"]],
+            "verified_by": "verifier", "verified_by_model": models["verifier"],
+            "edited_by": "collator" if was_edited else None,
+            "edited_by_model": models["collator"] if was_edited else None,
+        })
+    return published
 
 
 def review_with_independent_passes(case, runtime, prompt_config,
@@ -443,19 +472,17 @@ def review_with_independent_passes(case, runtime, prompt_config,
     debug["alternatives"] = verified_alternatives
     was_edited = (stages["collator"]["status"] == "completed"
                   and not stages["collator"].get("used_verified_wording"))
+    published = _published_findings(verified, findings, candidate_sources,
+                                    prompt_config.models, was_edited)
+    published_by_id = {finding["id"]: finding for finding in published}
     debug["finding_attribution"] = [
         {"finding_id": finding["id"],
          **{key: finding[key] for key in ("title", "path", "line", "side")},
          "presented_body": finding["body"],
          "candidate_ids": finding_candidates[finding["id"]],
-         "raised_by": sorted({candidate_sources[identifier]
-                              for identifier in finding_candidates[finding["id"]]}) or ["verifier"],
-         "raised_by_models": sorted({prompt_config.models[candidate_sources[identifier]]
-                                     for identifier in finding_candidates[finding["id"]]})
-                             or [prompt_config.models["verifier"]],
-         "verified_by": "verifier", "verified_by_model": prompt_config.models["verifier"],
-         "edited_by": "collator" if was_edited else None,
-         "edited_by_model": prompt_config.models["collator"] if was_edited else None}
+         **{key: published_by_id[finding["id"]][key] for key in (
+             "raised_by", "raised_by_models", "verified_by", "verified_by_model",
+             "edited_by", "edited_by_model")}}
         for finding in findings
     ]
     if budget is not None:
@@ -463,5 +490,8 @@ def review_with_independent_passes(case, runtime, prompt_config,
     if ppq_budget is not None:
         debug["ppq_budget"] = ppq_budget.summary()
     debug.pop("pipeline_stage", None)
-    return protocol.render(findings, debug["coverage"]["limitations"], concept_summary,
-                           verified_alternatives)
+    content = protocol.render(findings, debug["coverage"]["limitations"], concept_summary,
+                              verified_alternatives)
+    concept_concern = (verified.concept is not None and bool(concept_summary)
+                       and verified.concept["assessment"] != "worth_pursuing")
+    return ReviewResult(content, published, concept_concern)

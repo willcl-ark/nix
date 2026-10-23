@@ -23,8 +23,8 @@ from unittest.mock import patch
 from ralph import config as core_config
 from ralph import repository as local_repository
 from ralph_service import badge, config, forgejo, repository, service
-from ralph import current_engine, engine, model, pipeline, spend
-from ralph_service.jobs import JobStore
+from ralph import engine, model, pipeline, spend
+from ralph_service.jobs import JobStore, migrate_state
 
 
 class ServiceTests(unittest.TestCase):
@@ -56,7 +56,8 @@ class ServiceTests(unittest.TestCase):
                                    self.bot_config, self.ledger,
                                    self.review_engine)
 
-    def saved_result(self, content="Review content", debug=None):
+    def saved_result(self, content="Review content", debug=None, *, findings=(),
+                     concept_concern=False):
         debug = debug or {}
         return {
             "schema_version": 1, "engine": self.review_engine.identity,
@@ -64,7 +65,9 @@ class ServiceTests(unittest.TestCase):
             "merge_base": "b" * 40, "content": content,
             "output": {"schema_version": 2,
                        "data": {"schema_version": 2, **debug},
-                       "exports": current_engine.exports(debug)},
+                       "exports": {"findings": list(findings),
+                                   "actionable": [*[finding["id"] for finding in findings],
+                                                  *(["concept_objection"] if concept_concern else [])]}},
             "run": {"review_id": "pr:42:1:1", "status": "completed",
                     "metrics": {}, "skipped": bool(debug.get("skip")),
                     "budget": {}, "ppq_budget": None, "attempt": debug},
@@ -105,6 +108,52 @@ class ServiceTests(unittest.TestCase):
         with patch("sys.argv", args), patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(service.main(), 0)
         self.assertFalse(state_dir.exists())
+
+    def test_migrate_saved_results_preserves_findings_and_concept_concerns(self):
+        path = self.state_dir / "pre-engine.sqlite3"
+        security = {"classification": "non_security", "reason": "Ordinary bug."}
+        old = {"base_sha": "b" * 40, "head_sha": "a" * 40,
+               "content": "Edited review", "debug": {
+                   "decisions": [
+                       {"disposition": "drop", "finding": None},
+                       {"disposition": "publish", "finding": {
+                           "title": "Verified title", "body": "Verified body",
+                           "severity": "minor", "security": security}}],
+                   "finding_attribution": [{
+                       "finding_id": "finding:1", "title": "Edited title",
+                       "presented_body": "Edited body", "raised_by": ["tests"]}],
+                   "concept_assessment": {
+                       "status": "verified", "summary": "Material concern",
+                       "verification": {"disposition": "publish", "assessment": {
+                           "assessment": "rework_approach"}}}}}
+        with sqlite3.connect(path) as db:
+            db.execute("""CREATE TABLE jobs (
+                id INTEGER PRIMARY KEY, number INTEGER, generation INTEGER,
+                status TEXT, attempts INTEGER, review_result TEXT
+            )""")
+            db.execute("INSERT INTO jobs VALUES (1, 42, 2, 'completed', 0, ?)",
+                       (json.dumps(old),))
+
+        self.assertTrue(migrate_state(path))
+        self.assertFalse(migrate_state(path))
+        with sqlite3.connect(path) as db:
+            result = json.loads(db.execute("SELECT review_result FROM jobs").fetchone()[0])
+        exported = result["output"]["exports"]
+        self.assertEqual(exported["actionable"], ["finding:1", "concept_objection"])
+        self.assertEqual(len(exported["findings"]), 1)
+        finding = exported["findings"][0]
+        self.assertEqual(finding["id"], "finding:1")
+        self.assertEqual(finding["title"], "Verified title")
+        self.assertEqual(finding["body"], "Verified body")
+        self.assertEqual(finding["presented_title"], "Edited title")
+        self.assertEqual(finding["presented_body"], "Edited body")
+        self.assertEqual(finding["raised_by"], ["tests"])
+        self.assertEqual(finding["security"], security)
+        self.assertEqual(result["content"], old["content"])
+        self.assertEqual(result["run"]["review_id"], "pr:42:1:2")
+        with sqlite3.connect(f"{path}.pre-engine.bak") as db:
+            self.assertEqual(json.loads(db.execute(
+                "SELECT review_result FROM jobs").fetchone()[0]), old)
 
     def post_webhook(self, store):
         secret = b"secret"
@@ -188,7 +237,9 @@ class ServiceTests(unittest.TestCase):
         center = 8 * 65 + 1 + 8 * 4
         self.assertEqual(pixels[center:center + 4], bytes((128, 128, 128, 255)))
         job = self.enqueue()
-        self.jobs.save_result(job, self.saved_result(debug={"decisions": [{"disposition": "publish", "finding": {"severity": "suggestion"}}]}))
+        self.jobs.save_result(job, self.saved_result(
+            debug={"decisions": [{"disposition": "publish", "finding": {"severity": "suggestion"}}]},
+            findings=[{"id": "finding:1", "severity": "suggestion"}]))
         self.assertEqual(get(), grey)  # Saved but not published.
         self.jobs.complete(job)
         orange = get()
@@ -201,14 +252,18 @@ class ServiceTests(unittest.TestCase):
         self.jobs.complete(job)
         self.assertEqual(get(), grey)
         job = self.enqueue("c" * 40)
-        self.jobs.save_result(job, self.saved_result(debug={"decisions": [], "concept_assessment": {
-            "status": "verified", "summary": "A material concern.",
-            "verification": {"disposition": "publish", "assessment": {
-                "assessment": "rework_approach"}}}}))
+        self.jobs.save_result(job, self.saved_result(
+            debug={"decisions": [], "concept_assessment": {
+                "status": "verified", "summary": "A material concern.",
+                "verification": {"disposition": "publish", "assessment": {
+                    "assessment": "rework_approach"}}}},
+            concept_concern=True))
         self.jobs.complete(job)
         self.assertEqual(get(), orange)
         job = self.enqueue("d" * 40)
-        self.jobs.save_result(job, self.saved_result(debug={"decisions": [{"disposition": "publish", "finding": {"severity": "suggestion"}}]}))
+        self.jobs.save_result(job, self.saved_result(
+            debug={"decisions": [{"disposition": "publish", "finding": {"severity": "suggestion"}}]},
+            findings=[{"id": "finding:1", "severity": "suggestion"}]))
         self.jobs.fail(job, "Publication failed")
         self.assertEqual(get(), grey)
         job = self.enqueue("e" * 40)
@@ -253,7 +308,7 @@ class ServiceTests(unittest.TestCase):
 
         def review(*args, **kwargs):
             barrier.wait(timeout=5)
-            return "Review content"
+            return pipeline.ReviewResult("Review content", [], False)
 
         with (patch.object(service.repository, "current_head", return_value="a" * 40),
               patch.object(service.forgejo, "find_comment", return_value=None),
@@ -285,7 +340,7 @@ class ServiceTests(unittest.TestCase):
               patch.object(service.local_repository, "snapshot_repository",
                            return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
-                           return_value="Review content") as review,
+                           return_value=pipeline.ReviewResult("Review content", [], False)) as review,
               patch.object(service.forgejo, "publish_review",
                            side_effect=urllib.error.URLError("connection lost"))):
             with self.assertLogs(level="ERROR"):
@@ -452,7 +507,7 @@ class ServiceTests(unittest.TestCase):
               patch.object(service.local_repository, "snapshot_repository",
                            return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
-                           return_value="New base review") as review,
+                           return_value=pipeline.ReviewResult("New base review", [], False)) as review,
               patch.object(service.forgejo, "publish_review",
                            return_value="updated")):
             self.assertEqual(self.process(job), "updated")
@@ -512,7 +567,7 @@ class ServiceTests(unittest.TestCase):
               patch.object(service.local_repository, "snapshot_repository",
                            return_value=SimpleNamespace(base_sha="b" * 40, head_sha="a" * 40, merge_base="c" * 40, diff_base_sha="c" * 40)),
               patch.object(pipeline, "review_with_independent_passes",
-                           return_value="Review content"),
+                           return_value=pipeline.ReviewResult("Review content", [], False)),
               patch.object(service.forgejo, "publish_review", return_value="updated")):
             self.assertEqual(self.process(retry), "updated")
         self.assertIsNone(self.jobs.claim())
@@ -568,7 +623,7 @@ class ServiceTests(unittest.TestCase):
                     "SELECT engine_identity FROM jobs WHERE id = ?",
                     (interrupted["id"],)).fetchone()[0])
             self.assertEqual(stored, self.review_engine.identity)
-            return "Updated review"
+            return pipeline.ReviewResult("Updated review", [], False)
 
         def publish(*_args, **_kwargs):
             stop_event.set()
@@ -853,7 +908,7 @@ class WebhookTests(unittest.TestCase):
                              return_value=("b" * 40, "a" * 40, "review input", None)), \
                 patch.object(local_repository, "snapshot_repository", return_value=self.snapshot()), \
                 patch.object(pipeline, "review_with_independent_passes",
-                             return_value="New review.") as review_model, \
+                             return_value=pipeline.ReviewResult("New review.", [], False)) as review_model, \
                 patch.object(forgejo, "publish_review", return_value="updated") as publish:
             self.assertEqual(service.process_job(
                 job, jobs, state_dir, "openai-key", "forgejo-token", "ralph",

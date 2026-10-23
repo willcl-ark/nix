@@ -271,6 +271,42 @@ class JobStore:
             return status
 
 
+def _pre_engine_exports(debug):
+    """Recover exports from saved results written before the engine interface."""
+    from ralph.trace import published_concept_concern
+
+    decisions = debug.get("decisions", [])
+    attribution = {item.get("finding_id"): item
+                   for item in debug.get("finding_attribution", [])}
+    findings = []
+    index = 0
+    for decision in decisions:
+        if decision.get("disposition") != "publish":
+            continue
+        finding = decision.get("finding")
+        if not isinstance(finding, dict):
+            continue
+        index += 1
+        finding_id = f"finding:{index}"
+        item = attribution.get(finding_id, {})
+        findings.append({
+            "id": finding_id,
+            **{key: finding.get(key) for key in (
+                "kind", "severity", "security", "path", "line", "side", "source_evidence")},
+            "title": finding.get("title"),
+            "body": finding.get("body"),
+            "presented_title": item.get("title"),
+            "presented_body": item.get("presented_body"),
+            **{key: item.get(key) for key in (
+                "raised_by", "raised_by_models", "verified_by",
+                "verified_by_model", "edited_by", "edited_by_model")},
+        })
+    verified_objection = published_concept_concern(debug)
+    return {"findings": findings,
+            "actionable": [*[item["id"] for item in findings],
+                           *(["concept_objection"] if verified_objection else [])]}
+
+
 def migrate_state(path):
     """Back up and convert pre-engine saved results once, before service startup."""
     path = str(path)
@@ -292,7 +328,6 @@ def migrate_state(path):
             os.unlink(backup_path)
             raise
 
-    from ralph.current_engine import exports as current_exports
     from ralph.trace import review_metrics
 
     db = sqlite3.connect(path, timeout=30, isolation_level=None)
@@ -321,7 +356,7 @@ def migrate_state(path):
                     "content": old["content"],
                     "output": {"schema_version": 1,
                                "data": {"schema_version": 1, **debug},
-                               "exports": current_exports(debug)},
+                               "exports": _pre_engine_exports(debug)},
                     "run": {"review_id": f"pr:{number}:{job_id}:{generation}",
                             "status": "completed", "skipped": bool(debug.get("skip")),
                             "metrics": review_metrics(debug),

@@ -55,8 +55,9 @@ class BlindAlternativesTests(unittest.TestCase):
                                      fixture.source)
             runtime = engine.Runtime(case=case, discussion_lookup=lambda name, args: "Discussion",
                                      api_key="key", attempt=fixture.debug)
-            content = pipeline.review_with_independent_passes(
+            result = pipeline.review_with_independent_passes(
                 case, runtime, fixture.prompts, archaeology=True)
+            content = result.content
         self.assertLess(list(outputs).index("alternatives"), list(outputs).index("independent"))
         for stage in ("independent", "design"):
             self.assertNotIn(option["concept"], outputs[stage])

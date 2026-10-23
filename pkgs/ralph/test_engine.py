@@ -5,20 +5,26 @@ from types import SimpleNamespace
 import urllib.error
 from unittest.mock import Mock, patch
 
-from ralph import current_engine, engine, model, research, trace
+from ralph import current_engine, engine, model, pipeline, research, trace
 
 
 class EngineTests(unittest.TestCase):
-    def test_current_engine_preserves_security_in_exports(self):
+    def test_current_engine_exports_pipeline_results_without_reading_diagnostics(self):
+        case = engine.ReviewCase("Patch", None)
         for classification in ("potential_vulnerability", "non_security", "uncertain"):
-            with self.subTest(classification=classification):
-                security = {"classification": classification,
-                            "reason": "The verifier's assessment."}
-                debug = {"decisions": [{"disposition": "publish",
-                                        "finding": {"security": security}}]}
-                exported = current_engine.exports(debug)
-                self.assertEqual(exported["findings"][0]["security"], security)
-                self.assertEqual(exported["actionable"], ["finding:1"])
+            for concern in (False, True):
+                with self.subTest(classification=classification, concern=concern):
+                    finding = {"id": "finding:7", "security": {
+                        "classification": classification, "reason": "Verifier assessment."}}
+                    result = pipeline.ReviewResult("Review", [finding], concern)
+                    runtime = engine.Runtime(case=case, api_key="secret", attempt={
+                        "decisions": [], "finding_attribution": [], "concept_assessment": {}})
+                    with patch.object(pipeline, "review_with_independent_passes", return_value=result):
+                        output = current_engine.run(case, runtime, current_engine.configure({}))
+                    self.assertEqual(output.content, "Review")
+                    self.assertEqual(output.exports["findings"], [finding])
+                    self.assertEqual(output.exports["actionable"],
+                                     ["finding:7", "concept_objection"] if concern else ["finding:7"])
 
     def test_current_engine_declares_native_version_on_success_and_failure(self):
         case = engine.ReviewCase("Patch", None)
@@ -26,7 +32,7 @@ class EngineTests(unittest.TestCase):
             with self.subTest(failure=failure):
                 runtime = engine.Runtime(case=case, api_key="secret", attempt={"schema_version": 1})
                 with patch.object(current_engine.pipeline, "review_with_independent_passes",
-                                  return_value="Review", side_effect=failure):
+                                  return_value=pipeline.ReviewResult("Review", [], False), side_effect=failure):
                     if failure:
                         with self.assertRaises(failure):
                             current_engine.run(case, runtime, current_engine.configure({}))
@@ -113,13 +119,13 @@ class EngineTests(unittest.TestCase):
                 case = engine.ReviewCase("Patch", None, source, evidence)
                 runtime = engine.Runtime(case=case, api_key="secret", discussion_lookup=reader)
                 with patch.object(current_engine.pipeline, "review_with_independent_passes",
-                                  return_value="Review") as run:
+                                  return_value=pipeline.ReviewResult("Review", [], False)) as run:
                     current_engine.run(case, runtime, current_engine.configure({"archaeology": True}))
                 self.assertIs(run.call_args.args[-1], True)
         case = engine.ReviewCase("Patch", None)
         runtime = engine.Runtime(case=case, api_key="secret")
         with patch.object(current_engine.pipeline, "review_with_independent_passes",
-                          return_value="Review") as run:
+                          return_value=pipeline.ReviewResult("Review", [], False)) as run:
             current_engine.run(case, runtime, current_engine.configure({}))
         self.assertIs(run.call_args.args[-1], False)
 

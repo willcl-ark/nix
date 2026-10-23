@@ -60,42 +60,6 @@ def configure(value):
     return normalized
 
 
-def exports(debug):
-    """Return current-engine findings and badge inputs in consumer form."""
-    from .trace import published_concept_concern
-
-    decisions = debug.get("decisions", [])
-    attribution = {item.get("finding_id"): item
-                   for item in debug.get("finding_attribution", [])}
-    findings = []
-    index = 0
-    for decision in decisions:
-        if decision.get("disposition") != "publish":
-            continue
-        finding = decision.get("finding")
-        if not isinstance(finding, dict):
-            continue
-        index += 1
-        finding_id = f"finding:{index}"
-        item = attribution.get(finding_id, {})
-        findings.append({
-            "id": finding_id,
-            **{key: finding.get(key) for key in (
-                "kind", "severity", "security", "path", "line", "side", "source_evidence")},
-            "title": finding.get("title"),
-            "body": finding.get("body"),
-            "presented_title": item.get("title"),
-            "presented_body": item.get("presented_body"),
-            **{key: item.get(key) for key in (
-                "raised_by", "raised_by_models", "verified_by",
-                "verified_by_model", "edited_by", "edited_by_model")},
-        })
-    verified_objection = published_concept_concern(debug)
-    return {"findings": findings,
-            "actionable": [*[item["id"] for item in findings],
-                           *(["concept_objection"] if verified_objection else [])]}
-
-
 def run(case, runtime, configured):
     if configured["archaeology"]:
         if (not isinstance(case.source, dict) or case.source.get("kind") != "pull_request"
@@ -104,8 +68,11 @@ def run(case, runtime, configured):
             raise ValueError("archaeology requires PR context and discussion evidence or a reader")
     runtime.debug["schema_version"] = 2
     prompt_config = config.PromptConfig(**configured["prompts"])
-    content = pipeline.review_with_independent_passes(
+    result = pipeline.review_with_independent_passes(
         case, runtime, prompt_config, configured["routing_mode"],
         configured["blind_alternatives"], configured["archaeology"])
     data = {**runtime.debug, "schema_version": 2}
-    return Output(content, data, exports(runtime.debug), schema_version=2)
+    exports = {"findings": result.findings,
+               "actionable": [*[finding["id"] for finding in result.findings],
+                              *(["concept_objection"] if result.concept_concern else [])]}
+    return Output(result.content, data, exports, schema_version=2)

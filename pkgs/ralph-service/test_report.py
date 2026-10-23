@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ralph import current_engine
 from ralph_service import report, trace
 
 
@@ -199,12 +198,16 @@ class ReportTests(unittest.TestCase):
             with self.subTest(classification=classification), tempfile.TemporaryDirectory() as directory:
                 security = {"classification": classification,
                             "reason": "The verifier's assessment."}
+                finding = {"kind": "defect", "severity": "major", "security": security,
+                           "path": "src/node.cpp", "line": 7, "side": "head",
+                           "title": "Breaks startup", "body": "The verified finding body."}
                 debug = self.debug()
-                debug["decisions"][0]["finding"]["security"] = security
+                debug["decisions"][0]["finding"] = finding
                 result = {"schema_version": 1, "engine": {"name": "current"},
                           "output": {"schema_version": 2,
                                      "data": {"schema_version": 2, **debug},
-                                     "exports": current_engine.exports(debug)}}
+                                     "exports": {"findings": [{"id": "finding:1", **finding}],
+                                                 "actionable": ["finding:1"]}}}
                 report.save_report(directory, 123, result, "123-security")
                 public = json.loads((Path(directory) / "123-security.json").read_text())
                 self.assertEqual(public["findings"][0]["security"], security)

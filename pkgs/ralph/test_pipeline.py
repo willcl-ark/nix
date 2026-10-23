@@ -272,9 +272,10 @@ class PipelineTests(unittest.TestCase):
                 ppq_api_key=ppq_api_key, budget=budget, ppq_budget=ppq_budget,
                 discussion_lookup=(lambda name, args: "Discussion") if allow_discussions else None,
                 attempt=self.debug)
-            return pipeline.review_with_independent_passes(
+            self.result = pipeline.review_with_independent_passes(
                 case, runtime, self.prompts, blind_alternatives=blind_alternatives,
                 archaeology=archaeology_enabled)
+            return self.result.content
 
     def test_parallel_adversarial_models_share_context_and_attribute_merged_finding(self):
         self.tier, self.audits = "sensitive", []
@@ -647,6 +648,22 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(attribution["finding:2"]["raised_by"], ["verifier"])
         self.assertEqual(attribution["finding:2"]["candidate_ids"], [])
         self.assertEqual(attribution["finding:2"]["title"], "Edited verifier finding")
+        first, second = self.result.findings
+        self.assertEqual([first["id"], second["id"]], ["finding:1", "finding:2"])
+        self.assertEqual(first["title"], self.published["title"])
+        self.assertEqual(first["body"], self.published["body"])
+        self.assertEqual(first["presented_title"], "Edited shared finding")
+        self.assertEqual(first["presented_body"], "Verified text")
+        self.assertEqual(first["raised_by"], ["independent", "tests"])
+        self.assertEqual(second["title"], "Verifier discovery")
+        self.assertEqual(second["presented_title"], "Edited verifier finding")
+        self.assertEqual(second["raised_by"], ["verifier"])
+        self.assertEqual(first["security"], self.published["security"])
+        self.assertEqual(first["source_evidence"], self.published["source_evidence"])
+        self.assertEqual(set(first), {
+            "id", "kind", "severity", "security", "path", "line", "side", "source_evidence",
+            "title", "body", "presented_title", "presented_body", "raised_by", "raised_by_models",
+            "verified_by", "verified_by_model", "edited_by", "edited_by_model"})
 
     def test_missing_verifier_decision_never_publishes_candidate(self):
         self.tier, self.audits = "routine", []
@@ -732,6 +749,10 @@ class PipelineTests(unittest.TestCase):
                 self.assertIn("Design and approach", content)
                 self.assertTrue(self.debug["stages"]["collator"]["used_verified_wording"])
                 self.assertIsNone(self.debug["finding_attribution"][0]["edited_by"])
+                finding = self.result.findings[0]
+                self.assertEqual(finding["body"], design["body"])
+                self.assertEqual(finding["presented_body"], design["body"])
+                self.assertIsNone(finding["edited_by"])
 
     def test_sound_concept_brief_stays_out_of_public_review(self):
         self.tier, self.audits = "routine", []
@@ -746,6 +767,8 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("Concept and approach", content)
         self.assertEqual(self.debug["concept_assessment"]["status"], "no_concern")
         self.assertEqual(self.debug["finding_attribution"], [])
+        self.assertEqual(self.result.findings, [])
+        self.assertFalse(self.result.concept_concern)
 
     def test_favorable_concept_and_rejected_alternatives_preserve_public_code_finding(self):
         self.tier, self.audits = "routine", []
@@ -806,6 +829,7 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("Alternatives considered", content)
         self.assertNotIn("**Do nothing**", content)
         self.assertEqual(self.debug["concept_assessment"]["status"], "verified")
+        self.assertTrue(self.result.concept_concern)
 
     def test_discussion_disabled_review_skips_archaeology(self):
         self.tier, self.audits = "routine", []
