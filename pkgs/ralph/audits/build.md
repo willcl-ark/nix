@@ -1,4 +1,4 @@
-Inspect changed build, packaging, dependency, toolchain, Guix, and portability
+Inspect changed build, CI, packaging, dependency, toolchain, Guix, and portability
 behavior. Check whether supported platforms, feature combinations, generated
 artifacts, dependency versions, or reproducibility assumptions changed.
 

@@ -16,6 +16,10 @@ improvements. For each lead, give a changed-file path and source line that
 supports it. Set the flag when the code or unresolved evidence raises a
 credible consensus or security concern, and clear it otherwise.
 
+Review scope includes production code, tests, CI, build tooling, and contrib
+utilities. A supported correctness, design, or maintenance finding need not be
+a vulnerability. Security relevance does not decide whether it merits review.
+
 Return `findings: []` when no supported finding remains. Keep rejected concerns
 and your thought process out of findings. If inspection disproves a candidate,
 omit it instead of returning a self-refuting claim or empty evidence and
@@ -53,11 +57,14 @@ anchor a finding to the changed code and quote the conflicting text.
 For new or changed Assert, Assume, assert, or CHECK_NONFATAL checks, determine
 whether reachable remote input or on-disk data can make the condition false
 after preceding validation. Check the failure behavior of the specific helper
-and whether recovery is required. Assume needs a working fallback; a negated
-Assert in a condition is dead code. Distinguish a documented kernel C API
-caller-precondition violation from failure on valid input. Check size_t arithmetic on the
-32-bit targets, a count() or cast to seconds in a comparison that truncates a
-timeout, and unit-literal products for integer promotion.
+in the reviewed release configuration and whether recovery is required. Do not
+equate a debug-only or regtest-only check failure with a production crash;
+identify the underlying bad state and its supported consequence. Assume needs a
+working fallback; a negated Assert in a condition is dead code. Distinguish a
+documented kernel C API caller-precondition violation from failure on valid
+input. Check size_t arithmetic on the 32-bit targets, a count() or cast to
+seconds in a comparison that truncates a timeout, and unit-literal products for
+integer promotion.
 
 For a design or test-quality suggestion, name the current cost or limitation,
 the concrete alternative, and why the required behavior is preserved. For a

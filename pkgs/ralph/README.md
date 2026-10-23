@@ -350,6 +350,12 @@ Static proof can suffice; running a reproduction is not required. Defect
 discovery remains independent of the concept assessment, PR discussion and
 upstream review threads.
 
+Review includes tests, CI, build tooling, contrib utilities, and non-security
+defects. Security guidance draws on the
+[oss-scanner Bitcoin Core threat model](https://github.com/instagibbs/oss-scanner/blob/22ee6a8367b6bd1ef308273a1cdde6aa54e7bb28/projects/bitcoin-core/threat_model.md),
+adapted for static PR review. Its scanner-specific exclusions, execution
+requirements, and numeric resource thresholds do not restrict Ralph's findings.
+
 Design findings need an established premise and material tradeoff. A grounded
 question can survive even when the implementation is correct and the author must
 supply a requirement or measurement. Uncertainty about the choice differs from

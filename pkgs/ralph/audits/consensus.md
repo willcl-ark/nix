@@ -8,6 +8,10 @@ head. For relevant changes, examine activation boundaries, script flags,
 serialization, integer behavior, cache keys, ConnectBlock, DisconnectBlock, and
 reorg paths.
 
+Under the same active consensus rules, check whether cache state or a history
+of restarts and reorgs changes validation results. For mining changes, check
+whether the node can still construct valid templates with the intended fees.
+
 For a claimed refactor, look for an input or prior state that distinguishes
 the versions. Establish the exact call path and preconditions before claiming
 consensus divergence. A stricter policy rule alone is not a consensus change.

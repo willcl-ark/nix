@@ -20,6 +20,13 @@ the relevant input limits and locks. For changed filters or retry tracking,
 test repeated inputs, cache expiry, and state changes that make a later retry
 valid.
 
+For security claims, establish the authority the actor already has. Distinguish
+peer-controlled input, unauthenticated requests, authenticated RPC or IPC use,
+and local administration. Check the reviewed revision's trust assumptions and
+name required options. A privileged caller causing an ordinary error differs
+from bypassing authorization or violating an approved wallet operation. Scope
+exclusions from a security audit do not exclude useful ordinary review findings.
+
 Before reporting a specific unread caller or helper as material, inspect it if
 it is available and tool calls remain. Do not claim the inspection limit was
 reached unless a tool call was actually skipped because that limit was

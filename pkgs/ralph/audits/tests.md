@@ -4,6 +4,10 @@ assertion would fail under a realistic regression. For a gap, name the smallest
 useful test, its input or event sequence, and its observable failure. Only then
 assess test reliability, duplication, fixtures, and runtime.
 
+For changes confined to tests or test infrastructure, start from the changed
+test or contributor workflow. A broken test runner or unreliable CI check is
+worth reporting without a production-code defect.
+
 Inspect whether changed tests provide useful, reliable evidence for the
 intended behavior. Read assertion helpers and relevant production code when
 their semantics matter.

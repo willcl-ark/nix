@@ -8,9 +8,15 @@ repetition, then trace that control through validation, deduplication, caches,
 locks, persistence, timers, disconnect paths, and error handling. Check size,
 count, expiry, and work limits under repeated or reordered peer messages.
 
+State required inbound or outbound access, peer count, and any proof-of-work or
+fee cost. Account for shared limits before multiplying a per-peer cost. Check
+whether memory is transient or retained, whether disconnect releases it, and
+whether retries accumulate work or state. Label estimates as estimates; static
+review cannot establish measured CPU time, memory, disk I/O, or bandwidth.
+
 For a resource-abuse or peer-behavior claim, identify the reachable peer action,
 the bound or invariant that changed, and the concrete consequence. Distinguish
 a remote-triggerable cost from local maintenance work, and explain why existing
-rate limits, caches, or locks do not bound the scenario. Report only concrete
-risks introduced by this PR, tied to checkout evidence in the same adversarial
-discovery object.
+rate limits, caches, or locks do not prevent the claimed consequence. Report only
+concrete risks introduced by this PR, tied to checkout evidence in the same
+adversarial discovery object.

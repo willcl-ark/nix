@@ -19,3 +19,8 @@ wallet invariant that changes, and the concrete consequence. Establish how
 funds could be lost, become unspendable, be sent incorrectly, or how private
 wallet data could be revealed. Report only concrete risks introduced by this
 PR, tied to checkout evidence in the same adversarial discovery object.
+
+For externally supplied signing data, check that the signed transaction matches
+the approved recipients, amounts, and fees. Distinguish a rejected operation
+from an unauthorized signature or payment while retaining supported failures
+of ordinary wallet workflows.
