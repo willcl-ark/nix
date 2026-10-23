@@ -361,7 +361,7 @@ def _public_record(number, result, report_id):
         prompts = config.get("prompts") if isinstance(config, dict) else None
         models = (prompts.get("models") if isinstance(prompts, dict) else None)
         record["models"] = models if isinstance(models, dict) else None
-        record["metrics"] = core_trace.review_metrics(debug, trace._prompt_config(result))
+        record["metrics"] = core_trace.review_metrics(debug)
         record["metrics"].update(metrics or {})
         record["coverage"] = _public_coverage(debug.get("coverage")) or _unknown_coverage()
         record["stages"] = _public_stages(debug)

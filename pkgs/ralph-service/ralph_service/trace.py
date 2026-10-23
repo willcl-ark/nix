@@ -2,7 +2,6 @@
 import json
 import os
 import time
-from types import SimpleNamespace
 
 from ralph.trace import (current_diagnostics, result_engine, result_metrics,
                          findings_export, finding_attribution, stage_metrics,
@@ -75,24 +74,12 @@ def review_trace(result):
         trace["pipeline_stage"] = debug["pipeline_stage"]
     if "decisions" in debug:
         trace["decisions"] = debug["decisions"]
-    trace.update(review_metrics(debug, _prompt_config(result)))
+    trace.update(review_metrics(debug))
     trace["pricing_note"] = ("Estimated from token usage and hosted web searches at configured rates. "
                              "Unknown usage is excluded from this subtotal; the budget "
                              "includes uncertain reservations. Missing cache-write "
                              "counts use the conservative cache-write rate.")
     return trace
-
-
-def _prompt_config(result):
-    config = result_engine(result).get("config")
-    prompts = config.get("prompts") if isinstance(config, dict) else None
-    if not isinstance(prompts, dict):
-        return SimpleNamespace(models={}, instructions="")
-    models = prompts.get("models")
-    instructions = prompts.get("instructions", "")
-    if not isinstance(models, dict):
-        models = {}
-    return SimpleNamespace(models=models, instructions=instructions)
 
 
 def save_review_trace(state_dir, number, result):

@@ -65,7 +65,7 @@ class StatsTests(unittest.TestCase):
                            "data": {"schema_version": 2, **debug},
                            "exports": {"findings": exported}},
                 "run": {"status": "completed",
-                        "metrics": core_trace.review_metrics(debug, None),
+                        "metrics": core_trace.review_metrics(debug),
                         "budget": debug.get("budget"), "attempt": {},
                         "skipped": bool(debug.get("skip"))},
             }

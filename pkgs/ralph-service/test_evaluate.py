@@ -350,7 +350,7 @@ class EvaluateTests(unittest.TestCase):
         else:
             artifact["output"] = None
         run = {"status": status,
-               "metrics": core_trace.review_metrics(debug, None)
+               "metrics": core_trace.review_metrics(debug)
                if engine_name == "current" else
                {"estimated_cost_usd": 0.0, "unknown_usage_count": 0,
                 "incomplete_usage_count": 0},

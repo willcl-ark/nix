@@ -699,7 +699,7 @@ class BotTests(unittest.TestCase):
                  "stage_outputs": {"tests": "</pre><script>alert(1)</script>"}}
         body = forgejo.review_body(self.bot_config, "b" * 40, "a" * 40,
                                    "Review text.")
-        metrics = core_trace.review_metrics(debug, self.prompt_config)
+        metrics = core_trace.review_metrics(debug)
         result = self.review_result(debug)
         public_trace = trace.review_trace(result)
         self.assertEqual(metrics["estimated_cost_usd"], 0.000011)
@@ -754,7 +754,7 @@ class BotTests(unittest.TestCase):
             "state": {"status": "skipped", "turns": [], "tools": []},
         }}
 
-        metrics = core_trace.review_metrics(debug, self.prompt_config)
+        metrics = core_trace.review_metrics(debug)
         self.assertEqual(metrics["model_turns"], 6)
         self.assertEqual(metrics["tool_calls"], 2)
         self.assertEqual(metrics["audit_calls"], 1)

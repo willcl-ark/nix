@@ -231,7 +231,7 @@ def request_metrics(records):
                "model_responses": len(model_turns)}
 
 
-def review_metrics(debug, prompt_config):
+def review_metrics(debug):
     stages = debug.get("stages", {})
     metrics = request_metrics(stages)
     metrics["audit_calls"] = sum(name in AUDIT_NAMES

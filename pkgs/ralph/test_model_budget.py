@@ -309,7 +309,7 @@ class ModelBudgetTests(unittest.TestCase):
                       "output_tokens": None, "elapsed_seconds": None} ]}
         debug = {"stages": {"state": stage}, "routing": {"mode": "enabled"},
                  "coverage": {"status": "partial"}, "budget": {"unknown": 1}}
-        metrics = trace.review_metrics(debug, self.prompt_config)
+        metrics = trace.review_metrics(debug)
         result = {
             "schema_version": 1,
             "engine": {"name": "current", "config": {

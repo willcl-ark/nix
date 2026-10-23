@@ -324,7 +324,7 @@ def migrate_state(path):
                                "exports": current_exports(debug)},
                     "run": {"review_id": f"pr:{number}:{job_id}:{generation}",
                             "status": "completed", "skipped": bool(debug.get("skip")),
-                            "metrics": review_metrics(debug, None),
+                            "metrics": review_metrics(debug),
                             "budget": debug.get("budget"),
                             "ppq_budget": debug.get("ppq_budget"),
                             "attempt": debug},
