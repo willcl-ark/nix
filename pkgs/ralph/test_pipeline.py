@@ -209,6 +209,8 @@ class PipelineTests(unittest.TestCase):
         self.published = {"kind": "suggestion", "severity": "suggestion", "path": "src/example.cpp", "line": 3,
                           "side": "head", "title": "Simplify fixture",
                           "body": "Reuse the fixture while preserving the regression check.",
+                          "security": {"classification": "non_security",
+                                       "reason": "This only removes duplicate fixture setup."},
                           "source_evidence": [{"path": "src/example.cpp", "line": 3,
                                                "side": "head", "excerpt": "setup();"}]}
         self.debug = {}

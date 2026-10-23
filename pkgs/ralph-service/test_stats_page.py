@@ -803,8 +803,8 @@ class StatsPageTests(unittest.TestCase):
             "content": "PRIVATE review body must not leak",
             "engine": {"name": "current", "code_sha256": None,
                        "config_sha256": None, "config": None},
-            "output": {"schema_version": 1,
-                       "data": {"schema_version": 1, **debug},
+            "output": {"schema_version": 2,
+                       "data": {"schema_version": 2, **debug},
                        "exports": {"findings": [{
                            "id": "finding:1", **finding,
                            "presented_title": finding["title"],

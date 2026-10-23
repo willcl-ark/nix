@@ -343,9 +343,9 @@ class EvaluateTests(unittest.TestCase):
                               "config": {}}
         if status == "completed":
             data = (native_data if native_data is not None else
-                    {"schema_version": 1, **debug} if engine_name == "current" else {})
+                    {"schema_version": 2, **debug} if engine_name == "current" else {})
             exports = ({"findings": findings} if findings is not None else {})
-            artifact["output"] = {"schema_version": 1, "data": data,
+            artifact["output"] = {"schema_version": 2 if engine_name == "current" else 1, "data": data,
                                   "exports": exports}
         else:
             artifact["output"] = None
@@ -355,7 +355,7 @@ class EvaluateTests(unittest.TestCase):
                {"estimated_cost_usd": 0.0, "unknown_usage_count": 0,
                 "incomplete_usage_count": 0},
                "budget": artifact.pop("budget", {}),
-               "attempt": ({"schema_version": 1, **debug}
+               "attempt": ({"schema_version": 2, **debug}
                            if status != "completed" and engine_name == "current" else {})}
         artifact["run"] = run
         return artifact
@@ -363,8 +363,8 @@ class EvaluateTests(unittest.TestCase):
     def test_partial_coverage_uses_code_summary_not_advisory_stage(self):
         artifact = {"schema_version": 1,
                     "engine": {"name": "current"},
-                    "output": {"schema_version": 1,
-                               "data": {"schema_version": 1,
+                    "output": {"schema_version": 2,
+                               "data": {"schema_version": 2,
                                         "coverage": {"status": "complete"},
                                         "stages": {"archaeologist": {
                                             "coverage": {"status": "partial"}}}},

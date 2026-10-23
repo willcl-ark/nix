@@ -81,7 +81,7 @@ def exports(debug):
         findings.append({
             "id": finding_id,
             **{key: finding.get(key) for key in (
-                "kind", "severity", "path", "line", "side", "source_evidence")},
+                "kind", "severity", "security", "path", "line", "side", "source_evidence")},
             "title": finding.get("title"),
             "body": finding.get("body"),
             "presented_title": item.get("title"),
@@ -102,10 +102,10 @@ def run(case, runtime, configured):
                 or not case.source.get("url")
                 or (case.research_evidence is None and runtime.discussion_lookup is None)):
             raise ValueError("archaeology requires PR context and discussion evidence or a reader")
-    runtime.debug.setdefault("schema_version", 1)
+    runtime.debug["schema_version"] = 2
     prompt_config = config.PromptConfig(**configured["prompts"])
     content = pipeline.review_with_independent_passes(
         case, runtime, prompt_config, configured["routing_mode"],
         configured["blind_alternatives"], configured["archaeology"])
-    data = {**runtime.debug, "schema_version": 1}
-    return Output(content, data, exports(runtime.debug))
+    data = {**runtime.debug, "schema_version": 2}
+    return Output(content, data, exports(runtime.debug), schema_version=2)

@@ -9,6 +9,51 @@ from ralph import current_engine, engine, model, research, trace
 
 
 class EngineTests(unittest.TestCase):
+    def test_current_engine_preserves_security_in_exports(self):
+        for classification in ("potential_vulnerability", "non_security", "uncertain"):
+            with self.subTest(classification=classification):
+                security = {"classification": classification,
+                            "reason": "The verifier's assessment."}
+                debug = {"decisions": [{"disposition": "publish",
+                                        "finding": {"security": security}}]}
+                exported = current_engine.exports(debug)
+                self.assertEqual(exported["findings"][0]["security"], security)
+                self.assertEqual(exported["actionable"], ["finding:1"])
+
+    def test_current_engine_declares_native_version_on_success_and_failure(self):
+        case = engine.ReviewCase("Patch", None)
+        for failure in (None, TimeoutError):
+            with self.subTest(failure=failure):
+                runtime = engine.Runtime(case=case, api_key="secret", attempt={"schema_version": 1})
+                with patch.object(current_engine.pipeline, "review_with_independent_passes",
+                                  return_value="Review", side_effect=failure):
+                    if failure:
+                        with self.assertRaises(failure):
+                            current_engine.run(case, runtime, current_engine.configure({}))
+                    else:
+                        output = current_engine.run(case, runtime, current_engine.configure({}))
+                        self.assertEqual(output.schema_version, 2)
+                        self.assertEqual(output.data["schema_version"], 2)
+                self.assertEqual(runtime.debug["schema_version"], 2)
+
+    def test_current_diagnostics_require_matching_native_version_two(self):
+        for output_version in (1, 2, 7):
+            for data_version in (1, 2, 7):
+                with self.subTest(output_version=output_version, data_version=data_version):
+                    data = {"schema_version": data_version, "stages": {}}
+                    result = {"schema_version": 1, "engine": {"name": "current"},
+                              "output": {"schema_version": output_version, "data": data,
+                                         "exports": {"findings": [{"id": "finding:1"}]}}}
+                    self.assertEqual(trace.current_diagnostics(result),
+                                     data if output_version == data_version == 2 else {})
+                    self.assertEqual(trace.findings_export(result), [{"id": "finding:1"}])
+        for version in (1, 2, 7):
+            with self.subTest(attempt_version=version):
+                attempt = {"schema_version": version, "stages": {}}
+                result = {"schema_version": 1, "engine": {"name": "current"},
+                          "run": {"status": "failed", "attempt": attempt}}
+                self.assertEqual(trace.current_diagnostics(result), attempt if version == 2 else {})
+
     def test_findings_exports_are_independent_of_native_schema(self):
         for exports, expected in (({}, None), ({"findings": []}, []),
                                   ({"findings": [{"id": "finding:1"}]},

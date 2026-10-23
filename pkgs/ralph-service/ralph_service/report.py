@@ -212,7 +212,12 @@ def _public_attribution(debug):
 
 
 def _public_finding(finding):
-    return _filtered(finding, FINDING_FIELDS) if isinstance(finding, dict) else None
+    if not isinstance(finding, dict):
+        return None
+    record = _filtered(finding, FINDING_FIELDS)
+    if isinstance(finding.get("security"), dict):
+        record["security"] = _filtered(finding["security"], ("classification", "reason"))
+    return record
 
 
 def _public_decisions(debug):

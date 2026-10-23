@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from ralph import current_engine
 from ralph_service import report, trace
 
 
@@ -172,8 +173,8 @@ class ReportTests(unittest.TestCase):
             "engine": {"name": "current", "config": {
                 "prompts": {"instructions": "",
                             "models": self.prompt_config.models}}},
-            "output": {"schema_version": 1,
-                        "data": {"schema_version": 1, **debug},
+            "output": {"schema_version": 2,
+                        "data": {"schema_version": 2, **debug},
                         "exports": {"findings": []}},
             "run": {"status": "completed", "metrics": {}, "attempt": {}},
         }
@@ -192,6 +193,38 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(public["stage_outputs"]["tests"], raw)
         self.assertNotIn("truncated", public["stage_outputs"])
         self.assertIn(raw, html)
+
+    def test_public_report_retains_security_in_findings_and_decisions(self):
+        for classification in ("potential_vulnerability", "non_security", "uncertain"):
+            with self.subTest(classification=classification), tempfile.TemporaryDirectory() as directory:
+                security = {"classification": classification,
+                            "reason": "The verifier's assessment."}
+                debug = self.debug()
+                debug["decisions"][0]["finding"]["security"] = security
+                result = {"schema_version": 1, "engine": {"name": "current"},
+                          "output": {"schema_version": 2,
+                                     "data": {"schema_version": 2, **debug},
+                                     "exports": current_engine.exports(debug)}}
+                report.save_report(directory, 123, result, "123-security")
+                public = json.loads((Path(directory) / "123-security.json").read_text())
+                self.assertEqual(public["findings"][0]["security"], security)
+                self.assertEqual(public["decisions"][0]["finding"]["security"], security)
+
+    def test_public_report_keeps_old_exports_without_native_diagnostics(self):
+        findings = [{"id": "finding:1", "title": "Earlier finding"}]
+        result = {"schema_version": 1, "engine": {"name": "current"},
+                  "content": "Earlier review",
+                  "output": {"schema_version": 1,
+                             "data": {"schema_version": 1, **self.debug()},
+                             "exports": {"findings": findings}}}
+        with tempfile.TemporaryDirectory() as directory:
+            report.save_report(directory, 123, result, "123-earlier")
+            public = json.loads((Path(directory) / "123-earlier.json").read_text())
+        self.assertEqual(public["findings"], findings)
+        self.assertEqual(public["review"], "Earlier review")
+        self.assertEqual(public["findings_export_status"], "supported")
+        self.assertNotIn("decisions", public)
+        self.assertNotIn("security", public["findings"][0])
 
     def test_json_stage_reply_renders_readable_findings_without_changing_download(self):
         raw = json.dumps({"coverage": {"status": "partial", "limitations": ["needs run"]},

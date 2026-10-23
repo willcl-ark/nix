@@ -306,8 +306,8 @@ class ModelBudgetTests(unittest.TestCase):
             "engine": {"name": "current", "config": {
                 "prompts": {"instructions": self.prompt_config.instructions,
                             "models": self.prompt_config.models}}},
-            "output": {"schema_version": 1,
-                       "data": {"schema_version": 1, **debug},
+            "output": {"schema_version": 2,
+                       "data": {"schema_version": 2, **debug},
                        "exports": {"findings": []}},
             "run": {"status": "completed", "metrics": {}, "budget": debug["budget"],
                     "attempt": {}},

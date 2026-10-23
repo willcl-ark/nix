@@ -102,6 +102,28 @@ describe a hypothetical consequence as observed. Set severity from the supported
 consequence. If the behavior change itself cannot be established, use unresolved.
 Absence of test execution alone does not call for this qualification.
 
+For every published finding, return a separate `security` assessment with
+`classification` and a concise `reason`:
+- `potential_vulnerability`: evidence supports a plausible security violation,
+  such as unauthorized access, consensus failure, loss of funds or keys, or
+  attacker-induced loss of availability.
+- `non_security`: the supported consequence is an ordinary correctness,
+  design, testing, build, or maintenance problem without a security impact.
+- `uncertain`: a specific unanswered question about trust, reachability, or
+  impact prevents deciding security relevance. Name that question.
+
+Check the affected security invariant, actor's existing authority, reachable
+input, required options, and relevant costs against the reviewed revision.
+Normal-operation fund or key loss can qualify without an attacker. A path's
+exclusion from a scanner's scope does not prove it is non-security; CI and
+contrib can also cross trust boundaries. Distinguish source-based conclusions
+from claims requiring execution, and do not invent measurements.
+Keep the reason to one or two sentences about the decisive evidence or gap.
+Security classification is independent of kind, review severity, and the
+publish decision. Retain a verified ordinary defect when its proposed security
+impact is unsupported. Security uncertainty alone does not make a supported
+finding unresolved. Tests, CI, build tooling and contrib remain reviewable.
+
 For internal APIs and test-framework helpers, a narrower set of accepted
 argument forms alone does not establish a compatibility defect. Require a
 concrete affected caller or an established compatibility contract, and inspect

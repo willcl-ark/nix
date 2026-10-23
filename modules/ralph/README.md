@@ -155,6 +155,12 @@ coverage alone does not discard findings. Broken candidate accounting or a
 failed verifier still prevents publication of unverified findings. If only
 editing fails, the verified wording is used.
 
+Each verified finding also carries a security classification and reason in
+structured results and report diagnostics. `potential_vulnerability`,
+`non_security`, and `uncertain` are independent of review severity and whether
+the finding deserves publication. This uses the existing verifier call and
+does not select additional audits or change publication behavior.
+
 The default OpenAI per-review spending ceiling is USD 1.00. It is an allowance for
 complex reviews, not a target spend. Lightweight routing still skips both adversarial passes and
 irrelevant specialist stages. Before each API request ralph reserves a

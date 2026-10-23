@@ -34,6 +34,8 @@ class SourceEvidenceTests(unittest.TestCase):
         self.finding = {"kind": "defect", "severity": "major", "path": self.framework,
                         "line": 1, "side": "head", "title": "Positional caller breaks",
                         "body": "The caller supplies wait and timeout positionally.",
+                        "security": {"classification": "non_security",
+                                     "reason": "The issue changes how the test invokes the helper."},
                         "source_evidence": [self.evidence]}
 
     def commit(self):

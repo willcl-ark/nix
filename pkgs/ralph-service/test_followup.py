@@ -53,7 +53,7 @@ def completed_job(job_id, generation, head, debug, content="Review."):
             "head_sha": head,
             "content": content,
             "engine": {"name": "current"},
-            "output": {"schema_version": 1, "data": {"schema_version": 1, **debug},
+            "output": {"schema_version": 2, "data": {"schema_version": 2, **debug},
                         "exports": {"findings": findings}},
             "run": {"status": "completed", "metrics": {}, "attempt": {}},
         },

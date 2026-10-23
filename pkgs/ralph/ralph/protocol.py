@@ -34,9 +34,15 @@ CANDIDATE = object_schema({
     **{key: STRING for key in ("title", "claim", "consequence", "evidence",
                                "correction", "uncertainty")},
 })
+SECURITY_ASSESSMENT = object_schema({
+    "classification": {"type": "string", "enum": ["potential_vulnerability", "non_security",
+                                                  "uncertain"]},
+    "reason": STRING,
+})
 FINDING = object_schema({
     "kind": CANDIDATE["properties"]["kind"],
     "severity": {"type": "string", "enum": ["critical", "major", "minor", "suggestion"]},
+    "security": SECURITY_ASSESSMENT,
     **LOCATION, "title": STRING, "body": STRING,
     "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE, "minItems": 1},
 })
@@ -381,6 +387,11 @@ def verification(text, candidates, snapshot, concept_assessment=None):
                 if finding["kind"] not in FINDING["properties"]["kind"]["enum"]:
                     raise InvalidReview("Invalid finding kind")
                 _text(finding, ("title", "body"))
+                security = finding["security"]
+                _object(security, SECURITY_ASSESSMENT["properties"])
+                if security["classification"] not in SECURITY_ASSESSMENT["properties"]["classification"]["enum"]:
+                    raise InvalidReview("Invalid security classification")
+                _text(security, ("reason",))
                 _source_evidence(finding["source_evidence"], snapshot)
             except InvalidReview as exc:
                 error = str(exc)

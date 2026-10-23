@@ -8,6 +8,10 @@ severity and supplied location, so do not change or contradict that location.
 Keep the supplied consequence and correction. Preserve uncertainty when the
 verifier marked it.
 
+The caller also preserves the verifier's separate security assessment. Keep
+the edited claim consistent with its reason and limits; do not turn a possible
+security impact into confirmed exploitation or discard a non-security finding.
+
 Keep any specific qualification that the behavior change is established but
 no concrete production trigger or affected caller was identified. Retain the
 conditional input and the distinction between proven behavior and unconfirmed

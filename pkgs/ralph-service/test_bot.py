@@ -41,8 +41,8 @@ class BotTests(unittest.TestCase):
             "base_sha": "b" * 40,
             "head_sha": head_sha,
             "content": content,
-            "output": {"schema_version": 1,
-                       "data": {"schema_version": 1, **debug},
+            "output": {"schema_version": 2,
+                       "data": {"schema_version": 2, **debug},
                        "exports": exports or {}},
             "run": {"status": "completed", "metrics": {}, "attempt": {}},
         }

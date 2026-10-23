@@ -96,8 +96,10 @@ run(case, runtime, normalized_config_dict) -> engine.Output
 `exports` (supported consumer data); generic validation checks the envelope,
 not an engine's native schema. Native data stays private by default. The current
 report adapter explicitly selects diagnostics only for the declared `current`
-engine and native schema version 1, through
+engine and native schema version 2, through
 [`trace.current_diagnostics`](ralph/trace.py).
+Older results retain their saved review text and declared exports; the current
+diagnostic adapter does not interpret their native stage details.
 
 The diagrams and implementation details below describe the `current` engine.
 
@@ -356,6 +358,17 @@ defects. Security guidance draws on the
 adapted for static PR review. Its scanner-specific exclusions, execution
 requirements, and numeric resource thresholds do not restrict Ralph's findings.
 
+The same verifier call attaches a `security` object to each published finding:
+`classification` is `potential_vulnerability`, `non_security`, or `uncertain`,
+with a concise `reason`. This assessment is independent of finding kind,
+review severity, and the publish decision. A supported ordinary bug survives
+an unsupported security claim, and uncertain security relevance does not
+discard an otherwise verified finding. Classifications are static assessments,
+not proof of exploitability or safety. They appear in structured findings and
+public report diagnostics; they do not add labels to review Markdown or control
+routing, private triage, or publication. The existing discovery escalation flag
+still controls requests for sensitive review.
+
 Design findings need an established premise and material tradeoff. A grounded
 question can survive even when the implementation is correct and the author must
 supply a requirement or measurement. Uncertainty about the choice differs from
@@ -392,8 +405,9 @@ candidate-accounting errors reject the entire verifier response.
 
 Partial coverage does not discard otherwise valid findings. An unresolved
 candidate or failed stage adds a limitation. The collator cannot add, merge or
-remove accepted IDs, or change their kind, severity or location. Python enforces
-those metadata constraints; preservation of meaning is a prompt requirement.
+remove accepted IDs, or change their kind, severity, security assessment or
+location. Python enforces those metadata constraints; preservation of meaning
+is a prompt requirement.
 
 Rendering groups findings first, with critical, major, minor, then suggestions.
 Design and approach feedback follows, then at most one independently verified

@@ -14,6 +14,8 @@ class ProtocolTests(unittest.TestCase):
         self.finding = {"kind": "suggestion", "severity": "suggestion", "path": "src/example.cpp",
                         "line": 5, "side": "head", "title": "Consolidate duplicate setup",
                         "body": "Reuse the existing fixture while keeping the regression assertion.",
+                        "security": {"classification": "non_security",
+                                     "reason": "This only removes duplicate fixture setup."},
                         "source_evidence": [{"path": "src/example.cpp", "line": 5,
                                              "side": "head", "excerpt": "setup();"}]}
         self.snapshot.checkout = "/unused"
@@ -85,6 +87,67 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(omitted["candidate_ids"], ["independent:1"])
         self.assertEqual(omitted["disposition"], "unresolved")
         self.assertIn("omitted", result["validation_errors"][0]["error"])
+
+    def test_security_classification_is_independent_of_kind_and_severity(self):
+        for classification in ("potential_vulnerability", "non_security", "uncertain"):
+            for kind in ("defect", "design", "suggestion"):
+                for severity in ("critical", "major", "minor", "suggestion"):
+                    with self.subTest(classification=classification, kind=kind, severity=severity):
+                        finding = {**self.finding, "kind": kind, "severity": severity,
+                                   "security": {"classification": classification,
+                                                "reason": "The assessment follows the inspected behavior."}}
+                        decision = {"candidate_ids": ["tests:1"], "disposition": "publish",
+                                    "reason": "Verified", "finding": finding}
+                        result, accepted = protocol.verification(
+                            self.verification([decision]), [{"id": "tests:1"}], self.snapshot)
+                        self.assertEqual(accepted, [{**finding, "id": "finding:1"}])
+                        self.assertEqual(result["decisions"], [decision])
+                        self.assertEqual(result["coverage"], self.coverage)
+
+    def test_invalid_security_assessment_withholds_only_its_finding(self):
+        invalid_findings = [
+            {key: value for key, value in self.finding.items() if key != "security"},
+            *({**self.finding, "security": security} for security in (
+                None, "non_security", [], {},
+                {"classification": "non_security"},
+                {"reason": "Missing classification"},
+                {"classification": "safe", "reason": "Unsupported classification"},
+                {"classification": [], "reason": "Invalid classification type"},
+                {"classification": "uncertain", "reason": ""},
+                {"classification": "uncertain", "reason": " \n"},
+                {"classification": "uncertain", "reason": False},
+                {"classification": "non_security", "reason": "Has extra field", "severity": "low"},
+            )),
+        ]
+        valid = {"candidate_ids": ["tests:1"], "disposition": "publish",
+                 "reason": "Verified", "finding": self.finding}
+        for finding in invalid_findings:
+            with self.subTest(security=finding.get("security")):
+                invalid = {"candidate_ids": ["design:1"], "disposition": "publish",
+                           "reason": "Verified", "finding": finding}
+                result, accepted = protocol.verification(
+                    self.verification([invalid, valid]),
+                    [{"id": "tests:1"}, {"id": "design:1"}], self.snapshot)
+                self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
+                self.assertEqual(result["coverage"]["status"], "partial")
+                self.assertTrue(result["coverage"]["limitations"])
+                self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
+                self.assertIsNone(result["decisions"][0]["finding"])
+                self.assertEqual(result["decisions"][1], valid)
+                self.assertEqual(result["validation_errors"][0]["candidate_ids"], ["design:1"])
+
+    def test_collator_preserves_security_and_cannot_reclassify_findings(self):
+        for classification in ("potential_vulnerability", "non_security", "uncertain"):
+            with self.subTest(classification=classification):
+                finding = {**self.finding, "id": "finding:1",
+                           "security": {"classification": classification,
+                                        "reason": "The verifier's assessment."}}
+                edit = {"id": "finding:1", "title": "Edited title", "body": "Edited body"}
+                edited, _ = protocol.collation(self.collation([edit]), [finding])
+                self.assertEqual(edited, [{**finding, **edit}])
+                for security in (None, {"classification": "non_security", "reason": "Reclassified"}):
+                    with self.assertRaises(protocol.InvalidReview):
+                        protocol.collation(self.collation([{**edit, "security": security}]), [finding])
 
     def test_collator_cannot_add_remove_or_duplicate_accepted_ids(self):
         accepted = [{**self.finding, "id": "finding:1"},

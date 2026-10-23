@@ -44,17 +44,17 @@ def current_diagnostics(result):
     output = result.get("output")
     if (isinstance(output, dict)
             and type(output.get("schema_version")) is int
-            and output["schema_version"] == 1):
+            and output["schema_version"] == 2):
         data = output.get("data")
         if (isinstance(data, dict)
                 and type(data.get("schema_version")) is int
-                and data["schema_version"] == 1):
+                and data["schema_version"] == 2):
             return data
     run = result.get("run")
     attempt = run.get("attempt") if isinstance(run, dict) else None
     debug = attempt
     if (isinstance(debug, dict) and type(debug.get("schema_version")) is int
-            and debug["schema_version"] == 1):
+            and debug["schema_version"] == 2):
         return debug
     return {}
 
