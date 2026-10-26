@@ -17,11 +17,11 @@ from pathlib import Path
 from ralph import trace as core_trace
 from . import config, forgejo, repository, research, stats, stats_page
 from ralph import repository as local_repository
-from ralph import engine, spend, runner
+from ralph import engine, profiles, spend, runner
 from ralph import research as frozen_research
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def private_dir(path):
@@ -385,6 +385,10 @@ def run_case(
             selected_name, selected_config, configured=use_captured_config
         )
         engine_identity = loaded_engine.identity
+        if selected_name == "current":
+            ledger = profiles.ReviewProfile.from_dict(
+                loaded_engine.config["profile"]
+            ).apply_budget(ledger)
         code_hash = source_code_sha256()
         review_limit = getattr(ledger, "review_limit_micros", None)
         monthly_limit = getattr(ledger, "monthly_limit_micros", None)

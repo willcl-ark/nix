@@ -186,7 +186,13 @@ class ReportTests(unittest.TestCase):
             "engine": {
                 "name": "current",
                 "config": {
-                    "prompts": {"instructions": "", "models": self.prompt_config.models}
+                    "profile": {
+                        "name": "default",
+                        "stages": {
+                            name: {"model": model}
+                            for name, model in self.prompt_config.models.items()
+                        },
+                    }
                 },
             },
             "output": {
@@ -209,6 +215,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(public["stage_outputs"]["tests"], raw)
         self.assertNotIn("truncated", public["stage_outputs"])
         self.assertIn(raw, html)
+        self.assertEqual(public["profile"], "default")
+        self.assertEqual(public["models"], self.prompt_config.models)
+        self.assertIn("Review profile: default", html)
 
     def test_public_report_retains_security_in_findings_and_decisions(self):
         for classification in ("potential_vulnerability", "non_security", "uncertain"):

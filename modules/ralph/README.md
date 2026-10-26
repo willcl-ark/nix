@@ -406,9 +406,9 @@ be derived from `forgejoApi`.
   only use package code you trust.
 - `services.ralph.engineConfig = { }`: JSON-serializable object passed to the
   selected engine. Ralph writes this configuration to the Nix store and pins
-  its resolved identity for each run when claimed. Do not put secrets in it.
+  its resolved settings when queuing each run. Do not put secrets in it.
   The current engine accepts resolved `prompts`, or `prompt_file`,
-  `audit_prompt_dir` and `models_json`, plus `routing_mode`, `archaeology` and
+  `audit_prompt_dir` and `models_json`, plus `profile`, `routing_mode`, `archaeology` and
   `blind_alternatives`.
   The service enables archaeology for PR context with discussion access.
 
@@ -419,11 +419,11 @@ current-only options explicitly with a non-current engine is rejected.
 Engine-produced Markdown is the published review body. Structured data stays
 private unless an engine explicitly provides a supported export.
 
-Unfinished jobs bind the currently configured engine and resolved settings when
-claimed, including retries and jobs recovered after restart. Each attempt records
-its actual identity. Saved results keep their original identity and only retry
-publication. Frozen evaluation captures pin code and resolved settings too;
-recapture old manifests after a schema cutover.
+Jobs retain their selected profile and resolved engine configuration across
+retries and restarts. Each attempt records its actual engine code identity.
+Saved results keep their original identity and only retry publication. Frozen
+evaluation captures pin code and resolved settings too; recapture old manifests
+after a schema cutover.
 
 On service startup, Ralph checks for `jobs.sqlite3` and runs the database
 conversion before starting the worker. A fresh state directory has no database
@@ -443,17 +443,23 @@ The conversion creates an exclusive mode-0600 backup at
 `/var/lib/ralph/jobs.sqlite3.pre-engine.bak` before converting saved results.
 Historical results retain their bodies and current-engine diagnostics, but have
 null code/config identity because those values were not recorded. Never-started
-pending jobs and recovered unfinished attempts bind the current engine when
+pending jobs without a recorded configuration bind the configured engine when
 claimed. If the backup path already exists,
 the conversion stops rather than overwrite it. A Nix version rollback alone
 does not restore the old database format. This backup covers the jobs database
 at conversion time; after new reviews run, restoring it also requires
 reconciling later jobs, spend and followup records, and published outputs.
 
+On the profile cutover, unfinished jobs with recorded model maps are converted
+once to resolved `default` profiles with those models. Saved results retain
+their original identity. Frozen evaluation uses schema version 5; recapture
+older cases before replaying them.
+
 ## Cost and routing options
 
-- `reviewBudgetUsd = 1.00`: per-review spending ceiling. It spans retries and
-  is not a target spend.
+- `reviewBudgetUsd = 1.00`: base per-review spending ceiling. The `high` profile
+  uses five times this OpenAI allowance. It spans retries and is not a target
+  spend. The PPQ allowance and shared monthly ceiling are unchanged.
 - `ppqReviewBudgetUsd = null`: optional ceiling shared by the PPQ passes, using
   `ppq-spend.sqlite3`. Each PPQ pass preserves room for its own final response.
 - `monthlyBudgetUsd = null`: optional OpenAI ceiling on the month's recorded charges
@@ -637,7 +643,18 @@ queuing a reply. Displayed author signatures are not used for authorization.
 Post `/status` to see the current states of `ralph.service`,
 `ralph-followup.service`, `ralph-stats.service` and `ralph-telegram.service`,
 plus queue counts, review results and estimated API costs. `/help` lists the
-commands. These commands cannot restart services or trigger reviews.
+commands. Post `/high 123` to request a fresh high-profile review of PR #123 in
+the configured repository, even if its current head was already reviewed.
+The reviewer checks that the PR is open before queuing it. These commands
+cannot restart services.
+
+The `default` profile preserves the existing review settings. `high` increases
+model capability and reasoning for core analysis and verification while keeping
+routine stages and the external adversarial models unchanged. Stage settings
+include model, reasoning effort, response token ceiling and tool-call limits.
+See the [core profile documentation](../../pkgs/ralph/README.md) for details.
+Normal webhook reviews use `default` unless `engineConfig.profile` selects
+`high`. Profile selection is explicit; routing does not automatically escalate.
 
 `ralph-telegram.service` runs separately from `ralph.service`, so it can answer
 when the reviewer is stopped or failing. It starts on boot with its own
@@ -665,8 +682,12 @@ not posted. The first digest arrives at the next 21:00 UTC check. After
 downtime, the monitor counts newly observed events in the window it sees them
 and sends only the latest completed window's digest.
 
-Notifications live in `stateDir/telegram.sqlite3` and retry independently of
-reviews. Preserve this database with Ralph's other state. Command replies
+Notifications and review requests live in `stateDir/telegram.sqlite3` and retry
+independently of reviews. The monitor saves each `/high` request with its
+Telegram update offset; the reviewer consumes it and deduplicates it in the job
+database. Requests survive reviewer downtime without creating duplicate runs
+after a crash. An ordinary webhook cannot downgrade a pending high review.
+Preserve this database with Ralph's other state. Command replies
 are sent as soon as the summary is ready, ahead of queued background posts.
 Background delivery sends one message per check. All messages respect
 Telegram's retry delay. A crash after Telegram

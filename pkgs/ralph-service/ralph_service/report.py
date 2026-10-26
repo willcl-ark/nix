@@ -428,9 +428,18 @@ def _public_record(number, result, report_id):
     }
     if debug:
         config = engine.get("config")
-        prompts = config.get("prompts") if isinstance(config, dict) else None
-        models = prompts.get("models") if isinstance(prompts, dict) else None
-        record["models"] = models if isinstance(models, dict) else None
+        profile = config.get("profile") if isinstance(config, dict) else None
+        stages = profile.get("stages") if isinstance(profile, dict) else None
+        record["profile"] = profile.get("name") if isinstance(profile, dict) else None
+        record["models"] = (
+            {
+                name: settings.get("model")
+                for name, settings in stages.items()
+                if isinstance(settings, dict)
+            }
+            if isinstance(stages, dict)
+            else None
+        )
         record["metrics"] = core_trace.review_metrics(debug)
         record["metrics"].update(metrics or {})
         record["coverage"] = (
@@ -765,6 +774,11 @@ def _stage_html(name, stage, stage_output):
 
 
 def _html_report(record, json_name):
+    profile = (
+        f"<p>Review profile: {_escape(record['profile'])}</p>"
+        if record.get("profile")
+        else ""
+    )
     stages = record.get("stages", {})
     stage_outputs = record.get("stage_outputs", {})
     stage_sections = "".join(
@@ -813,6 +827,7 @@ summary {{ cursor: pointer; font-weight: 600; }}
 <header>
 <h1>Forgejo Review Report</h1>
 <p>PR #{_escape(record["pr"])} at <code>{_escape(record["head"])}</code></p>
+{profile}
 <p><a href="{_escape(json_name)}" download>Download JSON report</a></p>
 <p><a href="stats/">Review statistics</a></p>
 </header>

@@ -78,8 +78,8 @@ class EvaluateTests(unittest.TestCase):
                 "prompts": {
                     "instructions": self.prompt_config.instructions,
                     "audit_prompts": self.prompt_config.audit_prompts,
-                    "models": self.prompt_config.models,
-                }
+                },
+                "profile": self.prompt_config.profile.to_dict(),
             },
         )
 
@@ -140,8 +140,8 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(case["title"], "Pinned input")
         self.assertEqual(case["description"], "Review this.")
         self.assertEqual(
-            case["config"]["engine"]["config"]["prompts"]["models"],
-            self.prompt_config.models,
+            case["config"]["engine"]["config"]["profile"],
+            self.prompt_config.profile.to_dict(),
         )
         self.assertEqual(case["config_sha256"], evaluate.digest(case["config"]))
         self.assertEqual(
@@ -166,6 +166,37 @@ class EvaluateTests(unittest.TestCase):
             evaluate.verify_local_objects(
                 self.checkout.resolve(), case["base_sha"], case["head_sha"]
             )
+
+    def test_replay_retains_high_profile_and_scales_only_its_review_allowance(self):
+        self.review_engine = engine.load("current", {"profile": "high"})
+        manifest = self.capture()
+        ledger = spend.Ledger(
+            self.root / "spend.sqlite3", review_limit_usd=1, monthly_limit_usd=20
+        )
+        ppq_ledger = spend.Ledger(self.root / "ppq.sqlite3", review_limit_usd=2)
+
+        def review(case, runtime, prompts, *args):
+            self.assertEqual(prompts.profile.name, "high")
+            self.assertEqual(runtime.budget.ledger.review_limit_micros, 5_000_000)
+            self.assertEqual(runtime.budget.ledger.monthly_limit_micros, 20_000_000)
+            self.assertEqual(runtime.ppq_budget.ledger.review_limit_micros, 2_000_000)
+            return pipeline.ReviewResult("High review.", [], False)
+
+        with patch.object(
+            pipeline, "review_with_independent_passes", side_effect=review
+        ):
+            path = evaluate.run_case(
+                manifest,
+                "key",
+                self.root / "runs",
+                ledger,
+                ppq_api_key="ppq-key",
+                ppq_ledger=ppq_ledger,
+            )
+        result = json.loads(path.read_text())
+        self.assertEqual(result["run"]["status"], "completed", result.get("error"))
+        self.assertEqual(result["effective_config"]["review_budget_usd"], 5)
+        self.assertEqual(ledger.review_limit_micros, 1_000_000)
 
     def test_replay_needs_no_forgejo_or_remote_git_and_keeps_labels_separate(self):
         manifest = self.capture()
@@ -270,7 +301,12 @@ class EvaluateTests(unittest.TestCase):
             ),
             patch.object(pipeline, "review_with_independent_passes") as review,
         ):
-            path = evaluate.run_case(broken, "openai-key", self.root / "runs", object())
+            path = evaluate.run_case(
+                broken,
+                "openai-key",
+                self.root / "runs",
+                spend.Ledger(self.root / "spend.sqlite3"),
+            )
         review.assert_not_called()
         result = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(result["run"]["status"], "failed")

@@ -29,8 +29,14 @@ class TraceAttributionTests(unittest.TestCase):
                 "config": {
                     "prompts": {
                         "instructions": self.prompt_config.instructions,
-                        "models": self.prompt_config.models,
-                    }
+                    },
+                    "profile": {
+                        "name": "default",
+                        "stages": {
+                            name: {"model": model}
+                            for name, model in self.prompt_config.models.items()
+                        },
+                    },
                 },
             },
             "output": {

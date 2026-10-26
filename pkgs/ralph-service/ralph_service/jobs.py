@@ -8,6 +8,14 @@ import uuid
 from contextlib import contextmanager
 
 
+def _profile_name(identity):
+    if identity and identity.get("name") == "current":
+        profile = (identity.get("config") or {}).get("profile")
+        if isinstance(profile, dict):
+            return profile.get("name")
+    return None
+
+
 class JobStore:
     def __init__(
         self, path, *, max_attempts=3, retry_base_seconds=30, retry_max_seconds=300
@@ -48,6 +56,35 @@ class JobStore:
                 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_pending_per_pr
                     ON jobs(number) WHERE status = 'pending'
             """)
+            # Migrate unfinished reviews once to the resolved profile format.
+            for row in db.execute(
+                "SELECT id, engine_identity FROM jobs WHERE review_result IS NULL AND status IN ('pending', 'running', 'retry')"
+            ).fetchall():
+                if row["engine_identity"] is None:
+                    continue
+                identity = json.loads(row["engine_identity"])
+                if identity is None:
+                    continue
+                if (
+                    identity["name"] == "current"
+                    and identity["config"] is not None
+                    and "profile" not in identity["config"]
+                    and "models" in identity["config"].get("prompts", {})
+                ):
+                    from ralph import engine, profiles
+
+                    configured = identity["config"]
+                    models = configured["prompts"].pop("models")
+                    profile = profiles.get_profile("default").with_models(models)
+                    configured["profile"] = profile.to_dict()
+                    migrated = engine.load("current", configured).identity
+                    db.execute(
+                        "UPDATE jobs SET engine_identity = ? WHERE id = ?",
+                        (json.dumps(migrated, sort_keys=True), row["id"]),
+                    )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS review_requests (id TEXT PRIMARY KEY)"
+            )
             db.execute("DROP INDEX IF EXISTS jobs_one_running")
             db.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_running_per_pr
@@ -89,13 +126,28 @@ class JobStore:
         )
         return job
 
-    def enqueue(self, number, base_ref, head, action, force=False, *, engine_identity):
+    def enqueue(
+        self,
+        number,
+        base_ref,
+        head,
+        action,
+        force=False,
+        *,
+        engine_identity,
+        request_id=None,
+    ):
         """Store a webhook event before acknowledging it.
 
         A pending event for this PR is replaced by the latest event. An event
         with an already queued or finished head is ignored unless forced.
         """
         with self._connection(write=True) as db:
+            if request_id is not None:
+                if not db.execute(
+                    "INSERT OR IGNORE INTO review_requests VALUES (?)", (request_id,)
+                ).rowcount:
+                    return False
             identity = json.dumps(engine_identity, sort_keys=True)
             pending = db.execute(
                 "SELECT * FROM jobs WHERE number = ? AND status = 'pending'", (number,)
@@ -104,6 +156,25 @@ class JobStore:
                 "SELECT * FROM jobs WHERE number = ? ORDER BY generation DESC LIMIT 1",
                 (number,),
             ).fetchone()
+            # An ordinary update must retain an explicitly requested high review.
+            active = pending or latest
+            if active and active["status"] in {"pending", "running", "retry"}:
+                previous = (
+                    (json.loads(active["engine_identity"]) or {})
+                    if active["engine_identity"]
+                    else {}
+                )
+                if (
+                    _profile_name(previous) == "high"
+                    and _profile_name(engine_identity) == "default"
+                ):
+                    identity = active["engine_identity"]
+                    if (
+                        pending
+                        or active["head"] != head
+                        or active["base_ref"] != base_ref
+                    ):
+                        force = force or bool(active["force"])
             if pending:
                 if (
                     pending["head"] == head

@@ -85,9 +85,12 @@ accounting month and an unknown timestamp; the Usage page includes them in
 monthly totals and identifies their absence from daily and weekly charts.
 Stats reads never modify private state.
 
-Unfinished jobs use the currently configured engine when claimed, including
-retries and restart recovery. Saved results retain their original identity and
-retry publication without running the engine again.
+Queued reviews retain their resolved profile and prompt settings across retries
+and restarts. The running engine code may update after a deployment; its hash
+is recorded when the worker claims the review. Saved results retain their
+original identity and retry publication without running the engine again.
+Existing unfinished reviews migrate once into the default profile, preserving
+their configured models.
 
 Switch the companion package, its core dependency, module commands and custom
 prompt/model configuration together. Before a deployment, stop timers and
@@ -119,13 +122,27 @@ units; longer reviews use the title and links only. An exported finding with
 severity exactly `major` adds `🚨 Major finding` in either form.
 
 Post `/status` in the configured channel to see service states, queue and
-result totals, and estimated costs. `/help` lists the commands. Commands are
-read-only and channel-only. All channel administrators may issue commands.
+result totals, and estimated costs. `/high <PR number>` requests a fresh review
+of an open PR in the configured repository using the high profile. It increases
+the harder core review stages and multiplies the OpenAI review allowance by
+five; the monthly cap and PPQ allowance stay unchanged. `/help` lists the
+commands. Commands are channel-only. All channel administrators may issue commands.
 Anonymous posts rely on Telegram's administrator posting permissions;
 identified senders must be current administrators. The monitor verifies bot
 posting permission instead of trusting displayed signatures. Direct messages
 are ignored. Replies are sent as soon as the summary is ready and take
 priority over background posts, while honoring Telegram's retry delay.
+
+High requests are saved with the Telegram update offset and reply in
+`telegram.sqlite3`. The review daemon consumes them and records request IDs
+transactionally with the job, so a restart cannot duplicate a command. Normal
+webhooks and head refreshes preserve a pending or running high review. The
+monitor can accept commands while the review daemon is stopped. A second
+reply confirms queueing or explains why the PR could not be queued.
+
+Normal webhook reviews use the default profile. Set `engineConfig.profile` to
+`"high"` to select high for ordinary reviews too. Custom engine modules do not
+support `/high`.
 
 Use a bot token from `@BotFather`, grant the bot channel administrator
 permission to post, and keep its token in a runtime secret file readable by

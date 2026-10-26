@@ -203,7 +203,7 @@ in
     modelsJson = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Optional replacement for auditPromptDir/models.json.";
+      description = "Optional per-stage model map overriding the selected review profile.";
     };
 
     workers = lib.mkOption {
@@ -216,7 +216,8 @@ in
       type = lib.types.addCheck lib.types.number (value: value > 0);
       default = 1.00;
       description = ''
-        Per-review spending ceiling in USD. Each API request reserves a
+        Base per-review spending ceiling in USD. The high profile uses five
+        times this allowance. Each API request reserves a
         conservative estimate before starting. Reviews that exhaust their
         allowance report incomplete coverage.
         Reservations are estimates, not an invoice cap.

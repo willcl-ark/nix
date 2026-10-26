@@ -64,6 +64,31 @@ class CommandTests(unittest.TestCase):
             ).fetchone()
             return row[0] if row else None
 
+    def test_high_request_is_durable_and_idempotent(self):
+        self.updates = [self.update(text="/high@RalphBot 42")]
+        self.assertEqual(self.poll(), 1)
+        self.assertEqual(self.poll(), 0)
+        with closing(self.store._connect()) as db:
+            self.assertEqual(
+                db.execute("SELECT id, number FROM review_requests").fetchall(),
+                [(10, 42)],
+            )
+        self.assertIn("high review", self.messages()["command:10"])
+
+    def test_high_invalid_and_unauthorized_requests(self):
+        for index, text in enumerate(
+            ("/high", "/high -1", "/high https://elsewhere/42", "/high 42 extra")
+        ):
+            self.updates = [self.update(10 + index, text=text)]
+            self.poll()
+        self.updates = [self.update(20, text="/high 42", **{"from": {"id": 1234}})]
+        self.poll()
+        with closing(self.store._connect()) as db:
+            self.assertEqual(
+                db.execute("SELECT count(*) FROM review_requests").fetchone()[0], 0
+            )
+        self.assertNotIn("command:20", self.messages())
+
     def test_reply_and_offset_survive_restart_without_duplicate(self):
         self.updates = [self.update()]
         self.assertEqual(self.poll(), 1)

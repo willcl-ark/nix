@@ -39,6 +39,10 @@ class NotificationStore:
                     status TEXT NOT NULL, day TEXT NOT NULL,
                     PRIMARY KEY (id, generation, status)
                 );
+                CREATE TABLE IF NOT EXISTS review_requests (
+                    id INTEGER PRIMARY KEY, number INTEGER NOT NULL,
+                    processed INTEGER NOT NULL DEFAULT 0
+                );
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL
                 );

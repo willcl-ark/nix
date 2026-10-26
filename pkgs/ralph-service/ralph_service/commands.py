@@ -1,6 +1,7 @@
 """Administrator commands posted in the configured Telegram channel."""
 
 import logging
+import re
 from contextlib import closing
 
 from . import telegram
@@ -17,10 +18,15 @@ def _command(post, configured_chat_id, bot):
     elif destination != str(chat.get("id")):
         return None
     text = post.get("text", "").strip()
-    command, separator, username = text.partition("@")
+    parts = text.split(maxsplit=1)
+    if not parts:
+        return None
+    command, separator, username = parts[0].partition("@")
     if separator and username.casefold() != bot.get("username", "").casefold():
         return None
-    return command if command in {"/status", "/help"} else None
+    if command == "/high":
+        return (command, parts[1] if len(parts) > 1 else "")
+    return command if command in {"/status", "/help"} and len(parts) == 1 else None
 
 
 def _admin_only(token, post, bot):
@@ -81,14 +87,26 @@ def poll_commands(
                 )
                 command = None
             if command:
-                if command == "/status":
+                if isinstance(command, tuple):
+                    argument = command[1]
+                    if re.fullmatch(r"[1-9][0-9]{0,9}", argument):
+                        number = int(argument)
+                        db.execute(
+                            "INSERT OR IGNORE INTO review_requests (id, number) VALUES (?, ?)",
+                            (update["update_id"], number),
+                        )
+                        text = f"Requested a fresh high review of PR #{number}."
+                    else:
+                        text = "Usage: /high <PR number>"
+                elif command == "/status":
                     from . import status
 
                     text = status.status_message(state_dir, report_dir, report_base_url)
                 else:
                     text = (
-                        "Ralph monitoring commands\n"
+                        "Ralph commands\n"
                         "/status - Service health, review results and costs\n"
+                        "/high <PR number> - Request a fresh high review\n"
                         "/help - Show these commands\n"
                         "Post commands in this channel as an administrator."
                     )

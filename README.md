@@ -27,7 +27,7 @@ stable named flake output.
 | `packages.<system>.cdash` | CDash build and test dashboard with locked PHP dependencies and compiled frontend assets. |
 | `packages.<system>.dnsseedrs` | Bitcoin DNS seeder built from `willcl-ark/dnsseedrs`. |
 | `packages.<system>.ralph-service` | Forgejo webhook reviewer, frozen evaluation, reports, statistics, follow-up and a separate Telegram monitor, importing the Ralph core. [Usage](pkgs/ralph-service/README.md). |
-| `packages.<system>.ralph` | Local committed-change review CLI with selectable engines and budgeted audits. [Usage and review flow](pkgs/ralph/README.md). |
+| `packages.<system>.ralph` | Local committed-change review CLI with selectable engines, default/high review profiles and budgeted audits. [Usage and review flow](pkgs/ralph/README.md). |
 
 ## Usage
 

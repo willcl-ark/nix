@@ -123,7 +123,7 @@ class BotTests(unittest.TestCase):
             }
             (audit_dir / "models.json").write_text(json.dumps(models))
             loaded = core_config.PromptConfig.load(
-                core_config.DEFAULT_PROMPT_FILE, audit_dir
+                core_config.DEFAULT_PROMPT_FILE, audit_dir, audit_dir / "models.json"
             )
             self.assertEqual(loaded.audit_prompts["router"], "router instructions")
             self.assertEqual(
@@ -135,7 +135,9 @@ class BotTests(unittest.TestCase):
             (audit_dir / "models.json").write_text(json.dumps(models))
             with self.assertRaisesRegex(ValueError, "each review stage"):
                 core_config.PromptConfig.load(
-                    core_config.DEFAULT_PROMPT_FILE, audit_dir
+                    core_config.DEFAULT_PROMPT_FILE,
+                    audit_dir,
+                    audit_dir / "models.json",
                 )
 
     def test_collect_review_skips_stale_head_without_model_call(self):
@@ -788,7 +790,7 @@ class BotTests(unittest.TestCase):
             custom_prompts = core_config.PromptConfig(
                 core_config.load_prompt_file(prompt_file),
                 self.prompt_config.audit_prompts,
-                self.prompt_config.models,
+                self.prompt_config.profile,
             )
             with patch.object(
                 urllib.request, "urlopen", return_value=Response()
@@ -884,10 +886,12 @@ class BotTests(unittest.TestCase):
                 "Edit review",
                 "Leads",
                 model_name=self.prompt_config.models["collator"],
-                max_output_tokens=model.MAX_COLLATOR_OUTPUT_TOKENS,
+                max_output_tokens=self.prompt_config.profile.stages[
+                    "collator"
+                ].max_output_tokens,
             )
         payload = json.loads(send.call_args.args[0].data)
-        self.assertEqual(payload["max_output_tokens"], model.MAX_COLLATOR_OUTPUT_TOKENS)
+        self.assertEqual(payload["max_output_tokens"], 6_000)
         self.assertEqual(len(answer), 5000)
         self.assertFalse(record["output_truncated"])
 

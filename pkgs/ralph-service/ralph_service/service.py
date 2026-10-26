@@ -1,6 +1,7 @@
 """Webhook server and review worker."""
 
 import argparse
+from contextlib import closing
 import hashlib
 import hmac
 import json
@@ -16,9 +17,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ralph import trace as core_trace
-from . import badge, config, forgejo, github, report, repository, trace
+from . import badge, config, forgejo, github, report, repository, trace, monitor
 from ralph import repository as local_repository
-from ralph import engine, model, spend, runner
+from ralph import engine, model, spend, runner, profiles
 from .research import discussion_lookup
 from .jobs import JobStore
 from ralph.repository import BRANCH, SHA
@@ -221,8 +222,12 @@ def process_job(
     base_sha = None
     head_sha = expected_head
     merge_base = None
+    profile = (engine_identity.get("config") or {}).get("profile")
+    if engine_identity["name"] == "current" and profile is not None:
+        ledger = profiles.ReviewProfile.from_dict(profile).apply_budget(ledger)
     budget = spend.RequestBudget(
-        ledger, review_id=f"pr:{number}:{job['id']}:{job['generation']}"
+        ledger,
+        review_id=f"pr:{number}:{job['id']}:{job['generation']}",
     )
 
     ppq_budget = (
@@ -557,6 +562,80 @@ def process_job(
             )
 
 
+def consume_review_requests(store, jobs, bot_config, token, high_engine):
+    """Replay durable Telegram requests safely after either process restarts."""
+    with closing(store._connect()) as db:
+        requests = db.execute(
+            "SELECT id, number FROM review_requests WHERE processed = 0 ORDER BY id"
+        ).fetchall()
+    for request_id, number in requests:
+        try:
+            if high_engine is None:
+                raise ValueError("high reviews require the current engine")
+            pr = forgejo.forgejo_request(bot_config, token, f"/pulls/{number}")
+            if pr.get("number") != number or pr.get("state") != "open":
+                raise ValueError("pull request is not open")
+            event = parse_event(
+                bot_config,
+                "pull_request",
+                {
+                    "action": "opened",
+                    "repository": {
+                        "full_name": bot_config.repository,
+                        "html_url": bot_config.repository_url or "",
+                    },
+                    "pull_request": pr,
+                    "ralph_force": True,
+                },
+            )
+            # Use the current base branch, not a historical base commit.
+            number, _, head, action, force = event
+            base_ref = pr["base"]["ref"]
+            jobs.enqueue(
+                number,
+                base_ref,
+                head,
+                action,
+                force,
+                engine_identity=high_engine.identity,
+                request_id=f"telegram:{request_id}",
+            )
+            message = f"Queued high review of PR #{number}."
+        except ValueError as exc:
+            message = f"Could not queue high review of PR #{number}: {exc}."
+        except urllib.error.HTTPError as exc:
+            if exc.code not in {404, 422}:
+                logging.warning(
+                    "Could not fetch PR %d for Telegram review: HTTP %d; will retry",
+                    number,
+                    exc.code,
+                )
+                continue
+            message = f"Could not find PR #{number}."
+        except (OSError, urllib.error.URLError, sqlite3.Error):
+            logging.exception(
+                "Could not queue Telegram review of PR %d; will retry", number
+            )
+            continue
+        with closing(store._connect()) as db, db:
+            db.execute(
+                "UPDATE review_requests SET processed = 1 WHERE id = ?", (request_id,)
+            )
+            db.execute(
+                "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
+                (f"command:result:{request_id}", message),
+            )
+
+
+def command_worker(store, jobs, bot_config, token, high_engine):
+    while True:
+        try:
+            consume_review_requests(store, jobs, bot_config, token, high_engine)
+        except Exception:
+            logging.exception("Could not process Telegram review requests")
+        time.sleep(5)
+
+
 def worker(
     jobs,
     state_dir,
@@ -585,9 +664,18 @@ def worker(
             continue
         try:
             if job["review_result"] is None:
-                if not jobs.bind_engine(job, review_engine.identity):
+                identity = job["engine_identity"]
+                job_engine = (
+                    review_engine
+                    if identity is None
+                    or identity.get("config") is None
+                    or identity == review_engine.identity
+                    else engine.load(
+                        identity["name"], identity["config"], configured=True
+                    )
+                )
+                if not jobs.bind_engine(job, job_engine.identity):
                     continue
-                job_engine = review_engine
             else:
                 job_engine = None
             process_job(
@@ -882,6 +970,11 @@ def main():
         engine_config.setdefault("archaeology", True)
     try:
         review_engine = engine.load(args.engine, engine_config)
+        high_engine = (
+            engine.load("current", {**engine_config, "profile": "high"})
+            if args.engine == "current"
+            else None
+        )
     except (ImportError, TypeError, ValueError) as exc:
         parser.error(f"could not load review engine: {exc}")
     api_key = args.openai_key_file.read_text().strip()
@@ -908,6 +1001,7 @@ def main():
     except RuntimeError as exc:
         parser.error(str(exc))
     recovered = jobs.recover()
+    command_store = monitor.NotificationStore(args.state_dir / "telegram.sqlite3")
     ledger = spend.Ledger(
         args.state_dir / "spend.sqlite3",
         review_limit_usd=args.review_budget_usd,
@@ -918,6 +1012,12 @@ def main():
         review_limit_usd=args.ppq_review_budget_usd,
     )
     logging.info("review queue recovered_claims=%d workers=%d", recovered, args.workers)
+    threading.Thread(
+        target=command_worker,
+        name="review-commands",
+        args=(command_store, jobs, bot_config, forgejo_token, high_engine),
+        daemon=True,
+    ).start()
     for index in range(args.workers):
         threading.Thread(
             target=worker,

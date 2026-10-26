@@ -46,7 +46,6 @@ class ServiceTests(unittest.TestCase):
                 "prompts": {
                     "instructions": self.prompt_config.instructions,
                     "audit_prompts": self.prompt_config.audit_prompts,
-                    "models": self.prompt_config.models,
                 },
                 "routing_mode": "enabled",
                 "blind_alternatives": True,
@@ -598,7 +597,7 @@ class ServiceTests(unittest.TestCase):
             "name": "narrative",
             "code_sha256": "c" * 64,
             "config_sha256": "d" * 64,
-            "config": {},
+            "config": {"profile": "custom-review"},
         }
         private_text = "NARRATIVE_PRIVATE_NATIVE_DATA"
 
@@ -1105,12 +1104,12 @@ class ServiceTests(unittest.TestCase):
             )
         self.assertEqual(called.call_count, 1)
 
-    def test_worker_restarts_unfinished_review_with_current_engine(self):
+    def test_worker_restarts_unfinished_review_with_saved_configuration(self):
         previous = {
             **self.review_engine.identity,
             "code_sha256": "old code",
             "config_sha256": "old configuration",
-            "config": {},
+            "config": self.review_engine.config,
         }
         self.jobs.enqueue(42, "master", "a" * 40, "opened", engine_identity=previous)
         interrupted = self.jobs.claim()
@@ -1192,7 +1191,7 @@ class ServiceTests(unittest.TestCase):
             **self.review_engine.identity,
             "code_sha256": "old code",
             "config_sha256": "old configuration",
-            "config": {},
+            "config": self.review_engine.config,
         }
         saved = {**self.saved_result(), "engine": previous}
         self.jobs.enqueue(42, "master", "a" * 40, "opened", engine_identity=previous)
@@ -1352,7 +1351,6 @@ class WebhookTests(unittest.TestCase):
                 "prompts": {
                     "instructions": self.prompt_config.instructions,
                     "audit_prompts": self.prompt_config.audit_prompts,
-                    "models": self.prompt_config.models,
                 },
                 "routing_mode": "enabled",
                 "blind_alternatives": True,
