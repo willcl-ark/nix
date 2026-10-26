@@ -69,6 +69,61 @@ class GitHubTests(unittest.TestCase):
         for excluded in ("Original", "Minor"):
             self.assertNotIn(excluded, body)
 
+    def test_retained_major_updates_previous_comment_instead_of_deleting(self):
+        result = self.result()
+        exports = result["output"]["exports"]
+        exports["findings"] = []
+        exports["review_memory"] = [{"severity": "major", "status": "unclear"}]
+        own = {"id": 2, "user": {"id": 7}, "body": "<!-- ralph-major:owner/repo -->"}
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[
+                {"id": 7},
+                [own],
+                {"state": "open", "head": {"sha": "a" * 40}},
+                {},
+            ],
+        ) as request:
+            self.assertEqual(self.publish(result), "updated")
+        self.assertEqual(request.call_args.args[2], "PATCH")
+        body = request.call_args.args[3]["body"]
+        self.assertIn("remain unresolved", body)
+        self.assertIn(result["run"]["report_url"], body)
+        self.assertNotIn("Ralph found major issues", body)
+
+    def test_collapsing_major_does_not_bypass_verification(self):
+        result = self.result()
+        exports = result["output"]["exports"]
+        exports["review_memory"] = [
+            {
+                "severity": "major",
+                "status": "still_present",
+                "collapsed": True,
+                "current_candidate_ids": ["independent:1"],
+                "current_finding_ids": ["finding:1"],
+            }
+        ]
+        exports["findings"][0]["verified_by"] = "verifier"
+        with patch.object(github, "github_request") as request:
+            self.assertEqual(self.publish(result), "unverified")
+        request.assert_not_called()
+        exports["findings"][0]["verified_by"] = "major_verifier"
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[
+                {"id": 7},
+                [],
+                {"state": "open", "head": {"sha": "a" * 40}},
+                {},
+            ],
+        ) as request:
+            self.assertEqual(self.publish(result), "created")
+        body = request.call_args.args[3]["body"]
+        self.assertIn("remain unresolved", body)
+        self.assertNotIn("Edited title", body)
+
     def test_stale_or_closed_upstream_does_not_post(self):
         for pull in (
             {"state": "open", "head": {"sha": "b" * 40}},

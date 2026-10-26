@@ -182,3 +182,32 @@ Frozen cases use schema 6 and retain the backport evidence and available upstrea
 objects for offline replay. Recreate older case manifests before evaluating with
 this version; replay rejects changed evidence or missing source pins before any
 model request.
+
+## PR-local author feedback
+
+Before a re-review, the service gathers earlier completed findings for that PR
+and carries their saved review memory forward. New results record repository/PR
+scope explicitly; legacy results use the service's dedicated repository database.
+No history is shared between PRs. Comment edits alone do not enqueue new reviews.
+
+For repositories configured with `github_repository`, author identity comes from
+the upstream GitHub PR's numeric user ID. The service captures that author's issue
+comments, inline replies and review bodies from GitHub. Standalone replies on the
+Forgejo mirror are not included in this mode. Native Forgejo repositories use
+Forgejo numeric user IDs; imported author names alone are insufficient. Reads are
+bounded and record omissions. First reviews perform no feedback discussion reads.
+
+Author comments are untrusted text. Their exact captured bodies, IDs, URLs,
+timestamps and hashes accompany the previous findings and a bounded revision
+diff. “Addressing elsewhere” cannot erase an issue: the core verifier must check
+the code, and unresolved history remains in reports and status badges even when
+there are no new findings. A collapsed entry is still unresolved.
+
+Same-head reuse checks revision and review metadata before feedback acquisition,
+so new replies cannot trigger duplicate paid reviews. The packet fingerprint is
+saved separately with the result. Publication retries use the
+saved result and frozen packet instead of paying for another review. Frozen
+captures retain the same evidence. Historical captures exclude older results
+without a trustworthy completion timestamp; ordinary captures retain legacy
+history. Feedback acquisition failures retain prior findings for reconciliation
+without treating unavailable replies as author acceptance or rejection.

@@ -209,6 +209,98 @@ class EvaluateTests(unittest.TestCase):
             self.assertEqual(result["run"]["status"], "failed")
             reviewed.assert_called_once()
 
+    def test_feedback_replay_preserves_memory_offline_and_rejects_tampering(self):
+        head = self.git(self.work, "rev-parse", "HEAD")
+        packet = {
+            "schema_version": 1,
+            "repository": self.bot_config.repository,
+            "new_head": head,
+            "number": 42,
+            "findings": [
+                {
+                    "key": "1:1:F1",
+                    "title": "Known limitation",
+                    "severity": "major",
+                    "body": "Still unresolved",
+                }
+            ],
+            "comments": [{"id": "2", "body": "Addressing elsewhere"}],
+            "revisions": {"new_head": head, "diff": "Frozen revision difference"},
+        }
+        with patch.object(
+            evaluate.review_feedback, "collect_review_feedback", return_value=packet
+        ) as capture:
+            manifest = self.capture()
+        self.assertEqual(
+            capture.call_args.kwargs["cutoff"],
+            json.loads(manifest.read_text())["discussion_cutoff"],
+        )
+        original = json.loads(manifest.read_text())
+        self.origin.rename(self.root / "unavailable-origin.git")
+        ledger = spend.Ledger(self.root / "spend.sqlite3")
+
+        def review(case, runtime, *args):
+            self.assertEqual(case.review_feedback, packet)
+            return pipeline.ReviewResult("Known concern remains.", [], False)
+
+        with (
+            patch.object(
+                forgejo, "forgejo_request", side_effect=AssertionError("Network")
+            ),
+            patch.object(
+                evaluate.review_feedback,
+                "collect_review_feedback",
+                side_effect=AssertionError("History reread"),
+            ),
+            patch.object(
+                pipeline, "review_with_independent_passes", side_effect=review
+            ) as reviewed,
+        ):
+            result = json.loads(
+                evaluate.run_case(
+                    manifest, "key", self.root / "runs", ledger
+                ).read_text()
+            )
+            self.assertEqual(result["run"]["status"], "completed", result.get("error"))
+            reviewed.assert_called_once()
+            for field, value in (
+                ("number", 43),
+                ("repository", "other/repo"),
+                ("head", "a" * 40),
+                ("hash", "changed"),
+            ):
+                with self.subTest(field=field):
+                    changed = json.loads(json.dumps(original))
+                    feedback = changed["review_feedback"]
+                    if field == "head":
+                        feedback["revisions"]["new_head"] = value
+                    elif field == "hash":
+                        feedback["comments"][0]["body"] = value
+                    else:
+                        feedback[field] = value
+                    if field != "hash":
+                        changed["review_feedback_sha256"] = evaluate.digest(feedback)
+                    changed["manifest_sha256"] = evaluate.digest(
+                        {
+                            key: value
+                            for key, value in changed.items()
+                            if key != "manifest_sha256"
+                        }
+                    )
+                    manifest.write_text(json.dumps(changed))
+                    result = json.loads(
+                        evaluate.run_case(
+                            manifest, "key", self.root / "runs", ledger
+                        ).read_text()
+                    )
+                    self.assertEqual(
+                        result["error"]["message"],
+                        "Frozen review feedback hash mismatch"
+                        if field == "hash"
+                        else "Frozen review feedback scope mismatch",
+                    )
+                    reviewed.assert_called_once()
+
     def test_replay_refuses_source_objects_acquired_after_capture(self):
         self.git(self.work, "commit", "--allow-empty", "-qm", "Uncaptured original")
         original = self.git(self.work, "rev-parse", "HEAD")
@@ -301,6 +393,7 @@ class EvaluateTests(unittest.TestCase):
             self.assertEqual(prompt_config.models, self.prompt_config.models)
             self.assertIsNone(runtime.discussion_lookup)
             self.assertIs(runtime.allow_web_search, False)
+            self.assertIsNone(review_case.review_feedback)
             self.assertIsNotNone(review_case.research_evidence)
             self.assertIn(
                 "read_current_pr_discussion",

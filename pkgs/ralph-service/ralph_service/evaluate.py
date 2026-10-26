@@ -15,13 +15,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ralph import trace as core_trace
-from . import config, forgejo, repository, research, stats, stats_page
+from . import config, forgejo, repository, research, review_feedback, stats, stats_page
 from ralph import repository as local_repository
 from ralph import engine, profiles, spend, runner, upstream
 from ralph import research as frozen_research
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def private_dir(path):
@@ -190,6 +190,7 @@ def capture_case(
     review_engine,
     research_requests=None,
     research_cutoff=None,
+    state_dir=None,
 ):
     """Make one private manifest with complete local Git objects."""
     output_dir = private_dir(output_dir)
@@ -268,6 +269,15 @@ def capture_case(
         research_evidence = research.capture(
             bot_config, number, research_requests, discussion_cutoff, captured_at
         )
+        feedback = review_feedback.collect_review_feedback(
+            (state_dir or checkout.parent) / "jobs.sqlite3",
+            {"number": number, "generation": None},
+            bot_config,
+            checkout,
+            head_sha,
+            cutoff=discussion_cutoff,
+            historical_cutoff=research_cutoff is not None,
+        )
         frozen_config = {"bot": asdict(bot_config), "engine": review_engine.identity}
         manifest = {
             "schema_version": SCHEMA_VERSION,
@@ -293,6 +303,8 @@ def capture_case(
             "backport_evidence": backport_evidence,
             "backport_evidence_sha256": digest(backport_evidence),
             "backport_pins": backport_pins,
+            "review_feedback": feedback,
+            "review_feedback_sha256": digest(feedback),
             "research_evidence": research_evidence,
             "research_evidence_sha256": digest(research_evidence),
             "source_code_sha256": source_code_sha256(),
@@ -370,6 +382,19 @@ def run_case(
         if digest(backport_evidence) != manifest["backport_evidence_sha256"]:
             raise ValueError("Frozen backport evidence hash mismatch")
         bot_config = config.BotConfig(**frozen_config["bot"])
+        feedback = manifest["review_feedback"]
+        if digest(feedback) != manifest["review_feedback_sha256"]:
+            raise ValueError("Frozen review feedback hash mismatch")
+        if feedback is not None and (
+            not isinstance(feedback, dict)
+            or feedback.get("repository")
+            != (bot_config.github_repository or bot_config.repository)
+            or feedback.get("number") != manifest["pr"]
+            or feedback.get("new_head") != manifest["head_sha"]
+            or not isinstance(feedback.get("revisions"), dict)
+            or feedback["revisions"].get("new_head") != manifest["head_sha"]
+        ):
+            raise ValueError("Frozen review feedback scope mismatch")
         captured_engine = frozen_config["engine"]
         selected_name = engine_name or captured_engine["name"]
         explicit_engine_config = engine_config is not None
@@ -440,6 +465,7 @@ def run_case(
             "monthly_budget_usd": None
             if monthly_limit is None
             else monthly_limit / 1_000_000,
+            "review_feedback_sha256": manifest["review_feedback_sha256"],
             "research_evidence_sha256": manifest["research_evidence_sha256"],
             "backport_evidence_sha256": manifest["backport_evidence_sha256"],
             "source_code_sha256": code_hash,
@@ -502,11 +528,13 @@ def run_case(
                 snapshot,
                 source={
                     "kind": "pull_request",
+                    "repository": bot_config.github_repository or bot_config.repository,
                     "number": manifest["pr"],
                     "url": f"{bot_config.repository_url}/pulls/{manifest['pr']}",
                 },
                 research_evidence=research_evidence,
                 backport_evidence=backport_evidence,
+                review_feedback=feedback,
             )
             runtime = engine.Runtime(
                 case=case,
@@ -1165,6 +1193,7 @@ def main(argv=None):
                     review_engine,
                     requests,
                     args.research_cutoff,
+                    state_dir=args.state_dir,
                 )
             )
         return 0

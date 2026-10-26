@@ -510,6 +510,37 @@ class WebhookTests(unittest.TestCase):
         ledger = spend.Ledger(state_dir / "spend.sqlite3")
         return jobs.claim(), jobs, state_dir, ledger
 
+    def test_badge_keeps_unresolved_previous_finding_visible(self):
+        result = {
+            "schema_version": 1,
+            "output": {
+                "schema_version": 1,
+                "exports": {
+                    "findings": [],
+                    "review_memory": [{"status": "unclear", "severity": "major"}],
+                },
+            },
+        }
+        jobs = SimpleNamespace(latest_completed_result=lambda number: result)
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", 0), service.make_handler(b"secret", jobs, self.bot_config)
+        )
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/assets/{self.bot_config.repository}/42.png"
+            with urllib.request.urlopen(url) as response:
+                self.assertEqual(response.read(), service.badge.ORANGE)
+            result["output"]["exports"]["review_memory"][0]["status"] = "fixed"
+            with urllib.request.urlopen(url) as response:
+                self.assertEqual(response.read(), service.badge.GREY)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_webhook_queues_only_authenticated_target_event(self):
         jobs = CapturingJobs()
         server = ThreadingHTTPServer(
@@ -661,6 +692,7 @@ class WebhookTests(unittest.TestCase):
             )
         }
         with (
+            patch.object(service, "collect_review_feedback") as feedback,
             patch.object(repository, "current_head", return_value="a" * 40),
             patch.object(forgejo, "find_comment", return_value=existing),
             patch.object(
@@ -693,6 +725,7 @@ class WebhookTests(unittest.TestCase):
         collect.assert_called_once()
         snapshot.assert_called_once()
         review_model.assert_not_called()
+        feedback.assert_not_called()
 
 
 if __name__ == "__main__":

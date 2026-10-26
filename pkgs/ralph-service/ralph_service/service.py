@@ -21,6 +21,7 @@ from . import badge, config, forgejo, github, report, repository, trace, monitor
 from ralph import repository as local_repository
 from ralph import engine, model, spend, runner, profiles
 from .research import discussion_lookup
+from .review_feedback import collect_review_feedback
 from .jobs import JobStore
 from ralph.repository import BRANCH, SHA
 
@@ -346,6 +347,19 @@ def process_job(
                         jobs.complete(job)
                         outcome = "already-reviewed"
                         return outcome
+                feedback = (
+                    collect_review_feedback(
+                        jobs.path,
+                        job,
+                        bot_config,
+                        checkout,
+                        head_sha,
+                        github_token=github_token,
+                        allow_discussions=allow_discussions,
+                    )
+                    if not skip
+                    else None
+                )
                 debug = {"skip": skip} if skip else {}
                 stage = "model"
                 if skip:
@@ -355,6 +369,7 @@ def process_job(
                         review,
                         snapshot,
                         backport_evidence=backport_evidence,
+                        review_feedback=feedback,
                         source={
                             **metadata,
                             "kind": "pull_request",
@@ -407,6 +422,15 @@ def process_job(
                         },
                     }
                 content = saved["content"]
+                saved["run"]["review_completed_at"] = forgejo._retrieved_at()
+                saved["run"]["review_scope"] = {
+                    "repository": bot_config.repository_url,
+                    "number": number,
+                }
+                saved["run"]["review_feedback"] = feedback
+                saved["run"]["review_feedback_fingerprint"] = (
+                    feedback["fingerprint"] if feedback else None
+                )
                 saved["run"]["pr_title"] = title
                 saved["run"]["review_context"] = expected_context
                 saved["run"]["review_fingerprint"] = review_fingerprint
@@ -773,7 +797,9 @@ def make_handler(secret, jobs, bot_config, engine_identity=None):
                 self.send_error(503)
                 return
             debug = core_trace.current_diagnostics(result) if result else {}
-            if result is None or debug.get("skip") or "decisions" not in debug:
+            if result is not None and core_trace.unresolved_memory(result):
+                image = badge.ORANGE
+            elif result is None or debug.get("skip") or "decisions" not in debug:
                 image = badge.GREY
             elif any(
                 decision.get("disposition") == "publish"

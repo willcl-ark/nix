@@ -31,6 +31,28 @@ class TelegramTests(unittest.TestCase):
         self.assertIn("https://forge.example/owner/repo/pulls/42", text)
         self.assertIn("https://reports.example/42.html", text)
 
+    def test_retained_major_avoids_new_alarm_without_forgetting_the_concern(self):
+        result = self.result(findings=[{"id": "new:1", "severity": "major"}])
+        result["output"]["exports"]["review_memory"] = [
+            {
+                "severity": "major",
+                "status": "still_present",
+                "collapsed": True,
+                "current_candidate_ids": ["independent:1"],
+                "current_finding_ids": ["new:1"],
+            }
+        ]
+        self.assertIn("Previously discussed major concern remains", self.render(result))
+        self.assertNotIn("🚨 Major finding", self.render(result))
+        result["output"]["exports"]["findings"].append(
+            {"id": "new:2", "severity": "major"}
+        )
+        self.assertIn("🚨 Major finding", self.render(result))
+        result["output"]["exports"]["findings"] = []
+        self.assertIn("Previously discussed major concern remains", self.render(result))
+        result["output"]["exports"]["review_memory"][0]["status"] = "fixed"
+        self.assertNotIn("major concern", self.render(result))
+
     def test_http_rate_limit_is_sanitized_and_preserves_retry_delay(self):
         error = urllib.error.HTTPError(
             "https://api.telegram.org/botsecret/sendMessage",

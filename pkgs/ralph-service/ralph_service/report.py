@@ -438,6 +438,7 @@ def _public_record(number, result, report_id):
         if findings is not None
         else "unsupported",
         "findings": findings,
+        "review_memory": core_trace.review_memory_export(result),
         "actionable": (
             (result.get("output", {}).get("exports", {}) or {}).get("actionable")
             if isinstance(result.get("output"), dict)

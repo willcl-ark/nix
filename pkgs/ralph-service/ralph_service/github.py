@@ -31,6 +31,18 @@ def publish_major_findings(repository, token, number, result):
     findings = [finding for finding in exported if finding.get("severity") == "major"]
     if any(finding.get("verified_by") != "major_verifier" for finding in findings):
         return "unverified"
+    retained = [
+        item
+        for item in trace.unresolved_memory(result)
+        if item.get("severity") == "major"
+    ]
+    collapsed = {
+        finding_id
+        for item in retained
+        if item.get("collapsed")
+        for finding_id in item.get("current_finding_ids", [])
+    }
+    findings = [finding for finding in findings if finding.get("id") not in collapsed]
     marker = f"<!-- ralph-major:{repository} -->"
     base = f"/repos/{repository}"
     user = github_request(token, "/user")
@@ -56,7 +68,7 @@ def publish_major_findings(repository, token, number, result):
     pull = github_request(token, f"{base}/pulls/{number}")
     if pull["state"] != "open" or pull["head"]["sha"] != result["head_sha"]:
         return "stale"
-    if not findings:
+    if not findings and not retained:
         if comment is None:
             return "unchanged"
         github_request(token, f"{base}/issues/comments/{comment['id']}", "DELETE")
@@ -64,7 +76,14 @@ def publish_major_findings(repository, token, number, result):
     report_url = result["run"].get("report_url")
     if not report_url:
         raise urllib.error.URLError("GitHub publication requires a full report URL")
-    sections = [marker, f"Ralph found major issues at {result['head_sha']}."]
+    sections = [marker]
+    if findings:
+        sections.append(f"Ralph found major issues at {result['head_sha']}.")
+    if retained:
+        sections.append(
+            "Previously discussed major concerns remain unresolved. "
+            "Their original findings and current assessments are retained in the full report."
+        )
     for finding in findings:
         title = finding.get("presented_title") or finding["title"]
         body = finding.get("presented_body") or finding["body"]

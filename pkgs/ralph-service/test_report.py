@@ -7,6 +7,23 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    def test_unknown_schema_does_not_export_retained_findings(self):
+        result = {
+            "schema_version": 1,
+            "output": {
+                "schema_version": 1,
+                "exports": {
+                    "review_memory": [{"severity": "major", "status": "unclear"}],
+                },
+            },
+        }
+        self.assertEqual(len(report.core_trace.unresolved_memory(result)), 1)
+        result["schema_version"] = True
+        self.assertEqual(report.core_trace.review_memory_export(result), [])
+        result["schema_version"] = 1
+        result["output"]["schema_version"] = 0
+        self.assertEqual(report.core_trace.review_memory_export(result), [])
+
     def test_public_report_escapes_markup_and_excludes_private_data(self):
         secret = "PRIVATE-CREDENTIAL"
         hostile = "<script>alert('review')</script>"
@@ -40,6 +57,9 @@ class ReportTests(unittest.TestCase):
                 "data": {"schema_version": 2, **debug},
                 "exports": {
                     "findings": [],
+                    "review_memory": [
+                        {"title": "Prior concern", "status": "unclear", "body": hostile}
+                    ],
                     "backport_assessment": {
                         "verdict": "Needs clarification",
                         "summary": hostile,
@@ -59,6 +79,10 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;script&gt;alert", html)
         self.assertEqual(json.loads(public)["review"], hostile)
+        self.assertEqual(
+            json.loads(public)["review_memory"],
+            result["output"]["exports"]["review_memory"],
+        )
         self.assertEqual(
             json.loads(public)["backport_assessment"]["verdict"], "Needs clarification"
         )

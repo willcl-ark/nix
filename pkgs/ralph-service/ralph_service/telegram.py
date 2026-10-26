@@ -29,11 +29,22 @@ def truncate_message(text, limit=MESSAGE_LIMIT):
 def review_message(repository_url, number, result):
     run = result["run"]
     findings = trace.findings_export(result) or []
-    marker = (
-        "🚨 Major finding\n"
-        if any(finding.get("severity") == "major" for finding in findings)
-        else ""
-    )
+    memory = trace.unresolved_memory(result)
+    collapsed = {
+        finding_id
+        for item in memory
+        if item.get("collapsed")
+        for finding_id in item.get("current_finding_ids", [])
+    }
+    if any(
+        finding.get("severity") == "major" and finding.get("id") not in collapsed
+        for finding in findings
+    ):
+        marker = "🚨 Major finding\n"
+    elif any(item.get("severity") == "major" for item in memory):
+        marker = "Previously discussed major concern remains\n"
+    else:
+        marker = ""
     title = " ".join(run.get("pr_title", f"Pull request #{number}").split())
     heading = f"{marker}PR #{number}: {title}"
     links = (
