@@ -68,10 +68,10 @@ concept research, shares the existing OpenAI allowance, and protects verifier
 headroom. Partial coverage reaches the verifier as named inspection gaps and
 remains visible in reports and stats. See the [specialist design](../../pkgs/ralph/README.md#script-and-transaction-policy-specialist).
 
-Sensitive changes receive parallel independent Sol 6.1, DeepSeek V4 Pro 0813 and Gemini 4 Argon
-adversarial reviews. DeepSeek and Gemini use PPQ at `https://api.ppq.ai/v1/responses`.
+Sensitive changes receive parallel independent Sol 6.1 and Gemini 4 Argon
+adversarial reviews. Gemini uses PPQ at `https://api.ppq.ai/v1/responses`.
 Selected consensus, wallet, and P2P profiles add the same domain instructions
-to all three reviews. Concurrency covers C++ lifetime, locks and shared state; state
+to both reviews. Concurrency covers C++ lifetime, locks and shared state; state
 covers persistence and recovery. Public-contract and build audits cover exposed
 behavior and portability respectively. These correctness checks run before
 tests and design. Reviewers can escalate when inspection reveals sensitive
@@ -180,7 +180,7 @@ the finding deserves publication. This uses the existing verifier call and
 does not select additional audits or change publication behavior.
 
 The default OpenAI per-review spending ceiling is USD 1.00. It is an allowance for
-complex reviews, not a target spend. Lightweight routing still skips all three
+complex reviews, not a target spend. Lightweight routing still skips both
 adversarial passes and irrelevant specialist stages. Before each API request
 ralph reserves a conservative input/output cost estimate, holding some allowance
 for verification based on its actual model, input, response limit and bounded
@@ -469,7 +469,7 @@ older cases before replaying them.
   audit. This costs more and still respects the same allowance.
 - `routingMode = "full"`: request every audit without calling the router.
 - `modelsJson = null`: optional per-stage replacement for the model map.
-  The map must include router, independent, script, adversarial, adversarial_deepseek, adversarial_gemini, concurrency, state,
+  The map must include router, independent, script, adversarial, adversarial_gemini, concurrency, state,
   public_contract, tests, dead_code, design, build, archaeologist, verifier,
   major_verifier and collator.
   Prices must also be supported by ralph's ledger.
@@ -571,7 +571,7 @@ scorecard for comparing coverage and cost. Summaries use recorded attribution;
 they do not automatically decide whether a finding is correct or useful.
 
 The service and evaluation run command require `--ppq-key-file`. Compare
-`adversarial`, `adversarial_deepseek` and `adversarial_gemini` in debug stage metrics for sole/shared
+`adversarial` and `adversarial_gemini` in debug stage metrics for sole/shared
 accepted findings and published, dropped or unresolved candidates. OpenAI has a
 USD 1.00 default ceiling; PPQ passes have no ceiling by default. Incomplete
 passes are not evidence of model quality.

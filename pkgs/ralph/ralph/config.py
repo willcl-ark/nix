@@ -25,7 +25,6 @@ MODEL_NAMES = (
     "router",
     "independent",
     "adversarial",
-    "adversarial_deepseek",
     "adversarial_gemini",
     *AUDIT_NAMES,
     "archaeologist",

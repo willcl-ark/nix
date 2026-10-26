@@ -20,7 +20,7 @@ from ralph.spend import SNAPSHOT_MODEL
 
 MICRODOLLARS = Decimal("1000000")
 LEDGERS = (("openai", "spend.sqlite3"), ("ppq", "ppq-spend.sqlite3"))
-ADVERSARIAL_STAGES = ("adversarial", "adversarial_deepseek", "adversarial_gemini")
+ADVERSARIAL_STAGES = ("adversarial", "adversarial_gemini")
 PUBLIC_LIMITATION_NOTES = [
     "Monthly trend uses ledger request accounting month.",
     "Model seconds are summed model turn elapsed_seconds, not wall time.",
@@ -1590,7 +1590,7 @@ def _new_adversarial_comparison():
         "shared_accepted": dict.fromkeys(ADVERSARIAL_STAGES, 0),
         "known_cost_micros": dict.fromkeys(ADVERSARIAL_STAGES, 0),
         "reserved_micros": dict.fromkeys(ADVERSARIAL_STAGES, 0),
-        "note": "Observed reviews with all three adversarial stages completed only; this is not causal recall.",
+        "note": "Observed reviews with both OpenAI and Gemini adversarial stages completed only; this is not causal recall.",
     }
 
 

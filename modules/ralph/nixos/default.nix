@@ -309,7 +309,7 @@ in
 
     ppqKeyFile = lib.mkOption {
       type = lib.types.str;
-      description = "Path to a file containing the PPQ API key for DeepSeek and Gemini adversarial reviews.";
+      description = "Path to a file containing the PPQ API key for Gemini adversarial reviews.";
     };
 
     webhookSecretFile = lib.mkOption {

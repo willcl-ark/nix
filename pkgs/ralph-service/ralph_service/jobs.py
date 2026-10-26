@@ -56,7 +56,7 @@ class JobStore:
                 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_pending_per_pr
                     ON jobs(number) WHERE status = 'pending'
             """)
-            # Migrate unfinished reviews once to the resolved profile format.
+            # Migrate unfinished reviews before loading their saved configuration.
             for row in db.execute(
                 "SELECT id, engine_identity FROM jobs WHERE review_result IS NULL AND status IN ('pending', 'running', 'retry')"
             ).fetchall():
@@ -65,23 +65,28 @@ class JobStore:
                 identity = json.loads(row["engine_identity"])
                 if identity is None:
                     continue
-                if (
-                    identity["name"] == "current"
-                    and identity["config"] is not None
-                    and "profile" not in identity["config"]
-                    and "models" in identity["config"].get("prompts", {})
-                ):
-                    from ralph import engine, profiles
+                if identity["name"] != "current" or identity["config"] is None:
+                    continue
+                from ralph import engine, profiles
 
-                    configured = identity["config"]
+                configured = identity["config"]
+                profile = configured.get("profile")
+                if profile is None and "models" in configured.get("prompts", {}):
                     models = configured["prompts"].pop("models")
                     profile = profiles.get_profile("default").with_models(models)
                     configured["profile"] = profile.to_dict()
-                    migrated = engine.load("current", configured).identity
-                    db.execute(
-                        "UPDATE jobs SET engine_identity = ? WHERE id = ?",
-                        (json.dumps(migrated, sort_keys=True), row["id"]),
-                    )
+                elif (
+                    isinstance(profile, dict)
+                    and "adversarial_deepseek" in profile["stages"]
+                ):
+                    del profile["stages"]["adversarial_deepseek"]
+                else:
+                    continue
+                migrated = engine.load("current", configured).identity
+                db.execute(
+                    "UPDATE jobs SET engine_identity = ? WHERE id = ?",
+                    (json.dumps(migrated, sort_keys=True), row["id"]),
+                )
             db.execute(
                 "CREATE TABLE IF NOT EXISTS review_requests (id TEXT PRIMARY KEY)"
             )

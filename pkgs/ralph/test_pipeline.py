@@ -363,7 +363,7 @@ class PipelineTests(unittest.TestCase):
         ppq_budget = Mock()
         openai_budget.summary.return_value = {"limit_usd": "1", "provider": "openai"}
         ppq_budget.summary.return_value = {"limit_usd": "1", "provider": "ppq"}
-        rendezvous = Barrier(3)
+        rendezvous = Barrier(2)
         inputs = {}
         candidate_ids = [f"{stage}:1" for stage in pipeline.ADVERSARIAL_STAGES]
 
@@ -409,7 +409,6 @@ class PipelineTests(unittest.TestCase):
         ppq_budget.protect.assert_not_called()
         self.assertEqual(self.debug["ppq_budget"], ppq_budget.summary.return_value)
         self.assertEqual(self.debug["budget"], openai_budget.summary.return_value)
-        self.assertEqual(inputs["adversarial"], inputs["adversarial_deepseek"])
         self.assertEqual(inputs["adversarial"], inputs["adversarial_gemini"])
         self.assertEqual(
             self.debug["stages"]["adversarial_gemini"]["status"], "completed"
@@ -417,14 +416,11 @@ class PipelineTests(unittest.TestCase):
         finding = self.debug["finding_attribution"][0]
         self.assertEqual(
             finding["raised_by"],
-            ["adversarial", "adversarial_deepseek", "adversarial_gemini"],
+            ["adversarial", "adversarial_gemini"],
         )
         self.assertEqual(
             finding["raised_by_models"],
             sorted(self.prompts.models[stage] for stage in pipeline.ADVERSARIAL_STAGES),
-        )
-        self.assertEqual(
-            self.debug["stages"]["adversarial_deepseek"]["status"], "completed"
         )
 
     def test_omitted_candidate_preserves_valid_finding_and_attribution(self):

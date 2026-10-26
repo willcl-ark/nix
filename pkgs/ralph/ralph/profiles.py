@@ -47,7 +47,7 @@ class StageSettings:
 class ReviewProfile:
     name: str
     stages: dict[str, StageSettings]
-    # OpenAI only; high leaves the PPQ reviewers and their allowance unchanged.
+    # OpenAI only; high leaves the PPQ reviewer and its allowance unchanged.
     budget_multiplier: float = 1
 
     def __post_init__(self):
@@ -109,7 +109,6 @@ _DEFAULT_STAGES = {
     "router": _stage(calls=0),
     "independent": _stage(),
     "adversarial": _stage("gpt-6.1-sol", "high", 25_000, 48),
-    "adversarial_deepseek": _stage("deepseek/deepseek-v4-pro-0813", "high", 32_000, 48),
     "adversarial_gemini": _stage("google/gemini-4-argon", "high", 32_000, 48),
     "script": _stage("gpt-6.1-sol", "high", 25_000, 48),
     "concurrency": _stage(effort="medium", output=8_000),

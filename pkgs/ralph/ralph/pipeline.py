@@ -23,7 +23,7 @@ DISCOVERY_ORDER = (
     "dead_code",
     "design",
 )
-PPQ_ADVERSARIAL_STAGES = ("adversarial_deepseek", "adversarial_gemini")
+PPQ_ADVERSARIAL_STAGES = ("adversarial_gemini",)
 ADVERSARIAL_STAGES = ("adversarial", *PPQ_ADVERSARIAL_STAGES)
 FULL_CONTEXT_STAGES = {
     "script",

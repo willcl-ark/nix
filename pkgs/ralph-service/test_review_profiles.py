@@ -1,5 +1,6 @@
 """High reviews survive queue updates, retries and command replay."""
 
+import json
 import tempfile
 import unittest
 from contextlib import closing
@@ -71,3 +72,26 @@ class ProfileTests(unittest.TestCase):
                 self.store, self.jobs, self.config, "token", self.high
             )
             self.assertIsNone(self.jobs.claim())
+
+    def test_restart_removes_retired_stage_only_from_unfinished_reviews(self):
+        old = json.loads(json.dumps(self.high.identity))
+        stages = old["config"]["profile"]["stages"]
+        stages["adversarial_deepseek"] = {
+            **stages["adversarial_gemini"],
+            "model": "deepseek/deepseek-v4-pro-0813",
+        }
+        self.jobs.enqueue(41, "master", "a" * 40, "opened", engine_identity=old)
+        completed = self.jobs.claim()
+        self.jobs.save_result(completed, {"content": "Historical review"})
+        self.jobs.complete(completed)
+        self.jobs.enqueue(42, "master", "b" * 40, "opened", engine_identity=old)
+
+        self.jobs = JobStore(self.jobs.path)
+        self.jobs = JobStore(self.jobs.path)
+        self.assertEqual(self.jobs.claim()["engine_identity"], self.high.identity)
+        with self.jobs._connection() as db:
+            historical = db.execute(
+                "SELECT engine_identity, review_result FROM jobs WHERE number = 41"
+            ).fetchone()
+        self.assertEqual(json.loads(historical[0]), old)
+        self.assertEqual(json.loads(historical[1]), {"content": "Historical review"})

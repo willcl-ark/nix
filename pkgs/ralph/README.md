@@ -220,7 +220,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Sol + DeepSeek + Gemini<br/>in parallel when selected"]
+    overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Sol + Gemini<br/>in parallel when selected"]
     adversarial --> focused["Selected focused audits<br/>run sequentially"]
     focused --> pool["Candidate pool"]
     classDef optional stroke-dasharray: 5 4
@@ -229,7 +229,7 @@ flowchart LR
 
 Focused audit order: concurrency, state, public_contract, build, tests,
 dead_code, design. Discovery can escalate coverage and add pending audits.
-DeepSeek and Gemini require PPQ; without it the adversarial stage runs Sol alone.
+Gemini requires PPQ; without it the adversarial stage runs Sol alone.
 
 **3. Verify, edit, double-check Majors and render**
 
@@ -265,7 +265,6 @@ does not receive concept research output or current PR discussion.
 | independent | gpt-6-luna | low | 4,000 | Full tool set |
 | script | gpt-6.1-sol | high | 25,000 | Original input; code and base history, no discussion or web tools |
 | adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |
-| adversarial_deepseek | deepseek/deepseek-v4-pro-0813 | high | 32,000 | Same tools and profiles, via PPQ |
 | adversarial_gemini | google/gemini-4-argon | high | 32,000 | Same tools and profiles, via PPQ |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
 | dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
@@ -292,7 +291,7 @@ research call is missing from the frozen manifest, the tool returns an
 unavailable-evidence message and the model continues from code and frozen input.
 
 Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensitive.
-The script and dead-code specialists, all three adversarial passes and both verifiers allow 48. History and discussion
+The script and dead-code specialists, both adversarial passes and both verifiers allow 48. History and discussion
 sublimits are eight each per tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit and are capped at
 two per response. Search fees and evidence-token headroom are reserved in the
@@ -383,7 +382,7 @@ immutable snapshots. The original Luna decisions remain in its stage record;
 final decisions and finding attribution reflect the second pass. No editing
 runs after Sol verifies the public wording.
 
-Candidate findings are leads, not votes. Agreement between Sol, DeepSeek, Gemini and focused
+Candidate findings are leads, not votes. Agreement between Sol, Gemini and focused
 reviewers gives a claim no extra weight. A defect needs a reachable trigger and
 consequence, checked against the strongest code-based reason it might be false.
 Static proof can suffice; running a reproduction is not required. Defect
@@ -549,7 +548,7 @@ High uses gpt-6.1-sol for independent review, concurrency, state, dead code,
 design and verification. Core analysis and verification stages use at least
 high reasoning effort, retaining xhigh where already configured, and at least
 16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
-and the two PPQ reviewers retain their default settings. Tool limits are unchanged.
+and the PPQ reviewer retain their default settings. Tool limits are unchanged.
 
 High multiplies the configured OpenAI review allowance by five. Its 128,000-token
 verifier reserves at least $2.56 for its initial and finishing requests alone;
