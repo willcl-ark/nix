@@ -17,11 +17,11 @@ from pathlib import Path
 from ralph import trace as core_trace
 from . import config, forgejo, repository, research, stats, stats_page
 from ralph import repository as local_repository
-from ralph import engine, profiles, spend, runner
+from ralph import engine, profiles, spend, runner, upstream
 from ralph import research as frozen_research
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def private_dir(path):
@@ -91,13 +91,14 @@ def offline_git():
             os.environ["GIT_NO_LAZY_FETCH"] = previous
 
 
-def verify_local_objects(checkout, base_sha, head_sha):
+def verify_local_objects(checkout, base_sha, head_sha, *originals):
     """Reject partial clones that would fetch Git objects during replay."""
     if not checkout.is_absolute():
         raise ValueError("Frozen checkout path must be absolute")
-    if not local_repository.SHA.fullmatch(
-        base_sha
-    ) or not local_repository.SHA.fullmatch(head_sha):
+    if any(
+        not local_repository.SHA.fullmatch(sha)
+        for sha in (base_sha, head_sha, *originals)
+    ):
         raise ValueError("Frozen Git object IDs are invalid")
     result = subprocess.run(
         [
@@ -109,6 +110,7 @@ def verify_local_objects(checkout, base_sha, head_sha):
             "--missing=print",
             base_sha,
             head_sha,
+            *originals,
         ],
         capture_output=True,
         text=True,
@@ -169,6 +171,13 @@ def pull_request_details(bot_config, token, number):
     for key in ("created_at", "updated_at", "closed_at", "merged_at"):
         if key in pull:
             details[key] = pull[key]
+    labels = pull.get("labels", [])
+    if not isinstance(labels, list) or any(
+        not isinstance(label, dict) or not isinstance(label.get("name"), str)
+        for label in labels
+    ):
+        raise ValueError(f"PR {number} has invalid labels")
+    details["labels"] = sorted({label["name"] for label in labels})
     return details
 
 
@@ -212,6 +221,7 @@ def capture_case(
     case_id = uuid.uuid4().hex
     base_pin = f"refs/review-cases/{case_id}/base"
     head_pin = f"refs/review-cases/{case_id}/head"
+    source_prefix = f"refs/review-cases/{case_id}"
     try:
         local_repository.git(checkout, "update-ref", base_pin, base_sha)
         local_repository.git(checkout, "update-ref", head_pin, head_sha)
@@ -237,6 +247,24 @@ def capture_case(
             snapshot = local_repository.snapshot_repository(
                 checkout, base_sha, head_sha
             )
+        backport_evidence = repository.collect_backport_evidence(
+            snapshot,
+            {
+                "title": details["title"],
+                "body": details["description"],
+                "labels": details["labels"],
+                "base_ref": details["base_ref"],
+                "repository": bot_config.github_repository or bot_config.repository,
+            },
+            bot_config,
+            source_prefix,
+        )
+        backport_pins = {}
+        for original in sorted(upstream.original_commits(backport_evidence)):
+            if local_repository.has_commit(checkout, original):
+                pin = f"{source_prefix}/originals/{original}"
+                local_repository.git(checkout, "update-ref", pin, original)
+                backport_pins[original] = pin
         research_evidence = research.capture(
             bot_config, number, research_requests, discussion_cutoff, captured_at
         )
@@ -262,6 +290,9 @@ def capture_case(
             "review_input_sha256": hashlib.sha256(review.encode()).hexdigest(),
             "config": frozen_config,
             "config_sha256": digest(frozen_config),
+            "backport_evidence": backport_evidence,
+            "backport_evidence_sha256": digest(backport_evidence),
+            "backport_pins": backport_pins,
             "research_evidence": research_evidence,
             "research_evidence_sha256": digest(research_evidence),
             "source_code_sha256": source_code_sha256(),
@@ -273,6 +304,7 @@ def capture_case(
         write_private_json(path, manifest)
         return path
     except Exception:
+        repository.release_source_refs(checkout, source_prefix)
         for pin in (base_pin, head_pin):
             subprocess.run(
                 ["git", "-C", str(checkout), "update-ref", "-d", pin],
@@ -334,6 +366,9 @@ def run_case(
         research_evidence = frozen_research.validate(manifest.get("research_evidence"))
         if digest(research_evidence) != manifest.get("research_evidence_sha256"):
             raise ValueError("Frozen research evidence hash mismatch")
+        backport_evidence = manifest["backport_evidence"]
+        if digest(backport_evidence) != manifest["backport_evidence_sha256"]:
+            raise ValueError("Frozen backport evidence hash mismatch")
         bot_config = config.BotConfig(**frozen_config["bot"])
         captured_engine = frozen_config["engine"]
         selected_name = engine_name or captured_engine["name"]
@@ -406,6 +441,7 @@ def run_case(
             if monthly_limit is None
             else monthly_limit / 1_000_000,
             "research_evidence_sha256": manifest["research_evidence_sha256"],
+            "backport_evidence_sha256": manifest["backport_evidence_sha256"],
             "source_code_sha256": code_hash,
         }
         artifact["effective_config"] = effective_config
@@ -431,8 +467,23 @@ def run_case(
         ):
             raise ValueError("Frozen review input hash mismatch")
         with offline_git():
-            verify_local_objects(checkout, base_sha, head_sha)
             verify_case_pins(checkout, manifest)
+            originals = upstream.original_commits(backport_evidence)
+            for original in originals - manifest["backport_pins"].keys():
+                if local_repository.has_commit(checkout, original):
+                    raise ValueError(
+                        "Previously unavailable frozen backport object is now present"
+                    )
+            for original, pin in manifest["backport_pins"].items():
+                if (
+                    original not in originals
+                    or pin != f"refs/review-cases/{case_id}/originals/{original}"
+                    or local_repository.resolve_commit(checkout, pin) != original
+                ):
+                    raise ValueError("Frozen backport ref no longer pins its original")
+            verify_local_objects(
+                checkout, base_sha, head_sha, *manifest["backport_pins"]
+            )
             snapshot = local_repository.snapshot_repository(
                 checkout, base_sha, head_sha
             )
@@ -455,6 +506,7 @@ def run_case(
                     "url": f"{bot_config.repository_url}/pulls/{manifest['pr']}",
                 },
                 research_evidence=research_evidence,
+                backport_evidence=backport_evidence,
             )
             runtime = engine.Runtime(
                 case=case,

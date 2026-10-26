@@ -85,10 +85,11 @@ class EvaluateTests(unittest.TestCase):
             ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
         ).stdout.strip()
 
-    def capture(self):
+    def capture(self, labels=()):
         details = {
             "title": "Pinned input",
             "body": "Review this.",
+            "labels": [{"name": label} for label in labels],
             "base": {"ref": "master"},
             "head": {"sha": self.git(self.work, "rev-parse", "HEAD")},
         }
@@ -125,6 +126,118 @@ class EvaluateTests(unittest.TestCase):
             )
         request.assert_called_once_with(self.bot_config, "token", "/pulls/42")
         return path
+
+    def test_backport_replay_preserves_sources_offline_and_checks_packet_hash(self):
+        self.git(self.work, "commit", "--allow-empty", "-qm", "Upstream original")
+        original = self.git(self.work, "rev-parse", "HEAD")
+        self.git(self.work, "push", "origin", "HEAD:refs/heads/upstream")
+        packet = {
+            "complete": False,
+            "limitations": ["One source PR is unavailable"],
+            "commits": [{"original": original}],
+            "sources": {},
+        }
+
+        def acquire(snapshot, metadata, bot_config, prefix):
+            self.assertEqual(metadata["labels"], ["Backport"])
+            self.git(snapshot.checkout, "fetch", "origin", original)
+            return packet
+
+        with patch.object(
+            evaluate.repository, "collect_backport_evidence", side_effect=acquire
+        ):
+            manifest = self.capture(labels=["Backport"])
+        case = json.loads(manifest.read_text())
+        self.assertEqual(case["backport_evidence"], packet)
+        self.git(self.checkout, "reflog", "expire", "--expire=now", "--all")
+        self.git(self.checkout, "gc", "--prune=now")
+        self.assertEqual(
+            self.git(self.checkout, "rev-parse", case["backport_pins"][original]),
+            original,
+        )
+        self.origin.rename(self.root / "unavailable-origin.git")
+        ledger = spend.Ledger(self.root / "spend.sqlite3")
+
+        def review(review_case, runtime, *args):
+            self.assertEqual(review_case.backport_evidence, packet)
+            runtime.debug["backport_assessment"] = {"verdict": "Needs clarification"}
+            return pipeline.ReviewResult("Backport review", [], False)
+
+        with (
+            patch.object(
+                forgejo, "_github_api", side_effect=AssertionError("GitHub used")
+            ),
+            patch.object(
+                forgejo, "forgejo_request", side_effect=AssertionError("Forgejo used")
+            ),
+            patch.object(
+                pipeline, "review_with_independent_passes", side_effect=review
+            ) as reviewed,
+        ):
+            result = json.loads(
+                evaluate.run_case(
+                    manifest, "key", self.root / "runs", ledger
+                ).read_text()
+            )
+            self.assertEqual(result["run"]["status"], "completed", result.get("error"))
+            reviewed.assert_called_once()
+            case["backport_evidence"]["complete"] = True
+            case["manifest_sha256"] = evaluate.digest(
+                {key: value for key, value in case.items() if key != "manifest_sha256"}
+            )
+            manifest.write_text(json.dumps(case))
+            result = json.loads(
+                evaluate.run_case(
+                    manifest, "key", self.root / "runs", ledger
+                ).read_text()
+            )
+            self.assertEqual(
+                result["error"]["message"], "Frozen backport evidence hash mismatch"
+            )
+            reviewed.assert_called_once()
+            case["backport_evidence"]["complete"] = False
+            case["manifest_sha256"] = evaluate.digest(
+                {key: value for key, value in case.items() if key != "manifest_sha256"}
+            )
+            manifest.write_text(json.dumps(case))
+            self.git(self.checkout, "update-ref", "-d", case["backport_pins"][original])
+            result = json.loads(
+                evaluate.run_case(
+                    manifest, "key", self.root / "runs", ledger
+                ).read_text()
+            )
+            self.assertEqual(result["run"]["status"], "failed")
+            reviewed.assert_called_once()
+
+    def test_replay_refuses_source_objects_acquired_after_capture(self):
+        self.git(self.work, "commit", "--allow-empty", "-qm", "Uncaptured original")
+        original = self.git(self.work, "rev-parse", "HEAD")
+        self.git(self.work, "push", "origin", "HEAD:refs/heads/upstream")
+        packet = {
+            "complete": False,
+            "limitations": ["Original unavailable"],
+            "commits": [],
+            "sources": {"example/repo#1": {"commits": [original]}},
+        }
+        with patch.object(
+            evaluate.repository, "collect_backport_evidence", return_value=packet
+        ):
+            manifest = self.capture(labels=["Backport"])
+        captured = json.loads(manifest.read_text())
+        self.assertEqual(captured["backport_pins"], {})
+        self.git(self.checkout, "fetch", "origin", original)
+        ledger = spend.Ledger(self.root / "spend.sqlite3")
+        with patch.object(pipeline, "review_with_independent_passes") as review:
+            result = json.loads(
+                evaluate.run_case(
+                    manifest, "key", self.root / "runs", ledger
+                ).read_text()
+            )
+        review.assert_not_called()
+        self.assertEqual(
+            result["error"]["message"],
+            "Previously unavailable frozen backport object is now present",
+        )
 
     def test_replay_retains_high_profile_and_scales_only_its_review_allowance(self):
         self.review_engine = engine.load("current", {"profile": "high"})
