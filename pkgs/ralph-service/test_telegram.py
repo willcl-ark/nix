@@ -3,6 +3,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
+from ralph import protocol
 from ralph_service import telegram
 
 
@@ -42,16 +43,40 @@ class TelegramTests(unittest.TestCase):
                 "current_finding_ids": ["new:1"],
             }
         ]
-        self.assertIn("Previously discussed major concern remains", self.render(result))
+        self.assertIn("Previously reported major concern", self.render(result))
         self.assertNotIn("🚨 Major finding", self.render(result))
         result["output"]["exports"]["findings"].append(
             {"id": "new:2", "severity": "major"}
         )
         self.assertIn("🚨 Major finding", self.render(result))
         result["output"]["exports"]["findings"] = []
-        self.assertIn("Previously discussed major concern remains", self.render(result))
+        self.assertIn("Previously reported major concern", self.render(result))
         result["output"]["exports"]["review_memory"][0]["status"] = "fixed"
         self.assertNotIn("major concern", self.render(result))
+
+    def test_retained_review_and_coverage_reach_telegram_as_markdown(self):
+        memory = [
+            {
+                "key": "prior:1",
+                "title": "Check height",
+                "body": "Guard `block->nStatus`.",
+                "severity": "major",
+                "status": "unclear",
+                "source_head": "old-head",
+            }
+        ]
+        result = self.result(
+            protocol.render([], ["Verifier unavailable"], review_memory=memory)
+        )
+        result["output"]["exports"]["review_memory"] = memory
+        text = self.render(result)
+        self.assertIn("**Check height**", text)
+        self.assertIn("Guard `block->nStatus`.", text)
+        self.assertIn("old-head", text)
+        self.assertIn("Verifier unavailable", text)
+        self.assertNotIn("<h6>", text)
+        self.assertNotIn("<details>", text)
+        self.assertNotIn("&gt;", text)
 
     def test_http_rate_limit_is_sanitized_and_preserves_retry_delay(self):
         error = urllib.error.HTTPError(

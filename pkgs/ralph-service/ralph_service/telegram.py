@@ -42,7 +42,7 @@ def review_message(repository_url, number, result):
     ):
         marker = "🚨 Major finding\n"
     elif any(item.get("severity") == "major" for item in memory):
-        marker = "Previously discussed major concern remains\n"
+        marker = "Previously reported major concern\n"
     else:
         marker = ""
     title = " ".join(run.get("pr_title", f"Pull request #{number}").split())
