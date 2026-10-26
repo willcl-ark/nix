@@ -114,6 +114,51 @@ class ServiceTests(unittest.TestCase):
             },
         }
 
+    def test_telegram_requires_paired_options_and_public_reports(self):
+        required = [
+            "ralph-service",
+            "--state-dir",
+            str(self.state_dir),
+            "--origin",
+            self.bot_config.origin,
+            "--repository",
+            self.bot_config.repository,
+            "--forgejo-api",
+            self.bot_config.forgejo_api,
+            "--openai-key-file",
+            "/unused/openai",
+            "--ppq-key-file",
+            "/unused/ppq",
+            "--webhook-secret-file",
+            "/unused/webhook",
+            "--forgejo-token-file",
+            "/unused/forgejo",
+            "--bot-login",
+            "ralph",
+        ]
+        for flags, message in (
+            (["--telegram-token-file", "/unused/telegram"], "must be set together"),
+            (["--telegram-chat-id", "123"], "must be set together"),
+            (
+                [
+                    "--telegram-token-file",
+                    "/unused/telegram",
+                    "--telegram-chat-id",
+                    "123",
+                ],
+                "requires --report-dir and --report-base-url",
+            ),
+        ):
+            with (
+                self.subTest(flags=flags),
+                patch("sys.argv", required + flags),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                self.assertRaises(SystemExit) as raised,
+            ):
+                service.main()
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(message, stderr.getvalue())
+
     def test_migrate_state_upgrades_all_ledgers_without_a_jobs_database(self):
         (self.state_dir / "jobs.sqlite3").unlink()
         filenames = ("spend.sqlite3", "ppq-spend.sqlite3", "followup/spend.sqlite3")
@@ -550,6 +595,7 @@ class ServiceTests(unittest.TestCase):
         restarted = JobStore(self.state_dir / "jobs.sqlite3", retry_base_seconds=0)
         retry_job = restarted.claim()
         self.assertEqual(retry_job["review_result"]["content"], "Review content")
+        self.assertEqual(retry_job["review_result"]["run"]["pr_title"], "Title")
         saved = retry_job["review_result"]
         self.assertEqual(
             set(saved),
@@ -732,6 +778,8 @@ class ServiceTests(unittest.TestCase):
             retry_job = self.jobs.claim()
             self.assertEqual(self.process(retry_job), "published")
         self.assertEqual(urls[0], urls[1])
+        completed = self.jobs.latest_completed_result(42)
+        self.assertEqual(completed["run"]["report_url"], urls[-1])
 
     def test_github_rate_limit_403_is_retryable_but_permission_denial_is_not(self):
         for headers in ({"Retry-After": "60"}, {"X-RateLimit-Remaining": "0"}):

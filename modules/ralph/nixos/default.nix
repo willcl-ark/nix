@@ -81,6 +81,12 @@ let
     "--github-repository"
     cfg.githubRepository
   ]
+  ++ lib.optionals cfg.telegram.enable [
+    "--telegram-token-file"
+    cfg.telegram.botTokenFile
+    "--telegram-chat-id"
+    cfg.telegram.chatId
+  ]
   ++ lib.optionals (cfg.repositoryUrl != null) [
     "--repository-url"
     cfg.repositoryUrl
@@ -155,6 +161,23 @@ in
       type = lib.types.nullOr (lib.types.strMatching "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
       default = null;
       description = "Upstream GitHub owner/repo. PR numbers must match the Forgejo mirror.";
+    };
+
+    telegram = {
+      enable = lib.mkEnableOption "Telegram review publication and monitoring";
+
+      botTokenFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Runtime file containing the Telegram bot token. Keep the token out of the Nix store.";
+      };
+
+      chatId = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "@ralph_reviews";
+        description = "Telegram channel username prefixed with @, or numeric chat ID as a string.";
+      };
     };
 
     repositoryUrl = lib.mkOption {
@@ -333,6 +356,15 @@ in
       {
         assertion = !cfg.githubPostMajorFindings || (cfg.reportDir != null && cfg.reportBaseUrl != null);
         message = "services.ralph GitHub publication requires reportDir and reportBaseUrl.";
+      }
+      {
+        assertion =
+          !cfg.telegram.enable || (cfg.telegram.botTokenFile != null && cfg.telegram.chatId != null);
+        message = "services.ralph.telegram.enable requires telegram.botTokenFile and telegram.chatId.";
+      }
+      {
+        assertion = !cfg.telegram.enable || (cfg.reportDir != null && cfg.reportBaseUrl != null);
+        message = "services.ralph Telegram publication requires reportDir and reportBaseUrl.";
       }
       {
         assertion = lib.hasPrefix "/var/lib/" cfg.stateDir;

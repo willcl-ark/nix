@@ -606,3 +606,53 @@ token with `public_repo` scope. Fine-grained tokens owned by the bot account
 provide only read access to other owners' public repositories. See
 [GitHub's token limitations](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#fine-grained-personal-access-tokens-limitations).
 Never put the token itself in Nix configuration or the Nix store.
+
+### Telegram publishing and monitoring
+
+Set `services.ralph.telegram.enable = true` to publish completed reviews and
+monitor Ralph in a Telegram channel or personal chat. It defaults to `false`. Public reports
+must also be configured through `reportDir` and `reportBaseUrl`.
+
+```nix
+services.ralph.telegram = {
+  enable = true;
+  botTokenFile = "/run/secrets/ralph/telegram-token";
+  chatId = "@ralph_reviews";
+};
+```
+
+Create a bot with Telegram's `@BotFather` and add it to the channel as an
+administrator with permission to post messages. Store its token in the runtime
+secret file, readable by the Ralph service user. Never put the token itself in
+Nix configuration or the Nix store. For a public channel, `chatId` is its
+`@username`. For a private channel, use its numeric chat ID as a string.
+These are the only Telegram credentials Ralph needs.
+For a personal chat, start the bot first and set `chatId` to your numeric user
+ID as a string. A personal `@username` cannot be used as a bot destination.
+
+Each post includes the PR title, PR link and full report link. Ralph includes
+the full review when the complete post fits Telegram's 4,096-character limit,
+counted in UTF-16 code units. Longer reviews get the title and links only.
+Reviews with an exported finding whose severity is exactly `major` receive a
+`🚨 Major finding` marker in either form.
+
+The daemon checks for completed reviews and terminal job failures every 30
+seconds. Each check groups new terminal failures into one alert. The daily
+digest runs at 21:00 UTC and reports the preceding 24 hours' observed review
+completions and failures, current queue depth, and estimated spend by request
+date across the OpenAI, PPQ and follow-up ledgers. Missing ledgers and unknown
+costs are identified. The reporting window runs from 21:00 to 21:00 UTC.
+Counts use observation time because the job queue does
+not record completion timestamps.
+
+On first enable, existing completed and failed jobs form a baseline and are
+not posted. The first digest arrives at the next 21:00 UTC check. After
+downtime, the monitor counts newly observed events in the window it sees them
+and sends only the latest completed window's digest.
+
+Notifications live in `stateDir/telegram.sqlite3` and retry independently of
+reviews. Preserve this database with Ralph's other state. Delivery sends one
+message per check and respects Telegram's retry delay. A crash after Telegram
+accepts a message but before Ralph records delivery can cause a duplicate.
+These run in the service without an extra systemd timer. There are no bot
+commands.

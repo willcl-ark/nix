@@ -103,3 +103,20 @@ or delete the comment when major findings change or disappear. Skipped reviews
 and missing findings exports preserve it. Upstream PR numbers must match the
 mirror, and the upstream must be open at the reviewed head before a write.
 GitHub credentials are separate from Forgejo credentials and model tools.
+
+Optional `--telegram-token-file /run/secrets/telegram-token` and
+`--telegram-chat-id @channel` publish reviews to a Telegram channel. A personal
+chat uses its numeric chat ID after starting the bot. Both
+report options are required. Each post contains the PR title and links to the
+PR and full report. The full review is included when the complete post fits
+4,096 UTF-16 code units; longer reviews use the title and links only. An
+exported finding with severity exactly `major` adds `🚨 Major finding` in
+either form.
+
+Telegram monitoring also sends a daily UTC digest and grouped terminal job
+failure alerts from the running daemon. There are no bot commands or extra
+timers. Use a bot token from `@BotFather`, grant the bot channel administrator
+permission to post, and supply the channel's `@username` or numeric chat ID.
+Keep the token in a runtime secret file readable by the service user. See the
+[module guide](../../modules/ralph/README.md#telegram-publishing-and-monitoring)
+for NixOS setup, digest timing and delivery behavior.

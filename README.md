@@ -15,7 +15,7 @@ stable named flake output.
 | `nixosModules.bitcoin-dnsseed` | `services.bitcoinDnsSeed` | Bitcoin DNS seed deployment using `dnsseedrs`, CoreDNS, DNSSEC key material, optional Tor/I2P proxies, and Caddy seed dumps. |
 | `nixosModules.bitcoin-core-guix-substitutes` | `services.bitcoinCoreGuixSubstitutes` | Bitcoin Core Guix substitute publisher with optional immutable manifest builder, signing-key publication, and Caddy wiring. |
 | `nixosModules.dnsseedrs` | `services.dnsseedrs` | Generic multi-instance dnsseedrs service module. |
-| `nixosModules.ralph` | `services.ralph` | Selectable-engine pull request reviewer with one editable comment per PR, optional full browser reports, and review statistics. [Engine options](modules/ralph/README.md#review-engine). |
+| `nixosModules.ralph` | `services.ralph` | Selectable-engine pull request reviewer with one editable comment per PR, optional full browser reports, review statistics, and Telegram review posts and monitoring. [Engine options](modules/ralph/README.md#review-engine). |
 | `nixosModules.forgejo-site` | `services.forgejoSite` | Forgejo site deployment with Caddy, optional Anubis, sops-managed secrets, mailer settings, and initial admin bootstrap. |
 | `nixosModules.radicle-mirror` | `services.radicleMirror` | Public Radicle seed, Radicle Explorer frontend, and scheduled Bitcoin Core Git mirror. |
 | `nixosModules.stuntman` | `services.stuntman` | STUNTMAN STUN server plus the `btcpunch` UDP rendezvous helper. |
