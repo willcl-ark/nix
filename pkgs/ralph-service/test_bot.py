@@ -17,6 +17,34 @@ class BotTests(unittest.TestCase):
             "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin",
         )
 
+    def test_pull_request_context_uses_mirror_issue_metadata(self):
+        issue = {
+            "number": 36670,
+            "title": "Fix review context",
+            "body": None,
+            "labels": [{"name": "Wallet"}, {"name": "Tests"}, {"name": "Wallet"}],
+            "pull_request": {"merged": False, "draft": False},
+        }
+        with patch.object(forgejo, "forgejo_request", return_value=issue) as request:
+            context = forgejo.pull_request_context(self.bot_config, "token", 36670)
+            request.assert_called_once_with(self.bot_config, "token", "/issues/36670")
+            self.assertEqual(
+                context,
+                {
+                    "title": "Fix review context",
+                    "body": "",
+                    "labels": ["Tests", "Wallet"],
+                },
+            )
+            issue["body"] = "Review the mirrored PR."
+            self.assertEqual(
+                forgejo.pull_request_context(self.bot_config, "token", 36670)["body"],
+                issue["body"],
+            )
+            del issue["pull_request"]
+            with self.assertRaisesRegex(ValueError, "invalid pull request$"):
+                forgejo.pull_request_context(self.bot_config, "token", 36670)
+
     def test_concurrent_review_refs_preserve_pinned_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

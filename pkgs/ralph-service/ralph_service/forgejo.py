@@ -483,8 +483,12 @@ def read_github_discussion(bot_config, url, kind="comments", page=1, cutoff=None
 
 
 def pull_request_context(bot_config, token, number):
-    pull = forgejo_request(bot_config, token, f"/pulls/{number}")
-    if not isinstance(pull, dict) or pull.get("number") != number:
+    pull = forgejo_request(bot_config, token, f"/issues/{number}")
+    if (
+        not isinstance(pull, dict)
+        or pull.get("number") != number
+        or not isinstance(pull.get("pull_request"), dict)
+    ):
         raise ValueError("Forgejo returned invalid pull request")
     title, description = pull.get("title"), pull.get("body")
     if not isinstance(title, str) or not (
@@ -497,13 +501,10 @@ def pull_request_context(bot_config, token, number):
         for label in labels
     ):
         raise ValueError("Forgejo returned invalid pull request labels")
-    base = pull.get("base") or {}
     return {
         "title": title,
         "body": description or "",
         "labels": sorted({label["name"] for label in labels}),
-        "base_ref": base.get("ref"),
-        "base_sha": base.get("sha"),
     }
 
 
