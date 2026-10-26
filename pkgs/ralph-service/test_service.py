@@ -24,6 +24,22 @@ from ralph_service.jobs import JobStore
 
 class ServiceTests(unittest.TestCase):
     def setUp(self):
+        context = patch.object(
+            forgejo,
+            "pull_request_context",
+            return_value={
+                "title": "Title",
+                "body": "Description",
+                "labels": [],
+            },
+        )
+        context.start()
+        self.addCleanup(context.stop)
+        evidence = patch.object(
+            repository, "collect_backport_evidence", return_value=None
+        )
+        self.evidence = evidence.start()
+        self.addCleanup(evidence.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.state_dir = Path(self.directory.name)
@@ -180,7 +196,7 @@ class ServiceTests(unittest.TestCase):
             patch.object(
                 service.forgejo,
                 "pull_request_context",
-                return_value=("Title", "Description"),
+                return_value={"title": "Title", "body": "Description", "labels": []},
             ),
             patch.object(
                 service.repository,
@@ -241,6 +257,26 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(publish.call_count, 1)
         self.assertIsNone(restarted.claim())
 
+    def test_saved_review_with_changed_labels_is_not_published_or_rerun(self):
+        job = self.enqueue()
+        result = self.saved_result()
+        result["run"]["review_context"] = {
+            "title": "Title",
+            "body": "Description",
+            "labels": ["Backport"],
+        }
+        self.jobs.save_result(job, result)
+        job["review_result"] = result
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(service.runner, "run_review") as run,
+            patch.object(forgejo, "publish_review") as publish,
+        ):
+            self.assertEqual(self.process(job), "stale")
+        run.assert_not_called()
+        publish.assert_not_called()
+        self.assertIsNone(self.jobs.claim())
+
     def test_stale_forgejo_result_never_publishes_to_github(self):
         self.bot_config = replace(
             self.bot_config,
@@ -278,7 +314,7 @@ class ServiceTests(unittest.TestCase):
             patch.object(
                 service.forgejo,
                 "pull_request_context",
-                return_value=("Title", "Description"),
+                return_value={"title": "Title", "body": "Description", "labels": []},
             ),
             patch.object(
                 service.repository,
@@ -335,7 +371,7 @@ class ServiceTests(unittest.TestCase):
             patch.object(
                 service.forgejo,
                 "pull_request_context",
-                return_value=("Title", "Description"),
+                return_value={"title": "Title", "body": "Description", "labels": []},
             ),
             patch.object(
                 service.repository,
@@ -412,6 +448,22 @@ class CapturingJobs:
 
 class WebhookTests(unittest.TestCase):
     def setUp(self):
+        context = patch.object(
+            forgejo,
+            "pull_request_context",
+            return_value={
+                "title": "Title",
+                "body": "Description",
+                "labels": [],
+            },
+        )
+        context.start()
+        self.addCleanup(context.stop)
+        evidence = patch.object(
+            repository, "collect_backport_evidence", return_value=None
+        )
+        self.evidence = evidence.start()
+        self.addCleanup(evidence.stop)
         self.bot_config = config.BotConfig(
             "https://git.fish.foo/bitcoin/bitcoin.git",
             "bitcoin/bitcoin",
@@ -522,7 +574,9 @@ class WebhookTests(unittest.TestCase):
             patch.object(repository, "current_head", return_value="a" * 40),
             patch.object(forgejo, "find_comment", return_value=existing) as find,
             patch.object(
-                forgejo, "pull_request_context", return_value=("Title", "Body")
+                forgejo,
+                "pull_request_context",
+                return_value={"title": "Title", "body": "Body", "labels": []},
             ),
             patch.object(
                 repository,
@@ -558,6 +612,33 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(review_model.call_args.args[0].review, "review input")
         publish.assert_called_once()
 
+    def test_case_marker_distinguishes_changed_metadata_and_evidence(self):
+        metadata = {"title": "Backports", "body": "Backport #1", "labels": ["Backport"]}
+        fingerprint = service.review_case_fingerprint(metadata, {"complete": False})
+        comment = {
+            "body": forgejo.review_body(
+                self.bot_config,
+                "b" * 40,
+                "a" * 40,
+                "Review",
+                engine_identity=self.review_engine.identity,
+                review_fingerprint=fingerprint,
+            )
+        }
+        for changed_metadata, evidence in (
+            ({**metadata, "labels": []}, {"complete": False}),
+            (metadata, {"complete": True}),
+        ):
+            self.assertFalse(
+                forgejo.comment_matches_engine(
+                    comment,
+                    "b" * 40,
+                    "a" * 40,
+                    self.review_engine.identity,
+                    service.review_case_fingerprint(changed_metadata, evidence),
+                )
+            )
+
     def test_repeated_head_skips_model_call(self):
         job, jobs, state_dir, ledger = self.queued_job()
         existing = {
@@ -567,13 +648,25 @@ class WebhookTests(unittest.TestCase):
                 "a" * 40,
                 "Reviewed.",
                 engine_identity=self.review_engine.identity,
+                review_fingerprint=service.review_case_fingerprint(
+                    {
+                        "title": "Title",
+                        "body": "Body",
+                        "labels": [],
+                        "base_ref": "master",
+                        "repository": "bitcoin/bitcoin",
+                    },
+                    None,
+                ),
             )
         }
         with (
             patch.object(repository, "current_head", return_value="a" * 40),
             patch.object(forgejo, "find_comment", return_value=existing),
             patch.object(
-                forgejo, "pull_request_context", return_value=("Title", "Body")
+                forgejo,
+                "pull_request_context",
+                return_value={"title": "Title", "body": "Body", "labels": []},
             ),
             patch.object(
                 repository,
@@ -598,7 +691,7 @@ class WebhookTests(unittest.TestCase):
                 "already-reviewed",
             )
         collect.assert_called_once()
-        snapshot.assert_not_called()
+        snapshot.assert_called_once()
         review_model.assert_not_called()
 
 

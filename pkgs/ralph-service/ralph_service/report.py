@@ -458,6 +458,13 @@ def _public_record(number, result, report_id):
             "are shown separately when available."
         ),
     }
+    exports = (result.get("output") or {}).get("exports") or {}
+    assessment = exports.get("backport_assessment")
+    if isinstance(assessment, dict):
+        record["backport_assessment"] = _filtered(
+            assessment,
+            ("verdict", "summary", "evidence", "required_fixes", "limitations"),
+        )
     if debug:
         config = engine.get("config")
         profile = config.get("profile") if isinstance(config, dict) else None
@@ -837,6 +844,13 @@ def _html_report(record, json_name):
 """
     else:
         engine_sections = f"<section><h2>Findings export</h2>{_export_findings_html(record)}</section>"
+    if record.get("backport_assessment"):
+        engine_sections = (
+            "<section><h2>Backport assessment</h2>"
+            + _json_html(record["backport_assessment"])
+            + "</section>"
+            + engine_sections
+        )
     return f"""<!doctype html>
 <html lang="en">
 <head>

@@ -359,10 +359,14 @@ def read_current_pr_discussion(
     return result
 
 
-def _github_api(path):
+def _github_api(path, token=None):
     request = urllib.request.Request(
         "https://api.github.com" + path,
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "ralph/1.0"},
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "ralph/1.0",
+            **({"Authorization": f"Bearer {token}"} if token else {}),
+        },
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         content = response.read(MAX_DISCUSSION_RESPONSE_BYTES + 1)
@@ -479,19 +483,28 @@ def read_github_discussion(bot_config, url, kind="comments", page=1, cutoff=None
 
 
 def pull_request_context(bot_config, token, number):
-    issue = forgejo_request(bot_config, token, f"/issues/{number}")
-    if (
-        not isinstance(issue, dict)
-        or issue.get("number") != number
-        or not isinstance(issue.get("pull_request"), dict)
-    ):
+    pull = forgejo_request(bot_config, token, f"/pulls/{number}")
+    if not isinstance(pull, dict) or pull.get("number") != number:
         raise ValueError("Forgejo returned invalid pull request")
-    title, description = issue.get("title"), issue.get("body")
+    title, description = pull.get("title"), pull.get("body")
     if not isinstance(title, str) or not (
         description is None or isinstance(description, str)
     ):
         raise ValueError("Forgejo returned invalid pull request text")
-    return title, description or ""
+    labels = pull.get("labels", [])
+    if not isinstance(labels, list) or any(
+        not isinstance(label, dict) or not isinstance(label.get("name"), str)
+        for label in labels
+    ):
+        raise ValueError("Forgejo returned invalid pull request labels")
+    base = pull.get("base") or {}
+    return {
+        "title": title,
+        "body": description or "",
+        "labels": sorted({label["name"] for label in labels}),
+        "base_ref": base.get("ref"),
+        "base_sha": base.get("sha"),
+    }
 
 
 def find_comment(bot_config, token, number, bot_login):
@@ -531,15 +544,25 @@ def engine_marker(engine_identity):
 
 
 def review_body(
-    bot_config, base_sha, head_sha, content, *, report_url=None, engine_identity=None
+    bot_config,
+    base_sha,
+    head_sha,
+    content,
+    *,
+    report_url=None,
+    engine_identity=None,
+    review_fingerprint=None,
 ):
     report_link = f"\n[Full review report](<{report_url}>)\n" if report_url else ""
     marker = engine_marker(engine_identity)
     identity_marker = f"{marker}\n" if marker else ""
+    case_marker = (
+        f"<!-- ralph-case:{review_fingerprint} -->\n" if review_fingerprint else ""
+    )
     return (
         f"{bot_config.comment_marker}\n"
         f"{identity_marker}Base: `{base_sha}`  \nHead: `{head_sha}`\n\n"
-        f"{content.strip()}\n"
+        f"{case_marker}{content.strip()}\n"
         f"{report_link}"
     )
 
@@ -551,7 +574,9 @@ def comment_matches_head(comment, head_sha):
     )
 
 
-def comment_matches_engine(comment, base_sha, head_sha, engine_identity):
+def comment_matches_engine(
+    comment, base_sha, head_sha, engine_identity, review_fingerprint=None
+):
     if comment is None:
         return False
     expected = engine_marker(engine_identity)
@@ -560,6 +585,11 @@ def comment_matches_engine(comment, base_sha, head_sha, engine_identity):
         expected in lines
         and f"Base: `{base_sha}`" in lines
         and f"Head: `{head_sha}`" in lines
+        and (
+            review_fingerprint is None
+            or f"<!-- ralph-case:{review_fingerprint} -->"
+            in comment.get("body", "").splitlines()[:7]
+        )
     )
 
 
@@ -574,6 +604,8 @@ def publish_review(
     *,
     engine_identity=None,
     report_url=None,
+    review_fingerprint=None,
+    expected_context=None,
 ):
     body = review_body(
         bot_config,
@@ -582,9 +614,15 @@ def publish_review(
         content,
         report_url=report_url,
         engine_identity=engine_identity,
+        review_fingerprint=review_fingerprint,
     )
     comment = find_comment(bot_config, token, number, bot_login)
     # Check as close as possible to publication, after paginating old comments.
+    if (
+        expected_context is not None
+        and pull_request_context(bot_config, token, number) != expected_context
+    ):
+        return "stale"
     if current_head(bot_config, number) != head_sha:
         return "stale"
     if comment is None:

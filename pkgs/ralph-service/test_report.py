@@ -38,7 +38,15 @@ class ReportTests(unittest.TestCase):
             "output": {
                 "schema_version": 2,
                 "data": {"schema_version": 2, **debug},
-                "exports": {"findings": []},
+                "exports": {
+                    "findings": [],
+                    "backport_assessment": {
+                        "verdict": "Needs clarification",
+                        "summary": hostile,
+                        "limitations": ["Original PR unavailable"],
+                        "private": secret,
+                    },
+                },
             },
             "run": {"status": "completed", "metrics": {}, "attempt": {}},
         }
@@ -51,6 +59,9 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;script&gt;alert", html)
         self.assertEqual(json.loads(public)["review"], hostile)
+        self.assertEqual(
+            json.loads(public)["backport_assessment"]["verdict"], "Needs clarification"
+        )
 
 
 if __name__ == "__main__":

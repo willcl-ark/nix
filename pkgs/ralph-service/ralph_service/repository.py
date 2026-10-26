@@ -93,3 +93,169 @@ def current_head(bot_config, number):
     ):
         raise ValueError("Git returned invalid PR head")
     return fields[0]
+
+
+def collect_backport_evidence(snapshot, metadata, bot_config, ref_prefix, token=None):
+    """Acquire bounded source history before entering the local review boundary."""
+    import re
+    import urllib.error
+
+    from ralph import backports
+
+    from . import forgejo
+
+    if backports.classify(snapshot, metadata)["mode"] != "backport":
+        return None
+    requests = backports.source_requests(snapshot, metadata)
+    origins = {}
+    repository = bot_config.github_repository or bot_config.repository
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ValueError("invalid configured source repository")
+    allowed = {repository}
+    if repository == "bitcoin/bitcoin":
+        allowed.add("bitcoin-core/gui")
+    errors = (
+        ValueError,
+        urllib.error.URLError,
+        TimeoutError,
+        subprocess.SubprocessError,
+    )
+
+    def request(source, path):
+        if source not in allowed:
+            raise ValueError("source repository is not allowed")
+        return forgejo._github_api(f"/repos/{source}" + path, token)
+
+    def pin(sha, source):
+        if not isinstance(sha, str) or not local.SHA.fullmatch(sha):
+            raise ValueError("invalid upstream commit SHA")
+        ref = f"{ref_prefix}/originals/{sha}"
+        local.git(snapshot.checkout, "check-ref-format", ref)
+        try:
+            local.resolve_commit(snapshot.checkout, sha)
+        except ValueError:
+            # Only configured upstreams are eligible; PR text cannot choose a URL.
+            local.git(
+                snapshot.checkout,
+                "fetch",
+                "--no-tags",
+                f"https://github.com/{source}.git",
+                f"+{sha}:{ref}",
+            )
+        local.git(snapshot.checkout, "update-ref", ref, sha)
+
+    # Restrict reads to configured sources and Bitcoin's GUI companion repo.
+    requested = set(requests["prs"])
+    resolution_errors = []
+    for item in requests["originals"][:500]:
+        raw = item["original"]
+        if not isinstance(raw, str) or not re.fullmatch(r"[0-9a-fA-F]{7,40}", raw):
+            continue
+        source = (item.get("pr") or f"{repository}#0").rsplit("#", 1)[0]
+        if source not in allowed:
+            source = repository
+        try:
+            commit = request(source, f"/commits/{raw}")
+            if not isinstance(commit, dict):
+                raise ValueError("invalid upstream commit")
+            sha = commit.get("sha")
+            pin(sha, source)
+            # Github-Pull can name the backport PR itself. Resolve membership
+            # from the original SHA as well as from the trailer.
+            for page in range(1, 4):
+                pulls = request(
+                    source, f"/commits/{sha}/pulls?per_page=100&page={page}"
+                )
+                if not isinstance(pulls, list):
+                    raise ValueError("invalid upstream commit associations")
+                for pull in pulls:
+                    if not isinstance(pull, dict):
+                        raise ValueError("invalid upstream commit association")
+                    number = pull.get("number")
+                    # Bitcoin release PRs also contain these SHAs. Only master
+                    # PRs identify the upstream implementation being ported.
+                    if (
+                        type(number) is int
+                        and number > 0
+                        and (
+                            source not in {"bitcoin/bitcoin", "bitcoin-core/gui"}
+                            or (pull.get("base") or {}).get("ref") == "master"
+                        )
+                    ):
+                        requested.add(f"{source}#{number}")
+                if len(pulls) < 100:
+                    break
+            else:
+                raise ValueError(
+                    "upstream commit associations exceed acquisition limit"
+                )
+        except errors as exc:
+            resolution_errors.append(
+                f"Could not acquire original {raw}: {type(exc).__name__}"
+            )
+    if len(requests["originals"]) > 500:
+        resolution_errors.append("Original commit count exceeds acquisition limit")
+    if len(requested) > 50:
+        resolution_errors.append("Source PR count exceeds acquisition limit")
+    for canonical in sorted(requested)[:50]:
+        match = re.fullmatch(
+            r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)", canonical
+        )
+        if match is None or match[1] not in allowed:
+            origins[canonical] = {
+                "error": "Source PR is outside the configured repositories"
+            }
+            continue
+        source, number = match[1], int(match[2])
+        try:
+            pull = request(source, f"/pulls/{number}")
+            if not isinstance(pull, dict):
+                raise ValueError("invalid upstream PR")
+            commits = []
+            for page in range(1, 4):
+                batch = request(
+                    source, f"/pulls/{number}/commits?per_page=100&page={page}"
+                )
+                if not isinstance(batch, list):
+                    raise ValueError("invalid upstream PR commits")
+                for commit in batch:
+                    if not isinstance(commit, dict):
+                        raise ValueError("invalid upstream PR commit")
+                    sha = commit.get("sha")
+                    pin(sha, source)
+                    commits.append(sha)
+                if len(batch) < 100:
+                    break
+            # GitHub's PR commits endpoint exposes at most 250 commits.
+            if (
+                len(commits) >= 250
+                or pull.get("commits") != len(commits)
+                or len(set(commits)) != len(commits)
+            ):
+                raise ValueError("upstream PR commit list is incomplete")
+            origins[canonical] = {
+                "commits": commits,
+                "base_ref": (pull.get("base") or {}).get("ref"),
+                "title": pull.get("title", ""),
+                "body": pull.get("body") or "",
+                "url": f"https://github.com/{source}/pull/{number}",
+            }
+        except errors as exc:
+            origins[canonical] = {
+                "error": f"Source PR unavailable: {type(exc).__name__}"
+            }
+    evidence = backports.collect(snapshot, metadata, origins)
+    if evidence is not None and resolution_errors:
+        evidence["complete"] = False
+        evidence["limitations"].extend(resolution_errors)
+    return evidence
+
+
+def release_source_refs(checkout, ref_prefix):
+    prefix = f"{ref_prefix}/originals/"
+    local.git(checkout, "check-ref-format", prefix + "check")
+    refs = local.git(
+        checkout, "for-each-ref", "--format=%(refname)", prefix
+    ).splitlines()
+    for ref in refs:
+        local.git(checkout, "update-ref", "-d", ref)

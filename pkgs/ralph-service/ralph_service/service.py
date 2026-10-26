@@ -184,6 +184,16 @@ def retryable_error(exc):
     )
 
 
+def review_case_fingerprint(metadata, evidence):
+    return hashlib.sha256(
+        json.dumps(
+            {"metadata": metadata, "evidence": evidence},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
 def process_job(
     job,
     jobs,
@@ -222,6 +232,9 @@ def process_job(
     base_sha = None
     head_sha = expected_head
     merge_base = None
+    expected_context = None
+    review_fingerprint = None
+    backport_evidence = None
     profile = (engine_identity.get("config") or {}).get("profile")
     if engine_identity["name"] == "current" and profile is not None:
         ledger = profiles.ReviewProfile.from_dict(profile).apply_budget(ledger)
@@ -240,6 +253,11 @@ def process_job(
         return (
             jobs.is_current(job)
             and repository.current_head(bot_config, number) == expected_head
+            and (
+                expected_context is None
+                or forgejo.pull_request_context(bot_config, forgejo_token, number)
+                == expected_context
+            )
         )
 
     try:
@@ -269,9 +287,21 @@ def process_job(
                     )
                 )
                 stage = "context"
-                title, description = forgejo.pull_request_context(
+                expected_context = forgejo.pull_request_context(
                     bot_config, forgejo_token, number
                 )
+                if (
+                    not base_ref.startswith("sha:")
+                    and expected_context.get("base_ref")
+                    and expected_context["base_ref"] != base_ref
+                ):
+                    raise model.StaleReview("PR target branch changed")
+                title, description = expected_context["title"], expected_context["body"]
+                metadata = {
+                    **expected_context,
+                    "base_ref": expected_context.get("base_ref") or base_ref,
+                    "repository": bot_config.github_repository or bot_config.repository,
+                }
                 stage = "collect"
                 with CHECKOUT_LOCK:
                     base_sha, head_sha, review, skip = repository.collect_review(
@@ -295,12 +325,6 @@ def process_job(
                                 engine_identity=engine_identity,
                             )
                         raise model.StaleReview("PR head changed during fetch")
-                    if forgejo.comment_matches_engine(
-                        comment, base_sha, head_sha, engine_identity
-                    ):
-                        jobs.complete(job)
-                        outcome = "already-reviewed"
-                        return outcome
                     snapshot = (
                         None
                         if skip
@@ -309,6 +333,19 @@ def process_job(
                         )
                     )
                     merge_base = getattr(snapshot, "merge_base", None)
+                    if snapshot is not None:
+                        backport_evidence = repository.collect_backport_evidence(
+                            snapshot, metadata, bot_config, ref_prefix, github_token
+                        )
+                    review_fingerprint = review_case_fingerprint(
+                        metadata, backport_evidence
+                    )
+                    if forgejo.comment_matches_engine(
+                        comment, base_sha, head_sha, engine_identity, review_fingerprint
+                    ):
+                        jobs.complete(job)
+                        outcome = "already-reviewed"
+                        return outcome
                 debug = {"skip": skip} if skip else {}
                 stage = "model"
                 if skip:
@@ -317,7 +354,9 @@ def process_job(
                     case = engine.ReviewCase(
                         review,
                         snapshot,
+                        backport_evidence=backport_evidence,
                         source={
+                            **metadata,
                             "kind": "pull_request",
                             "number": number,
                             "url": f"{bot_config.repository_url}/pulls/{number}",
@@ -369,6 +408,8 @@ def process_job(
                     }
                 content = saved["content"]
                 saved["run"]["pr_title"] = title
+                saved["run"]["review_context"] = expected_context
+                saved["run"]["review_fingerprint"] = review_fingerprint
                 run_status = "completed"
                 result_record = saved
                 if not jobs.save_result(job, saved):
@@ -381,6 +422,8 @@ def process_job(
                 head_sha = saved["head_sha"]
                 content = saved["content"]
                 debug = saved["run"]["attempt"]
+                expected_context = saved["run"].get("review_context")
+                review_fingerprint = saved["run"].get("review_fingerprint")
             result_record = saved
             if not is_current():
                 raise model.StaleReview("PR head changed before publication")
@@ -415,6 +458,8 @@ def process_job(
                 content,
                 engine_identity=engine_identity,
                 report_url=result_record["run"].get("report_url"),
+                review_fingerprint=review_fingerprint,
+                expected_context=expected_context,
             )
             if result == "stale":
                 if jobs.is_current(job):
@@ -478,6 +523,7 @@ def process_job(
         if (checkout / ".git").exists():
             try:
                 with CHECKOUT_LOCK:
+                    repository.release_source_refs(checkout, ref_prefix)
                     local_repository.release_review_refs(checkout, ref_prefix)
             except (OSError, subprocess.SubprocessError) as exc:
                 logging.warning(
