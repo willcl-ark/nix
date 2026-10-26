@@ -1632,13 +1632,12 @@ def _limits_html(summary, repository_url, report_base_url):
                 _escape(group["profile"]),
                 _escape(group["stage"]),
                 _escape(group["model"]),
-                f"{group['limited_runs']} / {group['monitored_runs']}"
-                if group["monitored_runs"]
-                else "Unknown",
+                f"{group['limited_runs']} / {group['monitored_runs']}",
                 _fmt_int(group["unknown_runs"]),
             ]
         )
         for group in limits.get("budgets", [])
+        if group["monitored_runs"]
     ]
     affected_rows = []
     for run in limits.get("recent_affected", []):
@@ -1667,11 +1666,20 @@ def _limits_html(summary, repository_url, report_base_url):
         + _section_note(
             "Saved stage runs only; live work and overwritten retry attempts are excluded. "
             "Reaching a cap does not prove that review quality suffered. Compare affected reports before changing allowances. "
-            "Skipped stages are excluded. Historical runs without telemetry are unknown."
+            "Skipped stages are excluded."
         )
-        + f"<p>{_fmt_int(limits.get('uninstrumented_stage_runs'))} of "
-        + f"{_fmt_int(limits.get('stage_runs'))} saved stage runs have no limit telemetry.</p>"
-        + "<section><h2>Token and tool limits</h2>"
+        + f"<p>{_fmt_int(limits.get('uninstrumented_stage_runs'))} historical stage runs "
+        + "without limit telemetry excluded.</p>"
+    )
+    if not rows and not budget_rows:
+        body += (
+            "<section><h2>Awaiting first instrumented review</h2>"
+            "<p>Measurements will appear after a new review saves its results "
+            "and stats refresh.</p></section>"
+        )
+        return _page("Limits", summary, body, "../", "Limits")
+    body += (
+        "<section><h2>Token and tool limits</h2>"
         + _section_note(
             "Work limited counts observed output truncations, forced final answers or refused tool calls. "
             "The tool allowance also bounds model turns, so a forced final answer can occur below the tool call cap. "
