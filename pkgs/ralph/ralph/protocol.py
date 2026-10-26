@@ -174,6 +174,61 @@ VERIFIER_SCHEMA = object_schema(
         },
     }
 )
+BACKPORT_ASSESSMENT = object_schema(
+    {
+        "verdict": {
+            "type": "string",
+            "enum": [
+                "Faithful",
+                "Incomplete",
+                "Missing",
+                "Defective",
+                "Needs clarification",
+            ],
+        },
+        "summary": STRING,
+        "evidence": STRINGS,
+        "required_fixes": STRINGS,
+        "limitations": STRINGS,
+    }
+)
+BACKPORT_VERIFIER_SCHEMA = object_schema(
+    {**VERIFIER_SCHEMA["properties"], "backport_assessment": BACKPORT_ASSESSMENT}
+)
+
+
+def backport_assessment(value, evidence):
+    _object(value, BACKPORT_ASSESSMENT["properties"])
+    if value["verdict"] not in BACKPORT_ASSESSMENT["properties"]["verdict"]["enum"]:
+        raise InvalidReview("Invalid backport verdict")
+    _text(value, ("summary",))
+    for key in ("evidence", "required_fixes", "limitations"):
+        if not isinstance(value[key], list) or any(
+            not isinstance(item, str) or not item.strip() for item in value[key]
+        ):
+            raise InvalidReview("Invalid backport assessment " + key)
+    value = {
+        **value,
+        "limitations": list(
+            dict.fromkeys([*value["limitations"], *evidence.get("limitations", [])])
+        ),
+    }
+    if evidence.get("complete") is not True and not value["limitations"]:
+        value["limitations"].append("Backport source evidence is incomplete.")
+    if value["verdict"] == "Faithful" and (
+        not value["evidence"] or value["required_fixes"]
+    ):
+        value["limitations"].append(
+            "A faithful verdict requires evidence and no outstanding fixes."
+        )
+    if value["verdict"] == "Faithful" and value["limitations"]:
+        value["verdict"] = "Needs clarification"
+        value["summary"] = (
+            "Fidelity could not be established from the available evidence."
+        )
+    return value
+
+
 MAJOR_VERIFIER_SCHEMA = object_schema(
     {
         "coverage": COVERAGE,
@@ -720,8 +775,22 @@ def collation(text, accepted, concept_assessment=None):
     return edited, concept_summary
 
 
-def render(findings, limitations=(), concept_summary=None, alternatives=()):
+def render(
+    findings, limitations=(), concept_summary=None, alternatives=(), backport=None
+):
     sections = []
+    if backport is not None:
+        lines = [f"Backport verdict: **{backport['verdict']}**", backport["summary"]]
+        for key, heading in (
+            ("evidence", "Evidence"),
+            ("required_fixes", "Required fixes"),
+            ("limitations", "Limitations"),
+        ):
+            if backport[key]:
+                lines.append(
+                    heading + ":\n\n" + "\n".join(f"- {item}" for item in backport[key])
+                )
+        sections.append("\n\n".join(lines))
     finding_groups = {}
     design_findings = []
     for finding in findings:

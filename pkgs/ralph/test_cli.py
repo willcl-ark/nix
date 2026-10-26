@@ -26,7 +26,8 @@ def run(case, runtime, configured):
     if configured.get('cancel'):
         os.kill(os.getpid(), signal.SIGTERM)
         runtime.check_current()
-    data = {'native': 'arbitrary engine schema', 'source': case.source}
+    data = {'native': 'arbitrary engine schema', 'source': case.source,
+            'backport': case.backport_evidence}
     return Output('# Test review', data, {'custom': ['native']}, schema_version=17)
 """
 
@@ -112,6 +113,18 @@ class CLITest(unittest.TestCase):
         self.assertEqual(
             self.git("for-each-ref", "--format=%(refname)", "refs/ralph/local"), ""
         )
+
+    def test_local_backport_retains_unresolved_provenance_without_network(self):
+        original = self.git("rev-parse", "HEAD")
+        self.git("commit", "--amend", "-qm", "Backport\n\nRebased-From: " + original)
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        evidence = self.result()["output"]["data"]["backport"]
+        self.assertEqual(evidence["classification"]["mode"], "backport")
+        self.assertEqual(evidence["commits"][0]["original"], original)
+        self.assertFalse(evidence["complete"])
+        self.assertTrue(evidence["limitations"])
+        self.assertEqual(self.git("for-each-ref", "refs/ralph/upstream"), "")
 
     def test_high_profile_scales_only_openai_allowance(self):
         from unittest.mock import patch

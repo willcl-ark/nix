@@ -61,6 +61,28 @@ class ProtocolTests(unittest.TestCase):
             }
         )
 
+    def test_backport_verdict_requires_complete_evidence(self):
+        assessment = {
+            "verdict": "Faithful",
+            "summary": "All originals checked",
+            "evidence": ["abc mapped to def"],
+            "required_fixes": [],
+            "limitations": [],
+        }
+        complete = protocol.backport_assessment(
+            assessment, {"complete": True, "limitations": []}
+        )
+        self.assertEqual(complete["verdict"], "Faithful")
+        incomplete = protocol.backport_assessment(
+            assessment, {"complete": False, "limitations": []}
+        )
+        self.assertEqual(incomplete["verdict"], "Needs clarification")
+        self.assertTrue(incomplete["limitations"])
+        with self.assertRaises(protocol.InvalidReview):
+            protocol.backport_assessment(
+                {**assessment, "evidence": "invented"}, {"complete": True}
+            )
+
     def collation(self, findings, concept_summary=None):
         return json.dumps({"concept_summary": concept_summary, "findings": findings})
 

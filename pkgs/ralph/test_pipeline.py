@@ -324,6 +324,7 @@ class PipelineTests(unittest.TestCase):
         ppq_api_key=None,
         ppq_budget=None,
         archaeology_enabled=False,
+        backport_evidence=None,
     ):
         with (
             patch.object(pipeline.routing, "plan_review", side_effect=self.plan),
@@ -336,7 +337,12 @@ class PipelineTests(unittest.TestCase):
             ),
             patch.object(pipeline, "audit_developer_notes", return_value="Policy"),
         ):
-            case = engine.ReviewCase("PR diff", self.snapshot, self.source)
+            case = engine.ReviewCase(
+                "PR diff",
+                self.snapshot,
+                self.source,
+                backport_evidence=backport_evidence,
+            )
             runtime = engine.Runtime(
                 case=case,
                 api_key="key",
@@ -353,6 +359,118 @@ class PipelineTests(unittest.TestCase):
                 archaeology=archaeology_enabled,
             )
             return self.result.content
+
+    def test_backport_fidelity_is_withheld_on_failed_verification_or_review(self):
+        self.tier, self.audits = "routine", []
+        for failure in (None, "discovery", "verification", "assessment"):
+            with self.subTest(failure=failure):
+                self.debug = {}
+
+                def review(*args, **kwargs):
+                    if kwargs["stage_name"] == "independent":
+                        if failure == "discovery":
+                            raise TimeoutError()
+                        return discovery()
+                    result = json.loads(verification())
+                    result["backport_assessment"] = {
+                        "verdict": "Faithful",
+                        "summary": "All originals checked",
+                        "evidence": ["Original mapped"],
+                        "required_fixes": [],
+                        "limitations": [],
+                    }
+                    if failure == "verification":
+                        result["decisions"] = "invalid"
+                    if failure == "assessment":
+                        result["backport_assessment"] = None
+                    return json.dumps(result)
+
+                self.run_review(
+                    review, backport_evidence={"complete": True, "limitations": []}
+                )
+                self.assertEqual(
+                    self.debug["backport_assessment"]["verdict"],
+                    "Faithful" if failure is None else "Needs clarification",
+                )
+
+    def test_backport_context_reaches_reviewers_and_both_verifiers(self):
+        self.tier, self.audits = "routine", ["build"]
+        seen = {}
+        packet = {
+            "complete": False,
+            "limitations": ["Original commit unavailable"],
+            "commits": [],
+            "sources": [],
+        }
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            seen[stage] = args[1]
+            self.assertIn("Original commit unavailable", args[1])
+            self.assertIn("target release branch", kwargs["prompt"])
+            if stage == "archaeologist":
+                return archaeology()
+            if stage in {"independent", "build"}:
+                return discovery([candidate()] if stage == "independent" else [])
+            if stage == "verifier":
+                self.assertIn(
+                    "backport_assessment", kwargs["response_schema"]["properties"]
+                )
+                result = json.loads(
+                    verification(
+                        [
+                            {
+                                "candidate_ids": ["independent:1"],
+                                "disposition": "publish",
+                                "reason": "Supported",
+                                "finding": {
+                                    **self.published,
+                                    "kind": "defect",
+                                    "severity": "major",
+                                },
+                            }
+                        ]
+                    )
+                )
+                result["backport_assessment"] = {
+                    "verdict": "Faithful",
+                    "summary": "Claimed faithful",
+                    "evidence": ["Compared commits"],
+                    "required_fixes": [],
+                    "limitations": [],
+                }
+                return json.dumps(result)
+            self.assertEqual(stage, "major_verifier")
+            return json.dumps(
+                {
+                    "coverage": COMPLETE,
+                    "decisions": [
+                        {
+                            "finding_id": "finding:1",
+                            "disposition": "publish",
+                            "reason": "Supported",
+                            "source_evidence": self.published["source_evidence"],
+                        }
+                    ],
+                }
+            )
+
+        with patch.object(
+            pipeline, "focused_review_input", return_value="Focused diff"
+        ):
+            content = self.run_review(
+                review, archaeology_enabled=True, backport_evidence=packet
+            )
+        self.assertEqual(
+            set(seen),
+            {"archaeologist", "independent", "build", "verifier", "major_verifier"},
+        )
+        self.assertEqual(self.debug["stages"]["alternatives"]["status"], "skipped")
+        self.assertEqual(
+            self.debug["backport_assessment"]["verdict"], "Needs clarification"
+        )
+        self.assertIn("Original commit unavailable", content)
+        self.assertEqual(len(self.result.findings), 1)
 
     def test_parallel_adversarial_models_share_context_and_attribute_merged_finding(
         self,

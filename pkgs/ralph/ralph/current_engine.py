@@ -105,4 +105,6 @@ def run(case, runtime, configured):
             *(["concept_objection"] if result.concept_concern else []),
         ],
     }
+    if case.backport_evidence is not None:
+        exports["backport_assessment"] = data["backport_assessment"]
     return Output(result.content, data, exports, schema_version=2)

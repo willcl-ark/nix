@@ -149,6 +149,16 @@ def summarize(debug):
             # verification prevents us from publishing verified findings.
             inspections.append("partial" if status == "failed" else status)
 
+    backport = debug.get("backport_assessment")
+    if backport is not None:
+        for reason in backport.get("limitations", []):
+            issue("verifier", "verification", reason)
+            verifications.append("partial")
+        if backport.get("verdict") == "Needs clarification" and not backport.get(
+            "limitations"
+        ):
+            issue("verifier", "verification", backport["summary"])
+            verifications.append("partial")
     if concept_reason:
         issue("verifier", "context", concept_reason)
         contexts.append("partial")

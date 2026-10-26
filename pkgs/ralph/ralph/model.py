@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import research
+from . import research, upstream
 from .repository import (
     find_paths,
     read_file,
@@ -29,6 +29,43 @@ MAX_WEB_SEARCH_CALLS_PER_RESPONSE = 2
 SAFE_NO_CHARGE_HTTP_STATUSES = {400, 401, 403, 404, 429}
 WEB_SEARCH_TOOL_TYPES = {"web_search"}
 WEB_SEARCH_TOOL = {"type": "web_search", "search_context_size": "low"}
+BACKPORT_TOOLS = [
+    {
+        "type": "function",
+        "name": "read_upstream_file",
+        "strict": True,
+        "description": "Read a tracked file at a resolved original backport commit, "
+        "or its parent with before=true. Use full original SHAs from backport evidence.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "commit": {"type": "string"},
+                "before": {"type": "boolean"},
+                "path": {"type": "string"},
+                "start_line": {"type": "integer"},
+            },
+            "required": ["commit", "before", "path", "start_line"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
+        "name": "search_upstream_code",
+        "strict": True,
+        "description": "Search tracked source at a resolved original backport commit "
+        "or its parent with before=true. Use a literal query and a full evidence SHA.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "commit": {"type": "string"},
+                "before": {"type": "boolean"},
+                "query": {"type": "string"},
+            },
+            "required": ["commit", "before", "query"],
+            "additionalProperties": False,
+        },
+    },
+]
 TOOLS = [
     {
         "type": "function",
@@ -602,6 +639,7 @@ def openai_review(
     is_current=None,
     api_base="https://api.openai.com/v1",
     research_evidence=None,
+    backport_evidence=None,
     timeout=180,
     final_timeout=180,
 ):
@@ -871,6 +909,13 @@ def openai_review(
                         elif call["name"] == "search_base_code":
                             answer = search_code(
                                 checkout, snapshot.diff_base_sha, args.get("query")
+                            )
+                        elif call["name"] in {
+                            "read_upstream_file",
+                            "search_upstream_code",
+                        }:
+                            answer = upstream.lookup(
+                                checkout, backport_evidence, call["name"], args
                             )
                         elif call["name"] in LIVE_RESEARCH_TOOL_NAMES:
                             if context_calls >= max_context_calls:

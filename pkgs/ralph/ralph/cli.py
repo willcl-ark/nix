@@ -12,7 +12,7 @@ import tempfile
 from urllib.parse import urlsplit
 import uuid
 
-from . import engine, profiles, repository, research, runner, spend
+from . import backports, engine, profiles, repository, research, runner, spend, upstream
 
 
 def _read_json(path):
@@ -297,6 +297,14 @@ def _review(args, cancellation):
                         snapshot=snapshot,
                         source=context["source"],
                         research_evidence=evidence,
+                        backport_evidence=backports.collect(
+                            snapshot,
+                            {
+                                "title": context["title"],
+                                "body": context["rationale"],
+                                "base_ref": args.base or "",
+                            },
+                        ),
                     )
                     runtime.case = case
                     if not snapshot.changed_paths:
@@ -308,7 +316,8 @@ def _review(args, cancellation):
                         result = runner.skipped_result(case, runtime, selected, skip)
                         code = 3
                     else:
-                        result = runner.run_review(case, runtime, selected)
+                        with upstream.pin(snapshot.checkout, case.backport_evidence):
+                            result = runner.run_review(case, runtime, selected)
                         code = 0
                 except Exception as error:
                     code = 128 + cancellation["signal"] if cancellation["signal"] else 1

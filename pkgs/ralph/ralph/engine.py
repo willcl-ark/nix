@@ -17,6 +17,7 @@ class ReviewCase:
     snapshot: RepositorySnapshot
     source: dict | None = None
     research_evidence: object | None = None
+    backport_evidence: dict | None = None
 
 
 @dataclass
@@ -133,6 +134,7 @@ class Runtime:
             ),
             timeout=timeout,
             final_timeout=final_timeout,
+            backport_evidence=self.case.backport_evidence,
             research_evidence=(
                 self.case.research_evidence
                 if self.case.research_evidence is not None
