@@ -10,7 +10,7 @@ from ralph_service import forgejo, repository
 
 
 class BackportAcquisitionTests(unittest.TestCase):
-    def collect(self, requests, api):
+    def collect(self, requests, api, verify=None):
         with (
             patch.object(backports, "classify", return_value={"mode": "backport"}),
             patch.object(backports, "source_requests", return_value=requests),
@@ -19,6 +19,7 @@ class BackportAcquisitionTests(unittest.TestCase):
             ) as collector,
             patch.object(forgejo, "_github_api", side_effect=api),
             patch.object(repository.local, "resolve_commit", return_value="a" * 40),
+            patch.object(repository.local, "verify_local_objects", side_effect=verify),
             patch.object(repository.local, "git") as git,
         ):
             evidence = repository.collect_backport_evidence(
@@ -71,6 +72,41 @@ class BackportAcquisitionTests(unittest.TestCase):
         self.assertTrue(
             any(call.args[1] == "update-ref" for call in git.call_args_list)
         )
+
+    def test_existing_commit_with_missing_objects_is_refetched_and_verified_once(self):
+        sha = "a" * 40
+        verified = []
+
+        def verify(checkout, base, head):
+            verified.append((base, head))
+            if len(verified) == 1:
+                raise ValueError("missing blob")
+
+        def api(path, token):
+            if "/commits/abcdef0" in path:
+                return {"sha": sha}
+            if "/commits/" in path and "/pulls?" in path:
+                return [{"number": 1, "base": {"ref": "master"}}]
+            if path.endswith("/pulls/1"):
+                return {"commits": 1}
+            return [{"sha": sha}]
+
+        evidence, origins, git = self.collect(
+            {
+                "prs": ["bitcoin/bitcoin#1"],
+                "originals": [{"commit": "b" * 40, "original": "abcdef0", "pr": None}],
+            },
+            api,
+            verify,
+        )
+        self.assertTrue(evidence["complete"])
+        self.assertEqual(origins["bitcoin/bitcoin#1"]["commits"], [sha])
+        self.assertEqual(verified, [(sha, sha), (sha, sha)])
+        fetches = [call.args for call in git.call_args_list if call.args[1] == "fetch"]
+        self.assertEqual(len(fetches), 1)
+        self.assertIn("--refetch", fetches[0])
+        self.assertIn("--no-filter", fetches[0])
+        self.assertIn("https://github.com/bitcoin/bitcoin.git", fetches[0])
 
     def test_unavailable_original_remains_explicit_evidence_gap(self):
         def api(path, token):

@@ -126,23 +126,32 @@ def collect_backport_evidence(snapshot, metadata, bot_config, ref_prefix, token=
             raise ValueError("source repository is not allowed")
         return forgejo._github_api(f"/repos/{source}" + path, token)
 
+    verified = set()
+
     def pin(sha, source):
         if not isinstance(sha, str) or not local.SHA.fullmatch(sha):
             raise ValueError("invalid upstream commit SHA")
+        if sha in verified:
+            return
         ref = f"{ref_prefix}/originals/{sha}"
         local.git(snapshot.checkout, "check-ref-format", ref)
         try:
             local.resolve_commit(snapshot.checkout, sha)
+            local.verify_local_objects(snapshot.checkout, sha, sha)
         except ValueError:
             # Only configured upstreams are eligible; PR text cannot choose a URL.
             local.git(
                 snapshot.checkout,
                 "fetch",
+                "--refetch",
+                "--no-filter",
                 "--no-tags",
                 f"https://github.com/{source}.git",
                 f"+{sha}:{ref}",
             )
+            local.verify_local_objects(snapshot.checkout, sha, sha)
         local.git(snapshot.checkout, "update-ref", ref, sha)
+        verified.add(sha)
 
     # Restrict reads to configured sources and Bitcoin's GUI companion repo.
     requested = set(requests["prs"])
