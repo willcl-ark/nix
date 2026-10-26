@@ -931,6 +931,23 @@ def review_with_independent_passes(
             for finding in published
         ):
             entry["collapsed"] = False
+    for finding in published:
+        linked_groups = {
+            entry.get("duplicate_of") or entry["key"]
+            for entry in debug.get("review_memory", [])
+            if finding["id"] in entry["current_finding_ids"]
+        }
+        linked = [
+            entry
+            for entry in debug.get("review_memory", [])
+            if (entry.get("duplicate_of") or entry["key"]) in linked_groups
+            and entry["status"] not in {"fixed", "invalid"}
+        ]
+        # Replies belong to individual reports. One answered report cannot hide
+        # a current finding also linked to an unanswered historical report.
+        if any(not entry["collapsed"] for entry in linked):
+            for entry in linked:
+                entry["collapsed"] = False
     published_by_id = {finding["id"]: finding for finding in published}
     debug["finding_attribution"] = [
         {

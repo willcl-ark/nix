@@ -1,6 +1,5 @@
 """Structured stage results and the boundary between findings and prose."""
 
-import html
 import json
 import re
 import subprocess
@@ -798,27 +797,118 @@ def render(
                 )
         sections.append("\n\n".join(lines))
     memory = review_memory or []
-    responded = [
-        entry
-        for entry in memory
-        if entry.get("author_position", "none") != "none"
-        and entry.get("author_comments")
-    ]
+    memory_groups = {}
+    for index, entry in enumerate(memory):
+        key = entry.get("duplicate_of") or entry.get("key") or index
+        memory_groups.setdefault(key, []).append(entry)
+
+    def has_response(entry):
+        return entry.get("author_position", "none") != "none" and bool(
+            entry.get("author_comments")
+        )
+
+    def active_entries(group):
+        return [
+            entry for entry in group if entry.get("status") not in ("fixed", "invalid")
+        ]
+
     collapsed_ids = {
         finding_id
-        for entry in responded
-        if entry.get("collapsed") and entry.get("status") == "still_present"
+        for group in memory_groups.values()
+        if active_entries(group)
+        and all(
+            has_response(entry)
+            and entry.get("collapsed")
+            and entry.get("status") == "still_present"
+            for entry in active_entries(group)
+        )
+        for entry in active_entries(group)
         for finding_id in entry.get("current_finding_ids", [])
     }
     finding_groups = {}
     design_findings = []
+
+    def finding_text(finding):
+        return (
+            f"**{finding.get('title', '')}** ({finding.get('path', '')}:"
+            f"{finding.get('line', '')}, {finding.get('side', 'head')})"
+            f"\n\n{finding.get('body', '')}"
+        )
+
+    def previous_report(entry):
+        status = entry.get("status", "unclear")
+        previous = "Previously reported"
+        if status == "unclear":
+            previous += "; not confirmed against this revision"
+        elif status == "still_present":
+            previous += "; verified as still present in this revision"
+        text = f"{previous}. Status: {status}. Author position: {entry.get('author_position', 'none')}."
+        if entry.get("source_head"):
+            text += f" Originally reported at `{entry['source_head']}`."
+        if entry.get("reason"):
+            text += " " + entry["reason"]
+        for comment in entry.get("author_comments", []):
+            url = comment.get("url", "")
+            if urlsplit(url).scheme in ("https", "http"):
+                url = url.replace("(", "%28").replace(")", "%29")
+                text += f" [Author reply]({url}) {comment.get('updated_at', '')}"
+        return text
+
+    severity_order = ("critical", "major", "minor", "suggestion")
+
+    def representative(group):
+        return min(
+            group,
+            key=lambda entry: severity_order.index(entry.get("severity", "suggestion")),
+        )
+
+    def memory_text(group, finding):
+        text = finding_text(finding)
+        if len(group) == 1:
+            return text + "\n\n" + previous_report(group[0])
+        reports = [
+            f"- {entry.get('path', '')}:{entry.get('line', '')}. {previous_report(entry)}"
+            for entry in group
+        ]
+        return (
+            text + "\n\nPrevious reports of the same concern:\n\n" + "\n".join(reports)
+        )
+
+    remaining = dict(memory_groups)
     for finding in findings:
         if finding["id"] in collapsed_ids:
             continue
+        text = finding_text(finding)
+        for key, group in list(remaining.items()):
+            ids = {
+                identifier
+                for entry in active_entries(group)
+                for identifier in entry.get("current_finding_ids", [])
+            }
+            if finding["id"] in ids:
+                text = memory_text(group, finding)
+                del remaining[key]
+                break
         if finding["kind"] == "design":
-            design_findings.append(finding)
+            design_findings.append(text)
         else:
-            finding_groups.setdefault(finding["severity"], []).append(finding)
+            finding_groups.setdefault(finding["severity"], []).append(text)
+    history = []
+    unresolved_history = []
+    for group in remaining.values():
+        active = active_entries(group)
+        eligible = active or [entry for entry in group if has_response(entry)]
+        if not eligible:
+            continue
+        entry = representative(eligible)
+        if all(has_response(item) for item in eligible):
+            history.append(memory_text(group, entry))
+            if active:
+                unresolved_history.append(entry)
+        else:
+            finding_groups.setdefault(entry.get("severity", "suggestion"), []).append(
+                memory_text(group, entry)
+            )
     rendered_findings = []
     for severity, heading in (
         ("critical", "Critical"),
@@ -828,52 +918,12 @@ def render(
     ):
         group = finding_groups.get(severity, [])
         if group:
-            rendered_findings.append(
-                f"**{heading}**\n\n"
-                + "\n\n".join(
-                    f"**{finding['title']}** ({finding['path']}:{finding['line']}, "
-                    f"{finding['side']})\n\n{finding['body']}"
-                    for finding in group
-                )
-            )
-    history = []
-    visible_ids = {finding["id"] for finding in findings} - collapsed_ids
-    for entry in memory:
-        if entry not in responded and (
-            entry.get("status") in ("fixed", "invalid")
-            or visible_ids.intersection(entry.get("current_finding_ids", []))
-        ):
-            continue
-        destination = history if entry in responded else rendered_findings
-
-        def escaped(key, default=""):
-            return html.escape(str(entry.get(key, default)))
-
-        destination.append(
-            f"<h6>{escaped('severity')} · {escaped('title')}</h6>\n"
-            f"<p>Status: {escaped('status', 'unclear')}. "
-            f"Author position: {escaped('author_position', 'none')}.</p>\n"
-            f"<p>{escaped('path')}:{escaped('line')} at {escaped('source_head')}</p>\n"
-            f"<pre>{escaped('body')}</pre>\n<p>{escaped('reason')}</p>"
-        )
-        for comment in entry.get("author_comments", []):
-            url = comment.get("url", "")
-            if urlsplit(url).scheme in ("https", "http"):
-                destination.append(
-                    f'<p><a href="{html.escape(url, quote=True)}">Author reply</a> '
-                    f"{html.escape(str(comment.get('updated_at', '')))}</p>"
-                )
+            rendered_findings.append(f"**{heading}**\n\n" + "\n\n".join(group))
     if rendered_findings:
         sections.append("##### Findings\n\n" + "\n\n".join(rendered_findings))
     rendered_design = []
     if design_findings:
-        rendered_design.append(
-            "\n\n".join(
-                f"**{finding['title']}** ({finding['path']}:{finding['line']}, "
-                f"{finding['side']})\n\n{finding['body']}"
-                for finding in design_findings
-            )
-        )
+        rendered_design.append("\n\n".join(design_findings))
     if concept_summary:
         rendered_design.append(f"**Concept and approach.** {concept_summary}")
     if rendered_design:
@@ -895,28 +945,21 @@ def render(
                 )
             rendered_alternatives.append(text)
         sections.append("##### Alternatives\n\n" + "\n\n".join(rendered_alternatives))
-    if responded:
-        unresolved = [
-            entry
-            for entry in responded
-            if entry.get("status") not in ("fixed", "invalid")
-        ]
-        if unresolved:
+    if history:
+        if unresolved_history:
             severities = {}
-            for entry in unresolved:
+            for entry in unresolved_history:
                 severity = entry.get("severity", "unknown")
                 severities[severity] = severities.get(severity, 0) + 1
             counts = ", ".join(
                 f"{count} {severity}" for severity, count in severities.items()
             )
             sections.append(
-                f"Previously reported concerns remain unresolved: {html.escape(counts)}. "
+                f"Previously reported concerns remain unresolved: {counts}. "
                 "Author deferral or disagreement does not resolve a finding."
             )
         sections.append(
-            "<details>\n<summary>Previous findings and author responses</summary>\n\n"
-            + "\n\n".join(history)
-            + "\n\n</details>"
+            "##### Previous findings and author responses\n\n" + "\n\n".join(history)
         )
     if not sections:
         sections.append(
@@ -927,8 +970,7 @@ def render(
     if limitations:
         sections.append(
             "Review coverage was incomplete.\n\n"
-            "<details>\n<summary>Review limitations</summary>\n\n"
+            "##### Review limitations\n\n"
             + "\n".join(f"- {limitation}" for limitation in dict.fromkeys(limitations))
-            + "\n\n</details>"
         )
     return "\n\n".join(sections)

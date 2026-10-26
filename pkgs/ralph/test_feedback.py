@@ -59,6 +59,7 @@ class FeedbackTests(unittest.TestCase):
     def assessment(self, **kwargs):
         return {
             "prior_key": "1:1:review:1",
+            "duplicate_of": None,
             "status": "still_present",
             "candidate_ids": ["review:1"],
             "unchanged": False,
@@ -173,6 +174,102 @@ class FeedbackTests(unittest.TestCase):
         record = self.reconcile([])
         self.assertEqual(record["status"], "unclear")
         self.assertEqual(record["assessment_history"][-1]["status"], "fixed")
+
+    def test_duplicate_history_keeps_provenance_across_unavailable_rechecks(self):
+        original = self.packet["findings"][0]
+        repeated = {
+            **original,
+            "key": "2:2:review:1",
+            "body": "Same bug, another report",
+        }
+        self.packet["findings"].append(repeated)
+        self.candidates = []
+        records = feedback.reconcile(
+            self.packet,
+            [
+                self.assessment(candidate_ids=[]),
+                self.assessment(
+                    prior_key=repeated["key"],
+                    candidate_ids=[],
+                    duplicate_of=original["key"],
+                ),
+            ],
+            [],
+            self.snapshot,
+        )
+        self.assertIsNone(records[0]["duplicate_of"])
+        self.assertEqual(records[1]["duplicate_of"], original["key"])
+        self.assertEqual(
+            [r["body"] for r in records], [original["body"], repeated["body"]]
+        )
+        self.packet["findings"] = records
+        records[1]["current_finding_ids"] = ["old:1"]
+        retained = feedback.reconcile(self.packet, [], [], self.snapshot)
+        self.assertEqual(retained[1]["duplicate_of"], original["key"])
+        self.assertEqual(retained[1]["status"], "unclear")
+        self.assertEqual(retained[1]["current_finding_ids"], [])
+        self.assertEqual(
+            retained[1]["assessment_history"][-1]["status"], "still_present"
+        )
+
+        # A partial reassessment cannot turn a saved direct link into a chain.
+        third = {**original, "key": "3:3:review:1"}
+        self.packet["findings"] = [*retained, third]
+        records = feedback.reconcile(
+            self.packet,
+            [
+                self.assessment(candidate_ids=[], duplicate_of=third["key"]),
+                self.assessment(prior_key=third["key"], candidate_ids=[]),
+            ],
+            [],
+            self.snapshot,
+        )
+        self.assertEqual(records[0]["duplicate_of"], third["key"])
+        self.assertIsNone(records[1]["duplicate_of"])
+
+    def test_shared_candidate_is_not_automatically_a_duplicate(self):
+        repeated = {**self.packet["findings"][0], "key": "2:2:review:1"}
+        self.packet["findings"].append(repeated)
+        self.mapping["mappings"].append(
+            {**self.mapping["mappings"][0], "prior_key": repeated["key"]}
+        )
+        feedback.parse_feedback(json.dumps(self.mapping), self.packet, self.candidates)
+        records = feedback.reconcile(
+            self.packet,
+            [self.assessment(), self.assessment(prior_key=repeated["key"])],
+            self.candidates,
+            self.snapshot,
+            self.mapping,
+        )
+        self.assertTrue(all(r["status"] == "still_present" for r in records))
+        self.assertTrue(all(r["duplicate_of"] is None for r in records))
+
+    def test_duplicate_links_require_current_evidence_and_a_canonical_target(self):
+        original = self.packet["findings"][0]
+        repeated = {**original, "key": "2:2:review:1"}
+        self.packet["findings"].append(repeated)
+        for assessments in (
+            [
+                self.assessment(duplicate_of=repeated["key"]),
+                self.assessment(
+                    prior_key=repeated["key"], duplicate_of=original["key"]
+                ),
+            ],
+            [
+                self.assessment(),
+                self.assessment(
+                    prior_key=repeated["key"],
+                    duplicate_of=original["key"],
+                    status="unclear",
+                    source_evidence=[],
+                ),
+            ],
+        ):
+            with self.subTest(assessments=assessments):
+                records = feedback.reconcile(
+                    self.packet, assessments, self.candidates, self.snapshot
+                )
+                self.assertTrue(all(r.get("duplicate_of") is None for r in records))
 
 
 if __name__ == "__main__":

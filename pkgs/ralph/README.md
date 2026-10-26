@@ -658,8 +658,18 @@ section only with a direct author response and when the verifier confirms the
 same mechanism and consequence, with evidence from both base and head that the PR
 does not introduce or worsen it. Findings that remain unresolved are retained with
 their original identity, severity and assessment history, including when discovery does not find them again. Missing or invalid
-reconciliation keeps them unresolved. Fixed and invalid decisions require source
-evidence; author intent alone is insufficient.
+reconciliation keeps them unresolved and labels them as not confirmed against the
+current revision. Fixed and invalid decisions require source evidence; author
+intent alone is insufficient.
+
+The verifier also checks whether historical reports describe the same failure
+mechanism and consequence, even when discovery does not rediscover them. Confirmed
+duplicates share one displayed concern with each original location, revision and
+assessment retained. Similar wording or a shared current candidate does not merge
+reports. Existing duplicate links survive unavailable verification, while every
+report keeps its own status and author feedback. An unanswered active report keeps
+the concern prominent. Review bodies, history and limitations use Markdown;
+structured finding records remain the source for subsequent reviews.
 
 This memory is restricted to one repository and PR. First reviews do not invoke
 the feedback pass. The structured `review_memory` export preserves the history;

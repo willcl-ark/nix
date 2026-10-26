@@ -421,6 +421,7 @@ class PipelineTests(unittest.TestCase):
         }
         order = []
         reconciliation_status = "still_present"
+        duplicate_history = False
 
         def reviewer(*args, **kwargs):
             stage = kwargs["stage_name"]
@@ -442,6 +443,7 @@ class PipelineTests(unittest.TestCase):
             result["review_reconciliation"] = [
                 {
                     "prior_key": "previous:1",
+                    "duplicate_of": None,
                     "status": reconciliation_status,
                     "candidate_ids": ["independent:1"],
                     "unchanged": True,
@@ -452,6 +454,15 @@ class PipelineTests(unittest.TestCase):
                     ],
                 }
             ]
+            if duplicate_history:
+                result["review_reconciliation"].append(
+                    {
+                        **result["review_reconciliation"][0],
+                        "prior_key": "previous:2",
+                        "duplicate_of": "previous:1",
+                        "candidate_ids": [],
+                    }
+                )
             return json.dumps(result)
 
         def audit(api_key, name, prompt, input_text, **kwargs):
@@ -495,6 +506,17 @@ class PipelineTests(unittest.TestCase):
                 self.assertIn("verified current finding", entry["reason"])
                 self.assertEqual(len(self.result.findings), 1)
                 self.assertEqual(entry["current_finding_ids"], ["finding:1"])
+
+        # A reply to one report must not hide an unanswered duplicate, including
+        # in downstream consumers that use the exported collapse flags.
+        reconciliation_status = "still_present"
+        self.published["severity"] = "suggestion"
+        duplicate_history = True
+        packet["findings"].append({**packet["findings"][0], "key": "previous:2"})
+        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.assertTrue(all(not e["collapsed"] for e in self.debug["review_memory"]))
+        self.assertEqual(self.debug["review_memory"][1]["duplicate_of"], "previous:1")
+        self.assertIn("##### Findings", self.result.content)
 
     def test_invalid_reconciliation_preserves_normal_verified_finding(self):
         self.tier, self.audits = "routine", []

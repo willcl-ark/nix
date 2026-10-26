@@ -32,6 +32,7 @@ ASSESSMENT = object_schema(
             "type": "string",
             "enum": ["still_present", "fixed", "invalid", "unclear"],
         },
+        "duplicate_of": {"type": ["string", "null"]},
         "candidate_ids": STRINGS,
         "unchanged": {"type": "boolean"},
         "reason": STRING,
@@ -46,6 +47,8 @@ failure mechanism and consequence, not titles or line numbers. Cite only supplie
 comment IDs. Author intent does not establish technical correctness. An author
 saying 'addressing elsewhere' leaves the finding unresolved. Do not suppress,
 delete, fix, or invalidate any finding. Use none when no explicit reply applies.
+Multiple prior findings may map to the same current candidate. This does not by
+itself establish that the prior findings are duplicates.
 Keep this analysis restricted to the supplied PR. Omit uncertain mappings.
 """
 
@@ -63,6 +66,17 @@ if the author refuses to fix it. This affects only the current PR; do not infer
 suppression rules for other PRs. Author replies may inform author intent and presentation only, despite the normal
 verifier exclusion of historical discussion. Normal findings still require normal
 verification; replies cannot alter their technical verdicts.
+
+Identify duplicate historical reports using duplicate_of, even if discovery did
+not rediscover them. Use another supplied prior_key only when source inspection
+confirms the same failure mechanism and consequence, with matching technical
+statuses and current source evidence for both records. Similar titles, locations,
+author replies or overlapping candidates alone do not establish equivalence.
+Choose one canonical prior record for each issue and link duplicates directly to
+it; the canonical record has duplicate_of null. Do not create chains or cycles.
+Use null for distinct or uncertain reports. Assess every record independently and
+preserve its individual author position. Multiple prior records may map to the
+same current candidate without being duplicates.
 """
 
 
@@ -133,7 +147,6 @@ def parse_feedback(text, packet, candidates):
     comments = {str(entry["id"]) for entry in packet.get("comments", [])}
     current = {entry["id"] for entry in candidates}
     seen = set()
-    assigned = set()
     for mapping in result["mappings"]:
         _object(mapping, MAPPING["properties"])
         key = mapping["prior_key"]
@@ -142,9 +155,6 @@ def parse_feedback(text, packet, candidates):
         seen.add(key)
         _references(mapping["candidate_ids"], current)
         _references(mapping["comment_ids"], comments)
-        if assigned.intersection(mapping["candidate_ids"]):
-            raise InvalidReview("Candidate matched to multiple prior findings")
-        assigned.update(mapping["candidate_ids"])
         if mapping["author_position"] not in POSITIONS:
             raise InvalidReview("Invalid author position")
         if mapping["author_position"] != "none" and not mapping["comment_ids"]:
@@ -163,16 +173,19 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
     try:
         if not isinstance(assessments, list):
             raise InvalidReview("Missing reconciliation")
-        assigned = set()
         for assessment in assessments:
             _object(assessment, ASSESSMENT["properties"])
             key = assessment["prior_key"]
             if not isinstance(key, str) or key not in prior or key in decisions:
                 raise InvalidReview("Unknown or duplicate prior assessment")
             _references(assessment["candidate_ids"], current)
-            if assigned.intersection(assessment["candidate_ids"]):
-                raise InvalidReview("Duplicate reconciled candidate")
-            assigned.update(assessment["candidate_ids"])
+            duplicate = assessment["duplicate_of"]
+            if duplicate is not None and (
+                not isinstance(duplicate, str)
+                or duplicate not in prior
+                or duplicate == key
+            ):
+                raise InvalidReview("Invalid duplicate finding reference")
             if assessment["status"] not in ASSESSMENT["properties"]["status"]["enum"]:
                 raise InvalidReview("Invalid reconciliation status")
             if type(assessment["unchanged"]) is not bool:
@@ -194,6 +207,20 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
             decisions[key] = assessment
     except (InvalidReview, KeyError, TypeError):
         decisions = {}
+    # Only source-checked, direct links may merge historical reports for display.
+    # Validate against the original decisions so a rejected chain cannot become
+    # acceptable merely because an earlier link was cleared.
+    duplicates = {}
+    for key, decision in decisions.items():
+        target = decisions.get(decision["duplicate_of"])
+        duplicates[key] = (
+            decision["duplicate_of"]
+            if target is not None
+            and target["duplicate_of"] is None
+            and decision["status"] != "unclear"
+            and decision["status"] == target["status"]
+            else None
+        )
     try:
         mapping_rows = parse_feedback(
             json.dumps(mappings or {"mappings": []}), packet, candidates
@@ -224,6 +251,7 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
                         "comment_ids",
                         "collapsed",
                         "current_candidate_ids",
+                        "duplicate_of",
                     )
                     if key in entry
                 }
@@ -232,9 +260,14 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
             status=decision["status"] if decision else "unclear",
             reason=decision["reason"]
             if decision
-            else "The previous finding has not been resolved against this revision.",
+            else "Previously reported; not reverified against this revision because "
+            "no valid verification assessment is available.",
             source_evidence=decision["source_evidence"] if decision else [],
             current_candidate_ids=decision["candidate_ids"] if decision else [],
+            current_finding_ids=[],
+            duplicate_of=duplicates[entry["key"]]
+            if decision
+            else entry.get("duplicate_of"),
             author_position=mapping.get(
                 "author_position", entry.get("author_position", "none")
             ),
@@ -258,4 +291,13 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
                 and {item["side"] for item in decision["source_evidence"]}
                 == {"base", "head"}
             )
+    # Partial reassessment may change a former canonical record into a duplicate.
+    # Do not keep older links through it, or follow unverified chains.
+    roots = {entry["key"]: entry.get("duplicate_of") for entry in entries}
+    for entry in entries:
+        target = entry["duplicate_of"]
+        if target is not None and (
+            target not in roots or target == entry["key"] or roots[target] is not None
+        ):
+            entry["duplicate_of"] = None
     return entries
