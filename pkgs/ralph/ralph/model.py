@@ -101,7 +101,7 @@ TOOLS = [
         "name": "read_file",
         "strict": True,
         "description": "Read numbered lines from a tracked text file at the PR head. "
-        "Use another call for later lines.",
+        "Returns up to 300 lines and 12,000 UTF-8 bytes. Use another call for later lines.",
         "parameters": {
             "type": "object",
             "properties": {

@@ -147,9 +147,9 @@ def _stage(
 _DEFAULT_STAGES = {
     "router": _stage(calls=0),
     "independent": _stage(),
-    "adversarial": _stage("gpt-6.1-sol", "high", 25_000, 48),
+    "adversarial": _stage("gpt-6.1-sol", "high", 25_000, 72),
     "adversarial_claude": _stage(
-        "claude-opus-5-5", "xhigh", 64_000, 48, timeout=600, final_timeout=600
+        "claude-opus-5-5", "xhigh", 64_000, 72, timeout=600, final_timeout=600
     ),
     "script": _stage("gpt-6.1-sol", "high", 25_000, 48),
     "concurrency": _stage(effort="medium", output=8_000),
@@ -161,8 +161,8 @@ _DEFAULT_STAGES = {
     "build": _stage(),
     "archaeologist": _stage(calls=12),
     "alternatives": _stage(calls=12),
-    "verifier": _stage(effort="xhigh", output=128_000, calls=48, final_timeout=600),
-    "major_verifier": _stage("gpt-6.1-sol", "medium", 25_000, 48, final_timeout=600),
+    "verifier": _stage(effort="xhigh", output=128_000, calls=72, final_timeout=600),
+    "major_verifier": _stage("gpt-6.1-sol", "medium", 25_000, 72, final_timeout=600),
     "collator": _stage(output=6_000, calls=0),
 }
 CORE_STAGES = (

@@ -303,6 +303,11 @@ Claude adversarial requests and both verifiers' final requests with tools
 disabled have a 600-second socket timeout. Other model requests retain the
 180-second timeout.
 
+The initial review input allows 300,000 UTF-8 bytes. Larger patches are replaced
+by a changed-file inventory so stages can inspect them with `read_diff`.
+File reads return up to 300 lines and 12,000 UTF-8 bytes per call. Published
+source evidence retains the smaller excerpt limit described below.
+
 Code tools find paths, read head/base files, read diffs and search code. The full
 tool set also reads base history and, when a live discussion reader is supplied,
 other PR discussions. Current PR discussion is excluded from code discovery.
@@ -314,8 +319,9 @@ research call is missing from the frozen manifest, the tool returns an
 unavailable-evidence message and the model continues from code and frozen input.
 
 Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensitive.
-The script and dead-code specialists, both adversarial passes and both verifiers allow 48. History and discussion
-sublimits are eight each per tool-enabled stage. Archaeology has twelve total
+The script and dead-code specialists allow 48; both adversarial passes and both
+verifiers allow 72. History and discussion sublimits are eight each per
+tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit and are capped at
 two per response. Search fees and evidence-token headroom are reserved in the
 existing OpenAI allowance; opening or finding text within a page is not a paid

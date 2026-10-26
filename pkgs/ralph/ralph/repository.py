@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from pathlib import Path
 
-MAX_REVIEW_BYTES = 200_000
+MAX_REVIEW_BYTES = 300_000
 MAX_FILE_BYTES = 1_000_000
 MAX_TOOL_BYTES = 12_000
 MAX_FOCUSED_DIFF_BYTES = 80_000
@@ -287,7 +287,7 @@ def read_file(checkout, files, path, start_line):
     if start_line > len(lines):
         return f"{path} has {len(lines)} lines."
     result = f"{path} ({len(lines)} lines):\n"
-    for number in range(start_line, min(start_line + 150, len(lines) + 1)):
+    for number in range(start_line, min(start_line + 300, len(lines) + 1)):
         line = f"{number}: {lines[number - 1]}\n"
         if len((result + line).encode()) > MAX_TOOL_BYTES:
             break
