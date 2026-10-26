@@ -58,6 +58,9 @@ With subscription authentication, dollar totals are API-equivalent usage
 estimates, not subscription charges or quota measurements. CLIProxyAPI removes
 `max_output_tokens` before forwarding Codex requests, so a response can exceed
 Ralph's requested output allowance and its reservation before usage is settled.
+Ralph omits `max_tool_calls` from outgoing requests because Codex rejects it.
+The configured web-search count remains a reservation estimate; all returned
+searches are accounted for, including those beyond that estimate.
 The proxy/provider enforces subscription limits. Configure only subscription
 credentials in the proxy if paid upstream fallback is unwanted.
 
@@ -322,8 +325,10 @@ Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensit
 The script and dead-code specialists allow 48; both adversarial passes and both
 verifiers allow 72. History and discussion sublimits are eight each per
 tool-enabled stage. Archaeology has twelve total
-inspections. Hosted web actions count toward the stage limit and are capped at
-two per response. Search fees and evidence-token headroom are reserved in the
+inspections. Hosted web actions count toward the stage limit. Reservations
+estimate two per response; this is not a provider-enforced cap, so one response
+can exceed the estimate or remaining stage allowance.
+Search fees and evidence-token headroom are reserved in the
 existing OpenAI allowance; opening or finding text within a page is not a paid
 search action. The early concept stage spends from the same capped review
 allowance, does not estimate savings and never stops later code stages.

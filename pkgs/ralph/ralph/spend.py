@@ -278,8 +278,8 @@ class Ledger:
             search_limit = request.get("max_tool_calls")
             if type(search_limit) is not int or search_limit < 1:
                 raise ValueError("Web search requires a positive max_tool_calls limit")
-            # Search content is billed as input. Reserve the same bounded evidence
-            # headroom used for local tools for each possible hosted search.
+            # Search content is billed as input. Reserve evidence headroom for
+            # the estimated search count; the provider may return more searches.
             extra_input_tokens += search_limit * FINAL_TOOL_OUTPUT_HEADROOM_TOKENS
         # Byte length plus padding is a coarse preflight estimate, not a guarantee
         # of the eventual invoice amount.

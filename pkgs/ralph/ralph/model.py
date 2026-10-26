@@ -373,6 +373,11 @@ class StaleReview(Exception):
     """The review no longer targets the current pull request head."""
 
 
+def _request_payload(data):
+    # Codex rejects this field. Retain it only for search cost reservations.
+    return json.dumps({k: v for k, v in data.items() if k != "max_tool_calls"}).encode()
+
+
 def request_response(
     api_key,
     data,
@@ -385,7 +390,7 @@ def request_response(
 ):
     if is_current is not None and not is_current():
         raise StaleReview("review head changed before model request")
-    payload = json.dumps(data).encode()
+    payload = _request_payload(data)
     token = budget.reserve(stage_name, data) if budget is not None else None
     request = urllib.request.Request(
         f"{api_base.rstrip('/')}/responses",
@@ -455,7 +460,7 @@ def response_record(result, payload, elapsed):
 
 
 def request_failure_record(data, error):
-    payload = json.dumps(data).encode()
+    payload = _request_payload(data)
     record = {
         "model": data.get("model"),
         "response_id": None,

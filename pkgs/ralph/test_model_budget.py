@@ -1,3 +1,4 @@
+import hashlib
 import json
 import unittest
 import urllib.error
@@ -25,9 +26,11 @@ class Response:
 class FakeBudget:
     def __init__(self):
         self.events = []
+        self.requests = []
 
     def reserve(self, stage, data):
         self.events.append(("reserve", stage, data["model"]))
+        self.requests.append(data)
         return "token"
 
     def settle(self, token, response):
@@ -158,6 +161,9 @@ class ModelBudgetTests(unittest.TestCase):
                 max_output_tokens=25_000,
             )
         self.assertEqual(answer, raw)
+        for call in send.call_args_list:
+            self.assertNotIn("max_tool_calls", json.loads(call.args[0].data))
+        self.assertEqual(budget.requests[0]["max_tool_calls"], 1)
         read.assert_called_once()
         history.assert_called_once()
         discussion.assert_called_once()
@@ -185,6 +191,31 @@ class ModelBudgetTests(unittest.TestCase):
         self.assertEqual(
             [event[0] for event in budget.events],
             ["reserve", "settle", "reserve", "settle"],
+        )
+
+    def test_failed_search_request_records_transmitted_payload(self):
+        debug = {}
+        error = urllib.error.HTTPError("url", 400, "rejected", {}, None)
+        with (
+            patch.object(model.urllib.request, "urlopen", side_effect=error) as send,
+            self.assertRaises(urllib.error.HTTPError),
+        ):
+            model.openai_review(
+                "secret",
+                "patch",
+                self.snapshot,
+                debug,
+                prompt="Review.",
+                model="gpt-6-luna",
+                max_output_tokens=model.MAX_OUTPUT_TOKENS,
+                tools=model.ARCHAEOLOGY_TOOLS,
+                allow_web_search=True,
+            )
+        payload = send.call_args.args[0].data
+        self.assertNotIn("max_tool_calls", json.loads(payload))
+        self.assertEqual(debug["turns"][0]["request_bytes"], len(payload))
+        self.assertEqual(
+            debug["turns"][0]["request_sha256"], hashlib.sha256(payload).hexdigest()
         )
 
     def test_stale_review_between_turns_does_not_reserve_again(self):

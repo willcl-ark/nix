@@ -28,15 +28,15 @@ class SpendTests(unittest.TestCase):
     def payload(output=100):
         return {"max_output_tokens": output, "input": "review"}
 
-    def test_web_search_reserves_limit_and_settles_search_actions(self):
+    def test_web_search_reserves_estimate_and_settles_all_search_actions(self):
         ledger = Ledger(self.path, review_limit_usd=1, input_padding_tokens=0)
         payload = {
             **self.payload(),
             "tools": [{"type": "web_search"}],
-            "max_tool_calls": 3,
+            "max_tool_calls": 1,
         }
         estimate = ledger.reserve_estimate_micros("gpt-6-luna", payload)
-        self.assertGreater(estimate, 30_000)
+        self.assertGreater(estimate, 10_000)
         self.assertLess(
             ledger.reserve_estimate_micros(
                 "gpt-6-luna", {**payload, "tool_choice": "none"}
@@ -66,6 +66,10 @@ class SpendTests(unittest.TestCase):
         )
         self.assertGreater(
             ledger.summary(review_id="pr-1")["estimated_total_usd"], 0.02
+        )
+        self.assertGreater(
+            ledger.summary(review_id="pr-1")["estimated_total_usd"],
+            estimate / MICRODOLLARS,
         )
         # Replayed provider responses do not charge the searches twice.
         ledger.settle(token, response)
