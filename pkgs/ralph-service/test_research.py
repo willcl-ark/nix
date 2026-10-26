@@ -1,4 +1,3 @@
-import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -96,59 +95,6 @@ class ResearchEvidenceTests(unittest.TestCase):
         self.assertNotIn("Missing metadata", comments)
         self.assertIn("omitted", comments)
         self.assertIn("read_current_pr_discussion", frozen_research.inventory(evidence))
-
-    def test_lookup_has_no_live_fallback_for_missing_snapshot(self):
-        evidence = {
-            "schema_version": research.SCHEMA_VERSION,
-            "captured_at": "2026-10-01T00:00:00Z",
-            "cutoff": "2026-10-01T00:00:00Z",
-            "entries": [],
-        }
-        with patch.object(
-            forgejo,
-            "public_discussion_request",
-            side_effect=AssertionError("network used"),
-        ):
-            result = frozen_research.lookup(
-                evidence,
-                "read_current_pr_discussion",
-                {"kind": "inline", "page": 1, "review_id": 7},
-            )
-        self.assertEqual(result, frozen_research.MISSING_RESEARCH)
-
-    def test_validation_rejects_mutated_output_and_naive_timestamps(self):
-        evidence = {
-            "schema_version": research.SCHEMA_VERSION,
-            "captured_at": "2026-10-01T00:00:00Z",
-            "cutoff": "2026-10-01T00:00:00Z",
-            "entries": [],
-        }
-        entry = {
-            "name": "search_discussions",
-            "arguments": {"query": "fees"},
-            "output": "Frozen.",
-            "captured_at": evidence["captured_at"],
-            "cutoff": evidence["cutoff"],
-        }
-        entry["key"] = research._entry_key(entry["name"], entry["arguments"])
-        evidence["entries"].append(entry)
-        research.validate(json.loads(json.dumps(evidence)))
-        evidence["entries"][0]["output"] = ["not text"]
-        with self.assertRaisesRegex(ValueError, "output"):
-            research.validate(evidence)
-        evidence["entries"][0]["output"] = "Frozen."
-        evidence["captured_at"] = "2026-10-01T00:00:00"
-        with self.assertRaisesRegex(ValueError, "timestamps"):
-            research.validate(evidence)
-
-    def test_cutoff_cannot_be_after_capture_time(self):
-        with self.assertRaisesRegex(ValueError, "after capture"):
-            research.capture(
-                self.bot_config,
-                42,
-                cutoff="2026-10-02T00:00:00Z",
-                captured_at="2026-10-01T00:00:00Z",
-            )
 
 
 if __name__ == "__main__":

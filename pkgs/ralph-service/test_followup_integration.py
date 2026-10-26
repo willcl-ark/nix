@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ralph_service import followup_runner, stats
 from ralph import model, repository, spend
+from ralph_service import followup_runner, stats
 from ralph_service.jobs import JobStore
 
 
