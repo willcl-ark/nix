@@ -363,6 +363,68 @@ class ModelBudgetTests(unittest.TestCase):
             ],
         )
 
+    def test_claude_uses_auto_tools_preserves_thinking_and_requires_inspection(self):
+        thinking = {
+            "type": "reasoning",
+            "id": "thinking-1",
+            "encrypted_content": "opaque-signed-thinking",
+            "summary": [],
+        }
+        first = {
+            "status": "completed",
+            "output": [
+                thinking,
+                {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "read_file",
+                    "arguments": '{"path":"src/a.cpp","start_line":1}',
+                },
+            ],
+        }
+        final = {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": '{"findings":[]}'}],
+                }
+            ],
+        }
+        options = {
+            "prompt": "Inspect code before returning findings.",
+            "model": "claude-opus-5-5",
+            "reasoning_effort": "xhigh",
+            "max_output_tokens": 64_000,
+            "max_tool_calls": 1,
+            "first_tool_required": True,
+        }
+        with (
+            patch.object(
+                model.urllib.request,
+                "urlopen",
+                side_effect=[Response(first), Response(final)],
+            ) as send,
+            patch.object(model, "read_file", return_value="1: evidence") as read,
+        ):
+            answer = model.openai_review("proxy-key", "patch", self.snapshot, **options)
+        self.assertEqual(json.loads(answer), {"findings": []})
+        read.assert_called_once()
+        sent = [json.loads(call.args[0].data) for call in send.call_args_list]
+        self.assertEqual([request["tool_choice"] for request in sent], ["auto", "none"])
+        self.assertEqual(sent[0]["reasoning"]["effort"], "xhigh")
+        self.assertEqual(sent[1]["input"][1], thinking)
+        self.assertEqual(sent[1]["input"][-1]["type"], "function_call_output")
+
+        with (
+            patch.object(
+                model.urllib.request, "urlopen", return_value=Response(final)
+            ) as send,
+            self.assertRaisesRegex(ValueError, "without inspecting"),
+        ):
+            model.openai_review("proxy-key", "patch", self.snapshot, **options)
+        send.assert_called_once()
+
     def test_audit_output_limit_preserves_partial_usage(self):
         result = {
             "status": "incomplete",

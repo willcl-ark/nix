@@ -337,13 +337,11 @@ class EvaluateTests(unittest.TestCase):
         ledger = spend.Ledger(
             self.root / "spend.sqlite3", review_limit_usd=1, monthly_limit_usd=20
         )
-        ppq_ledger = spend.Ledger(self.root / "ppq.sqlite3", review_limit_usd=2)
 
         def review(case, runtime, prompts, *args):
             self.assertEqual(prompts.profile.name, "high")
             self.assertEqual(runtime.budget.ledger.review_limit_micros, 5_000_000)
             self.assertEqual(runtime.budget.ledger.monthly_limit_micros, 20_000_000)
-            self.assertEqual(runtime.ppq_budget.ledger.review_limit_micros, 2_000_000)
             return pipeline.ReviewResult("High review.", [], False)
 
         with patch.object(
@@ -354,8 +352,6 @@ class EvaluateTests(unittest.TestCase):
                 "key",
                 self.root / "runs",
                 ledger,
-                ppq_api_key="ppq-key",
-                ppq_ledger=ppq_ledger,
             )
         result = json.loads(path.read_text())
         self.assertEqual(result["run"]["status"], "completed", result.get("error"))

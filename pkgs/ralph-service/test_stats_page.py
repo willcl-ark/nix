@@ -7,6 +7,22 @@ from ralph_service import jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
+    def test_adversarial_comparison_keeps_historical_gemini_and_counts_claude(self):
+        paired = stats._new_adversarial_comparison()
+        for secondary in ("adversarial_gemini", "adversarial_claude"):
+            debug = {
+                "stages": {
+                    name: {"status": "completed"} for name in ("adversarial", secondary)
+                },
+                "finding_attribution": [
+                    {"finding_id": secondary, "raised_by": [secondary]}
+                ],
+            }
+            stats._add_adversarial_comparison(paired, debug, [])
+        self.assertEqual(paired["completed_reviews"], 2)
+        self.assertEqual(paired["sole_accepted"]["adversarial_claude"], 1)
+        self.assertEqual(paired["sole_accepted"]["adversarial_gemini"], 1)
+
     def test_dashboard_renders_collected_stats_and_escapes_untrusted_findings(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

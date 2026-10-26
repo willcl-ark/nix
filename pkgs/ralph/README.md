@@ -36,12 +36,12 @@ calls a forge. Missing objects or history fail before model requests.
 Stdout contains review Markdown. Progress and errors go to stderr. `--output`
 writes a private versioned JSON artifact containing engine identity, base/head,
 merge base, actual diff base, native data, supported exports, usage and status.
-PPQ credentials are optional for local review. Supplying `--ppq-key-file` also
-requires an explicit `--ppq-review-budget-usd` allowance. The OpenAI default is
-USD 1.00. Use `--help` for budget and trusted local engine options.
+All stages share a default estimated review allowance of USD 5.00. Use `--help`
+for budget and trusted local engine options.
 
-The current engine can send its OpenAI requests through CLIProxyAPI while
-keeping PPQ on its own endpoint. Put the proxy URL in an engine configuration:
+The current engine sends Codex and Claude requests through the same
+OpenAI-compatible endpoint and access key. Configure CLIProxyAPI with both
+accounts and put its URL in an engine configuration:
 
 ```json
 {"openai_api_base": "http://127.0.0.1:8317/v1"}
@@ -51,7 +51,8 @@ Pass this file with `--engine-config` and use the proxy's access-key file with
 `--openai-key-file`. Ralph still supplies the prompts and executes tools; no
 coding CLI is launched. The URL is recorded in engine identity, so keep
 credentials out of it. Review stages and audits use this URL without falling
-back to the OpenAI endpoint on failure.
+back to the OpenAI endpoint on failure. Claude strict JSON schemas become
+prompt guidance at the proxy; Ralph parses and validates returned results.
 
 With subscription authentication, dollar totals are API-equivalent usage
 estimates, not subscription charges or quota measurements. CLIProxyAPI removes
@@ -240,7 +241,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Sol + Gemini<br/>in parallel when selected"]
+    overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Sol + Claude<br/>in parallel when selected"]
     adversarial --> focused["Selected focused audits<br/>run sequentially"]
     focused --> pool["Candidate pool"]
     classDef optional stroke-dasharray: 5 4
@@ -249,7 +250,8 @@ flowchart LR
 
 Focused audit order: concurrency, state, public_contract, build, tests,
 dead_code, design. Discovery can escalate coverage and add pending audits.
-Gemini requires PPQ; without it the adversarial stage runs Sol alone.
+Claude adversarial review requires `claude-opus-5-5` on the configured proxy.
+A failed Claude pass is reported as incomplete coverage.
 
 **3. Verify, edit, double-check Majors and render**
 
@@ -270,9 +272,9 @@ final edited title and body, with independent reads of the pinned base/head,
 before either the mirror review or GitHub export can publish them. It returns
 verdicts only and cannot rewrite, add, merge, or downgrade findings.
 
-Skipped audits do not make model calls. The companion service CLI requires both
-OpenAI and PPQ keys. Concept research is advisory: negative, failed or incomplete
-research never skips an independent, adversarial or focused code stage selected
+Skipped audits do not make model calls. All review stages use the configured
+OpenAI-compatible endpoint and key. Concept research is advisory. Negative,
+failed or incomplete research never skips an independent, adversarial or focused code stage selected
 for the review.
 Reviewers do not see other discovery passes' candidates. The verifier sees the
 pooled candidates, original review input, any archaeology and blind-alternative
@@ -285,7 +287,7 @@ does not receive concept research output or current PR discussion.
 | independent | gpt-6-luna | low | 4,000 | Full tool set |
 | script | gpt-6.1-sol | high | 25,000 | Original input; code and base history, no discussion or web tools |
 | adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |
-| adversarial_gemini | google/gemini-4-argon | high | 32,000 | Same tools and profiles, via PPQ |
+| adversarial_claude | claude-opus-5-5 | xhigh | 64,000 | Same tools and profiles, via the configured proxy |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
 | dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
@@ -297,8 +299,9 @@ does not receive concept research output or current PR discussion.
 | alternatives | Same as archaeologist | low | 4,000 | Neutral problem, goal and baseline; base-only code tools |
 | collator | gpt-6-luna | low | 6,000 | Accepted findings and conceptual assessment; no tools |
 
-Both verifiers' final requests with tools disabled have a 600-second socket timeout.
-Other model requests retain the 180-second timeout.
+Claude adversarial requests and both verifiers' final requests with tools
+disabled have a 600-second socket timeout. Other model requests retain the
+180-second timeout.
 
 Code tools find paths, read head/base files, read diffs and search code. The full
 tool set also reads base history and, when a live discussion reader is supplied,
@@ -318,8 +321,10 @@ two per response. Search fees and evidence-token headroom are reserved in the
 existing OpenAI allowance; opening or finding text within a page is not a paid
 search action. The early concept stage spends from the same capped review
 allowance, does not estimate savings and never stops later code stages.
-Script, dead_code, independent, adversarial and both verifier stages require a first inspection. At
-limits, a final turn uses collected evidence and must preserve uncertainty.
+Script, dead_code, independent, both adversarial passes and both verifier stages
+require a first inspection. Claude uses automatic tool selection because Opus
+5.5 rejects forced tool calls; Ralph checks that inspection occurred. At limits,
+a final turn uses collected evidence and must preserve uncertainty.
 
 The [dead-code audit](audits/dead_code.md) runs on production, test, script and
 build changes, including deletions and mechanical refactors. Ordinary docs-only
@@ -334,14 +339,14 @@ spending ceiling. These settings have not been tuned against live reviews.
 Custom prompt directories need `dead_code.md`, and complete custom model maps
 must include `dead_code`.
 
-OpenAI's default estimated review allowance is USD 1.00. Local PPQ use requires
-an explicit separate allowance; the companion service can leave it uncapped. Routing and discovery protect OpenAI verifier headroom,
-refreshed as candidates accumulate. Admission checks also protect a final model
+The default estimated review allowance is USD 5.00, shared by Codex and Claude.
+Routing and discovery protect verifier headroom, refreshed as candidates
+accumulate. Admission checks also protect a final model
 response after inspection. Budget limits can still prevent completion, including
 through competing workers' monthly spending. Failed discovery becomes a coverage
 limitation; failed verification publishes no unverified findings. Failed editing
 falls back to verified wording.
-The Major pass uses the remaining OpenAI allowance, reserving its own final
+The Major pass uses the remaining shared allowance, reserving its own final
 response. It has no extra allowance or protected share during discovery. A
 budget or API failure, invalid response, or missing decision withholds all
 pending Majors. Explicit `drop` and `unresolved` verdicts withhold those findings;
@@ -402,7 +407,7 @@ immutable snapshots. The original Luna decisions remain in its stage record;
 final decisions and finding attribution reflect the second pass. No editing
 runs after Sol verifies the public wording.
 
-Candidate findings are leads, not votes. Agreement between Sol, Gemini and focused
+Candidate findings are leads, not votes. Agreement between Sol, Claude and focused
 reviewers gives a claim no extra weight. A defect needs a reachable trigger and
 consequence, checked against the strongest code-based reason it might be false.
 Static proof can suffice; running a reproduction is not required. Defect
@@ -568,11 +573,14 @@ High uses gpt-6.1-sol for independent review, concurrency, state, dead code,
 design and verification. Core analysis and verification stages use at least
 high reasoning effort, retaining xhigh where already configured, and at least
 16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
-and the PPQ reviewer retain their default settings. Tool limits are unchanged.
+and the Claude reviewer retain their default settings. Claude stays at Opus
+5.5, `xhigh`, 64,000 output tokens and a 600-second timeout. Tool limits are
+unchanged.
 
-High multiplies the configured OpenAI review allowance by five. Its 128,000-token
+High multiplies the configured shared review allowance by five. Its 128,000-token
 verifier reserves at least $2.56 for its initial and finishing requests alone;
-the larger allowance leaves room for discovery. PPQ allowances are unchanged.
+the larger allowance leaves room for discovery. Claude consumes the same
+allowance.
 The default multiplier is one. An allowance is a spend cap, not a target.
 
 A resolved profile records every stage's model, reasoning effort, output ceiling,
@@ -580,6 +588,34 @@ and tool limits in the engine configuration snapshot and hash. Profiles keep
 routine, standard and sensitive tool limits explicit. Model overrides apply after
 profile selection; overriding the archaeologist model also selects that model
 for alternatives. Custom audit prompt directories contain prompts only.
+
+An engine configuration can override individual settings on any existing stage
+through `stages`. These partial overrides apply after profile selection and
+`models_json`. For example, to select Claude for verification:
+
+```json
+{
+  "openai_api_base": "http://127.0.0.1:8317/v1",
+  "stages": {
+    "verifier": {
+      "model": "claude-opus-5-5",
+      "reasoning_effort": "xhigh",
+      "max_output_tokens": 64000,
+      "timeout": 600,
+      "final_timeout": 600
+    }
+  }
+}
+```
+
+Pass this file with `--engine-config`. Unspecified settings retain their
+resolved defaults. Supported settings also include `max_tool_calls`,
+`max_context_calls`, `max_history_calls` and
+`max_web_search_calls_per_response`. `max_tool_calls` names all three tiers,
+`routine`, `standard` and `sensitive`. Unknown stages and fields are rejected;
+models must have known accounting rates. Ralph records the resolved settings in
+the profile snapshot and hash, including timeouts, for retries and evaluation.
+All stages continue to use the same endpoint, key and review allowance.
 
 ## Backport reviews
 

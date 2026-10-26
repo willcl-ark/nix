@@ -120,7 +120,6 @@ class ServiceTests(unittest.TestCase):
                 "metrics": {},
                 "skipped": bool(debug.get("skip")),
                 "budget": {},
-                "ppq_budget": None,
                 "attempt": debug,
             },
         }

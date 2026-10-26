@@ -206,8 +206,6 @@ def process_job(
     ledger,
     review_engine,
     allow_discussions=True,
-    ppq_api_key=None,
-    ppq_ledger=None,
     github_token=None,
     github_post_major_findings=False,
 ):
@@ -243,12 +241,6 @@ def process_job(
     budget = spend.RequestBudget(
         ledger,
         review_id=f"pr:{number}:{job['id']}:{job['generation']}",
-    )
-
-    ppq_budget = (
-        spend.RequestBudget(ppq_ledger, budget.review_id)
-        if ppq_ledger is not None
-        else None
     )
 
     def is_current():
@@ -381,9 +373,7 @@ def process_job(
                     runtime = engine.Runtime(
                         case=case,
                         api_key=api_key,
-                        ppq_api_key=ppq_api_key,
                         budget=budget,
-                        ppq_budget=ppq_budget,
                         is_current=is_current,
                         discussion_lookup=(
                             discussion_lookup(bot_config, number)
@@ -416,9 +406,6 @@ def process_job(
                             "metrics": {},
                             "skipped": True,
                             "budget": budget.summary(),
-                            "ppq_budget": (
-                                ppq_budget.summary() if ppq_budget is not None else None
-                            ),
                             "attempt": debug,
                         },
                     }
@@ -581,9 +568,6 @@ def process_job(
                             "metrics": runtime.metrics() if runtime else {},
                             "skipped": False,
                             "budget": _budget_summary(budget, debug, "budget"),
-                            "ppq_budget": _budget_summary(
-                                ppq_budget, debug, "ppq_budget"
-                            ),
                             "attempt": debug,
                         },
                     }
@@ -718,8 +702,6 @@ def worker(
     review_engine,
     allow_discussions=True,
     stop_event=None,
-    ppq_api_key=None,
-    ppq_ledger=None,
     github_token=None,
     github_post_major_findings=False,
 ):
@@ -761,8 +743,6 @@ def worker(
                 ledger,
                 job_engine,
                 allow_discussions,
-                ppq_api_key,
-                ppq_ledger,
                 github_token,
                 github_post_major_findings,
             )
@@ -937,7 +917,6 @@ def main():
         "--comment-marker", help="Hidden marker used to find the bot's editable comment"
     )
     parser.add_argument("--openai-key-file", type=Path)
-    parser.add_argument("--ppq-key-file", type=Path)
     parser.add_argument("--webhook-secret-file", type=Path)
     parser.add_argument("--forgejo-token-file", type=Path)
     parser.add_argument("--bot-login")
@@ -962,8 +941,7 @@ def main():
     parser.add_argument(
         "--models-json", type=Path, help="JSON model routing for each review stage"
     )
-    parser.add_argument("--review-budget-usd", type=float, default=1.00)
-    parser.add_argument("--ppq-review-budget-usd", type=float)
+    parser.add_argument("--review-budget-usd", type=float, default=5.00)
     parser.add_argument("--monthly-budget-usd", type=float)
     parser.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
     args = parser.parse_args()
@@ -996,7 +974,6 @@ def main():
         "repository",
         "forgejo_api",
         "openai_key_file",
-        "ppq_key_file",
         "webhook_secret_file",
         "forgejo_token_file",
         "bot_login",
@@ -1063,7 +1040,6 @@ def main():
     except (ImportError, TypeError, ValueError) as exc:
         parser.error(f"could not load review engine: {exc}")
     api_key = args.openai_key_file.read_text().strip()
-    ppq_api_key = args.ppq_key_file.read_text().strip()
     secret = args.webhook_secret_file.read_bytes().strip()
     forgejo_token = args.forgejo_token_file.read_text().strip()
     github_token = (
@@ -1071,13 +1047,7 @@ def main():
     )
     if github_token == "":
         parser.error("GitHub token file must not be empty")
-    if (
-        not api_key
-        or not ppq_api_key
-        or not secret
-        or not forgejo_token
-        or not args.bot_login
-    ):
+    if not api_key or not secret or not forgejo_token or not args.bot_login:
         parser.error("secret files must not be empty")
     args.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     args.state_dir.chmod(0o700)
@@ -1091,10 +1061,6 @@ def main():
         args.state_dir / "spend.sqlite3",
         review_limit_usd=args.review_budget_usd,
         monthly_limit_usd=args.monthly_budget_usd,
-    )
-    ppq_ledger = spend.Ledger(
-        args.state_dir / "ppq-spend.sqlite3",
-        review_limit_usd=args.ppq_review_budget_usd,
     )
     logging.info("review queue recovered_claims=%d workers=%d", recovered, args.workers)
     threading.Thread(
@@ -1118,8 +1084,6 @@ def main():
                 review_engine,
             ),
             kwargs={
-                "ppq_api_key": ppq_api_key,
-                "ppq_ledger": ppq_ledger,
                 "github_token": github_token,
                 "github_post_major_findings": args.github_post_major_findings,
             },

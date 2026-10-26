@@ -22,7 +22,8 @@ from .report import public_limits
 
 MICRODOLLARS = Decimal("1000000")
 LEDGERS = (("openai", "spend.sqlite3"), ("ppq", "ppq-spend.sqlite3"))
-ADVERSARIAL_STAGES = ("adversarial", "adversarial_gemini")
+# Include the retired Gemini stage when aggregating historical reviews.
+ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude", "adversarial_gemini")
 PUBLIC_LIMITATION_NOTES = [
     "Monthly trend uses ledger request accounting month.",
     "Model seconds are summed model turn elapsed_seconds, not wall time.",
@@ -1683,20 +1684,23 @@ def _new_adversarial_comparison():
         "shared_accepted": dict.fromkeys(ADVERSARIAL_STAGES, 0),
         "known_cost_micros": dict.fromkeys(ADVERSARIAL_STAGES, 0),
         "reserved_micros": dict.fromkeys(ADVERSARIAL_STAGES, 0),
-        "note": "Observed reviews with both OpenAI and Gemini adversarial stages completed only; this is not causal recall.",
+        "note": "Observed reviews with completed Codex and Claude (historically Gemini) adversarial stages only; this is not causal recall.",
     }
 
 
 def _add_adversarial_comparison(paired, debug, requests):
     stages = debug.get("stages") or {}
-    if not all(
-        isinstance(stages.get(name), dict) and stages[name].get("status") == "completed"
+    completed = {
+        name
         for name in ADVERSARIAL_STAGES
-    ):
+        if isinstance(stages.get(name), dict)
+        and stages[name].get("status") == "completed"
+    }
+    if "adversarial" not in completed or len(completed) < 2:
         return
     metrics = core_trace.stage_metrics(debug)
     paired["completed_reviews"] += 1
-    for name in ADVERSARIAL_STAGES:
+    for name in completed:
         paired["sole_accepted"][name] += metrics.get(name, {}).get(
             "sole_source_findings", 0
         )
@@ -1704,7 +1708,7 @@ def _add_adversarial_comparison(paired, debug, requests):
             "shared_findings", 0
         )
     for request in requests:
-        if request["stage"] in ADVERSARIAL_STAGES:
+        if request["stage"] in completed:
             paired["known_cost_micros"][request["stage"]] += request["cost_micros"]
             if request["status"] in RESERVED_STATUSES:
                 paired["reserved_micros"][request["stage"]] += request[

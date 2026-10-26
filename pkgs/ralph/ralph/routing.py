@@ -206,6 +206,7 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
                 ].reasoning_effort,
                 response_schema=ROUTER_SCHEMA,
                 debug_record=record,
+                timeout=prompt_config.profile.stages["router"].timeout,
             )
             record["status"] = response["status"]
             record["raw_output"] = answer

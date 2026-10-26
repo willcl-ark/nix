@@ -322,8 +322,7 @@ class PipelineTests(unittest.TestCase):
         reviewer,
         editor=None,
         budget=None,
-        ppq_api_key=None,
-        ppq_budget=None,
+        api_base=None,
         archaeology_enabled=False,
         backport_evidence=None,
         review_feedback=None,
@@ -349,12 +348,12 @@ class PipelineTests(unittest.TestCase):
             runtime = engine.Runtime(
                 case=case,
                 api_key="key",
-                ppq_api_key=ppq_api_key,
                 budget=budget,
-                ppq_budget=ppq_budget,
                 discussion_lookup=lambda name, args: "Discussion",
                 attempt=self.debug,
             )
+            if api_base is not None:
+                runtime.openai_api_base = api_base
             self.result = pipeline.review_with_independent_passes(
                 case,
                 runtime,
@@ -685,10 +684,14 @@ class PipelineTests(unittest.TestCase):
     ):
         self.tier, self.audits = "sensitive", []
         self.profiles = ["consensus", "wallet"]
-        openai_budget = Mock()
-        ppq_budget = Mock()
-        openai_budget.summary.return_value = {"limit_usd": "1", "provider": "openai"}
-        ppq_budget.summary.return_value = {"limit_usd": "1", "provider": "ppq"}
+        high_prompts = config.PromptConfig.load(profile="high")
+        self.assertEqual(
+            high_prompts.profile.stages["adversarial_claude"],
+            self.prompts.profile.stages["adversarial_claude"],
+        )
+        self.prompts = high_prompts
+        budget = Mock()
+        budget.summary.return_value = {"limit_usd": "1"}
         rendezvous = Barrier(2)
         inputs = {}
         candidate_ids = [f"{stage}:1" for stage in pipeline.ADVERSARIAL_STAGES]
@@ -701,15 +704,16 @@ class PipelineTests(unittest.TestCase):
                     kwargs["prompt"],
                     kwargs["tools"],
                 )
-                if stage in pipeline.PPQ_ADVERSARIAL_STAGES:
-                    self.assertIs(kwargs["budget"], ppq_budget)
-                    self.assertEqual(args[0], "ppq-key")
-                    self.assertEqual(kwargs["model"], self.prompts.models[stage])
-                    self.assertEqual(kwargs["api_base"], "https://api.ppq.ai/v1")
+                self.assertIs(kwargs["budget"], budget)
+                self.assertEqual(args[0], "key")
+                self.assertEqual(kwargs["api_base"], "http://proxy/v1")
+                self.assertEqual(kwargs["model"], self.prompts.models[stage])
+                if stage == "adversarial_claude":
+                    self.assertTrue(kwargs["first_tool_required"])
+                    self.assertEqual(kwargs["timeout"], 600)
+                    self.assertEqual(kwargs["final_timeout"], 600)
                 else:
-                    self.assertIs(kwargs["budget"], openai_budget)
-                    self.assertEqual(args[0], "key")
-                    self.assertNotIn("api_base", kwargs)
+                    self.assertTrue(kwargs["first_tool_required"])
                 rendezvous.wait(timeout=5)
                 return discovery([candidate()])
             if stage == "verifier":
@@ -729,20 +733,19 @@ class PipelineTests(unittest.TestCase):
                 )
             return discovery()
 
-        self.run_review(
-            review, ppq_api_key="ppq-key", budget=openai_budget, ppq_budget=ppq_budget
-        )
-        ppq_budget.protect.assert_not_called()
-        self.assertEqual(self.debug["ppq_budget"], ppq_budget.summary.return_value)
-        self.assertEqual(self.debug["budget"], openai_budget.summary.return_value)
-        self.assertEqual(inputs["adversarial"], inputs["adversarial_gemini"])
+        self.run_review(review, budget=budget, api_base="http://proxy/v1")
+        budget.protect.assert_called()
+        for call in budget.protect.call_args_list:
+            self.assertNotIn("adversarial_claude", call.kwargs["exempt_stages"])
+        self.assertEqual(self.debug["budget"], budget.summary.return_value)
+        self.assertEqual(inputs["adversarial"], inputs["adversarial_claude"])
         self.assertEqual(
-            self.debug["stages"]["adversarial_gemini"]["status"], "completed"
+            self.debug["stages"]["adversarial_claude"]["status"], "completed"
         )
         finding = self.debug["finding_attribution"][0]
         self.assertEqual(
             finding["raised_by"],
-            ["adversarial", "adversarial_gemini"],
+            ["adversarial", "adversarial_claude"],
         )
         self.assertEqual(
             finding["raised_by_models"],

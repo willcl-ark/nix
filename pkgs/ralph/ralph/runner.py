@@ -46,9 +46,6 @@ def _result(case, runtime, selected_engine, status, *, skipped=False, failure=Fa
             "budget": _budget_summary(
                 runtime.budget, runtime.attempt, "budget", failure=failure
             ),
-            "ppq_budget": _budget_summary(
-                runtime.ppq_budget, runtime.attempt, "ppq_budget", failure=failure
-            ),
             "attempt": runtime.attempt,
         },
     }

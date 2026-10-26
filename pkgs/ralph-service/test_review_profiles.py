@@ -77,7 +77,7 @@ class ProfileTests(unittest.TestCase):
         old = json.loads(json.dumps(self.high.identity))
         stages = old["config"]["profile"]["stages"]
         stages["adversarial_deepseek"] = {
-            **stages["adversarial_gemini"],
+            **stages["adversarial_claude"],
             "model": "deepseek/deepseek-v4-pro-0813",
         }
         self.jobs.enqueue(41, "master", "a" * 40, "opened", engine_identity=old)

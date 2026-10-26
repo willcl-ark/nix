@@ -154,9 +154,7 @@ def parser():
     review.add_argument("--engine-config", type=Path)
     review.add_argument("--archaeology", choices=("auto", "on", "off"))
     review.add_argument("--openai-key-file", type=Path, required=True)
-    review.add_argument("--ppq-key-file", type=Path)
-    review.add_argument("--review-budget-usd", type=float, default=1.00)
-    review.add_argument("--ppq-review-budget-usd", type=float)
+    review.add_argument("--review-budget-usd", type=float, default=5.00)
     review.add_argument("--prompt-file", type=Path)
     review.add_argument("--audit-prompt-dir", type=Path)
     review.add_argument("--models-json", type=Path)
@@ -229,13 +227,6 @@ def _review(args, cancellation):
         )
         args.review_budget_usd *= multiplier
         api_key = _key(args.openai_key_file)
-        if args.ppq_key_file is not None and args.ppq_review_budget_usd is None:
-            raise ValueError(
-                "PPQ requires an explicit --ppq-review-budget-usd allowance"
-            )
-        if args.ppq_key_file is None and args.ppq_review_budget_usd is not None:
-            raise ValueError("--ppq-review-budget-usd requires --ppq-key-file")
-        ppq_key = _key(args.ppq_key_file) if args.ppq_key_file else None
         with tempfile.TemporaryDirectory(prefix="ralph-review-") as ledger_dir:
             review_id = str(uuid.uuid4())
             budget = spend.RequestBudget(
@@ -243,17 +234,6 @@ def _review(args, cancellation):
                     Path(ledger_dir) / "spend.sqlite3", args.review_budget_usd
                 ),
                 review_id,
-            )
-            ppq_budget = (
-                spend.RequestBudget(
-                    spend.Ledger(
-                        Path(ledger_dir) / "ppq-spend.sqlite3",
-                        args.ppq_review_budget_usd,
-                    ),
-                    review_id,
-                )
-                if ppq_key is not None
-                else None
             )
             with repository.local_snapshot(
                 args.repo, args.target, base=args.base
@@ -277,9 +257,7 @@ def _review(args, cancellation):
                 runtime = engine.Runtime(
                     case=case,
                     api_key=api_key,
-                    ppq_api_key=ppq_key,
                     budget=budget,
-                    ppq_budget=ppq_budget,
                     is_current=lambda: cancellation["signal"] is None,
                 )
                 if archaeology is not None:
@@ -335,7 +313,6 @@ def _review(args, cancellation):
                 result["target"] = target
                 result["run"]["allowances"] = {
                     "openai_usd": args.review_budget_usd,
-                    "ppq_usd": args.ppq_review_budget_usd,
                 }
                 if cancellation["signal"]:
                     code = 128 + cancellation["signal"]

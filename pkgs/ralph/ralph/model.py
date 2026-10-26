@@ -551,6 +551,7 @@ def run_audit(
     is_current=None,
     debug=None,
     api_base="https://api.openai.com/v1",
+    timeout=180,
 ):
     model = model_name
     limits = _limit_metrics(output_tokens=max_output_tokens)
@@ -575,7 +576,14 @@ def run_audit(
         }
     try:
         result, payload, elapsed = request_response(
-            api_key, data, name, on_response, budget, is_current, api_base=api_base
+            api_key,
+            data,
+            name,
+            on_response,
+            budget,
+            is_current,
+            api_base=api_base,
+            timeout=timeout,
         )
     except StaleReview:
         if debug is not None:
@@ -711,7 +719,7 @@ def openai_review(
             "none"
             if calls_used >= max_tool_calls or turn == max_tool_calls
             else "required"
-            if turn == 0 and first_tool_required
+            if turn == 0 and first_tool_required and not model.startswith("claude-")
             else "auto"
         )
         data = {
@@ -732,11 +740,7 @@ def openai_review(
             )
             data["max_tool_calls"] = per_response_search_limit
             data["include"] = ["web_search_call.action.sources"]
-        # Gemini rejects a JSON response format with a forced tool call.
-        # The first turn must inspect code; subsequent turns enforce the schema.
-        if response_schema is not None and not (
-            model == "google/gemini-4-argon" and tool_choice == "required"
-        ):
+        if response_schema is not None:
             data["text"] = {
                 "format": {
                     "type": "json_schema",
@@ -1025,5 +1029,7 @@ def openai_review(
                 stage_debug["status"] = "empty"
                 stage_debug["error"] = "OpenAI response contained no review text"
             raise ValueError("OpenAI response contained no review text")
+        if first_tool_required and tools and max_tool_calls > 0 and calls_used == 0:
+            raise ValueError("Review returned without inspecting repository evidence")
         return text
     raise ValueError("OpenAI review exceeded model turn limit")

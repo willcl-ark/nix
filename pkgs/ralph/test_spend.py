@@ -98,6 +98,32 @@ class SpendTests(unittest.TestCase):
         self.assertTrue(supports_model("gpt-6.1-sol"))
         self.assertFalse(supports_model("gpt-6-luna-unrecognized"))
 
+    def test_claude_cache_accounting_has_no_gpt_long_context_surcharge(self):
+        self.assertEqual(
+            str(
+                price_usd(
+                    "claude-opus-5-5",
+                    {
+                        "input_tokens": 1_000_000,
+                        "input_tokens_details": {
+                            "cached_tokens": 100_000,
+                            "cache_write_tokens": 100_000,
+                        },
+                        "output_tokens": 1_000,
+                    },
+                )
+            ),
+            "4.040000",
+        )
+        ledger = Ledger(self.path, input_padding_tokens=0)
+        request = {"input": "x" * 300_000, "max_output_tokens": 1_000}
+        with_output = ledger.reserve_estimate_micros("claude-opus-5-5", request)
+        without_output = ledger.reserve_estimate_micros(
+            "claude-opus-5-5", {**request, "max_output_tokens": 0}
+        )
+        # The serialized output limit differs in length by three bytes.
+        self.assertEqual(with_output - without_output, 20_000 + 3 * 8)
+
     def test_missing_usage_is_unknown_and_missing_cache_writes_is_conservative(self):
         self.assertIsNone(price_usd("gpt-6-luna", {"input_tokens": 10}))
         usage = {

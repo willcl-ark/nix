@@ -68,8 +68,6 @@ let
     (toString cfg.reviewBudgetUsd)
     "--openai-key-file"
     cfg.openaiKeyFile
-    "--ppq-key-file"
-    cfg.ppqKeyFile
     "--webhook-secret-file"
     cfg.webhookSecretFile
     "--forgejo-token-file"
@@ -93,10 +91,6 @@ let
     cfg.reportDir
     "--report-base-url"
     cfg.reportBaseUrl
-  ]
-  ++ lib.optionals (cfg.ppqReviewBudgetUsd != null) [
-    "--ppq-review-budget-usd"
-    (toString cfg.ppqReviewBudgetUsd)
   ]
   ++ lib.optionals (cfg.monthlyBudgetUsd != null) [
     "--monthly-budget-usd"
@@ -217,7 +211,7 @@ in
 
     reviewBudgetUsd = lib.mkOption {
       type = lib.types.addCheck lib.types.number (value: value > 0);
-      default = 1.00;
+      default = 5.00;
       description = ''
         Base per-review spending ceiling in USD. The high profile uses five
         times this allowance. Each API request reserves a
@@ -225,12 +219,6 @@ in
         allowance report incomplete coverage.
         Reservations are estimates, not an invoice cap.
       '';
-    };
-
-    ppqReviewBudgetUsd = lib.mkOption {
-      type = lib.types.nullOr (lib.types.addCheck lib.types.number (value: value > 0));
-      default = null;
-      description = "Optional per-review spending ceiling in USD shared by the PPQ adversarial passes.";
     };
 
     followupBudgetUsd = lib.mkOption {
@@ -314,12 +302,7 @@ in
       type = lib.types.str;
       default = "https://api.openai.com/v1";
       example = "http://127.0.0.1:8317/v1";
-      description = "OpenAI-compatible Responses API base URL for the current engine and follow-up assessments. PPQ uses its own endpoint.";
-    };
-
-    ppqKeyFile = lib.mkOption {
-      type = lib.types.str;
-      description = "Path to a file containing the PPQ API key for Gemini adversarial reviews.";
+      description = "OpenAI-compatible Responses API base URL for the current engine, including Claude adversarial review, and follow-up assessments.";
     };
 
     webhookSecretFile = lib.mkOption {

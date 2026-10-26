@@ -9,7 +9,7 @@ from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
 from .repository import audit_developer_notes, focused_review_input
 from .spend import BudgetExceeded
 
-# Domain stages spend the review budget in a predictable order; the three
+# Domain stages spend the review budget in a predictable order; the two
 # adversarial models review the same evidence concurrently.
 # Domain correctness precedes design; verification retains protected headroom.
 DISCOVERY_ORDER = (
@@ -23,8 +23,7 @@ DISCOVERY_ORDER = (
     "dead_code",
     "design",
 )
-PPQ_ADVERSARIAL_STAGES = ("adversarial_gemini",)
-ADVERSARIAL_STAGES = ("adversarial", *PPQ_ADVERSARIAL_STAGES)
+ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude")
 FULL_CONTEXT_STAGES = {
     "script",
     "dead_code",
@@ -129,8 +128,8 @@ def _run_stage(
                     or name in {"archaeologist", "alternatives"}
                 ),
                 response_schema=schema,
-                provider="ppq" if name in PPQ_ADVERSARIAL_STAGES else "openai",
-                final_timeout=600 if name in {"verifier", "major_verifier"} else 180,
+                timeout=settings.timeout,
+                final_timeout=settings.final_timeout,
             )
         else:
             answer, response = runtime.audit(
@@ -142,6 +141,7 @@ def _run_stage(
                 response_schema=schema,
                 reasoning_effort=effort,
                 debug_record=record,
+                timeout=settings.timeout,
             )
             if response["status"] != "completed":
                 raise protocol.InvalidReview("Stage response was incomplete")
@@ -482,8 +482,6 @@ def review_with_independent_passes(
     debug = runtime.debug
     budget = runtime.budget
     is_current = runtime.is_current
-    ppq_api_key = runtime.ppq_api_key
-    ppq_budget = runtime.ppq_budget
     research_evidence = case.research_evidence
     backport_evidence = case.backport_evidence
     feedback_packet = (
@@ -505,9 +503,6 @@ def review_with_independent_passes(
             "required_fixes": [],
             "limitations": ["No validated backport assessment is available."],
         }
-    if ppq_budget is not None:
-        for stage in PPQ_ADVERSARIAL_STAGES:
-            ppq_budget.exempt(stage)
     stages = debug.setdefault("stages", {})
     debug.setdefault("stage_outputs", {})
     candidates = []
@@ -605,7 +600,6 @@ def review_with_independent_passes(
                     "verifier",
                     "major_verifier",
                     "collator",
-                    *PPQ_ADVERSARIAL_STAGES,
                 },
             )
 
@@ -631,7 +625,7 @@ def review_with_independent_passes(
             prompt_config.instructions
             if name == "independent"
             else prompt_config.audit_prompts[
-                "adversarial" if name in PPQ_ADVERSARIAL_STAGES else name
+                "adversarial" if name in ADVERSARIAL_STAGES else name
             ]
         )
         if name in ADVERSARIAL_STAGES:
@@ -779,7 +773,7 @@ def review_with_independent_passes(
     while pending := [name for name in DISCOVERY_ORDER if name in selected - completed]:
         name = pending[0]
         protect_verification()
-        if name == "adversarial" and ppq_api_key:
+        if name == "adversarial":
             debug["pipeline_stage"] = "adversarial"
             with ThreadPoolExecutor(max_workers=len(ADVERSARIAL_STAGES)) as executor:
                 futures = {
@@ -805,7 +799,7 @@ def review_with_independent_passes(
             }
             debug["routing"]["selected"] = plan
             debug["routing"]["escalated_by"] = name
-    for name in (*DISCOVERY_ORDER, *PPQ_ADVERSARIAL_STAGES):
+    for name in (*DISCOVERY_ORDER, "adversarial_claude"):
         if name not in completed:
             stages[name] = {
                 "model": prompt_config.models[name],
@@ -813,8 +807,6 @@ def review_with_independent_passes(
                 "turns": [],
                 "tools": [],
             }
-            if name in PPQ_ADVERSARIAL_STAGES and not ppq_api_key:
-                stages[name]["reason"] = "PPQ API key is not configured"
 
     protect_verification()
 
@@ -843,6 +835,7 @@ def review_with_independent_passes(
                 response_schema=feedback.FEEDBACK_SCHEMA,
                 reasoning_effort=settings.reasoning_effort,
                 debug_record=record,
+                timeout=settings.timeout,
             )
             if response["status"] != "completed":
                 raise protocol.InvalidReview("Feedback response was incomplete")
@@ -961,8 +954,6 @@ def review_with_independent_passes(
     ]
     if budget is not None:
         debug["budget"] = budget.summary()
-    if ppq_budget is not None:
-        debug["ppq_budget"] = ppq_budget.summary()
     debug.pop("pipeline_stage", None)
     content = protocol.render(
         findings,

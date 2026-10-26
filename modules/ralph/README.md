@@ -68,8 +68,10 @@ concept research, shares the existing OpenAI allowance, and protects verifier
 headroom. Partial coverage reaches the verifier as named inspection gaps and
 remains visible in reports and stats. See the [specialist design](../../pkgs/ralph/README.md#script-and-transaction-policy-specialist).
 
-Sensitive changes receive parallel independent Sol 6.1 and Gemini 4 Argon
-adversarial reviews. Gemini uses PPQ at `https://api.ppq.ai/v1/responses`.
+Sensitive changes receive parallel independent Sol 6.1 and Claude Opus 5.5
+adversarial reviews. Claude uses `claude-opus-5-5` at `xhigh` through the same
+configured OpenAI-compatible proxy, with a 64,000-token response allowance and
+600-second request timeout in both review profiles.
 Selected consensus, wallet, and P2P profiles add the same domain instructions
 to both reviews. Concurrency covers C++ lifetime, locks and shared state; state
 covers persistence and recovery. Public-contract and build audits cover exposed
@@ -127,9 +129,8 @@ discovery, and code review still runs every selected stage.
 The [core stage table](../../pkgs/ralph/README.md#stages-models-and-evidence)
 lists the default models, reasoning effort, response token ceilings and evidence
 access for every stage. Token ceilings cover reasoning and visible output
-combined. Debug output records the settings and actual usage. OpenAI stages
-share their per-review spending ceiling. The two PPQ passes share a separate
-ledger and have no spending ceiling by default.
+combined. Debug output records the settings and actual usage. All review stages,
+including Claude, share their per-review spending ceiling and ledger.
 
 The public review presents findings first, then accepted design and concept
 concerns under "Design and approach", then optional "Alternatives". Empty
@@ -179,7 +180,7 @@ structured results and report diagnostics. `potential_vulnerability`,
 the finding deserves publication. This uses the existing verifier call and
 does not select additional audits or change publication behavior.
 
-The default OpenAI per-review spending ceiling is USD 1.00. It is an allowance for
+The default per-review spending ceiling is USD 5.00. It is an allowance for
 complex reviews, not a target spend. Lightweight routing still skips both
 adversarial passes and irrelevant specialist stages. Before each API request
 ralph reserves a conservative input/output cost estimate, holding some allowance
@@ -271,7 +272,8 @@ prove the review would improve with more allowance.
 
 The Usage page shows total API cost for today, this week and this month, with
 daily, weekly and monthly charts covering the last 30 days, 12 weeks and 12
-months. These totals include OpenAI reviews, PPQ reviews and follow-up requests.
+months. These totals include current reviews, historical PPQ reviews and
+follow-up requests.
 Periods use request start times in UTC, Monday-starting weeks and calendar
 months; current periods are to date. Older requests have only an accounting
 month, so their costs remain in monthly totals and are identified as undated
@@ -360,8 +362,8 @@ listener at `ralph.example.org`:
     forgejoApi = "https://git.example.org/api/v1/repos/owner/repo";
     botLogin = "ralph";
 
-    openaiKeyFile = "/run/secrets/ralph/openai-key";
-    ppqKeyFile = "/run/secrets/ralph/ppq-key";
+    openaiApiBase = "http://127.0.0.1:8317/v1";
+    openaiKeyFile = "/run/secrets/ralph/proxy-key";
     webhookSecretFile = "/run/secrets/ralph/webhook-secret";
     forgejoTokenFile = "/run/secrets/ralph/forgejo-token";
   };
@@ -373,10 +375,10 @@ Set the Forgejo webhook to `POST` JSON to
 and store the same value in `webhookSecretFile`. Select custom pull request
 events.
 
-## Codex subscription trial through CLIProxyAPI
+## Subscription inference through CLIProxyAPI
 
 Import `will-nix.nixosModules.cli-proxy-api` alongside the Ralph module and
-provision the proxy's runtime configuration and Codex login as described in
+provision the proxy's runtime configuration and Codex and Claude logins. See
 the [CLIProxyAPI module](../cli-proxy-api/README.md). Then configure Ralph:
 
 ```nix
@@ -391,15 +393,17 @@ services.ralph = {
 ```
 
 The key file contains the proxy's client access key, not the subscription OAuth
-token. OpenAI review stages, audits and follow-up assessments use the proxy;
-PPQ reviewers keep their own endpoint and key. Ralph retains its prompts and
-tool execution. A failed proxy request does not fall back to the paid OpenAI API.
+token. All review stages, including Claude adversarial review, and follow-up
+assessments use the proxy and the same key. Ralph retains its prompts and tool
+execution. A failed proxy request does not fall back to the paid OpenAI API.
+The proxy converts Claude's strict JSON schema to prompt guidance; Ralph still
+parses and validates the response before accepting it.
 
 Stop new review intake and let active work finish before changing the endpoint
 and key together. Queued jobs and frozen evaluations retain their recorded
 engine configuration; requeue or recapture them for the new endpoint. Verify
-the proxy's authenticated model list contains the configured OpenAI model IDs,
-then run one local review with the proxy URL in `--engine-config` and inspect
+the proxy's authenticated model list contains the configured Codex model IDs
+and `claude-opus-5-5`, then run one local review with the proxy URL in `--engine-config` and inspect
 its result before resuming the service queue. The local command does not publish
 review comments.
 
@@ -408,7 +412,8 @@ estimates for subscription-backed calls. They do not measure subscription quota
 or charges. CLIProxyAPI strips Codex's `max_output_tokens`, so the requested
 output cap no longer bounds each response or its reservation. A response can
 exceed the local allowance before returned usage is settled. Subscription limits
-are enforced upstream. PPQ retains its existing paid accounting.
+are enforced upstream. The old PPQ ledger remains readable for historical
+statistics; new reviews do not use PPQ.
 
 ## Options
 
@@ -422,7 +427,6 @@ Required deployment options:
   `/api/v1/repos/owner/repo`.
 - `services.ralph.openaiKeyFile`: file containing the OpenAI API
   key or the configured proxy's client access key.
-- `services.ralph.ppqKeyFile`: file containing the PPQ API key.
 - `services.ralph.webhookSecretFile`: file containing the Forgejo
   webhook secret.
 - `services.ralph.forgejoTokenFile`: file containing the Forgejo API
@@ -461,7 +465,7 @@ be derived from `forgejoApi`.
   its resolved settings when queuing each run. Do not put secrets in it.
   The current engine accepts resolved `prompts`, or `prompt_file`,
   `audit_prompt_dir` and `models_json`, plus `profile`, `routing_mode`, `archaeology` and
-  `blind_alternatives` and `openai_api_base`.
+  `blind_alternatives`, `openai_api_base` and `stages`.
   The service enables archaeology for PR context with discussion access.
 
 The current-engine options `promptFile`, `auditPromptDir`, `modelsJson` and
@@ -475,6 +479,27 @@ private unless an engine explicitly provides a supported export.
 It sets the current engine's OpenAI-compatible Responses endpoint and the
 follow-up endpoint. An explicit `engineConfig.openai_api_base` takes precedence
 for both. Credentials belong only in `openaiKeyFile`, never in the URL.
+
+Use `engineConfig.stages` to override individual settings on any existing
+review stage. Overrides apply after the selected `default` or `high` profile
+and `modelsJson`. Unspecified settings keep their resolved defaults. For example,
+to use Claude for verification as well as adversarial review:
+
+```nix
+services.ralph.engineConfig.stages.verifier = {
+  model = "claude-opus-5-5";
+  reasoning_effort = "xhigh";
+  max_output_tokens = 64000;
+  timeout = 600;
+  final_timeout = 600;
+};
+```
+
+The same map accepts inspection limits such as `max_tool_calls`,
+`max_context_calls` and `max_history_calls`. `max_tool_calls` names all three
+tiers, `routine`, `standard` and `sensitive`. Unknown stages and fields are
+rejected. Resolved overrides are recorded in the profile identity and retained
+for retries and frozen evaluation. They do not change follow-up settings.
 
 Jobs retain their selected profile and resolved engine configuration across
 retries and restarts. Each attempt records its actual engine code identity.
@@ -514,19 +539,17 @@ older cases before replaying them.
 
 ## Cost and routing options
 
-- `reviewBudgetUsd = 1.00`: base per-review spending ceiling. The `high` profile
-  uses five times this OpenAI allowance. It spans retries and is not a target
-  spend. The PPQ allowance and shared monthly ceiling are unchanged.
-- `ppqReviewBudgetUsd = null`: optional ceiling shared by the PPQ passes, using
-  `ppq-spend.sqlite3`. Each PPQ pass preserves room for its own final response.
-- `monthlyBudgetUsd = null`: optional OpenAI ceiling on the month's recorded charges
+- `reviewBudgetUsd = 5.00`: base per-review spending ceiling. The `high` profile
+  uses five times this shared allowance. It spans retries and is not a target
+  spend. Claude uses the same allowance; the monthly ceiling is unchanged.
+- `monthlyBudgetUsd = null`: optional ceiling on the month's recorded charges
   and outstanding reservations.
 - `routingMode = "enabled"`: apply conservative routing.
 - `routingMode = "shadow"`: record the proposed route while requesting every
   audit. This costs more and still respects the same allowance.
 - `routingMode = "full"`: request every audit without calling the router.
 - `modelsJson = null`: optional per-stage replacement for the model map.
-  The map must include router, independent, script, adversarial, adversarial_gemini, concurrency, state,
+  The map must include router, independent, script, adversarial, adversarial_claude, concurrency, state,
   public_contract, tests, dead_code, design, build, archaeologist, verifier,
   major_verifier and collator.
   Prices must also be supported by ralph's ledger.
@@ -602,8 +625,7 @@ evidence and the model continues from code and the frozen input:
 ralph-evaluate run \
   --state-dir ./evaluation-state --output-dir ./results \
   --openai-key-file /run/secrets/openai-key \
-  --ppq-key-file /run/secrets/ppq-key \
-  --review-budget-usd 1.00 \
+  --review-budget-usd 5.00 \
   ./cases/case-123-*.json
 ```
 
@@ -627,14 +649,10 @@ See [the evaluation guide](evaluation.md) for offline summaries and a human
 scorecard for comparing coverage and cost. Summaries use recorded attribution;
 they do not automatically decide whether a finding is correct or useful.
 
-The service and evaluation run command require `--ppq-key-file`. Compare
-`adversarial` and `adversarial_gemini` in debug stage metrics for sole/shared
-accepted findings and published, dropped or unresolved candidates. OpenAI has a
-USD 1.00 default ceiling; PPQ passes have no ceiling by default. Incomplete
+Compare `adversarial` and `adversarial_claude` in debug stage metrics for
+sole/shared accepted findings and published, dropped or unresolved candidates.
+All review stages share the default USD 5.00 estimated allowance. Incomplete
 passes are not evidence of model quality.
-PPQ rates use the model catalog input, output and cache prices. Unknown
-cache-write usage uses the higher input rate as a conservative estimate.
-See [PPQ integration guide](https://ppq.ai/llms.txt).
 
 ### GitHub major findings
 
@@ -709,7 +727,7 @@ cannot restart services.
 
 The `default` profile preserves the existing review settings. `high` increases
 model capability and reasoning for core analysis and verification while keeping
-routine stages and the external adversarial models unchanged. Stage settings
+routine stages and Claude Opus 5.5 at `xhigh` unchanged. Stage settings
 include model, reasoning effort, response token ceiling and tool-call limits.
 See the [core profile documentation](../../pkgs/ralph/README.md) for details.
 Normal webhook reviews use `default` unless `engineConfig.profile` selects
@@ -731,8 +749,8 @@ The monitor checks for completed reviews and terminal job failures every 30
 seconds. Each check groups new terminal failures into one alert. The daily
 digest runs at 21:00 UTC and reports the preceding 24 hours' observed review
 completions and failures, current queue depth, and estimated spend by request
-date across the OpenAI, PPQ and follow-up ledgers. Missing ledgers and unknown
-costs are identified. The reporting window runs from 21:00 to 21:00 UTC.
+date across the current review, historical PPQ and follow-up ledgers. Missing
+ledgers and unknown costs are identified. The reporting window runs from 21:00 to 21:00 UTC.
 Counts use observation time because the job queue does
 not record completion timestamps.
 

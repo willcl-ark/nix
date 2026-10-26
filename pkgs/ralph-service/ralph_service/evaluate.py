@@ -336,8 +336,6 @@ def run_case(
     audit_dir=None,
     models_json=None,
     labels=None,
-    ppq_api_key=None,
-    ppq_ledger=None,
     blind_alternatives=None,
     engine_name=None,
     engine_config=None,
@@ -356,7 +354,6 @@ def run_case(
     }
     case_id = "unknown"
     budget = None
-    ppq_budget = None
     attempt = {}
     runtime = None
     review_id = None
@@ -452,13 +449,9 @@ def run_case(
         code_hash = source_code_sha256()
         review_limit = getattr(ledger, "review_limit_micros", None)
         monthly_limit = getattr(ledger, "monthly_limit_micros", None)
-        ppq_limit = getattr(ppq_ledger, "review_limit_micros", None)
         effective_config = {
             "bot": asdict(bot_config),
             "engine": engine_identity,
-            "ppq_review_budget_usd": None
-            if ppq_limit is None
-            else ppq_limit / 1_000_000,
             "review_budget_usd": None
             if review_limit is None
             else review_limit / 1_000_000,
@@ -517,11 +510,6 @@ def run_case(
                 raise ValueError("Frozen merge base mismatch")
             review_id = f"eval:{case_id}:{uuid.uuid4().hex}"
             budget = spend.RequestBudget(ledger, review_id)
-            ppq_budget = (
-                spend.RequestBudget(ppq_ledger, review_id)
-                if ppq_ledger is not None
-                else None
-            )
             artifact["review_id"] = review_id
             case = engine.ReviewCase(
                 review,
@@ -539,9 +527,7 @@ def run_case(
             runtime = engine.Runtime(
                 case=case,
                 api_key=api_key,
-                ppq_api_key=ppq_api_key,
                 budget=budget,
-                ppq_budget=ppq_budget,
                 allow_web_search=False,
                 attempt=attempt,
             )
@@ -576,7 +562,6 @@ def run_case(
                         "status": "failed",
                         "metrics": runtime.metrics() if runtime else {},
                         "budget": None,
-                        "ppq_budget": None,
                         "attempt": attempt,
                     },
                 }
@@ -587,12 +572,6 @@ def run_case(
             except Exception as exc:
                 artifact["run"]["budget"] = attempt.get("budget")
                 artifact["budget_error"] = type(exc).__name__
-        if ppq_budget is not None:
-            try:
-                artifact["run"]["ppq_budget"] = ppq_budget.summary()
-            except Exception as exc:
-                artifact["run"]["ppq_budget"] = attempt.get("ppq_budget")
-                artifact["ppq_budget_error"] = type(exc).__name__
         if isinstance(labels, dict) and case_id in labels:
             artifact["expected_findings"] = labels[case_id]
         config_hash = artifact.get("effective_config_sha256", "unknown")
@@ -1101,7 +1080,6 @@ def main(argv=None):
     run.add_argument("--state-dir", type=Path, required=True)
     run.add_argument("--output-dir", type=Path, required=True)
     run.add_argument("--openai-key-file", type=Path, required=True)
-    run.add_argument("--ppq-key-file", type=Path, required=True)
     run.add_argument("--engine")
     run.add_argument("--engine-config", type=Path)
     run.add_argument("--prompt-file", type=Path)
@@ -1114,8 +1092,7 @@ def main(argv=None):
         default=None,
         help="Run the eval-only blind alternatives experiment",
     )
-    run.add_argument("--review-budget-usd", type=float, default=1.00)
-    run.add_argument("--ppq-review-budget-usd", type=float)
+    run.add_argument("--review-budget-usd", type=float, default=5.00)
     run.add_argument("--monthly-budget-usd", type=float)
     run.add_argument(
         "--labels-json",
@@ -1217,15 +1194,10 @@ def main(argv=None):
         return 0
 
     api_key = read_secret(args.openai_key_file, "OpenAI key")
-    ppq_api_key = read_secret(args.ppq_key_file, "PPQ key")
     ledger = spend.Ledger(
         args.state_dir / "spend.sqlite3",
         review_limit_usd=args.review_budget_usd,
         monthly_limit_usd=args.monthly_budget_usd,
-    )
-    ppq_ledger = spend.Ledger(
-        args.state_dir / "ppq-spend.sqlite3",
-        review_limit_usd=args.ppq_review_budget_usd,
     )
     labels = (
         json.loads(args.labels_json.read_text(encoding="utf-8"))
@@ -1248,8 +1220,6 @@ def main(argv=None):
             args.audit_prompt_dir,
             args.models_json,
             labels,
-            ppq_api_key=ppq_api_key,
-            ppq_ledger=ppq_ledger,
             blind_alternatives=args.blind_alternatives,
             engine_name=args.engine,
             engine_config=(engine_config if args.engine_config else None),

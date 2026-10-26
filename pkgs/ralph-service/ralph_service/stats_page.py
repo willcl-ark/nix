@@ -883,7 +883,7 @@ def _paired_section(summary):
         | set(_mapping(paired.get("known_cost_micros")))
     )
     if not names:
-        body = "<p>No OpenAI/Gemini adversarial comparison was recorded.</p>"
+        body = "<p>No adversarial model comparison was recorded.</p>"
     else:
         rows = []
         sole = _mapping(paired.get("sole_accepted"))
@@ -916,7 +916,7 @@ def _paired_section(summary):
     note = _field(
         paired,
         "note",
-        default="Observed reviews with both OpenAI and Gemini adversarial stages completed only; this is not recall or causality.",
+        default="Observed reviews with completed adversarial pairs only; this is not recall or causality.",
     )
     return (
         '<section id="paired"><h2>Adversarial model comparison</h2>'

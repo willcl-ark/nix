@@ -70,11 +70,17 @@ those settings. It never loads the main-review prompt or complete model map.
 
 ## State and upgrades
 
-Keep `jobs.sqlite3`, both review spend databases, private traces, the shared Git
+Keep `jobs.sqlite3`, the review spend database, private traces, the shared Git
 object store and retained refs, public reports, and all of `followup/`.
 In particular, preserve follow-up initialization metadata, `assessments.sqlite3`,
 its spend database and checkout. The package split adds no state migration or
 second queue. The existing explicit pre-engine converter remains available.
+
+Codex and Claude requests share the proxy client key and `spend.sqlite3` review
+and monthly allowances. The default review allowance is $5, including Claude
+thinking and final-output reservations. No PPQ key or separate PPQ allowance
+is used for new reviews. Preserve any historical `ppq-spend.sqlite3`: statistics and status
+continue reading its costs.
 
 Daily and weekly cost tracking requires the request-timestamp migration in
 `ralph-service --state-dir DIR --migrate-state`. The NixOS module runs it before
@@ -133,8 +139,8 @@ severity exactly `major` adds `🚨 Major finding` in either form.
 Post `/status` in the configured channel to see service states, queue and
 result totals, and estimated costs. `/high <PR number>` requests a fresh review
 of an open PR in the configured repository using the high profile. It increases
-the harder core review stages and multiplies the OpenAI review allowance by
-five; the monthly cap and PPQ allowance stay unchanged. `/help` lists the
+the harder core review stages and multiplies the shared review allowance by
+five; the monthly cap stays unchanged. `/help` lists the
 commands. Commands are channel-only. All channel administrators may issue commands.
 Anonymous posts rely on Telegram's administrator posting permissions;
 identified senders must be current administrators. The monitor verifies bot

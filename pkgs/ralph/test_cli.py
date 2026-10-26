@@ -93,7 +93,7 @@ class CLITest(unittest.TestCase):
     def result(self):
         return json.loads(self.output.read_text())
 
-    def test_local_review_has_no_pr_or_ppq_requirement(self):
+    def test_local_review_has_no_pr_requirement(self):
         result = self.cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "# Test review\n")
@@ -102,10 +102,7 @@ class CLITest(unittest.TestCase):
         self.assertEqual(data["output"]["schema_version"], 17)
         self.assertEqual(data["output"]["exports"], {"custom": ["native"]})
         self.assertIsNone(data["output"]["data"]["source"])
-        self.assertIsNone(data["run"]["ppq_budget"])
-        self.assertEqual(
-            data["run"]["allowances"], {"openai_usd": 1.0, "ppq_usd": None}
-        )
+        self.assertEqual(data["run"]["allowances"], {"openai_usd": 5.0})
         self.assertEqual(data["run"]["budget"]["estimated_total_usd"], 0)
         self.assertEqual(data["target"]["requested"], "HEAD^..HEAD")
         self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o600)
@@ -126,7 +123,7 @@ class CLITest(unittest.TestCase):
         self.assertTrue(evidence["limitations"])
         self.assertEqual(self.git("for-each-ref", "refs/ralph/upstream"), "")
 
-    def test_high_profile_scales_only_openai_allowance(self):
+    def test_high_profile_scales_shared_allowance(self):
         from unittest.mock import patch
 
         from ralph import cli, current_engine, engine
@@ -134,7 +131,6 @@ class CLITest(unittest.TestCase):
         def run(case, runtime, configured):
             self.assertEqual(configured["profile"]["name"], "high")
             self.assertEqual(runtime.budget.ledger.review_limit_micros, 10_000_000)
-            self.assertEqual(runtime.ppq_budget.ledger.review_limit_micros, 3_000_000)
             return engine.Output("Review", {}, {})
 
         with patch.object(current_engine, "run", side_effect=run), patch("sys.stdout"):
@@ -145,12 +141,8 @@ class CLITest(unittest.TestCase):
                     str(self.repo),
                     "--openai-key-file",
                     str(self.key),
-                    "--ppq-key-file",
-                    str(self.key),
                     "--review-budget-usd",
                     "2",
-                    "--ppq-review-budget-usd",
-                    "3",
                     "--profile",
                     "high",
                     "--output",
@@ -158,11 +150,9 @@ class CLITest(unittest.TestCase):
                 ]
             )
         self.assertEqual(code, 0)
-        self.assertEqual(
-            self.result()["run"]["allowances"], {"openai_usd": 10.0, "ppq_usd": 3.0}
-        )
+        self.assertEqual(self.result()["run"]["allowances"], {"openai_usd": 10.0})
 
-    def test_proxy_routes_review_and_audit_without_redirecting_ppq(self):
+    def test_proxy_routes_both_providers_and_audits(self):
         import io
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -172,8 +162,6 @@ class CLITest(unittest.TestCase):
         proxy = "http://127.0.0.1:8317/v1"
         original = engine.load().identity["config_sha256"]
         self.configure(openai_api_base=proxy + "/")
-        ppq_key = self.root / "ppq-key"
-        ppq_key.write_text("ppq credential")
 
         def respond(request, **kwargs):
             data = json.loads(request.data)
@@ -194,18 +182,17 @@ class CLITest(unittest.TestCase):
             )
 
         def review(case, runtime, *args):
-            for provider in ("openai", "ppq"):
+            for stage_model in ("gpt-6-luna", "claude-opus-5-5"):
                 runtime.review(
-                    provider,
+                    stage_model,
                     "patch",
                     prompt="Review.",
-                    model_name="gpt-6-luna",
+                    model_name=stage_model,
                     tools=[],
                     max_tool_calls=0,
                     max_output_tokens=100,
                     reasoning_effort="low",
                     response_schema=None,
-                    provider=provider,
                 )
             runtime.audit(
                 "audit",
@@ -233,10 +220,6 @@ class CLITest(unittest.TestCase):
                     str(self.repo),
                     "--openai-key-file",
                     str(self.key),
-                    "--ppq-key-file",
-                    str(ppq_key),
-                    "--ppq-review-budget-usd",
-                    "1",
                     "--engine-config",
                     str(self.settings),
                     "--output",
@@ -248,7 +231,7 @@ class CLITest(unittest.TestCase):
             [call.args[0].full_url for call in send.call_args_list],
             [
                 proxy + "/responses",
-                "https://api.ppq.ai/v1/responses",
+                proxy + "/responses",
                 proxy + "/responses",
             ],
         )
@@ -256,7 +239,7 @@ class CLITest(unittest.TestCase):
             [call.args[0].get_header("Authorization") for call in send.call_args_list],
             [
                 "Bearer test credential",
-                "Bearer ppq credential",
+                "Bearer test credential",
                 "Bearer test credential",
             ],
         )

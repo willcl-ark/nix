@@ -17,6 +17,8 @@ FINAL_TOOL_OUTPUT_HEADROOM_TOKENS = 13_000
 WEB_SEARCH_CALL_MICROS = 10_000
 WEB_SEARCH_TOOL_TYPES = {"web_search"}
 RATES = {
+    # Conservatively price cache writes at the one-hour rate.
+    "claude-opus-5-5": (Decimal("4"), Decimal("0.2"), Decimal("8"), Decimal("20")),
     "deepseek/deepseek-v4-pro-0813": (
         Decimal("0.6963"),
         Decimal("0.02321"),
@@ -105,14 +107,7 @@ def price_usd(model, usage):
         cache_write_tokens = input_tokens - cached_tokens
     multiplier = (
         Decimal(2)
-        if model
-        not in {
-            "glm-5.3",
-            "z-ai/glm-5.3",
-            "deepseek/deepseek-v4-pro-0813",
-            "google/gemini-4-argon",
-        }
-        and input_tokens > THRESHOLD_TOKENS
+        if model.startswith("gpt-") and input_tokens > THRESHOLD_TOKENS
         else Decimal(1)
     )
     if multiplier == 2:
@@ -295,14 +290,7 @@ class Ledger:
         )
         multiplier = (
             Decimal(2)
-            if model
-            not in {
-                "glm-5.3",
-                "z-ai/glm-5.3",
-                "deepseek/deepseek-v4-pro-0813",
-                "google/gemini-4-argon",
-            }
-            and input_tokens > THRESHOLD_TOKENS
+            if model.startswith("gpt-") and input_tokens > THRESHOLD_TOKENS
             else Decimal(1)
         )
         input_rate = max(rates[:3]) * multiplier

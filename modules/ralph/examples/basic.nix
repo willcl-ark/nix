@@ -8,8 +8,8 @@
     forgejoApi = "https://git.example.org/api/v1/repos/owner/repo";
     botLogin = "ralph";
 
-    openaiKeyFile = "/run/secrets/ralph/openai-key";
-    ppqKeyFile = "/run/secrets/ralph/ppq-key";
+    openaiApiBase = "http://127.0.0.1:8317/v1";
+    openaiKeyFile = "/run/secrets/ralph/proxy-key";
     webhookSecretFile = "/run/secrets/ralph/webhook-secret";
     forgejoTokenFile = "/run/secrets/ralph/forgejo-token";
   };

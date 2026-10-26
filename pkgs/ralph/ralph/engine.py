@@ -37,9 +37,7 @@ class Runtime:
         *,
         case,
         api_key,
-        ppq_api_key=None,
         budget=None,
-        ppq_budget=None,
         is_current=None,
         discussion_lookup=None,
         allow_web_search=False,
@@ -52,9 +50,7 @@ class Runtime:
         self.case = case
         self.api_key = api_key
         self.openai_api_base = "https://api.openai.com/v1"
-        self.ppq_api_key = ppq_api_key
         self.budget = budget
-        self.ppq_budget = ppq_budget
         self.is_current = is_current
         self.discussion_lookup = discussion_lookup
         self.allow_web_search = allow_web_search
@@ -89,7 +85,6 @@ class Runtime:
         record=None,
         first_tool_required=False,
         research_evidence=None,
-        provider="openai",
         budget=_DEFAULT_BUDGET,
         api_base=None,
         timeout=180,
@@ -99,18 +94,10 @@ class Runtime:
 
         record = record if record is not None else {}
         self._records.append(record)
-        is_ppq = provider == "ppq"
-        api_key = self.ppq_api_key if is_ppq else self.api_key
-        selected_budget = (
-            (self.ppq_budget if is_ppq else self.budget)
-            if budget is _DEFAULT_BUDGET
-            else budget
-        )
-        selected_api_base = api_base or (
-            "https://api.ppq.ai/v1" if is_ppq else self.openai_api_base
-        )
+        selected_budget = self.budget if budget is _DEFAULT_BUDGET else budget
+        selected_api_base = api_base or self.openai_api_base
         return openai_review(
-            api_key,
+            self.api_key,
             input_text,
             self.case.snapshot,
             record,
@@ -156,6 +143,7 @@ class Runtime:
         response_schema,
         reasoning_effort="low",
         debug_record=None,
+        timeout=180,
     ):
         from .model import run_audit
 
@@ -174,6 +162,7 @@ class Runtime:
             model_name=model_name,
             max_output_tokens=max_output_tokens,
             api_base=self.openai_api_base,
+            timeout=timeout,
         )
 
     def metrics(self):

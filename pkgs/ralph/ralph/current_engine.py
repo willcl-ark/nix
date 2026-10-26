@@ -53,6 +53,7 @@ def configure(value):
                 json.loads(Path(value["models_json"]).read_text(encoding="utf-8"))
             )
         )
+    profile = profile.with_stages(value.get("stages", {}))
     if any(
         not isinstance(prompt, str) or not prompt.strip()
         for prompt in prompts["audit_prompts"].values()

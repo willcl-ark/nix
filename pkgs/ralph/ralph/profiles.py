@@ -2,7 +2,7 @@
 
 import math
 from copy import copy
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
 
 from .spend import supports_model
 
@@ -19,14 +19,23 @@ class StageSettings:
     max_context_calls: int = 8
     max_history_calls: int = 8
     max_web_search_calls_per_response: int = 2
+    timeout: int = 180
+    final_timeout: int = 180
 
     def __post_init__(self):
         if not isinstance(self.model, str) or not supports_model(self.model):
             raise ValueError("Unsupported stage model")
         if self.reasoning_effort not in {"low", "medium", "high", "xhigh"}:
             raise ValueError("Unknown reasoning effort")
-        if set(self.max_tool_calls) != set(TIERS):
+        if not isinstance(self.max_tool_calls, dict) or set(self.max_tool_calls) != set(
+            TIERS
+        ):
             raise ValueError("Tool limits must name every review tier")
+        if any(
+            type(value) is not int or value <= 0
+            for value in (self.timeout, self.final_timeout)
+        ):
+            raise ValueError("Stage timeouts must be positive integers")
         limits = [
             self.max_output_tokens,
             *self.max_tool_calls.values(),
@@ -47,7 +56,6 @@ class StageSettings:
 class ReviewProfile:
     name: str
     stages: dict[str, StageSettings]
-    # OpenAI only; high leaves the PPQ reviewer and its allowance unchanged.
     budget_multiplier: float = 1
 
     def __post_init__(self):
@@ -63,7 +71,7 @@ class ReviewProfile:
             raise ValueError("Profile budget multiplier must be positive and finite")
 
     def apply_budget(self, ledger):
-        """Scale the OpenAI review cap while retaining the shared spend ledger."""
+        """Scale the review cap while retaining the shared spend ledger."""
         if ledger is None:
             return None
         selected = copy(ledger)
@@ -97,19 +105,52 @@ class ReviewProfile:
         }
         return replace(self, stages=stages)
 
+    def with_stages(self, overrides):
+        if not isinstance(overrides, dict):
+            raise ValueError("stages must be an object of stage settings")
+        stages = dict(self.stages)
+        setting_names = {field.name for field in fields(StageSettings)}
+        for name, settings in overrides.items():
+            if name not in stages:
+                raise ValueError(f"Unknown review stage: {name}")
+            if not isinstance(settings, dict):
+                raise ValueError(f"Settings for {name} must be an object")
+            unknown = settings.keys() - setting_names
+            if unknown:
+                raise ValueError(
+                    f"Unknown settings for {name}: {', '.join(sorted(unknown))}"
+                )
+            try:
+                stages[name] = replace(stages[name], **settings)
+            except ValueError as exc:
+                raise ValueError(f"Invalid settings for {name}: {exc}") from exc
+        return replace(self, stages=stages)
 
-def _stage(model="gpt-6-luna", effort="low", output=4_000, calls=None):
+
+def _stage(
+    model="gpt-6-luna",
+    effort="low",
+    output=4_000,
+    calls=None,
+    *,
+    timeout=180,
+    final_timeout=180,
+):
     limits = (
         dict(zip(TIERS, (12, 24, 48))) if calls is None else dict.fromkeys(TIERS, calls)
     )
-    return StageSettings(model, effort, output, limits)
+    return StageSettings(
+        model, effort, output, limits, timeout=timeout, final_timeout=final_timeout
+    )
 
 
 _DEFAULT_STAGES = {
     "router": _stage(calls=0),
     "independent": _stage(),
     "adversarial": _stage("gpt-6.1-sol", "high", 25_000, 48),
-    "adversarial_gemini": _stage("google/gemini-4-argon", "high", 32_000, 48),
+    "adversarial_claude": _stage(
+        "claude-opus-5-5", "xhigh", 64_000, 48, timeout=600, final_timeout=600
+    ),
     "script": _stage("gpt-6.1-sol", "high", 25_000, 48),
     "concurrency": _stage(effort="medium", output=8_000),
     "state": _stage(),
@@ -120,8 +161,8 @@ _DEFAULT_STAGES = {
     "build": _stage(),
     "archaeologist": _stage(calls=12),
     "alternatives": _stage(calls=12),
-    "verifier": _stage(effort="xhigh", output=128_000, calls=48),
-    "major_verifier": _stage("gpt-6.1-sol", "medium", 25_000, 48),
+    "verifier": _stage(effort="xhigh", output=128_000, calls=48, final_timeout=600),
+    "major_verifier": _stage("gpt-6.1-sol", "medium", 25_000, 48, final_timeout=600),
     "collator": _stage(output=6_000, calls=0),
 }
 CORE_STAGES = (
