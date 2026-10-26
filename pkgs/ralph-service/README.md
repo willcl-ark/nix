@@ -120,12 +120,12 @@ severity exactly `major` adds `🚨 Major finding` in either form.
 
 Post `/status` in the configured channel to see service states, queue and
 result totals, and estimated costs. `/help` lists the commands. Commands are
-read-only and channel-only. Keep the channel owner and bot as the only
-administrators allowed to post. Telegram channel posts conceal the author's
-user ID, so the monitor checks this administrator restriction for every
-command instead of trusting a displayed signature. Other channel members
-cannot post commands. Commands are ignored if the restriction cannot be
-verified, and direct messages are ignored.
+read-only and channel-only. All channel administrators may issue commands.
+Anonymous posts rely on Telegram's administrator posting permissions;
+identified senders must be current administrators. The monitor verifies bot
+posting permission instead of trusting displayed signatures. Direct messages
+are ignored. Replies are sent as soon as the summary is ready and take
+priority over background posts, while honoring Telegram's retry delay.
 
 Use a bot token from `@BotFather`, grant the bot channel administrator
 permission to post, and keep its token in a runtime secret file readable by

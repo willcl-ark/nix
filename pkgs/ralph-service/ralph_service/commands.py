@@ -1,5 +1,6 @@
-"""Owner-only commands posted in the configured Telegram channel."""
+"""Administrator commands posted in the configured Telegram channel."""
 
+import logging
 from contextlib import closing
 
 from . import telegram
@@ -22,31 +23,24 @@ def _command(post, configured_chat_id, bot):
     return command if command in {"/status", "/help"} else None
 
 
-def _owner_only(token, post, bot):
+def _admin_only(token, post, bot):
     chat_id = post["chat"]["id"]
     sender_chat = post.get("sender_chat")
     if sender_chat is not None and sender_chat.get("id") != chat_id:
         return False
     sender = post.get("from")
-    if sender and sender.get("is_bot"):
-        return False
     admins = telegram.api_request(
         token,
         "getChatAdministrators",
         {"chat_id": chat_id, "return_bots": True},
     )
-    owners = [admin["user"]["id"] for admin in admins if admin["status"] == "creator"]
-    if len(owners) != 1 or (sender and sender.get("id") != owners[0]):
+    if sender and sender.get("id") not in {admin["user"]["id"] for admin in admins}:
         return False
-    bot_can_post = False
-    for admin in admins:
-        if admin["status"] == "creator":
-            continue
-        if admin.get("can_post_messages"):
-            if admin["user"]["id"] != bot["id"]:
-                return False
-            bot_can_post = True
-    return bot_can_post
+    # Anonymous channel posts are restricted to posting administrators by Telegram.
+    return any(
+        admin["user"]["id"] == bot["id"] and admin.get("can_post_messages")
+        for admin in admins
+    )
 
 
 def poll_commands(
@@ -72,7 +66,8 @@ def poll_commands(
         timeout=timeout + 10,
     )
     if not updates:
-        return
+        return 0
+    replies = 0
     with closing(store._connect()) as db, db:
         db.execute("BEGIN IMMEDIATE")
         for update in updates:
@@ -80,7 +75,12 @@ def poll_commands(
                 continue
             post = update.get("channel_post", {})
             command = _command(post, configured_chat_id, bot)
-            if command and _owner_only(token, post, bot):
+            if command and not _admin_only(token, post, bot):
+                logging.info(
+                    "Ignored Telegram command from a non-administrator or unverified channel"
+                )
+                command = None
+            if command:
                 if command == "/status":
                     from . import status
 
@@ -90,14 +90,15 @@ def poll_commands(
                         "Ralph monitoring commands\n"
                         "/status - Service health, review results and costs\n"
                         "/help - Show these commands\n"
-                        "Post commands in this channel as its owner."
+                        "Post commands in this channel as an administrator."
                     )
-                db.execute(
+                replies += db.execute(
                     "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
                     (f"command:{update['update_id']}", telegram.truncate_message(text)),
-                )
+                ).rowcount
             offset = max(offset, update["update_id"] + 1)
         db.execute(
             "INSERT OR REPLACE INTO metadata VALUES ('update_offset', ?)",
             (str(offset),),
         )
+    return replies

@@ -146,15 +146,22 @@ class NotificationStore:
                 (str(period_day),),
             )
 
-    def deliver(self, token, chat_id, *, now=None):
-        """Send one due message per tick. Network failures never affect review jobs."""
+    def deliver(self, token, chat_id, *, now=None, commands_only=False):
+        """Prioritize command replies while honoring backoff across all messages."""
         now = time.time() if now is None else now
         with closing(self._connect()) as db:
+            backoff = db.execute(
+                "SELECT max(next_attempt) FROM outbox WHERE sent = 0"
+            ).fetchone()[0]
+            if backoff is not None and backoff > now:
+                return
             row = db.execute(
-                "SELECT key, text, next_attempt FROM outbox WHERE sent = 0 "
-                "ORDER BY rowid LIMIT 1",
+                "SELECT key, text FROM outbox WHERE sent = 0 "
+                "AND (? = 0 OR key LIKE 'command:%') "
+                "ORDER BY (key LIKE 'command:%') DESC, rowid LIMIT 1",
+                (commands_only,),
             ).fetchone()
-        if row is None or row[2] > now:
+        if row is None:
             return
         try:
             telegram.send_message(token, chat_id, row[1])
@@ -262,7 +269,7 @@ def run_monitor(
         try:
             if bot is None:
                 bot = telegram.api_request(token, "getMe", {})
-            commands.poll_commands(
+            replies = commands.poll_commands(
                 store,
                 token,
                 chat_id,
@@ -272,6 +279,8 @@ def run_monitor(
                 report_base_url,
                 timeout=max(1, min(20, int(next_scan - time.monotonic()))),
             )
+            for _ in range(replies):
+                store.deliver(token, chat_id, commands_only=True)
         except telegram.TelegramError as exc:
             LOGGER.warning("Telegram command polling failed; will retry")
             delay = exc.retry_after

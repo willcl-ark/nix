@@ -201,6 +201,32 @@ class MonitorTests(unittest.TestCase):
             self.store.deliver("secret", "channel", now=300)
             self.assertEqual(send.call_count, 3)
 
+    def test_command_replies_bypass_background_backlog_but_respect_global_backoff(self):
+        with closing(sqlite3.connect(self.store.path)) as db, db:
+            db.executemany(
+                "INSERT INTO outbox (key, text, next_attempt) VALUES (?, ?, ?)",
+                [("review:1", "review", 0), ("command:1", "status", 0)],
+            )
+        with patch.object(monitor.telegram, "send_message") as send:
+            self.store.deliver("secret", "channel", now=100, commands_only=True)
+            send.assert_called_once_with("secret", "channel", "status")
+            self.store.deliver("secret", "channel", now=101, commands_only=True)
+            self.assertEqual(send.call_count, 1)
+        with closing(sqlite3.connect(self.store.path)) as db, db:
+            db.execute("INSERT INTO outbox (key, text) VALUES ('command:2', 'help')")
+        error = monitor.telegram.TelegramError(retry_after=120)
+        with patch.object(
+            monitor.telegram, "send_message", side_effect=[error, None, None]
+        ) as send:
+            with self.assertLogs(monitor.LOGGER, level="WARNING"):
+                self.store.deliver("secret", "channel", now=102, commands_only=True)
+            self.store.deliver("secret", "channel", now=200)
+            self.assertEqual(send.call_count, 1)
+            self.store.deliver("secret", "channel", now=222)
+            send.assert_called_with("secret", "channel", "help")
+            self.store.deliver("secret", "channel", now=223)
+            send.assert_called_with("secret", "channel", "review")
+
     def test_monitor_recovers_initialization_and_delivers_despite_observe_error(self):
         from unittest.mock import Mock
 
@@ -220,7 +246,7 @@ class MonitorTests(unittest.TestCase):
                 "api_request",
                 return_value={"id": 1, "username": "bot"},
             ),
-            patch.object(monitor.commands, "poll_commands") as poll,
+            patch.object(monitor.commands, "poll_commands", return_value=0) as poll,
             self.assertLogs(monitor.LOGGER, level="WARNING"),
         ):
             monitor.run_monitor(
@@ -252,7 +278,7 @@ class MonitorTests(unittest.TestCase):
                 "api_request",
                 side_effect=[monitor.telegram.TelegramError(), {"id": 1}],
             ),
-            patch.object(monitor.commands, "poll_commands"),
+            patch.object(monitor.commands, "poll_commands", return_value=0),
             self.assertLogs(monitor.LOGGER, level="WARNING"),
         ):
             monitor.run_monitor(
@@ -267,6 +293,40 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(store.observe.call_count, 2)
         self.assertEqual(store.deliver.call_count, 2)
         stop.wait.assert_called_once_with(60)
+
+    def test_commands_are_delivered_before_next_background_scan(self):
+        from unittest.mock import Mock
+
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, True]
+        store = Mock()
+        events = []
+        store.deliver.side_effect = lambda *args, **kwargs: events.append(
+            "reply" if kwargs.get("commands_only") else "background"
+        )
+        replies = iter((1, 0))
+
+        def poll(*args, **kwargs):
+            events.append("poll")
+            return next(replies)
+
+        with (
+            patch.object(monitor, "NotificationStore", return_value=store),
+            patch.object(monitor.time, "monotonic", side_effect=[0, 0, 0, 1, 1]),
+            patch.object(monitor.telegram, "api_request", return_value={"id": 1}),
+            patch.object(monitor.commands, "poll_commands", side_effect=poll),
+        ):
+            monitor.run_monitor(
+                self.root,
+                self.root / "reports",
+                "https://reports.example",
+                "https://forge.example/repo",
+                "secret",
+                "channel",
+                stop,
+            )
+        self.assertEqual(store.observe.call_count, 1)
+        self.assertEqual(events, ["background", "poll", "reply", "poll"])
 
     def test_standalone_monitor_cli(self):
         token = self.root / "token"

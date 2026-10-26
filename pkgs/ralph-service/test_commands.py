@@ -43,7 +43,7 @@ class CommandTests(unittest.TestCase):
         return {"update_id": update_id, "channel_post": post}
 
     def poll(self, destination="-100123"):
-        commands.poll_commands(
+        return commands.poll_commands(
             self.store,
             "token",
             destination,
@@ -66,11 +66,11 @@ class CommandTests(unittest.TestCase):
 
     def test_reply_and_offset_survive_restart_without_duplicate(self):
         self.updates = [self.update()]
-        self.poll()
+        self.assertEqual(self.poll(), 1)
         self.assertIn("/status", self.messages()["command:10"])
         self.assertEqual(self.offset(), "11")
         self.store = monitor.NotificationStore(self.store.path)
-        self.poll()
+        self.assertEqual(self.poll(), 0)
         self.assertEqual(len(self.messages()), 1)
         self.api.assert_any_call(
             "token",
@@ -111,7 +111,7 @@ class CommandTests(unittest.TestCase):
         self.poll()
         self.assertEqual(len(self.messages()), 1)
 
-    def test_other_posting_admin_or_bot_disables_commands(self):
+    def test_other_posting_admin_or_bot_can_issue_commands(self):
         for update_id, is_bot in enumerate((False, True), 10):
             with self.subTest(is_bot=is_bot):
                 self.admins.append(
@@ -122,8 +122,8 @@ class CommandTests(unittest.TestCase):
                     }
                 )
                 self.updates = [self.update(update_id)]
-                self.poll()
-                self.assertEqual(self.messages(), {})
+                self.assertEqual(self.poll(), 1)
+                self.assertIn(f"command:{update_id}", self.messages())
                 self.admins.pop()
 
     def test_nonposting_admin_accepted(self):
@@ -132,15 +132,20 @@ class CommandTests(unittest.TestCase):
         self.poll()
         self.assertEqual(len(self.messages()), 1)
 
-    def test_identified_sender_must_be_owner_and_not_bot(self):
-        for update_id, sender in enumerate(({"id": 2}, {"id": 1, "is_bot": True}), 10):
-            with self.subTest(sender=sender):
-                self.updates = [self.update(update_id, **{"from": sender})]
-                self.poll()
-                self.assertEqual(self.messages(), {})
-        self.updates = [self.update(12, **{"from": {"id": 1}})]
+    def test_identified_sender_must_be_an_administrator(self):
+        self.updates = [self.update(10, **{"from": {"id": 2}})]
         self.poll()
-        self.assertEqual(len(self.messages()), 1)
+        self.assertEqual(self.messages(), {})
+        self.admins.append(
+            {"status": "administrator", "can_post_messages": True, "user": {"id": 2}}
+        )
+        self.updates = [
+            self.update(11, **{"from": {"id": 2}}),
+            self.update(12, **{"from": {"id": 1}}),
+            self.update(13, **{"from": {"id": 9, "is_bot": True}}),
+        ]
+        self.poll()
+        self.assertEqual(len(self.messages()), 3)
 
     def test_foreign_sender_chat_and_missing_owner_or_bot_rejected(self):
         self.updates = [self.update(sender_chat={"id": -999})]

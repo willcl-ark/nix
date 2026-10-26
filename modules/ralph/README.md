@@ -628,12 +628,11 @@ Nix configuration or the Nix store. For a public channel, `chatId` is its
 `@username`. For a private channel, use its numeric chat ID as a string.
 These are the only Telegram credentials Ralph needs.
 The monitor only accepts commands in this channel. It ignores direct messages.
-Keep yourself as the channel owner and the bot as the only other administrator
-allowed to post. Regular subscribers cannot post. Telegram hides individual
-user IDs on channel posts, so the monitor verifies the channel's administrator
-permissions for every command. Commands are ignored if another administrator
-can post or the permissions cannot be verified. Displayed author signatures
-are not used for authorization.
+All channel administrators may issue commands. Regular subscribers cannot
+post. Telegram can hide individual user IDs on channel posts, so anonymous
+posts rely on the channel's posting permissions. Identified senders must be
+current administrators, and the monitor verifies that the bot can post before
+queuing a reply. Displayed author signatures are not used for authorization.
 
 Post `/status` to see the current states of `ralph.service`,
 `ralph-followup.service`, `ralph-stats.service` and `ralph-telegram.service`,
@@ -667,8 +666,10 @@ downtime, the monitor counts newly observed events in the window it sees them
 and sends only the latest completed window's digest.
 
 Notifications live in `stateDir/telegram.sqlite3` and retry independently of
-reviews. Preserve this database with Ralph's other state. Delivery sends one
-message per check and respects Telegram's retry delay. A crash after Telegram
+reviews. Preserve this database with Ralph's other state. Command replies
+are sent as soon as the summary is ready, ahead of queued background posts.
+Background delivery sends one message per check. All messages respect
+Telegram's retry delay. A crash after Telegram
 accepts a message but before Ralph records delivery can cause a duplicate.
 The monitor keeps the existing database at this path; no migration is needed.
 It runs without an extra systemd timer.
