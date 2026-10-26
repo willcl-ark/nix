@@ -12,6 +12,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from urllib.parse import quote
 
+from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
 from ralph.spend import SNAPSHOT_MODEL
@@ -510,7 +511,17 @@ def _review_id(row):
 def _verifier_completed(debug):
     stages = debug.get("stages") if isinstance(debug, dict) else None
     verifier = stages.get("verifier") if isinstance(stages, dict) else None
-    return isinstance(verifier, dict) and verifier.get("status") == "completed"
+    if not isinstance(verifier, dict) or verifier.get("status") != "completed":
+        return False
+    major_verifier = stages.get("major_verifier")
+    if major_verifier is None:
+        return True
+    if not isinstance(major_verifier, dict):
+        return False
+    if major_verifier.get("status") == "skipped":
+        return True
+    coverage = core_coverage.summarize({"stages": {"major_verifier": major_verifier}})
+    return coverage["verification"]["status"] == "complete"
 
 
 def _time_series_summary(state_dir, review_records, addressed_findings):

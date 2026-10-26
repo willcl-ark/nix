@@ -64,6 +64,9 @@ class ProtocolTests(unittest.TestCase):
     def collation(self, findings, concept_summary=None):
         return json.dumps({"concept_summary": concept_summary, "findings": findings})
 
+    def major_verification(self, decisions):
+        return json.dumps({"coverage": self.coverage, "decisions": decisions})
+
     def concept_assessment(self, citations=None):
         return {
             "goal": "Reduce review friction for repeated manual checks.",
@@ -600,6 +603,165 @@ class ProtocolTests(unittest.TestCase):
                         self.assertEqual(
                             result["validation_errors"][0]["candidate_ids"], ids
                         )
+
+    def test_major_verifier_returns_only_verdicts_for_supplied_findings(self):
+        findings = [
+            {**self.finding, "id": f"finding:{index}", "severity": "major"}
+            for index in range(1, 4)
+        ]
+        decisions = [
+            {
+                "finding_id": finding["id"],
+                "disposition": disposition,
+                "reason": reason,
+                "source_evidence": (
+                    self.finding["source_evidence"] if disposition == "publish" else []
+                ),
+            }
+            for finding, disposition, reason in zip(
+                findings,
+                ("publish", "drop", "unresolved"),
+                ("Trigger verified", "Caller prevents trigger", "Caller unavailable"),
+            )
+        ]
+        result = protocol.major_verification(
+            self.major_verification(decisions), findings, self.snapshot
+        )
+        self.assertEqual(result["decisions"], decisions)
+        self.assertEqual(result["coverage"]["status"], "partial")
+        self.assertEqual(
+            result["coverage"]["limitations"],
+            ["Major finding finding:3 remains unresolved: Caller unavailable"],
+        )
+
+    def test_major_verifier_requires_every_finding_id_exactly_once(self):
+        finding = {**self.finding, "id": "finding:1", "severity": "major"}
+        decision = {
+            "finding_id": finding["id"],
+            "disposition": "publish",
+            "reason": "Trigger verified",
+            "source_evidence": self.finding["source_evidence"],
+        }
+        for decisions in (
+            [],
+            [decision, decision],
+            [{**decision, "finding_id": "finding:2"}],
+            [decision, {**decision, "finding_id": "finding:2"}],
+            [{**decision, "finding_id": ""}],
+            [{**decision, "finding_id": []}],
+        ):
+            with (
+                self.subTest(decisions=decisions),
+                self.assertRaises(protocol.InvalidReview),
+            ):
+                protocol.major_verification(
+                    self.major_verification(decisions), [finding], self.snapshot
+                )
+
+    def test_major_verifier_rejects_missing_fields_and_finding_edits(self):
+        finding = {**self.finding, "id": "finding:1", "severity": "major"}
+        decision = {
+            "finding_id": finding["id"],
+            "disposition": "publish",
+            "reason": "Trigger verified",
+            "source_evidence": self.finding["source_evidence"],
+        }
+        malformed = [
+            {key: value for key, value in decision.items() if key != missing}
+            for missing in decision
+        ]
+        malformed.extend(
+            {**decision, key: finding[key]}
+            for key in finding
+            if key != "source_evidence"
+        )
+        malformed.append({**decision, "finding": finding})
+        for record in malformed:
+            with self.subTest(record=record), self.assertRaises(protocol.InvalidReview):
+                protocol.major_verification(
+                    self.major_verification([record]), [finding], self.snapshot
+                )
+
+    def test_major_verifier_publish_requires_matching_source_evidence(self):
+        finding = {**self.finding, "id": "finding:1", "severity": "major"}
+        decision = {
+            "finding_id": finding["id"],
+            "disposition": "publish",
+            "reason": "Trigger verified",
+            "source_evidence": self.finding["source_evidence"],
+        }
+        for evidence in (
+            [],
+            None,
+            {},
+            [{**self.finding["source_evidence"][0], "excerpt": "invented();"}],
+        ):
+            with (
+                self.subTest(evidence=evidence),
+                self.assertRaises(protocol.InvalidReview),
+            ):
+                protocol.major_verification(
+                    self.major_verification(
+                        [{**decision, "source_evidence": evidence}]
+                    ),
+                    [finding],
+                    self.snapshot,
+                )
+
+    def test_major_verifier_checks_evidence_for_other_verdicts_when_supplied(self):
+        finding = {**self.finding, "id": "finding:1", "severity": "major"}
+        for disposition in ("drop", "unresolved"):
+            decision = {
+                "finding_id": finding["id"],
+                "disposition": disposition,
+                "reason": "Trigger unconfirmed",
+                "source_evidence": self.finding["source_evidence"],
+            }
+            with self.subTest(disposition=disposition):
+                result = protocol.major_verification(
+                    self.major_verification([decision]), [finding], self.snapshot
+                )
+                self.assertEqual(result["decisions"], [decision])
+                decision["source_evidence"] = [
+                    {**self.finding["source_evidence"][0], "excerpt": "invented();"}
+                ]
+                with self.assertRaisesRegex(protocol.InvalidReview, "does not match"):
+                    protocol.major_verification(
+                        self.major_verification([decision]), [finding], self.snapshot
+                    )
+
+    def test_major_verifier_rejects_malformed_envelopes_and_verdicts(self):
+        finding = {**self.finding, "id": "finding:1", "severity": "major"}
+        decision = {
+            "finding_id": finding["id"],
+            "disposition": "publish",
+            "reason": "Trigger verified",
+            "source_evidence": self.finding["source_evidence"],
+        }
+        payload = json.loads(self.major_verification([decision]))
+        for response in (
+            None,
+            [],
+            {"coverage": self.coverage},
+            {"decisions": [decision]},
+            {**payload, "findings": [finding]},
+            {**payload, "coverage": {"status": [], "limitations": []}},
+            {**payload, "decisions": None},
+            {**payload, "decisions": [{**decision, "disposition": "major"}]},
+            {**payload, "decisions": [{**decision, "disposition": []}]},
+            {**payload, "decisions": [{**decision, "reason": ""}]},
+        ):
+            with (
+                self.subTest(response=response),
+                self.assertRaises(protocol.InvalidReview),
+            ):
+                protocol.major_verification(
+                    json.dumps(response), [finding], self.snapshot
+                )
+        with self.assertRaisesRegex(
+            protocol.InvalidReview, "Invalid Major verifier JSON"
+        ):
+            protocol.major_verification("{", [finding], self.snapshot)
 
     def test_concept_publish_is_separate_from_finding_decisions(self):
         concept = {

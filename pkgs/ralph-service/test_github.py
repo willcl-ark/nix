@@ -25,6 +25,7 @@ class GitHubTests(unittest.TestCase):
                             "body": "Original body",
                             "presented_title": "Edited title",
                             "presented_body": "Edited body",
+                            "verified_by": "major_verifier",
                             "path": "src/test.cpp",
                             "line": 5,
                             "side": "head",
@@ -96,6 +97,42 @@ class GitHubTests(unittest.TestCase):
             with patch.object(github, "github_request") as request:
                 self.assertEqual(self.publish(result), "skipped")
                 request.assert_not_called()
+
+    def test_unverified_major_batch_does_not_contact_github(self):
+        own = {
+            "id": 2,
+            "user": {"id": 7},
+            "body": "<!-- ralph-major:owner/repo -->",
+        }
+        for verifier in (None, "verifier"):
+            for mixed in (False, True):
+                for existing in ([], [own]):
+                    with self.subTest(
+                        verifier=verifier, mixed=mixed, existing=bool(existing)
+                    ):
+                        result = self.result()
+                        findings = result["output"]["exports"]["findings"]
+                        unchecked = {**findings[0], "id": "finding:unchecked"}
+                        if verifier is None:
+                            del unchecked["verified_by"]
+                        else:
+                            unchecked["verified_by"] = verifier
+                        if mixed:
+                            findings.append(unchecked)
+                        else:
+                            findings[0] = unchecked
+                        with patch.object(
+                            github,
+                            "github_request",
+                            side_effect=[
+                                {"id": 7},
+                                existing,
+                                {"state": "open", "head": {"sha": "a" * 40}},
+                                {},
+                            ],
+                        ) as request:
+                            self.assertEqual(self.publish(result), "unverified")
+                            request.assert_not_called()
 
     def test_missing_report_retries_without_posting(self):
         result = self.result()

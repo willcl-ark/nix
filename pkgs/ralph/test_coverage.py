@@ -121,5 +121,62 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("Caller guard", result["verification"]["limitations"][0])
 
     def test_skipped_stages_do_not_reduce_coverage(self):
-        result = self.summarize(adversarial_deepseek={"status": "skipped"})
+        result = self.summarize(
+            adversarial_deepseek={"status": "skipped"},
+            major_verifier={"status": "skipped"},
+        )
         self.assertEqual(result["status"], "complete")
+
+    def test_major_verifier_failure_is_verification_failure_in_any_stage_order(self):
+        for status in ("failed", "invalid", "budget_exhausted"):
+            for order in (
+                ("verifier", "major_verifier"),
+                ("major_verifier", "verifier"),
+            ):
+                with self.subTest(status=status, order=order):
+                    stages = {
+                        "verifier": completed(),
+                        "major_verifier": {"status": status},
+                    }
+                    result = coverage.summarize(
+                        {"stages": {name: stages[name] for name in order}}
+                    )
+                    self.assertEqual(result["status"], "failed")
+                    self.assertEqual(result["verification"]["status"], "failed")
+                    self.assertEqual(result["issues"][0]["stage"], "major_verifier")
+                    self.assertEqual(result["issues"][0]["category"], "verification")
+
+    def test_completed_major_verifier_does_not_hide_partial_first_verifier(self):
+        result = self.summarize(
+            verifier=completed("partial", ["Caller was not inspected."]),
+            major_verifier=completed(),
+        )
+        self.assertEqual(result["verification"]["status"], "partial")
+
+    def test_major_verifier_unresolved_decisions_belong_to_their_stage(self):
+        reason = "Caller guard was not checked."
+        decision = {
+            "finding_id": "finding:1",
+            "disposition": "unresolved",
+            "reason": reason,
+            "source_evidence": [],
+        }
+        for limitations in ([], [reason]):
+            with self.subTest(limitations=limitations):
+                result = coverage.summarize(
+                    {
+                        "stages": {
+                            "verifier": {**completed(), "decisions": []},
+                            "major_verifier": {
+                                **completed("complete", limitations),
+                                "decisions": [decision],
+                            },
+                        },
+                        "decisions": [decision],
+                    }
+                )
+                self.assertEqual(result["status"], "partial")
+                self.assertEqual(result["verification"]["status"], "partial")
+                self.assertEqual(len(result["issues"]), 1)
+                self.assertEqual(result["issues"][0]["stage"], "major_verifier")
+                self.assertIn(reason, result["verification"]["limitations"][0])

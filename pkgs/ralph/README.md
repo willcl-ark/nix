@@ -230,18 +230,24 @@ Focused audit order: concurrency, state, public_contract, build, tests,
 dead_code, design. Discovery can escalate coverage and add pending audits.
 DeepSeek and Gemini require PPQ; without it the adversarial stage runs Sol alone.
 
-**3. Verify, edit and render**
+**3. Verify, edit, double-check Majors and render**
 
 ```mermaid
 flowchart LR
     verify["Verify candidates<br/>+ concept evidence"] --> edit["Edit accepted findings<br/>+ concept objection"]
-    edit --> render["Render review<br/>+ coverage limitations"]
+    edit --> major["Verify Major wording<br/>Sol 6.1 medium"]
+    major --> render["Render review<br/>+ coverage limitations"]
     classDef optional stroke-dasharray: 5 4
-    class edit optional
+    class edit,major optional
 ```
 
 Editing runs only when findings or a concept objection survive verification.
 An independently verified optional alternative goes straight to rendering.
+Only findings with severity exactly `major` go through the second verifier.
+This includes Major design findings. Other severities skip it. Sol checks the
+final edited title and body, with independent reads of the pinned base/head,
+before either the mirror review or GitHub export can publish them. It returns
+verdicts only and cannot rewrite, add, merge, or downgrade findings.
 
 Skipped audits do not make model calls. The companion service CLI requires both
 OpenAI and PPQ keys. Concept research is advisory: negative, failed or incomplete
@@ -266,11 +272,12 @@ does not receive concept research output or current PR discussion.
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
 | verifier, all tiers | gpt-6-luna | xhigh | 128,000 | Original input, candidates, concept candidate, code and research tools |
+| major_verifier, only when Majors survive | gpt-6.1-sol | medium | 25,000 | Original input and final Major wording; code and base history tools |
 | archaeologist | gpt-6-luna | low | 4,000 | Original input, base/head code tools, current discussion and research tools |
 | alternatives | Same as archaeologist | low | 4,000 | Neutral problem, goal and baseline; base-only code tools |
 | collator | gpt-6-luna | low | 6,000 | Accepted findings and conceptual assessment; no tools |
 
-Final verifier requests with tools disabled have a 600-second socket timeout.
+Both verifiers' final requests with tools disabled have a 600-second socket timeout.
 Other model requests retain the 180-second timeout.
 
 Code tools find paths, read head/base files, read diffs and search code. The full
@@ -284,14 +291,14 @@ research call is missing from the frozen manifest, the tool returns an
 unavailable-evidence message and the model continues from code and frozen input.
 
 Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensitive.
-The script and dead-code specialists, all three adversarial passes and verification allow 48. History and discussion
+The script and dead-code specialists, all three adversarial passes and both verifiers allow 48. History and discussion
 sublimits are eight each per tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit and are capped at
 two per response. Search fees and evidence-token headroom are reserved in the
 existing OpenAI allowance; opening or finding text within a page is not a paid
 search action. The early concept stage spends from the same capped review
 allowance, does not estimate savings and never stops later code stages.
-Script, dead_code, independent, adversarial and verifier stages require a first inspection. At
+Script, dead_code, independent, adversarial and both verifier stages require a first inspection. At
 limits, a final turn uses collected evidence and must preserve uncertainty.
 
 The [dead-code audit](audits/dead_code.md) runs on production, test, script and
@@ -314,6 +321,17 @@ response after inspection. Budget limits can still prevent completion, including
 through competing workers' monthly spending. Failed discovery becomes a coverage
 limitation; failed verification publishes no unverified findings. Failed editing
 falls back to verified wording.
+The Major pass uses the remaining OpenAI allowance, reserving its own final
+response. It has no extra allowance or protected share during discovery. A
+budget or API failure, invalid response, or missing decision withholds all
+pending Majors. Explicit `drop` and `unresolved` verdicts withhold those findings;
+non-Majors and concept results remain available. Medium effort and the 25,000
+token limit are initial settings, not a measured accuracy guarantee.
+Custom prompt directories must include `major_verifier.md`, and complete model
+maps must include `major_verifier`.
+The companion GitHub publisher also requires second-verifier provenance for
+every Major, including saved publication retries. An unchecked batch is skipped
+without posting or deleting a comment.
 
 Public coverage separates code review, historical context, and verification.
 Missing advisory history does not reduce code coverage. Expected static-review
@@ -337,7 +355,8 @@ flowchart LR
     pool["Valid candidates"] --> verify["Verify claims"]
     verify --> accept["Validate findings<br/>+ assign IDs"]
     accept --> edit["Edit wording"]
-    edit --> render["Render verified feedback"]
+    edit --> major["Double-check Major wording"]
+    major --> render["Render verified feedback"]
 ```
 
 | Check or outcome | What survives |
@@ -349,12 +368,19 @@ flowchart LR
 | Decisive evidence is missing, or a finding fails validation | Withhold that finding and record a limitation; retain valid findings. |
 | Concept objection is unsupported or invalid | Withhold the objection; retain verified code findings. |
 | Editing fails, exceeds its budget, or changes the accepted ID set | Keep all accepted findings with their original verified wording and metadata. |
+| Second verification rejects or cannot verify a Major | Withhold it from public findings and exports; retain the decisions in the trace. |
+| Second verification fails or has invalid ID accounting | Withhold every pending Major; preserve other severities and concept results. |
 
 The verifier may merge supplied candidates, but cannot introduce new code findings.
 Every code decision must cite at least one supplied candidate ID.
 It checks conceptual feedback separately from code findings. Supported concept
 objections can be edited without code findings; an independently verified
 optional alternative is rendered directly.
+The second verifier must account for every supplied finding ID exactly once.
+Its publish decisions require exact source excerpts checked against the same
+immutable snapshots. The original Luna decisions remain in its stage record;
+final decisions and finding attribution reflect the second pass. No editing
+runs after Sol verifies the public wording.
 
 Candidate findings are leads, not votes. Agreement between Sol, DeepSeek, Gemini and focused
 reviewers gives a claim no extra weight. A defect needs a reachable trigger and

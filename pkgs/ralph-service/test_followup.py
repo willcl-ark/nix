@@ -114,6 +114,15 @@ class FollowupTests(unittest.TestCase):
         self.assertEqual(result["reason"], "no_previous_review")
         request.assert_not_called()
 
+    def test_published_findings_use_presented_body(self):
+        finding = self.previous["review_result"]["output"]["exports"]["findings"][0]
+        finding["body"] = "Original unchecked wording."
+        finding["presented_body"] = "Published wording checked by the major verifier."
+
+        published = followup._published_findings(self.previous)
+
+        self.assertEqual(published[0]["body"], finding["presented_body"])
+
     def test_same_head_review_skips_without_addressed_inference(self):
         current = completed_job(8, 4, OLD_HEAD, {})
         result = followup.assess_completed_review(

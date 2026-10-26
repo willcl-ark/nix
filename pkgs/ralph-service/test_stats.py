@@ -1411,6 +1411,38 @@ class StatsTests(unittest.TestCase):
         }
         return result
 
+    def test_verified_trend_requires_complete_major_verifier_when_requested(self):
+        gates = [
+            None,
+            {"status": "skipped"},
+            {"status": "completed", "coverage": {"status": "complete"}},
+            {"status": "failed"},
+            {"status": "invalid"},
+            {"status": "budget_exhausted"},
+            {"status": "completed", "coverage": {"status": "partial"}},
+            {"status": "completed"},
+            {
+                "status": "completed",
+                "coverage": {"status": "complete"},
+                "decisions": [
+                    {"disposition": "unresolved", "reason": "Caller was not inspected."}
+                ],
+            },
+        ]
+        for number, gate in enumerate(gates, 100):
+            head = f"{number:040x}"
+            result = self.verifier_result(head)
+            if gate is not None:
+                result["debug"]["stages"]["major_verifier"] = gate
+            self.save_complete(self.enqueue(number, head), result)
+            self.write_trace(number, head, "2024-06-15T12:00:00+0000")
+
+        summary = stats.collect_stats(self.state_dir, self.report_dir)
+
+        self.assertEqual(len(summary["time_series"]), 1)
+        self.assertEqual(summary["time_series"][0]["reviews"], len(gates))
+        self.assertEqual(summary["time_series"][0]["verified_reviews"], 3)
+
     def write_trace(self, number, head, when):
         trace_dir = self.state_dir / "review-traces"
         trace_dir.mkdir(exist_ok=True)

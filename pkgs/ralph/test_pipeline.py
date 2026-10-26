@@ -85,6 +85,244 @@ def candidate(title="Simplify fixture"):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_major_verifier_checks_only_major_final_wording(self):
+        self.tier, self.audits = "routine", []
+        findings = [
+            {**self.published, "severity": severity, "kind": kind}
+            for severity, kind in (
+                ("major", "defect"),
+                ("major", "design"),
+                ("minor", "defect"),
+                ("critical", "defect"),
+            )
+        ]
+        order = []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            order.append(stage)
+            if stage == "independent":
+                return discovery([candidate() for _ in findings])
+            if stage == "verifier":
+                return verification(
+                    [
+                        {
+                            "candidate_ids": [f"independent:{i}"],
+                            "disposition": "publish",
+                            "reason": "Supported",
+                            "finding": finding,
+                        }
+                        for i, finding in enumerate(findings, 1)
+                    ]
+                )
+            self.assertEqual(stage, "major_verifier")
+            self.assertEqual(kwargs["model"], "gpt-6.1-sol")
+            self.assertEqual(kwargs["reasoning_effort"], "medium")
+            self.assertEqual(kwargs["max_output_tokens"], 25_000)
+            self.assertEqual(kwargs["max_tool_calls"], 48)
+            self.assertTrue(kwargs["first_tool_required"])
+            names = {tool.get("name") for tool in kwargs["tools"]}
+            self.assertTrue({"read_file", "read_base_file", "search_code"} <= names)
+            self.assertFalse(names & model.LIVE_RESEARCH_TOOL_NAMES)
+            self.assertNotIn("web_search", {tool["type"] for tool in kwargs["tools"]})
+            payload = json.loads(args[1].split("Major verification input:\n")[1])
+            self.assertEqual(
+                [f["id"] for f in payload["findings"]], ["finding:1", "finding:2"]
+            )
+            self.assertTrue(
+                all(f["body"] == "Final public wording" for f in payload["findings"])
+            )
+            return json.dumps(
+                {
+                    "coverage": COMPLETE,
+                    "decisions": [
+                        {
+                            "finding_id": "finding:1",
+                            "disposition": "publish",
+                            "reason": "Independently confirmed",
+                            "source_evidence": self.published["source_evidence"],
+                        },
+                        {
+                            "finding_id": "finding:2",
+                            "disposition": "drop",
+                            "reason": "Fixture disproves the premise",
+                            "source_evidence": [],
+                        },
+                    ],
+                }
+            )
+
+        def edit(*args, **kwargs):
+            order.append("collator")
+            text, response = self.edit(*args, **kwargs)
+            result = json.loads(text)
+            for finding in result["findings"]:
+                finding["body"] = "Final public wording"
+            return json.dumps(result), response
+
+        budget = Mock()
+        self.run_review(review, edit, budget=budget)
+        self.assertEqual(
+            order, ["independent", "verifier", "collator", "major_verifier"]
+        )
+        self.assertIn(
+            "major_verifier", budget.protect.call_args.kwargs["exempt_stages"]
+        )
+        self.assertEqual(
+            [f["id"] for f in self.result.findings],
+            ["finding:1", "finding:3", "finding:4"],
+        )
+        self.assertEqual(self.result.findings[0]["verified_by"], "major_verifier")
+        self.assertEqual(self.result.findings[0]["verified_by_model"], "gpt-6.1-sol")
+        self.assertEqual(self.result.findings[0]["raised_by"], ["independent"])
+        self.assertEqual(self.result.findings[1]["verified_by"], "verifier")
+        self.assertEqual(self.debug["decisions"][1]["disposition"], "drop")
+        self.assertEqual(
+            self.debug["stages"]["verifier"]["decisions"][1]["disposition"], "publish"
+        )
+
+    def test_major_verifier_failures_withhold_only_majors(self):
+        for failure in (TimeoutError(), pipeline.BudgetExceeded(), "{}", "unresolved"):
+            with self.subTest(failure=failure):
+                self.debug = {}
+                self.tier, self.audits = "routine", []
+
+                def review(*args, **kwargs):
+                    stage = kwargs["stage_name"]
+                    if stage == "independent":
+                        return discovery([candidate(), candidate()])
+                    if stage == "verifier":
+                        return verification(
+                            [
+                                {
+                                    "candidate_ids": [f"independent:{i}"],
+                                    "disposition": "publish",
+                                    "reason": "Supported",
+                                    "finding": {**self.published, "severity": severity},
+                                }
+                                for i, severity in enumerate(("major", "minor"), 1)
+                            ]
+                        )
+                    self.assertEqual(stage, "major_verifier")
+                    if isinstance(failure, Exception):
+                        raise failure
+                    if failure == "unresolved":
+                        return json.dumps(
+                            {
+                                "coverage": COMPLETE,
+                                "decisions": [
+                                    {
+                                        "finding_id": "finding:1",
+                                        "disposition": "unresolved",
+                                        "reason": "Fixture setup was not established",
+                                        "source_evidence": [],
+                                    }
+                                ],
+                            }
+                        )
+                    return failure
+
+                self.run_review(review)
+                self.assertEqual(
+                    [f["severity"] for f in self.result.findings], ["minor"]
+                )
+                self.assertEqual(
+                    self.debug["decisions"][0]["disposition"], "unresolved"
+                )
+                self.assertIsNone(self.debug["decisions"][0]["finding"])
+                self.assertIn("major_verifier", self.result.content)
+                self.assertNotEqual(
+                    self.debug["coverage"]["verification"]["status"], "complete"
+                )
+
+    def test_major_verifier_skips_without_majors(self):
+        self.tier, self.audits = "routine", []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            self.assertNotEqual(stage, "major_verifier")
+            if stage == "verifier":
+                return verification(
+                    [
+                        {
+                            "candidate_ids": ["independent:1"],
+                            "disposition": "publish",
+                            "reason": "Supported",
+                            "finding": {**self.published, "severity": "critical"},
+                        }
+                    ]
+                )
+            return discovery([candidate()])
+
+        self.run_review(review)
+        self.assertEqual(self.debug["stages"]["major_verifier"]["status"], "skipped")
+        self.assertEqual(self.result.findings[0]["severity"], "critical")
+
+    def test_failed_editor_cannot_restore_major_rejected_by_second_verifier(self):
+        self.tier, self.audits = "routine", []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "independent":
+                return discovery([candidate()])
+            if stage == "verifier":
+                return verification(
+                    [
+                        {
+                            "candidate_ids": ["independent:1"],
+                            "disposition": "publish",
+                            "reason": "Supported",
+                            "finding": {**self.published, "severity": "major"},
+                        }
+                    ]
+                )
+            self.assertEqual(stage, "major_verifier")
+            payload = json.loads(args[1].split("Major verification input:\n")[1])
+            self.assertEqual(payload["findings"][0]["body"], self.published["body"])
+            return json.dumps(
+                {
+                    "coverage": COMPLETE,
+                    "decisions": [
+                        {
+                            "finding_id": "finding:1",
+                            "disposition": "drop",
+                            "reason": "The fixture disproves it",
+                            "source_evidence": [],
+                        }
+                    ],
+                }
+            )
+
+        self.run_review(review, editor=Mock(side_effect=TimeoutError))
+        self.assertEqual(self.result.findings, [])
+        self.assertNotIn(self.published["body"], self.result.content)
+        self.assertEqual(self.debug["decisions"][0]["disposition"], "drop")
+        self.assertTrue(self.debug["stages"]["collator"]["used_verified_wording"])
+
+    def test_major_verifier_stale_head_aborts_review(self):
+        self.tier, self.audits = "routine", []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "independent":
+                return discovery([candidate()])
+            if stage == "verifier":
+                return verification(
+                    [
+                        {
+                            "candidate_ids": ["independent:1"],
+                            "disposition": "publish",
+                            "reason": "Supported",
+                            "finding": {**self.published, "severity": "major"},
+                        }
+                    ]
+                )
+            self.assertEqual(stage, "major_verifier")
+            raise model.StaleReview()
+
+        with self.assertRaises(model.StaleReview):
+            self.run_review(review)
+
     def test_dead_code_inspects_base_and_head_and_sends_removals_for_verification(self):
         for tier in ("routine", "standard", "sensitive"):
             with self.subTest(tier=tier):

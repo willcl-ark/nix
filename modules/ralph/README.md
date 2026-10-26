@@ -137,6 +137,14 @@ sections are omitted. The Luna writing pass edits wording but cannot remove
 accepted findings or change their classification. It retains its 6,000-token
 output limit; an incomplete or invalid edit falls back to the verifier's wording
 without truncating findings.
+After editing, surviving findings with severity exactly `major` receive a
+second verification by `gpt-6.1-sol` at medium effort, including Major design
+findings. It checks the exact public wording using code and base-history tools,
+with 48 inspections and a 25,000-token response ceiling. Only explicit approval
+allows a Major into the mirror review and GitHub export. Rejected or unresolved
+Majors are withheld; a failed or invalid second pass withholds all pending
+Majors while preserving other severities and concept results. No model edits
+the wording after this pass.
 
 Routine discovery stages get up to 12 tool inspections, standard stages 24,
 and sensitive stages 48. The adversarial passes and verifier each get
@@ -158,7 +166,8 @@ accepted findings and a separately verified conceptual assessment. Python checks
 finding IDs and preserves verified
 locations and severity. A bad verifier finding is withheld without discarding
 other valid findings, and debug output identifies the validation error. Partial
-coverage alone does not discard findings. Unknown or repeated candidate IDs
+coverage alone does not discard findings. Neither verifier may invent code
+findings. Empty, unknown or repeated candidate IDs
 withhold affected decisions while preserving independently valid findings;
 affected and omitted candidates become unresolved. A malformed verifier envelope
 or decision structure rejects the entire response. If only editing fails, the
@@ -182,6 +191,10 @@ inspection cannot fit, the model is asked to finish from available evidence if
 that final request fits. This is bounded headroom, not a guarantee of complete
 verification: evidence growth and shared monthly spending can still exhaust it.
 Editing uses remaining allowance and can fall back to the verifier's wording.
+The second verifier also uses remaining allowance and reserves its own final
+response. It has no separate allowance or protected share during discovery;
+insufficient budget withholds the pending Majors. Medium effort is an initial
+setting and has not been measured against a review-quality evaluation set.
 Reported usage settles the reservation;
 missing usage or an ambiguous transport failure retains conservative estimated
 charges. These estimates depend on configured model prices and API token
@@ -203,8 +216,8 @@ clipped preliminary stage replies.
 
 Finding attribution is still recorded with the final title, discovering agents
 and their models, verifier and editor. Merged candidates retain all their
-source agents; a finding first discovered during verification is credited to
-the verifier. Editing never earns discovery credit. Per-stage summaries record
+source agents. Surviving Majors name the second verifier and its model; all
+findings must originate in discovery. Editing never earns discovery credit. Per-stage summaries record
 candidate dispositions, accepted findings found solely or jointly, concept
 recommendations, cost estimates and incomplete usage. Joint credit is not
 evidence that each agent was necessary, and verifier acceptance is not a human
@@ -451,7 +464,8 @@ reconciling later jobs, spend and followup records, and published outputs.
 - `routingMode = "full"`: request every audit without calling the router.
 - `modelsJson = null`: optional per-stage replacement for the model map.
   The map must include router, independent, script, adversarial, adversarial_deepseek, adversarial_gemini, concurrency, state,
-  public_contract, tests, dead_code, design, build, archaeologist, verifier and collator.
+  public_contract, tests, dead_code, design, build, archaeologist, verifier,
+  major_verifier and collator.
   Prices must also be supported by ralph's ledger.
 
 Custom main-review model maps must remove `addressed_findings`. Follow-up now
@@ -467,9 +481,9 @@ unknown timestamps and taking SQLite backups named `*.pre-timestamps.bak`.
 For manual upgrades, run `ralph-service --state-dir /var/lib/ralph --migrate-state`
 before generating stats with the new package. Missing databases are skipped.
 
-Custom prompt directories must include `dead_code.md`, `consensus.md`, `wallet.md`, `p2p.md`,
+Custom prompt directories must include `major_verifier.md`, `dead_code.md`, `consensus.md`, `wallet.md`, `p2p.md`,
 `concurrency.md`, `build.md` and `archaeologist.md`. Custom model maps must
-include `dead_code` and `archaeologist`; old complete maps are rejected.
+include `major_verifier`, `dead_code` and `archaeologist`; old complete maps are rejected.
 Update custom prompt/model configurations together. Unsupported model names
 are rejected when configuration loads. The existing verifier model override
 can be used for controlled Sol comparisons while the default stays on Luna.
@@ -573,6 +587,12 @@ Skipped reviews and engines without a findings export leave it alone. Updates
 and deletion require an open upstream PR at the reviewed head. The Forgejo
 comment is unchanged. Publication failures use the existing saved-result retry
 queue without repeating the model review.
+Every exported Major must record `verified_by = "major_verifier"`. If any lacks
+that approval, the GitHub operation returns `unverified` before making requests
+and leaves any existing comment alone. This also blocks unchecked Majors from
+saved publication retries created before the second verifier was introduced.
+Historical mirror reports remain unchanged; rerun their review to apply the new
+verification policy.
 
 Use a token for Ralph's GitHub account that can read the upstream PR and create,
 edit and delete its own issue comments. See [GitHub's token permission notes](https://docs.github.com/en/rest/issues/comments).

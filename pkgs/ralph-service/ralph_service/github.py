@@ -29,6 +29,8 @@ def publish_major_findings(repository, token, number, result):
     if exported is None or result["run"].get("skipped"):
         return "skipped"
     findings = [finding for finding in exported if finding.get("severity") == "major"]
+    if any(finding.get("verified_by") != "major_verifier" for finding in findings):
+        return "unverified"
     marker = f"<!-- ralph-major:{repository} -->"
     base = f"/repos/{repository}"
     user = github_request(token, "/user")

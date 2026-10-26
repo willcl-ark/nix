@@ -31,6 +31,7 @@ FULL_CONTEXT_STAGES = {
     "independent",
     *ADVERSARIAL_STAGES,
     "verifier",
+    "major_verifier",
 }
 DISCOVERY_TOOL_LIMITS = {"routine": 12, "standard": 24, "sensitive": 48}
 ARCHAEOLOGY_TOOL_LIMIT = 12
@@ -45,6 +46,8 @@ def stage_settings(name):
         return "high", 32_000
     if name == "verifier":
         return "xhigh", model.MAX_VERIFIER_OUTPUT_TOKENS
+    if name == "major_verifier":
+        return "medium", 25_000
     if name == "public_contract":
         return "low", 25_000
     if name in {*ADVERSARIAL_STAGES, "script"}:
@@ -72,7 +75,9 @@ def _stage_tools(name, runtime):
     evidence = research_evidence if name in {"archaeologist", "verifier"} else None
     return model.available_tools(
         tools,
-        discussion_lookup if name not in {"script", "dead_code"} else None,
+        discussion_lookup
+        if name not in {"script", "dead_code", "major_verifier"}
+        else None,
         evidence,
         allow_web_search,
     )
@@ -100,7 +105,14 @@ def _run_stage(
                 ARCHAEOLOGY_TOOL_LIMIT
                 if name in {"archaeologist", "alternatives"}
                 else 48
-                if name in {*ADVERSARIAL_STAGES, "script", "dead_code", "verifier"}
+                if name
+                in {
+                    *ADVERSARIAL_STAGES,
+                    "script",
+                    "dead_code",
+                    "verifier",
+                    "major_verifier",
+                }
                 else DISCOVERY_TOOL_LIMITS[plan["tier"]]
             )
             available_tools = _stage_tools(name, runtime)
@@ -121,7 +133,7 @@ def _run_stage(
                 ),
                 response_schema=schema,
                 provider="ppq" if name in PPQ_ADVERSARIAL_STAGES else "openai",
-                final_timeout=600 if name == "verifier" else 180,
+                final_timeout=600 if name in {"verifier", "major_verifier"} else 180,
             )
         else:
             answer, response = runtime.audit(
@@ -194,6 +206,7 @@ def _verify_candidates(
             verified, candidates, snapshot, concept_candidate
         )
         stages["verifier"]["coverage"] = result["coverage"]
+        stages["verifier"]["decisions"] = result["decisions"]
         debug["decisions"] = result["decisions"]
         previous_concept = debug.get("concept_assessment", {})
         concept_status = (
@@ -303,12 +316,82 @@ def _edit_findings(run_stage, prompt_config, verified, debug):
     return findings, concept_summary
 
 
+def _verify_majors(
+    run_stage, prompt_config, review, snapshot, verified, findings, debug
+):
+    majors = [finding for finding in findings if finding["severity"] == "major"]
+    stages = debug["stages"]
+    if not majors:
+        stages["major_verifier"] = {
+            "model": prompt_config.models["major_verifier"],
+            "status": "skipped",
+            "reason": "No major findings to verify",
+            "turns": [],
+            "tools": [],
+        }
+        return findings
+
+    try:
+        answer = run_stage(
+            "major_verifier",
+            review
+            + "\n\nMajor verification input:\n"
+            + json.dumps({"findings": majors}),
+            prompt_config.audit_prompts["major_verifier"],
+            protocol.MAJOR_VERIFIER_SCHEMA,
+        )
+        result = protocol.major_verification(answer, majors, snapshot)
+        stages["major_verifier"]["coverage"] = result["coverage"]
+        stages["major_verifier"]["decisions"] = result["decisions"]
+        decisions = result["decisions"]
+    except model.StaleReview:
+        raise
+    except Exception as exc:
+        _record_validation_failure(stages["major_verifier"], exc)
+        decisions = [
+            {
+                "finding_id": finding["id"],
+                "disposition": "unresolved",
+                "reason": "Major finding withheld because second verification did not complete.",
+            }
+            for finding in majors
+        ]
+
+    by_candidates = {
+        tuple(verified.candidate_ids[decision["finding_id"]]): decision
+        for decision in decisions
+    }
+    # Keep Luna's decisions in its stage record; public diagnostics use final verdicts.
+    final_decisions = []
+    for decision in debug["decisions"]:
+        verdict = by_candidates.get(tuple(decision["candidate_ids"]))
+        if verdict is not None and verdict["disposition"] != "publish":
+            decision = {
+                **decision,
+                "disposition": verdict["disposition"],
+                "reason": "Major verification: " + verdict["reason"],
+                "finding": None,
+            }
+        final_decisions.append(decision)
+    debug["decisions"] = final_decisions
+    withheld = {
+        decision["finding_id"]
+        for decision in decisions
+        if decision["disposition"] != "publish"
+    }
+    verified.findings = [
+        finding for finding in verified.findings if finding["id"] not in withheld
+    ]
+    return [finding for finding in findings if finding["id"] not in withheld]
+
+
 def _published_findings(verified, edited, candidate_sources, models, was_edited):
     presented = {finding["id"]: finding for finding in edited}
     published = []
     # Exports retain verification order even when the editor reorders prose.
     for finding in verified.findings:
         identifier = finding["id"]
+        verifier = "major_verifier" if finding["severity"] == "major" else "verifier"
         sources = sorted(
             {
                 candidate_sources[candidate_id]
@@ -322,8 +405,8 @@ def _published_findings(verified, edited, candidate_sources, models, was_edited)
                 "presented_body": presented[identifier]["body"],
                 "raised_by": sources,
                 "raised_by_models": sorted({models[stage] for stage in sources}),
-                "verified_by": "verifier",
-                "verified_by_model": models["verifier"],
+                "verified_by": verifier,
+                "verified_by_model": models[verifier],
                 "edited_by": "collator" if was_edited else None,
                 "edited_by_model": models["collator"] if was_edited else None,
             }
@@ -414,7 +497,12 @@ def review_with_independent_passes(
                         }
                     },
                 },
-                exempt_stages={"verifier", "collator", *PPQ_ADVERSARIAL_STAGES},
+                exempt_stages={
+                    "verifier",
+                    "major_verifier",
+                    "collator",
+                    *PPQ_ADVERSARIAL_STAGES,
+                },
             )
 
     protect_verification()
@@ -628,6 +716,9 @@ def review_with_independent_passes(
     )
     findings, concept_summary = _edit_findings(
         run_stage, prompt_config, verified, debug
+    )
+    findings = _verify_majors(
+        run_stage, prompt_config, review, snapshot, verified, findings, debug
     )
     finding_candidates = verified.candidate_ids
     verified_alternatives = verified.alternatives

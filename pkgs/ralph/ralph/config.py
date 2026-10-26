@@ -29,6 +29,7 @@ MODEL_NAMES = (
     *AUDIT_NAMES,
     "archaeologist",
     "verifier",
+    "major_verifier",
     "collator",
 )
 PROMPT_NAMES = (
@@ -40,6 +41,7 @@ PROMPT_NAMES = (
     "archaeologist",
     "alternatives",
     "verifier",
+    "major_verifier",
     "collator",
 )
 

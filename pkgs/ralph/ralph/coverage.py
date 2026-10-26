@@ -58,7 +58,7 @@ def summarize(debug):
     notes = []
     inspections = []
     contexts = []
-    verification = "unknown"
+    verifications = []
     concept = (debug.get("concept_assessment") or {}).get("verification") or {}
     concept_reason = (
         concept.get("reason") if concept.get("disposition") == "unresolved" else None
@@ -76,7 +76,7 @@ def summarize(debug):
             "context"
             if name in CONTEXT_STAGES
             else "verification"
-            if name == "verifier"
+            if name in {"verifier", "major_verifier"}
             else "inspection"
         )
         state = stage.get("status")
@@ -111,7 +111,7 @@ def summarize(debug):
                     category,
                     "Stage reported incomplete evidence without identifying the missing evidence.",
                 )
-            if name == "verifier":
+            if category == "verification":
                 for error in stage.get("validation_errors", []):
                     if not any(
                         error["error"] in item["reason"]
@@ -120,23 +120,30 @@ def summarize(debug):
                     ):
                         issue(name, category, "Finding withheld: " + error["error"])
                     status = "partial"
-                for decision in debug.get("decisions", []):
+                decisions = stage.get(
+                    "decisions",
+                    debug.get("decisions", []) if name == "verifier" else [],
+                )
+                for decision in decisions:
                     if decision.get("disposition") == "unresolved":
                         if not any(
                             decision["reason"] in item["reason"]
                             for item in issues
                             if item["stage"] == name and item["category"] == category
                         ):
+                            kind = (
+                                "finding" if name == "major_verifier" else "candidate"
+                            )
                             issue(
                                 name,
                                 category,
-                                "Unresolved candidate: " + decision["reason"],
+                                f"Unresolved {kind}: " + decision["reason"],
                             )
                         status = "partial"
         if category == "context":
             contexts.append(status)
         elif category == "verification":
-            verification = status
+            verifications.append(status)
         else:
             # Failed discovery reduces inspection coverage, but only failed
             # verification prevents us from publishing verified findings.
@@ -158,6 +165,7 @@ def summarize(debug):
     verification_limits = [
         item["reason"] for item in issues if item["category"] == "verification"
     ]
+    verification = _status(verifications)
     return {
         "status": _status([*inspections, verification]),
         "limitations": list(dict.fromkeys(limitations)),

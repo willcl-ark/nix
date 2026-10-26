@@ -174,6 +174,25 @@ VERIFIER_SCHEMA = object_schema(
         },
     }
 )
+MAJOR_VERIFIER_SCHEMA = object_schema(
+    {
+        "coverage": COVERAGE,
+        "decisions": {
+            "type": "array",
+            "items": object_schema(
+                {
+                    "finding_id": {"type": "string", "minLength": 1},
+                    "disposition": {
+                        "type": "string",
+                        "enum": ["publish", "drop", "unresolved"],
+                    },
+                    "reason": STRING,
+                    "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE},
+                }
+            ),
+        },
+    }
+)
 COLLATOR_SCHEMA = object_schema(
     {
         "concept_summary": {"anyOf": [STRING, {"type": "null"}]},
@@ -242,7 +261,7 @@ def _text(record, keys, empty=()):
 def _coverage(value):
     _object(value, COVERAGE["properties"])
     _strings(value["limitations"])
-    if value["status"] not in {"complete", "partial"}:
+    if value["status"] not in ("complete", "partial"):
         raise InvalidReview("Invalid coverage status")
     if value["limitations"]:
         value["status"] = "partial"
@@ -623,6 +642,45 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     result["decisions"] = normalized_decisions
     result["validation_errors"] = validation_errors
     return result, accepted
+
+
+def major_verification(text, findings, snapshot):
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise InvalidReview("Invalid Major verifier JSON") from exc
+    _object(result, MAJOR_VERIFIER_SCHEMA["properties"])
+    _coverage(result["coverage"])
+    if not isinstance(result["decisions"], list):
+        raise InvalidReview("Invalid Major verifier decisions")
+    expected = {finding["id"] for finding in findings}
+    seen = set()
+    for decision in result["decisions"]:
+        _object(
+            decision,
+            MAJOR_VERIFIER_SCHEMA["properties"]["decisions"]["items"]["properties"],
+        )
+        _text(decision, ("finding_id", "reason"))
+        finding_id = decision["finding_id"]
+        if finding_id not in expected or finding_id in seen:
+            raise InvalidReview("Unknown or repeated Major finding ID")
+        seen.add(finding_id)
+        disposition = decision["disposition"]
+        if disposition not in ("publish", "drop", "unresolved"):
+            raise InvalidReview("Invalid Major verifier disposition")
+        evidence = decision["source_evidence"]
+        if not isinstance(evidence, list):
+            raise InvalidReview("Expected a source evidence list")
+        if disposition == "publish" or evidence:
+            _source_evidence(evidence, snapshot)
+        if disposition == "unresolved":
+            result["coverage"]["status"] = "partial"
+            result["coverage"]["limitations"].append(
+                f"Major finding {finding_id} remains unresolved: {decision['reason']}"
+            )
+    if seen != expected:
+        raise InvalidReview("Major verifier omitted finding decisions")
+    return result
 
 
 def collation(text, accepted, concept_assessment=None):

@@ -106,7 +106,7 @@ def _published_findings(job):
             "title": title,
             "path": path,
             "line": line,
-            "body": item.get("body", ""),
+            "body": item.get("presented_body") or item.get("body", ""),
             "source_head": _head(job) or "",
         }
         finding["fingerprint"] = _fingerprint(finding)
