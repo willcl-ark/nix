@@ -17,6 +17,8 @@ from ralph import trace as core_trace
 
 from ralph.spend import SNAPSHOT_MODEL
 
+from .report import public_limits
+
 
 MICRODOLLARS = Decimal("1000000")
 LEDGERS = (("openai", "spend.sqlite3"), ("ppq", "ppq-spend.sqlite3"))
@@ -98,6 +100,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         "finding_severities": {},
     }
     stages = defaultdict(_new_stage)
+    limit_runs = []
     routing_tiers = Counter()
     review_records = []
     review_time_records = []
@@ -147,6 +150,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         routing = _routing_summary(debug)
         metrics = _saved_review_metrics(debug, result)
         report_name = _report_name(report_dir, row, result)
+        _collect_limit_runs(limit_runs, debug, result, row, report_name)
 
         if not skipped:
             overview["saved_reviews"] += 1
@@ -292,6 +296,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         "cost_trends": _cost_trends(requests + followup_requests, now),
         "stage_model_leaderboard": _stage_leaderboard(stages),
         "stages": _stage_records(stages),
+        "limits": _limit_summary(limit_runs),
         "routing_tiers": dict(sorted(routing_tiers.items())),
         "distributions": {
             "saved_review_known_cost_micros": _distribution(cost_values),
@@ -320,6 +325,94 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         "reviews": sorted(
             review_records, key=lambda item: item["job_id"], reverse=True
         ),
+    }
+
+
+def _collect_limit_runs(runs, debug, result, row, report_name):
+    config = (result.get("engine") or {}).get("config") or {}
+    profile = config.get("profile") or {}
+    for name, stage in (debug.get("stages") or {}).items():
+        if not isinstance(stage, dict) or stage.get("status") == "skipped":
+            continue
+        runs.append(
+            {
+                "profile": profile.get("name") or "unknown",
+                "stage": name,
+                "model": stage.get("model") or "unknown",
+                "limits": public_limits(stage),
+                "budget_limited": (
+                    stage["budget_limited"]
+                    if type(stage.get("budget_limited")) is bool
+                    else None
+                ),
+                "job_id": row["id"],
+                "number": row["number"],
+                "report_name": report_name,
+            }
+        )
+
+
+def _limit_summary(runs):
+    groups = {}
+    budget = {}
+    for run in runs:
+        identity = tuple(run[key] for key in ("profile", "stage", "model"))
+        group_identity = {key: run[key] for key in ("profile", "stage", "model")}
+        spending = budget.setdefault(
+            identity,
+            {
+                **group_identity,
+                "monitored_runs": 0,
+                "limited_runs": 0,
+                "unknown_runs": 0,
+            },
+        )
+        if type(run["budget_limited"]) is bool:
+            spending["monitored_runs"] += 1
+            spending["limited_runs"] += run["budget_limited"]
+        else:
+            spending["unknown_runs"] += 1
+        for name, limit in run["limits"].items():
+            group = groups.setdefault(
+                (*identity, name, limit["limit"]),
+                {
+                    **group_identity,
+                    "name": name,
+                    "cap": limit["limit"],
+                    "runs": 0,
+                    "usage_known_runs": 0,
+                    "hit_known_runs": 0,
+                    "hit_runs": 0,
+                    "at_cap_runs": 0,
+                    "max_used": None,
+                },
+            )
+            group["runs"] += 1
+            if limit["hit"] is not None:
+                group["hit_known_runs"] += 1
+                group["hit_runs"] += limit["hit"]
+            if limit["used"] is not None:
+                group["usage_known_runs"] += 1
+                group["at_cap_runs"] += limit["used"] >= limit["limit"]
+                group["max_used"] = max(group["max_used"] or 0, limit["used"])
+    affected = [
+        run
+        for run in runs
+        if run["budget_limited"] is True
+        or any(
+            value["hit"] is True
+            or (value["used"] is not None and value["used"] >= value["limit"])
+            for value in run["limits"].values()
+        )
+    ]
+    return {
+        "uninstrumented_stage_runs": sum(not run["limits"] for run in runs),
+        "stage_runs": len(runs),
+        "groups": [groups[key] for key in sorted(groups)],
+        "budgets": [budget[key] for key in sorted(budget)],
+        "recent_affected": sorted(
+            affected, key=lambda run: run["job_id"], reverse=True
+        )[:20],
     }
 
 

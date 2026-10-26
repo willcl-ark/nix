@@ -2,7 +2,7 @@ import json
 import unittest
 import urllib.error
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from ralph import model
 from ralph.spend import BudgetExceeded
@@ -90,17 +90,33 @@ class ModelBudgetTests(unittest.TestCase):
             {
                 "type": "function_call",
                 "call_id": f"call-{i}",
-                "name": "read_file",
-                "arguments": '{"path":"src/a.cpp","start_line":1}',
+                "name": name,
+                "arguments": json.dumps(args),
             }
-            for i in range(3)
+            for i, (name, args) in enumerate(
+                [
+                    ("search_discussions", {"query": "prior change"}),
+                    ("search_discussions", {"query": "another change"}),
+                    ("read_commit", {"commit": "base", "path": "src/a.cpp"}),
+                    ("read_commit", {"commit": "head", "path": "src/a.cpp"}),
+                    ("read_file", {"path": "src/a.cpp", "start_line": 1}),
+                    ("read_file", {"path": "src/b.cpp", "start_line": 1}),
+                ]
+            )
         ]
         raw = '{"coverage":{"status":"partial","limitations":["Caller not inspected"]}}'
         results = [
-            {"id": "tools", "status": "completed", "output": calls},
+            {
+                "id": "tools",
+                "status": "completed",
+                "output": [{"type": "web_search_call", "action": {"type": "search"}}]
+                + calls,
+                "usage": {"output_tokens": 30},
+            },
             {
                 "id": "final",
                 "status": "completed",
+                "usage": {"output_tokens": 20},
                 "output": [
                     {
                         "type": "message",
@@ -111,6 +127,7 @@ class ModelBudgetTests(unittest.TestCase):
         ]
         debug = {}
         budget = FakeBudget()
+        discussion = Mock(return_value="Discussion")
         with (
             patch.object(
                 model.urllib.request,
@@ -118,6 +135,9 @@ class ModelBudgetTests(unittest.TestCase):
                 side_effect=[Response(item) for item in results],
             ) as send,
             patch.object(model, "read_file", return_value="1: evidence") as read,
+            patch.object(
+                model, "read_commit", return_value="Commit evidence"
+            ) as history,
         ):
             answer = model.openai_review(
                 "secret",
@@ -126,23 +146,42 @@ class ModelBudgetTests(unittest.TestCase):
                 debug,
                 prompt="Review.",
                 model="gpt-6-luna",
-                max_tool_calls=2,
+                max_tool_calls=6,
+                max_context_calls=1,
+                max_history_calls=1,
+                max_web_search_calls_per_response=1,
+                tools=model.ARCHAEOLOGY_TOOLS,
+                allow_web_search=True,
+                discussion_lookup=discussion,
                 budget=budget,
                 reasoning_effort="xhigh",
                 max_output_tokens=25_000,
             )
         self.assertEqual(answer, raw)
-        self.assertEqual(read.call_count, 2)
+        read.assert_called_once()
+        history.assert_called_once()
+        discussion.assert_called_once()
         final_request = json.loads(send.call_args_list[-1].args[0].data)
         self.assertEqual(final_request["tool_choice"], "none")
         self.assertEqual(final_request["reasoning"], {"effort": "xhigh"})
         self.assertEqual(final_request["max_output_tokens"], 25_000)
         self.assertIn("Inspection limit reached", final_request["input"][-1]["output"])
-        self.assertEqual(debug["max_tool_calls"], 2)
+        self.assertEqual(debug["max_tool_calls"], 6)
         self.assertEqual(debug["reasoning_effort"], "xhigh")
         self.assertEqual(debug["max_output_tokens"], 25_000)
         self.assertEqual(debug["tools"][-1]["skipped"], "inspection_limit")
         self.assertNotIn("skipped", debug["tools"][0])
+        self.assertEqual(
+            debug["limits"],
+            {
+                "output_tokens": {"limit": 25_000, "used": 30, "hit": False},
+                "tool_calls": {"limit": 6, "used": 6, "hit": True},
+                "context_calls": {"limit": 1, "used": 1, "hit": True},
+                "history_calls": {"limit": 1, "used": 1, "hit": True},
+                "web_search_calls_per_response": {"limit": 1, "used": 1, "hit": None},
+            },
+        )
+        self.assertFalse(debug["budget_limited"])
         self.assertEqual(
             [event[0] for event in budget.events],
             ["reserve", "settle", "reserve", "settle"],
@@ -162,6 +201,7 @@ class ModelBudgetTests(unittest.TestCase):
             "output": [call],
             "usage": {"input_tokens": 10, "output_tokens": 2},
         }
+        debug = {}
         budget = FakeBudget()
         states = iter([True, False])
         with (
@@ -175,14 +215,20 @@ class ModelBudgetTests(unittest.TestCase):
                 "secret",
                 "patch",
                 self.snapshot,
+                debug,
                 prompt="Review.",
                 model="gpt-6-luna",
                 max_output_tokens=model.MAX_OUTPUT_TOKENS,
                 budget=budget,
+                max_tool_calls=1,
                 is_current=lambda: next(states),
             )
         send.assert_called_once()
         self.assertEqual([event[0] for event in budget.events], ["reserve", "settle"])
+        self.assertEqual(debug["limits"]["tool_calls"]["used"], 1)
+        self.assertEqual(debug["limits"]["output_tokens"]["used"], 2)
+        self.assertFalse(debug["budget_limited"])
+        self.assertFalse(debug["limits"]["tool_calls"]["hit"])
 
     def test_budget_rejection_has_no_request_turn(self):
         class RejectedBudget:
@@ -213,6 +259,8 @@ class ModelBudgetTests(unittest.TestCase):
         self.assertEqual(budget.choices, ["required"])
         self.assertEqual(stage["turns"], [])
         self.assertEqual(stage["status"], "budget_exhausted")
+        self.assertTrue(stage["budget_limited"])
+        self.assertIsNone(stage["limits"]["output_tokens"]["used"])
 
     def test_budget_rejection_after_inspection_finishes_without_tools(self):
         class OneInspectionBudget:
@@ -302,6 +350,8 @@ class ModelBudgetTests(unittest.TestCase):
             [turn["tool_choice"] for turn in debug["turns"]], ["required", "none"]
         )
         self.assertTrue(debug["turns"][1]["budget_forced_final"])
+        self.assertTrue(debug["budget_limited"])
+        self.assertFalse(debug["limits"]["tool_calls"]["hit"])
         self.assertEqual(
             budget.events,
             [
@@ -312,6 +362,41 @@ class ModelBudgetTests(unittest.TestCase):
                 ("settle", "token", "forced-final"),
             ],
         )
+
+    def test_audit_output_limit_preserves_partial_usage(self):
+        result = {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "usage": {"output_tokens": 100},
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Partial review"}],
+                }
+            ],
+        }
+        debug = {}
+        with patch.object(
+            model.urllib.request, "urlopen", return_value=Response(result)
+        ):
+            answer, record = model.run_audit(
+                "secret",
+                "router",
+                "Review.",
+                "patch",
+                model_name="gpt-6-luna",
+                max_output_tokens=100,
+                debug=debug,
+            )
+        self.assertEqual(answer, "Partial review")
+        self.assertEqual(
+            debug["limits"],
+            {
+                "output_tokens": {"limit": 100, "used": 100, "hit": True},
+            },
+        )
+        self.assertEqual(record["limits"], debug["limits"])
+        self.assertFalse(debug["budget_limited"])
 
 
 if __name__ == "__main__":

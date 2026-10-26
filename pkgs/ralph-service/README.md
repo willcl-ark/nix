@@ -85,6 +85,13 @@ accounting month and an unknown timestamp; the Usage page includes them in
 monthly totals and identifies their absence from daily and weekly charts.
 Stats reads never modify private state.
 
+The `stats/limits/` page groups saved stage observations by agent, model,
+profile and configured cap. It shows usage at the cap, confirmed interruptions,
+spending blocks and affected review links. Older results without telemetry
+remain uninstrumented. Output-token usage is measured per response; web-search
+cap usage is observable but provider-side blocking is not. These counts help
+choose limits to investigate, rather than measure review quality.
+
 Queued reviews retain their resolved profile and prompt settings across retries
 and restarts. The running engine code may update after a deployment; its hash
 is recorded when the worker claims the review. Saved results retain their

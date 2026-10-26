@@ -455,6 +455,36 @@ def hosted_search_outputs(result):
     ]
 
 
+def _limit_metrics(**limits):
+    return {
+        name: {
+            "limit": limit,
+            "used": None if name == "output_tokens" else 0,
+            "hit": None if name == "web_search_calls_per_response" else False,
+        }
+        for name, limit in limits.items()
+    }
+
+
+def _record_response_limits(limits, result):
+    output = limits["output_tokens"]
+    used = (result.get("usage") or {}).get("output_tokens")
+    if type(used) is int and used >= 0:
+        output["used"] = max(output["used"] or 0, used)
+    if (
+        result.get("status") == "incomplete"
+        and (result.get("incomplete_details") or {}).get("reason")
+        == "max_output_tokens"
+    ):
+        output["hit"] = True
+    hosted_calls = len(hosted_search_outputs(result))
+    if "web_search_calls_per_response" in limits:
+        web = limits["web_search_calls_per_response"]
+        web["used"] = max(web["used"], hosted_calls)
+    if "tool_calls" in limits:
+        limits["tool_calls"]["used"] += hosted_calls
+
+
 def run_audit(
     api_key,
     name,
@@ -471,6 +501,9 @@ def run_audit(
     debug=None,
 ):
     model = model_name
+    limits = _limit_metrics(output_tokens=max_output_tokens)
+    if debug is not None:
+        debug.update(limits=limits, budget_limited=False)
     data = {
         "model": model,
         "store": False,
@@ -498,7 +531,9 @@ def run_audit(
         raise
     except BudgetExceeded:
         if debug is not None:
-            debug.update(status="budget_exhausted", error="BudgetExceeded")
+            debug.update(
+                status="budget_exhausted", error="BudgetExceeded", budget_limited=True
+            )
         raise
     except Exception as exc:
         failure = request_failure_record(data, exc)
@@ -508,6 +543,7 @@ def run_audit(
             stage["error"] = failure["error"]
             stage["turns"].append(failure)
         raise
+    _record_response_limits(limits, result)
     answer = output_text(result.get("output", []))
     status = result.get("status")
     record = {
@@ -518,6 +554,8 @@ def run_audit(
         **response_record(result, payload, elapsed),
         "raw_output": answer,
         "output_truncated": False,
+        "limits": limits,
+        "budget_limited": False,
     }
     if debug is not None:
         stage = _stage_record(debug, name, model)
@@ -574,6 +612,17 @@ def openai_review(
         allow_web_search,
     )
     allowed_tools = {tool["name"] for tool in tools if tool.get("type") == "function"}
+    limits = _limit_metrics(output_tokens=max_output_tokens, tool_calls=max_tool_calls)
+    if allowed_tools & LIVE_RESEARCH_TOOL_NAMES:
+        limits.update(_limit_metrics(context_calls=max_context_calls))
+    if allowed_tools & {"blame_base", "read_commit"}:
+        limits.update(_limit_metrics(history_calls=max_history_calls))
+    if any(tool.get("type") in WEB_SEARCH_TOOL_TYPES for tool in tools):
+        limits.update(
+            _limit_metrics(
+                web_search_calls_per_response=max_web_search_calls_per_response
+            )
+        )
     checkout = snapshot.checkout
     files = snapshot.head_files
     inputs = [{"role": "user", "content": review}]
@@ -581,6 +630,8 @@ def openai_review(
         review_bytes = review.encode()
         debug.update(
             {
+                "limits": limits,
+                "budget_limited": False,
                 "instructions": prompt,
                 "review_input_bytes": len(review_bytes),
                 "review_input_sha256": hashlib.sha256(review_bytes).hexdigest(),
@@ -656,6 +707,8 @@ def openai_review(
                     **request_options,
                 )
             except BudgetExceeded:
+                if stage_debug is not None:
+                    stage_debug["budget_limited"] = True
                 if tool_choice == "none" or (first_tool_required and calls_used == 0):
                     raise
                 final_inputs = inputs + [
@@ -694,7 +747,11 @@ def openai_review(
             raise
         except BudgetExceeded:
             if stage_debug is not None:
-                stage_debug.update(status="budget_exhausted", error="BudgetExceeded")
+                stage_debug.update(
+                    status="budget_exhausted",
+                    error="BudgetExceeded",
+                    budget_limited=True,
+                )
             raise
         except Exception as exc:
             failure = request_failure_record(data, exc)
@@ -703,6 +760,9 @@ def openai_review(
                 stage_debug["status"] = "failed"
                 stage_debug["error"] = failure["error"]
             raise
+        if tool_choice == "none" and tools:
+            limits["tool_calls"]["hit"] = True
+        _record_response_limits(limits, result)
         if debug is not None:
             turn_record = {
                 **response_record(result, payload, elapsed),
@@ -768,9 +828,11 @@ def openai_review(
             for call in calls:
                 skipped = calls_used >= max_tool_calls
                 if skipped:
+                    limits["tool_calls"]["hit"] = True
                     answer = "Inspection limit reached. Finish with evidence already available."
                 else:
                     calls_used += 1
+                    limits["tool_calls"]["used"] += 1
                     try:
                         args = json.loads(call["arguments"])
                         if call.get("name") not in allowed_tools:
@@ -812,9 +874,11 @@ def openai_review(
                             )
                         elif call["name"] in LIVE_RESEARCH_TOOL_NAMES:
                             if context_calls >= max_context_calls:
+                                limits["context_calls"]["hit"] = True
                                 answer = "Discussion lookup limit reached."
                             else:
                                 context_calls += 1
+                                limits["context_calls"]["used"] = context_calls
                                 if research_evidence is not None:
                                     answer = research.lookup(
                                         research_evidence, call["name"], args
@@ -825,9 +889,11 @@ def openai_review(
                                     answer = "Discussion lookup unavailable."
                         elif call["name"] in {"blame_base", "read_commit"}:
                             if history_calls >= max_history_calls:
+                                limits["history_calls"]["hit"] = True
                                 answer = "History lookup limit reached."
                             else:
                                 history_calls += 1
+                                limits["history_calls"]["used"] = history_calls
                                 if call["name"] == "blame_base":
                                     answer = blame_base(
                                         checkout,

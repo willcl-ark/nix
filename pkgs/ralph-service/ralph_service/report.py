@@ -210,6 +210,34 @@ def _public_tools(stage):
     return tools
 
 
+def public_limits(stage):
+    """Export only numeric limit telemetry, never arbitrary debug fields."""
+    public = {}
+    limits = stage.get("limits")
+    if not isinstance(limits, dict):
+        return public
+    for name in (
+        "output_tokens",
+        "tool_calls",
+        "context_calls",
+        "history_calls",
+        "web_search_calls_per_response",
+    ):
+        value = limits.get(name)
+        if not isinstance(value, dict):
+            continue
+        cap = value.get("limit")
+        if type(cap) is not int or cap < 0:
+            continue
+        used = value.get("used")
+        public[name] = {
+            "limit": cap,
+            "used": used if type(used) is int and used >= 0 else None,
+            "hit": value.get("hit") if type(value.get("hit")) is bool else None,
+        }
+    return public
+
+
 def _public_stages(debug):
     public = {}
     for name, stage in sorted((debug.get("stages") or {}).items()):
@@ -229,6 +257,10 @@ def _public_stages(debug):
                 record[key] = stage[key]
         if isinstance(stage.get("used_verified_wording"), bool):
             record["used_verified_wording"] = stage["used_verified_wording"]
+        if "limits" in stage:
+            record["limits"] = public_limits(stage)
+        if isinstance(stage.get("budget_limited"), bool):
+            record["budget_limited"] = stage["budget_limited"]
         profiles = _strings(stage.get("profiles"))
         if profiles:
             record["profiles"] = profiles

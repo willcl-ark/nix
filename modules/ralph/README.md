@@ -254,6 +254,21 @@ findings and costs so a human can judge false proposed stops and useful findings
 that appeared after a proposed stop. Archaeology costs and execution remain
 visible outside the finding leaderboard.
 
+The Limits page at `stats/limits/` shows recorded limits by agent, model,
+review profile and cap. It separates usage reaching a cap from a limit
+stopping work, with links to affected reviews. Output-token usage is the largest
+single response, matching the per-response limit. Tool, discussion and history
+limits record refused work or forced final answers. Web-search usage can reach
+its cap without a provider reporting that more searches were wanted, so those
+rows do not claim confirmed blocking.
+
+Spending blocks are separate: request reservations and protected verifier
+headroom can stop work before the review spends its full allowance. Data comes
+from saved stage records, not live reviews or every intermediate retry. Older
+runs without telemetry are counted as uninstrumented. Use the page to choose
+limits for controlled same-head comparisons; reaching a limit alone does not
+prove the review would improve with more allowance.
+
 The Usage page shows total API cost for today, this week and this month, with
 daily, weekly and monthly charts covering the last 30 days, 12 weeks and 12
 months. These totals include OpenAI reviews, PPQ reviews and follow-up requests.

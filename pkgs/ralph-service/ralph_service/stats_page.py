@@ -1378,6 +1378,7 @@ def _header(summary, page_prefix="", active="Overview"):
         ("reviews/", "Reviews"),
         ("addressed/", "Outcomes"),
         ("usage/", "Usage"),
+        ("limits/", "Limits"),
     ]
     nav = "".join(
         f'<a href="{page_prefix}{path}"'
@@ -1595,10 +1596,136 @@ def _usage_html(summary):
     return _page("Usage", summary, body, "../", "Usage")
 
 
+def _limits_html(summary, repository_url, report_base_url):
+    limits = _mapping(summary.get("limits"))
+    labels = {
+        "output_tokens": "Output tokens per response",
+        "tool_calls": "Tool calls / turns",
+        "context_calls": "Discussion lookups",
+        "history_calls": "History lookups",
+        "web_search_calls_per_response": "Web searches per response",
+    }
+    rows = []
+    for group in limits.get("groups", []):
+        rows.append(
+            _cells(
+                [
+                    _escape(group["profile"]),
+                    _escape(group["stage"]),
+                    _escape(group["model"]),
+                    _escape(labels.get(group["name"], group["name"])),
+                    _fmt_int(group["cap"]),
+                    _fmt_int(group["runs"]),
+                    f"{group['hit_runs']} / {group['hit_known_runs']}"
+                    if group["hit_known_runs"]
+                    else "Unknown",
+                    f"{group['at_cap_runs']} / {group['usage_known_runs']}"
+                    if group["usage_known_runs"]
+                    else "Unknown",
+                    _fmt_int(group["max_used"]),
+                ]
+            )
+        )
+    budget_rows = [
+        _cells(
+            [
+                _escape(group["profile"]),
+                _escape(group["stage"]),
+                _escape(group["model"]),
+                f"{group['limited_runs']} / {group['monitored_runs']}"
+                if group["monitored_runs"]
+                else "Unknown",
+                _fmt_int(group["unknown_runs"]),
+            ]
+        )
+        for group in limits.get("budgets", [])
+    ]
+    affected_rows = []
+    for run in limits.get("recent_affected", []):
+        reasons = []
+        for name, value in run["limits"].items():
+            label = labels.get(name, name)
+            if value["hit"] is True:
+                reasons.append(label + ": work limited")
+            elif value["used"] is not None and value["used"] >= value["limit"]:
+                reasons.append(label + ": reached cap")
+        if run["budget_limited"] is True:
+            reasons.append("spending reservation refused")
+        affected_rows.append(
+            _cells(
+                [
+                    _pr_link(run, repository_url) + f" / job {run['job_id']}",
+                    _escape(run["profile"]),
+                    _escape(run["stage"]),
+                    _escape(", ".join(reasons)),
+                    _report_link(run, report_base_url),
+                ]
+            )
+        )
+    body = (
+        '<h1>Limits</h1><p class="subtitle">Where review allowances may be worth increasing.</p>'
+        + _section_note(
+            "Saved stage runs only; live work and overwritten retry attempts are excluded. "
+            "Reaching a cap does not prove that review quality suffered. Compare affected reports before changing allowances. "
+            "Skipped stages are excluded. Historical runs without telemetry are unknown."
+        )
+        + f"<p>{_fmt_int(limits.get('uninstrumented_stage_runs'))} of "
+        + f"{_fmt_int(limits.get('stage_runs'))} saved stage runs have no limit telemetry.</p>"
+        + "<section><h2>Token and tool limits</h2>"
+        + _section_note(
+            "Work limited counts observed output truncations, forced final answers or refused tool calls. "
+            "The tool allowance also bounds model turns, so a forced final answer can occur below the tool call cap. "
+            "Reached cap counts measured usage at or above the cap. Fractions use runs with known observations only. "
+            "Output tokens and web searches show the maximum in one response, not the stage total. "
+            "Web searches also consume the total tool allowance; reaching that smaller remaining allowance is counted under tool calls. "
+            "Providers do not report whether the web search cap stopped additional searches, so work limited is unknown."
+        )
+        + _interactive_table(
+            [
+                "Profile",
+                "Stage",
+                "Model",
+                "Limit",
+                "Configured cap",
+                "Saved runs",
+                "Work limited / observed",
+                "Reached cap / measured",
+                "Maximum used",
+            ],
+            rows,
+            "limits",
+        )
+        + "</section><section><h2>Spending constraints</h2>"
+        + _section_note(
+            "A refused reservation can stop work before the dollar allowance is spent, including when funds are protected for verification. "
+            "These counts are separate from token and tool caps."
+        )
+        + _data_table(
+            [
+                "Profile",
+                "Stage",
+                "Model",
+                "Reservation refused / monitored",
+                "Unknown runs",
+            ],
+            budget_rows,
+        )
+        + "</section><section><h2>Recent affected stage runs</h2>"
+        + _section_note(
+            "Newest job IDs first. Reports show the recorded limits for each stage."
+        )
+        + _data_table(
+            ["Review", "Profile", "Stage", "Observation", "Report"], affected_rows
+        )
+        + "</section>"
+    )
+    return _page("Limits", summary, body, "../", "Limits")
+
+
 def save_stats(
     output_dir: Path, summary: dict, repository_url: str, report_base_url: str
 ):
-    """Write the five public statistics views, agent details and matching JSON."""
+    """Write the public statistics views, agent details and matching JSON."""
     output_dir = Path(output_dir)
     output_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
     json_text = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
@@ -1612,6 +1739,7 @@ def save_stats(
             summary, repository_url, report_base_url
         ),
         "usage/index.html": _usage_html(summary),
+        "limits/index.html": _limits_html(summary, repository_url, report_base_url),
     }
     for stage in _list(summary.get("stages")):
         if isinstance(stage, dict):
