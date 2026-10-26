@@ -209,6 +209,7 @@ def process_job(
     ppq_api_key=None,
     ppq_ledger=None,
     github_token=None,
+    github_post_major_findings=False,
 ):
     number = job["number"]
     base_ref = job["base_ref"]
@@ -499,7 +500,7 @@ def process_job(
                     )
                 jobs.supersede(job)
             else:
-                if bot_config.github_repository is not None:
+                if github_post_major_findings:
                     if not is_current():
                         raise model.StaleReview(
                             "PR head changed before GitHub publication"
@@ -720,6 +721,7 @@ def worker(
     ppq_api_key=None,
     ppq_ledger=None,
     github_token=None,
+    github_post_major_findings=False,
 ):
     stop_event = stop_event or threading.Event()
     while not stop_event.is_set():
@@ -762,6 +764,7 @@ def worker(
                 ppq_api_key,
                 ppq_ledger,
                 github_token,
+                github_post_major_findings,
             )
         except Exception as exc:
             logging.exception(
@@ -944,6 +947,11 @@ def main():
     )
     parser.add_argument("--github-token-file", type=Path)
     parser.add_argument(
+        "--github-post-major-findings",
+        action="store_true",
+        help="Publish major findings upstream using the GitHub credentials",
+    )
+    parser.add_argument(
         "--prompt-file", type=Path, help="Markdown file containing the review prompt"
     )
     parser.add_argument(
@@ -1004,6 +1012,11 @@ def main():
         parser.error("workers must be positive")
     if (args.github_repository is None) != (args.github_token_file is None):
         parser.error("--github-repository and --github-token-file must be set together")
+    if args.github_post_major_findings:
+        if args.github_repository is None:
+            parser.error("--github-post-major-findings requires GitHub credentials")
+        if args.report_dir is None or args.report_base_url is None:
+            parser.error("GitHub publication requires public reports")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     bot_config = config.BotConfig(
         args.origin,
@@ -1108,6 +1121,7 @@ def main():
                 "ppq_api_key": ppq_api_key,
                 "ppq_ledger": ppq_ledger,
                 "github_token": github_token,
+                "github_post_major_findings": args.github_post_major_findings,
             },
             daemon=True,
         ).start()

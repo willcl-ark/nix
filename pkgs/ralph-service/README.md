@@ -108,8 +108,10 @@ No deployment is performed by building these packages. A package rollback does
 not undo published comments or recorded model spending.
 
 Optional `--github-repository owner/repo` and `--github-token-file /run/secrets/token`
-maintain one upstream GitHub comment with exactly `major` findings and a public
-report link. Both report options are required. Later completed reviews update
+authenticate upstream metadata and author-feedback reads independently of posting.
+Add `--github-post-major-findings` to maintain one upstream GitHub comment with
+exactly `major` findings and a public report link. Posting requires both report
+options and the GitHub credentials. Later completed reviews update
 or delete the comment when major findings change or disappear. Skipped reviews
 and missing findings exports preserve it. Upstream PR numbers must match the
 mirror, and the upstream must be open at the reviewed head before a write.

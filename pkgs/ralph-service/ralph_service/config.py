@@ -36,8 +36,6 @@ class BotConfig:
                 r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.github_repository
             ):
                 raise ValueError("github_repository must be owner/repo")
-            if self.report_dir is None:
-                raise ValueError("GitHub publication requires public reports")
         if not self.origin or not self.repository or not self.forgejo_api:
             raise ValueError("origin, repository, and forgejo_api are required")
         object.__setattr__(self, "forgejo_api", self.forgejo_api.rstrip("/"))

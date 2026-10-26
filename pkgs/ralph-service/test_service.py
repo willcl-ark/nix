@@ -73,7 +73,7 @@ class ServiceTests(unittest.TestCase):
         )
         return self.jobs.claim()
 
-    def process(self, job):
+    def process(self, job, **kwargs):
         return service.process_job(
             job,
             self.jobs,
@@ -84,6 +84,7 @@ class ServiceTests(unittest.TestCase):
             self.bot_config,
             self.ledger,
             self.review_engine,
+            **kwargs,
         )
 
     def saved_result(
@@ -225,7 +226,8 @@ class ServiceTests(unittest.TestCase):
             ),
         ):
             with self.assertLogs(level="ERROR"):
-                self.assertEqual(self.process(job), "retry")
+                self.assertEqual(self.process(job, github_token="read-token"), "retry")
+            self.assertEqual(self.evidence.call_args.args[-1], "read-token")
             self.assertEqual(review.call_count, 1)
             self.assertEqual(
                 review.call_args.args[1].budget.review_id,
@@ -277,6 +279,44 @@ class ServiceTests(unittest.TestCase):
         publish.assert_not_called()
         self.assertIsNone(self.jobs.claim())
 
+    def test_github_credentials_do_not_enable_publication(self):
+        self.bot_config = replace(self.bot_config, github_repository="owner/repo")
+        job = self.enqueue()
+        job["review_result"] = self.saved_result()
+        self.jobs.save_result(job, job["review_result"])
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "publish_review", return_value="updated"),
+            patch.object(service.github, "publish_major_findings") as publish,
+        ):
+            self.assertEqual(self.process(job, github_token="read-token"), "updated")
+        publish.assert_not_called()
+
+    def test_github_publication_requires_explicit_flag(self):
+        self.bot_config = replace(
+            self.bot_config,
+            github_repository="owner/repo",
+            report_dir=self.state_dir / "public",
+            report_base_url="https://review.example.org/traces",
+        )
+        job = self.enqueue()
+        job["review_result"] = self.saved_result()
+        self.jobs.save_result(job, job["review_result"])
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "publish_review", return_value="updated"),
+            patch.object(service.github, "publish_major_findings") as publish,
+        ):
+            self.assertEqual(
+                self.process(
+                    job, github_token="write-token", github_post_major_findings=True
+                ),
+                "updated",
+            )
+        publish.assert_called_once_with(
+            "owner/repo", "write-token", 42, job["review_result"]
+        )
+
     def test_stale_forgejo_result_never_publishes_to_github(self):
         self.bot_config = replace(
             self.bot_config,
@@ -292,7 +332,12 @@ class ServiceTests(unittest.TestCase):
             patch.object(service.forgejo, "publish_review", return_value="stale"),
             patch.object(service.github, "publish_major_findings") as publish,
         ):
-            self.assertEqual(self.process(job), "stale")
+            self.assertEqual(
+                self.process(
+                    job, github_token="write-token", github_post_major_findings=True
+                ),
+                "stale",
+            )
         publish.assert_not_called()
 
     def test_stale_review_keeps_newer_pending_head(self):

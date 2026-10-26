@@ -603,7 +603,9 @@ mirror must use matching PR numbers. Public reports must also be enabled through
 `reportDir` and `reportBaseUrl`.
 
 Set `githubPostMajorFindings = false` to stop GitHub posting while retaining
-the repository and token configuration. Forgejo reviews and the second Sol
+the repository and token configuration. Ralph still uses the token for
+authenticated upstream reads, including backport evidence and author feedback.
+Credentials alone never enable GitHub writes. Forgejo reviews and the second Sol
 verification of Major findings still run. Existing GitHub comments remain.
 
 Ralph keeps one GitHub comment per PR, containing only findings whose severity

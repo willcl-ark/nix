@@ -75,12 +75,13 @@ let
     "--bot-login"
     cfg.botLogin
   ]
-  ++ lib.optionals cfg.githubPostMajorFindings [
+  ++ lib.optionals (cfg.githubTokenFile != null && cfg.githubRepository != null) [
     "--github-token-file"
     cfg.githubTokenFile
     "--github-repository"
     cfg.githubRepository
   ]
+  ++ lib.optionals cfg.githubPostMajorFindings [ "--github-post-major-findings" ]
   ++ lib.optionals (cfg.repositoryUrl != null) [
     "--repository-url"
     cfg.repositoryUrl
@@ -148,7 +149,7 @@ in
     githubTokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Runtime file containing the GitHub bot token for major findings.";
+      description = "Runtime GitHub token file for authenticated upstream reads and optional posting.";
     };
 
     githubRepository = lib.mkOption {
@@ -343,6 +344,10 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        assertion = (cfg.githubTokenFile != null) == (cfg.githubRepository != null);
+        message = "services.ralph.githubTokenFile and githubRepository must be set together.";
+      }
       {
         assertion =
           !cfg.githubPostMajorFindings || (cfg.githubTokenFile != null && cfg.githubRepository != null);
