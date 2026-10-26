@@ -268,7 +268,7 @@ does not receive concept research output or current PR discussion.
 | adversarial_gemini | google/gemini-4-argon | high | 32,000 | Same tools and profiles, via PPQ |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
 | dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
-| public_contract | gpt-6.1-terra | low | 25,000 | Focused input and code tools |
+| public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
 | verifier, all tiers | gpt-6-luna | xhigh | 128,000 | Original input, candidates, concept candidate, code and research tools |
@@ -545,9 +545,8 @@ profile with `ralph review ... --profile high`, or set `"profile": "high"` in
 an engine configuration. The CLI option overrides the configuration file.
 
 High uses gpt-6.1-sol for independent review, concurrency, state, dead code,
-design and verification. Public-contract review retains gpt-6.1-terra. Core
-analysis and verification stages use at least high reasoning effort, retaining
-xhigh where already configured, and at least
+design and verification. Core analysis and verification stages use at least
+high reasoning effort, retaining xhigh where already configured, and at least
 16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
 and the PPQ reviewer retain their default settings. Tool limits are unchanged.
 

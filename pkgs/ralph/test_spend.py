@@ -90,11 +90,6 @@ class SpendTests(unittest.TestCase):
         }
         self.assertEqual(str(price_usd("gpt-6-luna", long_context)), "0.054476")
         self.assertEqual(str(price_usd("gpt-6.1-sol", long_context)), "1.089504")
-        self.assertEqual(str(price_usd("gpt-6.1-terra", long_context)), "0.544752")
-        self.assertEqual(
-            price_usd("gpt-6.1-terra-2026-10-26", long_context),
-            price_usd("gpt-6.1-terra", long_context),
-        )
         snapshot = "gpt-6-luna-2026-09-29"
         self.assertEqual(
             price_usd(snapshot, long_context), price_usd("gpt-6-luna", long_context)
