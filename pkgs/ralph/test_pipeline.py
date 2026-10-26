@@ -407,6 +407,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(entry["severity"], self.published["severity"])
         self.assertEqual(entry["status"], "unclear")
         self.assertFalse(entry["collapsed"])
+        self.assertIn("##### Findings", self.result.content)
+        self.assertIn(self.published["title"], self.result.content)
+        self.assertNotIn("Previous findings and author responses", self.result.content)
 
     def test_verified_repeat_preserves_finding_and_links_memory(self):
         self.tier, self.audits = "routine", []

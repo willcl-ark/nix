@@ -204,15 +204,41 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
                 "body": "</details><script>bad</script>",
                 "severity": "major",
                 "status": "unclear",
-                "author_position": "address_elsewhere",
+                "author_position": "none",
             }
         ]
         rendered = protocol.render([], review_memory=memory)
-        self.assertIn("1 major", rendered)
+        self.assertIn("##### Findings", rendered)
+        self.assertNotIn("<details>", rendered)
         self.assertIn("Existing index problem", rendered)
         self.assertNotIn("no actionable", rendered)
         self.assertNotIn("<script>", rendered)
         self.assertIn("&lt;/details&gt;", rendered)
+
+        for status in ("fixed", "invalid"):
+            memory[0]["status"] = status
+            self.assertNotIn(
+                "Existing index problem", protocol.render([], review_memory=memory)
+            )
+        memory[0]["status"] = "unclear"
+
+        memory.append(
+            {
+                "title": "Author discussed this finding",
+                "body": "A separate concern",
+                "severity": "minor",
+                "status": "still_present",
+                "author_position": "wontfix",
+                "author_comments": [{"url": "https://example.org/reply"}],
+            }
+        )
+        rendered = protocol.render([], review_memory=memory)
+        main, history = rendered.split("<details>", 1)
+        self.assertIn("Existing index problem", main)
+        self.assertNotIn("Existing index problem", history)
+        self.assertNotIn("Author discussed this finding", main)
+        self.assertIn("Author discussed this finding", history)
+        self.assertIn("https://example.org/reply", history)
 
     def test_only_confirmed_repeat_is_collapsed(self):
         finding = {
@@ -230,6 +256,8 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
                 **finding,
                 "status": "still_present",
                 "collapsed": True,
+                "author_position": "address_elsewhere",
+                "author_comments": [{"url": "https://example.org/reply"}],
                 "current_finding_ids": ["finding:1"],
             }
         ]
@@ -240,6 +268,11 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         self.assertIn(
             "##### Findings", protocol.render([finding], review_memory=memory)
         )
+        memory[0].update(collapsed=True, author_position="none", author_comments=[])
+        rendered = protocol.render([finding], review_memory=memory)
+        self.assertIn("##### Findings", rendered)
+        self.assertNotIn("<details>", rendered)
+        self.assertEqual(rendered.count("Repeated body"), 1)
 
 
 if __name__ == "__main__":

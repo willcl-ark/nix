@@ -595,11 +595,13 @@ feedback pass then maps explicit author replies to earlier findings and current
 candidates. The verifier checks the technical claims against source code.
 
 An author saying “addressing elsewhere” or “won't fix” does not resolve a finding.
-A repeat may move into the report's previously discussed section only when the
-verifier confirms the same mechanism and consequence, with evidence from both
-base and head that the PR does not introduce or worsen it. Findings that remain
-unresolved are retained with their original identity, severity and assessment
-history, including when discovery does not find them again. Missing or invalid
+Unresolved findings without a recorded direct author response stay in the main
+review body, including when discovery does not find them again. A verified current
+finding appears there once. A repeat may move into the report's previously discussed
+section only with a direct author response and when the verifier confirms the
+same mechanism and consequence, with evidence from both base and head that the PR
+does not introduce or worsen it. Findings that remain unresolved are retained with
+their original identity, severity and assessment history, including when discovery does not find them again. Missing or invalid
 reconciliation keeps them unresolved. Fixed and invalid decisions require source
 evidence; author intent alone is insufficient.
 

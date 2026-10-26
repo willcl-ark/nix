@@ -798,9 +798,15 @@ def render(
                 )
         sections.append("\n\n".join(lines))
     memory = review_memory or []
+    responded = [
+        entry
+        for entry in memory
+        if entry.get("author_position", "none") != "none"
+        and entry.get("author_comments")
+    ]
     collapsed_ids = {
         finding_id
-        for entry in memory
+        for entry in responded
         if entry.get("collapsed") and entry.get("status") == "still_present"
         for finding_id in entry.get("current_finding_ids", [])
     }
@@ -830,6 +836,33 @@ def render(
                     for finding in group
                 )
             )
+    history = []
+    visible_ids = {finding["id"] for finding in findings} - collapsed_ids
+    for entry in memory:
+        if entry not in responded and (
+            entry.get("status") in ("fixed", "invalid")
+            or visible_ids.intersection(entry.get("current_finding_ids", []))
+        ):
+            continue
+        destination = history if entry in responded else rendered_findings
+
+        def escaped(key, default=""):
+            return html.escape(str(entry.get(key, default)))
+
+        destination.append(
+            f"<h6>{escaped('severity')} · {escaped('title')}</h6>\n"
+            f"<p>Status: {escaped('status', 'unclear')}. "
+            f"Author position: {escaped('author_position', 'none')}.</p>\n"
+            f"<p>{escaped('path')}:{escaped('line')} at {escaped('source_head')}</p>\n"
+            f"<pre>{escaped('body')}</pre>\n<p>{escaped('reason')}</p>"
+        )
+        for comment in entry.get("author_comments", []):
+            url = comment.get("url", "")
+            if urlsplit(url).scheme in ("https", "http"):
+                destination.append(
+                    f'<p><a href="{html.escape(url, quote=True)}">Author reply</a> '
+                    f"{html.escape(str(comment.get('updated_at', '')))}</p>"
+                )
     if rendered_findings:
         sections.append("##### Findings\n\n" + "\n\n".join(rendered_findings))
     rendered_design = []
@@ -862,9 +895,11 @@ def render(
                 )
             rendered_alternatives.append(text)
         sections.append("##### Alternatives\n\n" + "\n\n".join(rendered_alternatives))
-    if memory:
+    if responded:
         unresolved = [
-            entry for entry in memory if entry.get("status") not in ("fixed", "invalid")
+            entry
+            for entry in responded
+            if entry.get("status") not in ("fixed", "invalid")
         ]
         if unresolved:
             severities = {}
@@ -878,26 +913,6 @@ def render(
                 f"Previously reported concerns remain unresolved: {html.escape(counts)}. "
                 "Author deferral or disagreement does not resolve a finding."
             )
-        history = []
-        for entry in memory:
-
-            def escaped(key, default=""):
-                return html.escape(str(entry.get(key, default)))
-
-            history.append(
-                f"<h6>{escaped('severity')} · {escaped('title')}</h6>\n"
-                f"<p>Status: {escaped('status', 'unclear')}. "
-                f"Author position: {escaped('author_position', 'none')}.</p>\n"
-                f"<p>{escaped('path')}:{escaped('line')} at {escaped('source_head')}</p>\n"
-                f"<pre>{escaped('body')}</pre>\n<p>{escaped('reason')}</p>"
-            )
-            for comment in entry.get("author_comments", []):
-                url = comment.get("url", "")
-                if urlsplit(url).scheme in ("https", "http"):
-                    history.append(
-                        f'<p><a href="{html.escape(url, quote=True)}">Author reply</a> '
-                        f"{html.escape(str(comment.get('updated_at', '')))}</p>"
-                    )
         sections.append(
             "<details>\n<summary>Previous findings and author responses</summary>\n\n"
             + "\n\n".join(history)
