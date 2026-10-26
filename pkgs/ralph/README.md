@@ -560,3 +560,29 @@ and tool limits in the engine configuration snapshot and hash. Profiles keep
 routine, standard and sensitive tool limits explicit. Model overrides apply after
 profile selection; overriding the archaeologist model also selects that model
 for alternatives. Custom audit prompt directories contain prompts only.
+
+## Backport reviews
+
+The current engine reviews backports for upstream fidelity and correctness on the
+release branch. A `Backport` label, a `Rebased-From:` commit trailer, or explicit
+backport intent targeting a release branch selects this mode. A release branch
+alone does not. Domain risk floors and the existing finding verification gates
+still apply; blind alternatives are skipped.
+
+The evidence collector maps original commits to backported commits, compares each
+pair, inventories claimed source PRs and untagged release preparation, and checks
+release-note references. Reviewers assess missing dependencies, intentional partial
+backports, conflict resolutions and interactions. Mechanical differences and
+missing release-note references are leads, not automatic defects.
+
+Reports include a separately verified backport assessment with pinned base/head
+revisions, evidence, required fixes and limitations. Unavailable originals,
+unverified source membership and incomplete review prevent a `Faithful` verdict.
+Normal code findings still require valid source evidence and changed-line anchors.
+The upstream tools read only resolved original commits and their parents, under
+existing tool budgets. Reviews remain static; they do not execute builds or tests.
+
+The local CLI detects commit trailers and uses available local objects without
+network access. It reports unverified source PR membership as a limitation. The
+companion service acquires source PR metadata and pins upstream history before
+calling the engine. Neither mode requires a personal fish function or skill path.

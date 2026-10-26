@@ -157,3 +157,28 @@ the service user. The monitor polls Telegram; no webhook or inbound port is
 needed. See the
 [module guide](../../modules/ralph/README.md#telegram-publishing-and-monitoring)
 for NixOS setup and delivery behavior.
+
+## Backport reviews
+
+Backport PRs receive the core's fidelity and release-branch review. The service
+collects labels, title/body and the target branch before checking for a reusable
+result. It resolves upstream PR commit lists and original objects, including
+abbreviated `Rebased-From` trailers, then pins the acquired history for the review.
+Unavailable or ambiguous provenance appears in the report as a limitation.
+
+Reuse includes a fingerprint of review metadata and backport evidence alongside
+the engine identity and base/head. Metadata is checked again during review and
+before publication. Publication retries reuse the saved result when its reviewed
+context remains current. Installing the feature does not enqueue historical PRs.
+
+The report includes the verified backport assessment separately from inline code
+findings. Missing whole commits can therefore be reported without fabricating a
+source-line location. See [core behavior](../ralph/README.md#backport-reviews).
+
+Label/body edits alone do not enqueue reviews. Use the existing explicit review
+request to re-review an unchanged head after editing its backport scope.
+
+Frozen cases use schema 6 and retain the backport evidence and available upstream
+objects for offline replay. Recreate older case manifests before evaluating with
+this version; replay rejects changed evidence or missing source pins before any
+model request.
