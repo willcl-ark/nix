@@ -32,6 +32,20 @@ WEB_SEARCH_TOOL = {"type": "web_search", "search_context_size": "low"}
 BACKPORT_TOOLS = [
     {
         "type": "function",
+        "name": "read_upstream_commit",
+        "strict": True,
+        "description": "Read the message and bounded patch of an original source commit, "
+        "including an omitted commit listed in backport evidence. Use source file tools "
+        "for additional context when the patch is truncated.",
+        "parameters": {
+            "type": "object",
+            "properties": {"commit": {"type": "string"}},
+            "required": ["commit"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
         "name": "read_upstream_file",
         "strict": True,
         "description": "Read a tracked file at a resolved original backport commit, "
@@ -911,6 +925,7 @@ def openai_review(
                                 checkout, snapshot.diff_base_sha, args.get("query")
                             )
                         elif call["name"] in {
+                            "read_upstream_commit",
                             "read_upstream_file",
                             "search_upstream_code",
                         }:

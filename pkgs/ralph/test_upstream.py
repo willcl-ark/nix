@@ -54,6 +54,15 @@ class UpstreamTests(unittest.TestCase):
                     {"commit": original, "before": False, "query": "after"},
                 ),
             )
+            omitted = {
+                "commits": [],
+                "sources": {"bitcoin/bitcoin#1": {"commits": [original]}},
+            }
+            patch = upstream.lookup(
+                root, omitted, "read_upstream_commit", {"commit": original}
+            )
+            self.assertIn("-before", patch)
+            self.assertIn("+after", patch)
             for invalid in (base, "HEAD", original[:7], original + "^", "--all"):
                 with self.subTest(commit=invalid):
                     self.assertIn(

@@ -3,7 +3,16 @@
 from contextlib import contextmanager
 import uuid
 
-from .repository import SHA, git, has_commit, read_file, search_code, tracked_files_at
+from .repository import (
+    SHA,
+    MAX_TOOL_BYTES,
+    bounded_git,
+    git,
+    has_commit,
+    read_file,
+    search_code,
+    tracked_files_at,
+)
 
 
 def original_commits(evidence):
@@ -43,7 +52,7 @@ def pin(checkout, evidence):
 
 def lookup(checkout, evidence, name, args):
     commit = args.get("commit")
-    before = args.get("before")
+    before = False if name == "read_upstream_commit" else args.get("before")
     if (
         not isinstance(commit, str)
         or not SHA.fullmatch(commit)
@@ -54,6 +63,24 @@ def lookup(checkout, evidence, name, args):
     ref = git(
         checkout, "rev-parse", "--verify", f"{commit}^" if before else commit
     ).strip()
+    if name == "read_upstream_commit":
+        output = bounded_git(
+            checkout,
+            "show",
+            "--format=fuller",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            ref,
+            "--",
+            max_bytes=MAX_TOOL_BYTES,
+            attr_source=ref,
+        )
+        return output[:MAX_TOOL_BYTES].decode(errors="replace") + (
+            "\n[Patch truncated; inspect original files and parents with upstream tools.]"
+            if len(output) > MAX_TOOL_BYTES
+            else ""
+        )
     if name == "read_upstream_file":
         return read_file(
             checkout,
