@@ -558,3 +558,26 @@ passes are not evidence of model quality.
 PPQ rates use the model catalog input, output and cache prices. Unknown
 cache-write usage uses the higher input rate as a conservative estimate.
 See [PPQ integration guide](https://ppq.ai/llms.txt).
+
+### GitHub major findings
+
+Set `services.ralph.githubRepository` to the upstream `owner/repo` and
+`services.ralph.githubTokenFile` to a runtime secret file to enable GitHub
+comments. The upstream and mirror must use matching PR numbers. Public reports
+must also be enabled through `reportDir` and `reportBaseUrl`.
+
+Ralph keeps one GitHub comment per PR, containing only findings whose severity
+is exactly `major`, using their final edited wording, plus a full-report link.
+A later review updates that comment or deletes it when no major findings remain.
+Skipped reviews and engines without a findings export leave it alone. Updates
+and deletion require an open upstream PR at the reviewed head. The Forgejo
+comment is unchanged. Publication failures use the existing saved-result retry
+queue without repeating the model review.
+
+Use a token for Ralph's GitHub account that can read the upstream PR and create,
+edit and delete its own issue comments. See [GitHub's token permission notes](https://docs.github.com/en/rest/issues/comments).
+For an account outside the upstream organization, use a classic personal access
+token with `public_repo` scope. Fine-grained tokens owned by the bot account
+provide only read access to other owners' public repositories. See
+[GitHub's token limitations](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#fine-grained-personal-access-tokens-limitations).
+Never put the token itself in Nix configuration or the Nix store.

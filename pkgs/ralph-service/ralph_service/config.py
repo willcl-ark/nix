@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from urllib.parse import urlsplit
 
 
@@ -27,8 +28,16 @@ class BotConfig:
     comment_marker: str | None = None
     report_dir: Path | None = None
     report_base_url: str | None = None
+    github_repository: str | None = None
 
     def __post_init__(self):
+        if self.github_repository is not None:
+            if not re.fullmatch(
+                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.github_repository
+            ):
+                raise ValueError("github_repository must be owner/repo")
+            if self.report_dir is None:
+                raise ValueError("GitHub publication requires public reports")
         if not self.origin or not self.repository or not self.forgejo_api:
             raise ValueError("origin, repository, and forgejo_api are required")
         object.__setattr__(self, "forgejo_api", self.forgejo_api.rstrip("/"))

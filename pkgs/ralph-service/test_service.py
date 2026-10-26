@@ -733,6 +733,82 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(self.process(retry_job), "published")
         self.assertEqual(urls[0], urls[1])
 
+    def test_github_rate_limit_403_is_retryable_but_permission_denial_is_not(self):
+        for headers in ({"Retry-After": "60"}, {"X-RateLimit-Remaining": "0"}):
+            self.assertTrue(
+                service.retryable_error(
+                    urllib.error.HTTPError(
+                        "https://api.github.com",
+                        403,
+                        "rate limited",
+                        headers,
+                        None,
+                    )
+                )
+            )
+        self.assertFalse(
+            service.retryable_error(
+                urllib.error.HTTPError(
+                    "https://api.github.com",
+                    403,
+                    "forbidden",
+                    {},
+                    None,
+                )
+            )
+        )
+
+    def test_github_failure_retries_saved_review_after_forgejo(self):
+        self.bot_config = replace(
+            self.bot_config,
+            report_dir=self.state_dir / "public",
+            report_base_url="https://review.example.org/traces",
+            github_repository="owner/repo",
+        )
+        job = self.enqueue()
+        job["review_result"] = self.saved_result()
+        self.jobs.save_result(job, job["review_result"])
+        with (
+            patch.object(service.repository, "current_head", return_value="a" * 40),
+            patch.object(
+                service.forgejo, "publish_review", return_value="unchanged"
+            ) as forgejo_publish,
+            patch.object(
+                service.github,
+                "publish_major_findings",
+                side_effect=[
+                    urllib.error.URLError("connection lost"),
+                    "created",
+                ],
+            ) as github_publish,
+        ):
+            with self.assertLogs(level="ERROR"):
+                self.assertEqual(self.process(job), "retry")
+            retry = self.jobs.claim()
+            self.assertEqual(retry["review_result"]["content"], "Review content")
+            self.assertEqual(self.process(retry), "unchanged")
+        self.assertEqual(forgejo_publish.call_count, 2)
+        self.assertEqual(github_publish.call_count, 2)
+        self.assertTrue(github_publish.call_args.args[3]["run"]["report_url"])
+
+    def test_stale_forgejo_result_never_publishes_to_github(self):
+        self.bot_config = replace(
+            self.bot_config,
+            report_dir=self.state_dir / "public",
+            report_base_url="https://review.example.org/traces",
+            github_repository="owner/repo",
+        )
+        job = self.enqueue()
+        job["review_result"] = self.saved_result()
+        self.jobs.save_result(job, job["review_result"])
+        with (
+            patch.object(service.repository, "current_head", return_value="a" * 40),
+            patch.object(service.forgejo, "publish_review", return_value="stale"),
+            patch.object(service.github, "publish_major_findings") as publish,
+        ):
+            self.assertEqual(self.process(job), "stale")
+        publish.assert_not_called()
+
     def test_report_failure_publishes_review_without_broken_link(self):
         self.bot_config = replace(
             self.bot_config,

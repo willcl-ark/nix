@@ -95,3 +95,11 @@ Hydrate the shared Git store before starting local-only snapshot reads. Start
 one companion against the existing state and resume timers after startup succeeds.
 No deployment is performed by building these packages. A package rollback does
 not undo published comments or recorded model spending.
+
+Optional `--github-repository owner/repo` and `--github-token-file /run/secrets/token`
+maintain one upstream GitHub comment with exactly `major` findings and a public
+report link. Both report options are required. Later completed reviews update
+or delete the comment when major findings change or disappear. Skipped reviews
+and missing findings exports preserve it. Upstream PR numbers must match the
+mirror, and the upstream must be open at the reviewed head before a write.
+GitHub credentials are separate from Forgejo credentials and model tools.

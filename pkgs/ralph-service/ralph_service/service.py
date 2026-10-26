@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ralph import trace as core_trace
-from . import badge, config, forgejo, report, repository, trace
+from . import badge, config, forgejo, github, report, repository, trace
 from ralph import repository as local_repository
 from ralph import engine, model, spend, runner
 from .research import discussion_lookup
@@ -171,6 +171,12 @@ def log_review_outcome(
 
 def retryable_error(exc):
     if isinstance(exc, urllib.error.HTTPError):
+        if exc.code == 403 and exc.headers is not None:
+            if (
+                exc.headers.get("Retry-After")
+                or exc.headers.get("X-RateLimit-Remaining") == "0"
+            ):
+                return True
         return exc.code == 429 or 500 <= exc.code < 600
     return isinstance(
         exc, (urllib.error.URLError, TimeoutError, subprocess.TimeoutExpired)
@@ -190,6 +196,7 @@ def process_job(
     allow_discussions=True,
     ppq_api_key=None,
     ppq_ledger=None,
+    github_token=None,
 ):
     number = job["number"]
     base_ref = job["base_ref"]
@@ -414,6 +421,18 @@ def process_job(
                     )
                 jobs.supersede(job)
             else:
+                if bot_config.github_repository is not None:
+                    if not is_current():
+                        raise model.StaleReview(
+                            "PR head changed before GitHub publication"
+                        )
+                    stage = "github"
+                    github.publish_major_findings(
+                        bot_config.github_repository,
+                        github_token,
+                        number,
+                        result_record,
+                    )
                 jobs.complete(job)
             outcome = result
             return outcome
@@ -547,6 +566,7 @@ def worker(
     stop_event=None,
     ppq_api_key=None,
     ppq_ledger=None,
+    github_token=None,
 ):
     stop_event = stop_event or threading.Event()
     while not stop_event.is_set():
@@ -579,6 +599,7 @@ def worker(
                 allow_discussions,
                 ppq_api_key,
                 ppq_ledger,
+                github_token,
             )
         except Exception as exc:
             logging.exception(
@@ -754,6 +775,11 @@ def main():
     parser.add_argument("--forgejo-token-file", type=Path)
     parser.add_argument("--bot-login")
     parser.add_argument(
+        "--github-repository",
+        help="Upstream GitHub owner/repo with matching PR numbers",
+    )
+    parser.add_argument("--github-token-file", type=Path)
+    parser.add_argument(
         "--prompt-file", type=Path, help="Markdown file containing the review prompt"
     )
     parser.add_argument(
@@ -812,6 +838,8 @@ def main():
         parser.error("required options: " + ", ".join(missing))
     if args.workers < 1:
         parser.error("workers must be positive")
+    if (args.github_repository is None) != (args.github_token_file is None):
+        parser.error("--github-repository and --github-token-file must be set together")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     bot_config = config.BotConfig(
         args.origin,
@@ -821,6 +849,7 @@ def main():
         args.comment_marker,
         args.report_dir,
         args.report_base_url,
+        args.github_repository,
     )
     current_only = (
         args.prompt_file is not None
@@ -855,6 +884,11 @@ def main():
     ppq_api_key = args.ppq_key_file.read_text().strip()
     secret = args.webhook_secret_file.read_bytes().strip()
     forgejo_token = args.forgejo_token_file.read_text().strip()
+    github_token = (
+        args.github_token_file.read_text().strip() if args.github_token_file else None
+    )
+    if github_token == "":
+        parser.error("GitHub token file must not be empty")
     if (
         not api_key
         or not ppq_api_key
@@ -894,7 +928,11 @@ def main():
                 ledger,
                 review_engine,
             ),
-            kwargs={"ppq_api_key": ppq_api_key, "ppq_ledger": ppq_ledger},
+            kwargs={
+                "ppq_api_key": ppq_api_key,
+                "ppq_ledger": ppq_ledger,
+                "github_token": github_token,
+            },
             daemon=True,
         ).start()
     server = ThreadingHTTPServer(

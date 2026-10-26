@@ -75,6 +75,12 @@ let
     "--bot-login"
     cfg.botLogin
   ]
+  ++ lib.optionals (cfg.githubTokenFile != null && cfg.githubRepository != null) [
+    "--github-token-file"
+    cfg.githubTokenFile
+    "--github-repository"
+    cfg.githubRepository
+  ]
   ++ lib.optionals (cfg.repositoryUrl != null) [
     "--repository-url"
     cfg.repositoryUrl
@@ -135,6 +141,18 @@ in
       type = lib.types.str;
       example = "https://git.example.org/api/v1/repos/owner/repo";
       description = "Forgejo repository API URL.";
+    };
+
+    githubTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Runtime file containing the GitHub bot token for major findings.";
+    };
+
+    githubRepository = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
+      default = null;
+      description = "Upstream GitHub owner/repo. PR numbers must match the Forgejo mirror.";
     };
 
     repositoryUrl = lib.mkOption {
@@ -305,6 +323,14 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        assertion = (cfg.githubTokenFile == null) == (cfg.githubRepository == null);
+        message = "services.ralph.githubTokenFile and githubRepository must be set together.";
+      }
+      {
+        assertion = cfg.githubRepository == null || (cfg.reportDir != null && cfg.reportBaseUrl != null);
+        message = "services.ralph GitHub publication requires reportDir and reportBaseUrl.";
+      }
       {
         assertion = lib.hasPrefix "/var/lib/" cfg.stateDir;
         message = "services.ralph.stateDir must be under /var/lib so systemd can manage it with StateDirectory.";
