@@ -39,6 +39,14 @@ the module passes the file through and does not override its listener. The
 module does not open firewall ports. The empty management key disables the
 management API.
 
+For quota polling or the built-in UI, set a separate nonempty
+`management.secret-key`, keep `management.allow-remote: false`, and retain the
+loopback listener. Client keys in `access.api-keys` cannot sign into management.
+Set `management.disable-control-panel: false` to serve `/management.html`.
+No separate frontend deployment is needed. The pinned package downloads the
+panel when needed; the module directs its cache to `dataDir/static` through
+`MANAGEMENT_STATIC_PATH` so it can write under the service sandbox.
+
 The client key authenticates requests from Ralph to the local proxy. It is
 separate from the subscription OAuth tokens. Give Ralph the same client key
 through its own secret file. Do not put upstream OpenAI API keys in this

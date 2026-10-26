@@ -59,7 +59,10 @@ in
       wantedBy = [ "multi-user.target" ];
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
-      environment.HOME = cfg.dataDir;
+      environment = {
+        HOME = cfg.dataDir;
+        MANAGEMENT_STATIC_PATH = "${cfg.dataDir}/static";
+      };
       serviceConfig = {
         ExecStart = lib.escapeShellArgs [
           (lib.getExe cfg.package)
