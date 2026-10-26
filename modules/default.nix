@@ -1,5 +1,6 @@
 {
   cdash = ./cdash/nixos;
+  cli-proxy-api = ./cli-proxy-api/nixos;
   bitcoin-core-guix-substitutes = ./bitcoin-core-guix-substitutes/nixos;
   bitcoin-dnsseed = ./bitcoin-dnsseed/nixos;
   dnsseedrs = ./dnsseedrs/nixos;

@@ -12,6 +12,7 @@ stable named flake output.
 | Output | Option prefix | Purpose |
 | --- | --- | --- |
 | `nixosModules.cdash` | `services.cdash` | CDash with PostgreSQL, nginx, PHP-FPM, queue processing, and scheduled maintenance. [Usage](modules/cdash/README.md). |
+| `nixosModules.cli-proxy-api` | `services.cli-proxy-api` | Subscription inference proxy with persistent OAuth credentials and a runtime secret configuration. [Usage](modules/cli-proxy-api/README.md). |
 | `nixosModules.bitcoin-dnsseed` | `services.bitcoinDnsSeed` | Bitcoin DNS seed deployment using `dnsseedrs`, CoreDNS, DNSSEC key material, optional Tor/I2P proxies, and Caddy seed dumps. |
 | `nixosModules.bitcoin-core-guix-substitutes` | `services.bitcoinCoreGuixSubstitutes` | Bitcoin Core Guix substitute publisher with optional immutable manifest builder, signing-key publication, and Caddy wiring. |
 | `nixosModules.dnsseedrs` | `services.dnsseedrs` | Generic multi-instance dnsseedrs service module. |
@@ -25,6 +26,7 @@ stable named flake output.
 | Output | Purpose |
 | --- | --- |
 | `packages.<system>.cdash` | CDash build and test dashboard with locked PHP dependencies and compiled frontend assets. |
+| `packages.<system>.cli-proxy-api` | CLIProxyAPI from `numtide/llm-agents.nix`, using this flake's nixpkgs. |
 | `packages.<system>.dnsseedrs` | Bitcoin DNS seeder built from `willcl-ark/dnsseedrs`. |
 | `packages.<system>.ralph-service` | Forgejo webhook reviewer, frozen evaluation, reports, statistics, follow-up and a separate Telegram monitor, importing the Ralph core. [Usage](pkgs/ralph-service/README.md). |
 | `packages.<system>.ralph` | Local committed-change review CLI with selectable engines, default/high review profiles, budgeted audits and backport fidelity reviews. [Usage and review flow](pkgs/ralph/README.md). |
@@ -78,6 +80,7 @@ keeps hosts from accidentally depending on unrelated services.
 ```text
 modules/
   cdash/
+  cli-proxy-api/
   bitcoin-core-guix-substitutes/
   bitcoin-dnsseed/
   dnsseedrs/
