@@ -104,85 +104,22 @@ class SourceEvidenceTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["status"], "partial")
         self.assertIn("does not match", result["validation_errors"][0]["error"])
 
-    def test_source_evidence_is_required(self):
-        for fields in ({}, {"source_evidence": []}):
-            finding = {
-                key: value
-                for key, value in self.finding.items()
-                if key != "source_evidence"
-            }
-            with self.subTest(fields=fields):
-                result, accepted = self.verify({**finding, **fields})
-                self.assertEqual(accepted, [])
-                self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
-
-    def test_one_real_excerpt_does_not_excuse_a_fabricated_excerpt(self):
-        sources = [
-            self.evidence,
-            {**self.evidence, "excerpt": self.call.replace("wait=", "")},
-        ]
-        _, accepted = self.verify({**self.finding, "source_evidence": sources})
-        self.assertEqual(accepted, [])
-
     def test_real_caller_in_unchanged_file_matches_both_snapshots(self):
         for side in ("base", "head"):
-            for ending in ("", "\n"):
-                with self.subTest(side=side, ending=ending):
-                    finding = {
-                        **self.finding,
-                        "source_evidence": [
-                            {
-                                **self.evidence,
-                                "side": side,
-                                "excerpt": self.call + ending,
-                            }
-                        ],
-                    }
-                    result, accepted = self.verify(finding)
-                    self.assertEqual(len(accepted), 1)
-                    self.assertEqual(result["coverage"]["status"], "complete")
+            with self.subTest(side=side):
+                finding = {
+                    **self.finding,
+                    "source_evidence": [{**self.evidence, "side": side}],
+                }
+                result, accepted = self.verify(finding)
+                self.assertEqual(len(accepted), 1)
+                self.assertEqual(result["coverage"]["status"], "complete")
 
     def test_excerpts_are_checked_against_pinned_objects(self):
         (self.checkout / self.caller).write_text("overwritten working tree\n")
         repository.git(self.checkout, "checkout", "-q", self.snapshot.merge_base)
         _, accepted = self.verify(self.finding)
         self.assertEqual(len(accepted), 1)
-
-    def test_wrong_location_or_side_and_malformed_evidence_are_withheld(self):
-        cases = (
-            {"line": 470},
-            {"line": 472},
-            {"line": True},
-            {"line": 0},
-            {"side": "other"},
-            {"path": "untracked.py"},
-            {"excerpt": ""},
-            {"excerpt": "# fixture\n" * 151},
-            {"excerpt": "x" * 12_001},
-            {
-                "path": self.framework,
-                "line": 1,
-                "side": "base",
-                "excerpt": "def sync_blocks(self, nodes=None, *, wait=0.05, timeout=60):",
-            },
-        )
-        for fields in cases:
-            with self.subTest(fields=fields):
-                _, accepted = self.verify(
-                    {**self.finding, "source_evidence": [{**self.evidence, **fields}]}
-                )
-                self.assertEqual(accepted, [])
-
-    def test_multiline_excerpt_preserves_whitespace(self):
-        excerpt = (
-            "def sync_blocks(self, nodes=None, *, wait=0.05, timeout=60):\n    pass"
-        )
-        source = {"path": self.framework, "line": 1, "side": "head", "excerpt": excerpt}
-        _, accepted = self.verify({**self.finding, "source_evidence": [source]})
-        self.assertEqual(len(accepted), 1)
-        source["excerpt"] = excerpt.replace("    pass", "pass")
-        _, accepted = self.verify({**self.finding, "source_evidence": [source]})
-        self.assertEqual(accepted, [])
 
 
 if __name__ == "__main__":

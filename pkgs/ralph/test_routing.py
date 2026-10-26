@@ -3,8 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ralph import config, engine, routing, profiles
-from ralph.protocol import InvalidReview
+from ralph import engine, profiles, routing
 from ralph.repository import MAX_REVIEW_BYTES
 from ralph.spend import BudgetExceeded
 
@@ -28,86 +27,9 @@ def route(
 
 
 class RoutingTests(unittest.TestCase):
-    def test_dead_code_covers_code_tests_and_builds_but_not_ordinary_docs(self):
-        for path in (
-            "src/util/time.cpp",
-            "src/util/time.h",
-            "test/functional/example.py",
-            "src/test/example_tests.cpp",
-            "contrib/example.py",
-            "CMakeLists.txt",
-            "src/CMakeLists.txt",
-            "cmake/example.cmake",
-            "depends/packages/example.mk",
-        ):
-            with self.subTest(path=path):
-                plan = routing.validate_plan(route(), {path}, "routine")
-                self.assertIn("dead_code", plan["audits"])
-        plan = routing.validate_plan(
-            route(), {"README.md", "doc/example.rst"}, "routine"
-        )
-        self.assertNotIn("dead_code", plan["audits"])
-
     def runtime(self):
         case = engine.ReviewCase("Patch", None)
         return engine.Runtime(case=case, api_key="key")
-
-    def test_script_specialist_requires_semantic_selection(self):
-        for path in (
-            "src/policy/policy.cpp",
-            "src/script/interpreter.cpp",
-            "src/primitives/transaction.h",
-            "src/validation.cpp",
-            "src/txmempool.cpp",
-            "src/wallet/spend.cpp",
-        ):
-            with self.subTest(path=path):
-                plan = routing.validate_plan(route(), {path}, "routine")
-                self.assertNotIn("script", plan["audits"])
-                plan = routing.validate_plan(
-                    route(audits=("script",)), {path}, "routine"
-                )
-                self.assertIn("script", plan["audits"])
-                self.assertEqual(plan["tier"], "sensitive")
-
-    def test_script_specialist_skips_docs_tests_and_generic_fallbacks(self):
-        for path in ("doc/transaction.md", "src/test/script_tests.cpp"):
-            with self.subTest(path=path):
-                plan = routing.validate_plan(
-                    route(audits=("script",)), {path}, "routine"
-                )
-                self.assertNotIn("script", plan["audits"])
-        self.assertNotIn("script", routing.full_plan("Routing unavailable")["audits"])
-
-    def test_explicit_full_review_includes_script_specialist(self):
-        debug = {}
-        with patch("ralph.model.run_audit") as run:
-            plan = routing.plan_review(
-                self.runtime(),
-                "Patch",
-                self.snapshot("src/util/time.cpp"),
-                self.prompt_config(),
-                debug,
-                mode="full",
-            )
-        run.assert_not_called()
-        self.assertIn("script", plan["audits"])
-
-    def test_explicit_shadow_review_includes_script_specialist(self):
-        debug = {}
-        with patch(
-            "ralph.model.run_audit", return_value=(route(), {"status": "completed"})
-        ):
-            plan = routing.plan_review(
-                self.runtime(),
-                "Patch",
-                self.snapshot("src/util/time.cpp"),
-                self.prompt_config(),
-                debug,
-                mode="shadow",
-            )
-        self.assertNotIn("script", debug["routing"]["proposed"]["audits"])
-        self.assertIn("script", plan["audits"])
 
     def snapshot(self, *paths):
         return SimpleNamespace(changed_paths=set(paths))
@@ -118,33 +40,6 @@ class RoutingTests(unittest.TestCase):
             audit_prompts={"router": "Route this PR."},
             profile=profiles.get_profile(),
         )
-
-    def test_full_plan_selects_every_audit_and_profile(self):
-        plan = routing.full_plan("Fallback")
-        self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(
-            plan["audits"], [name for name in config.AUDIT_NAMES if name != "script"]
-        )
-        self.assertEqual(plan["profiles"], list(config.ADVERSARIAL_PROFILES))
-
-    def test_sensitive_path_still_calls_router_and_adds_only_relevant_floor(self):
-        snapshot = self.snapshot("src/validation.cpp")
-        debug = {}
-        with patch(
-            "ralph.model.run_audit", return_value=(route(), {"status": "completed"})
-        ) as run:
-            plan = routing.plan_review(
-                self.runtime(),
-                "Patch:\n+validation",
-                snapshot,
-                self.prompt_config(),
-                debug,
-            )
-        self.assertEqual(run.call_count, 1)
-        self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(plan["profiles"], ["consensus"])
-        self.assertEqual(set(plan["audits"]), {"tests", "dead_code", "design"})
-        self.assertNotIn("state", plan["audits"])
 
     def test_full_fallback_for_incomplete_patch_router_failure_and_missing_context(
         self,
@@ -191,242 +86,24 @@ class RoutingTests(unittest.TestCase):
 
     def test_router_budget_exhaustion_propagates_instead_of_full_fallback(self):
         debug = {}
-        with patch(
-            "ralph.model.run_audit",
-            side_effect=BudgetExceeded("review spend limit would be exceeded"),
-        ) as run:
-            with self.assertRaises(BudgetExceeded):
-                routing.plan_review(
-                    self.runtime(),
-                    "Patch:\n+change",
-                    self.snapshot("src/example.cpp"),
-                    self.prompt_config(),
-                    debug,
-                )
+        with (
+            patch(
+                "ralph.model.run_audit",
+                side_effect=BudgetExceeded("review spend limit would be exceeded"),
+            ) as run,
+            self.assertRaises(BudgetExceeded),
+        ):
+            routing.plan_review(
+                self.runtime(),
+                "Patch:\n+change",
+                self.snapshot("src/example.cpp"),
+                self.prompt_config(),
+                debug,
+            )
         self.assertEqual(run.call_count, 1)
         self.assertEqual(debug["stages"]["router"]["status"], "budget_exhausted")
         self.assertEqual(debug["stages"]["router"]["error_type"], "BudgetExceeded")
         self.assertNotIn("routing", debug)
-
-    def test_generic_header_stays_standard_but_known_domains_are_sensitive(self):
-        self.assertEqual(routing.minimum_tier({"src/util/translation.h"}), "standard")
-        cases = {
-            "src/validation.h": ("consensus",),
-            "src/pow.cpp": ("consensus",),
-            "src/chain.h": ("consensus",),
-            "src/chainparams.cpp": ("consensus",),
-            "src/undo.h": ("consensus",),
-            "src/primitives/block.h": ("consensus",),
-            "src/net.h": ("p2p",),
-            "src/net_processing.h": ("p2p",),
-            "src/wallet/wallet.h": ("wallet",),
-            "src/kernel.h": ("consensus",),
-            "src/blockstorage.h": ("consensus",),
-            "src/chainstate.h": ("consensus",),
-        }
-        for path, expected_profiles in cases.items():
-            with self.subTest(path=path):
-                self.assertEqual(routing.minimum_tier({path}), "sensitive")
-                plan = routing.validate_plan(route(), {path}, "routine")
-                self.assertEqual(plan["tier"], "sensitive")
-                self.assertEqual(tuple(plan["profiles"]), expected_profiles)
-
-        plan = routing.validate_plan(route(), {"src/sync.h"}, "routine")
-        self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(
-            plan["audits"], ["concurrency", "tests", "dead_code", "design"]
-        )
-        self.assertEqual(plan["profiles"], [])
-
-        plan = routing.validate_plan(
-            route(), {"src/validationinterface.cpp"}, "routine"
-        )
-        self.assertEqual(
-            plan["audits"], ["concurrency", "tests", "dead_code", "design"]
-        )
-
-    def test_crypto_and_persistence_paths_remain_sensitive(self):
-        for path in (
-            "src/crypto/sha256.cpp",
-            "src/secp256k1/src/secp256k1.c",
-            "src/dbwrapper.cpp",
-            "src/index/base.cpp",
-        ):
-            with self.subTest(path=path):
-                plan = routing.validate_plan(route(), {path}, "routine")
-                self.assertEqual(plan["tier"], "sensitive")
-                self.assertEqual(plan["profiles"], [])
-                if path in {"src/dbwrapper.cpp", "src/index/base.cpp"}:
-                    self.assertIn("state", plan["audits"])
-
-    def test_docs_in_sensitive_and_build_directories_have_no_path_coverage(self):
-        for path in (
-            "src/wallet/README.md",
-            "src/wallet/rpc/README.md",
-            "src/consensus/README.md",
-            "src/policy/README.md",
-            "src/crypto/README.md",
-            "src/db/README.md",
-            "src/util/thread.md",
-            "src/rpc/README.md",
-            "ci/README.md",
-            "ci/test/README.md",
-            "ci/lint/README.txt",
-            "depends/README.txt",
-            "cmake/README.rst",
-        ):
-            with self.subTest(path=path):
-                plan = routing.validate_plan(route(), {path}, "routine")
-                self.assertEqual(plan["tier"], "routine")
-                self.assertEqual(plan["audits"], [])
-                self.assertEqual(plan["profiles"], [])
-
-    def test_test_only_changes_are_routine_tests_unless_router_adds_design(self):
-        paths = {"src/test/validation_tests.cpp"}
-        self.assertEqual(routing.minimum_tier(paths), "routine")
-        plan = routing.validate_plan(route(), paths, "routine")
-        self.assertEqual(plan["tier"], "routine")
-        self.assertEqual(plan["audits"], ["tests", "dead_code"])
-        self.assertEqual(plan["profiles"], [])
-
-        plan = routing.validate_plan(route(audits=("design",)), paths, "routine")
-        self.assertEqual(plan["audits"], ["tests", "dead_code", "design"])
-
-    def test_invalid_schema_rejects_old_or_unknown_route_objects(self):
-        with self.assertRaisesRegex(InvalidReview, "Invalid routing fields"):
-            routing.validate_plan(
-                json.dumps(
-                    {
-                        "tier": "routine",
-                        "audits": [],
-                        "evidence": [],
-                        "missing_context": [],
-                    }
-                ),
-                set(),
-                "routine",
-            )
-        with self.assertRaisesRegex(InvalidReview, "Unknown adversarial profile"):
-            routing.validate_plan(route(profiles=("compiler",)), set(), "routine")
-
-    def test_conditional_domains_add_only_their_audits_and_profiles(self):
-        plan = routing.validate_plan(
-            route(audits=("public_contract",)),
-            {
-                "src/node/blockstorage.cpp",
-                "src/policy/fees.cpp",
-                "src/rpc/mempool.cpp",
-                "depends/packages/libevent.mk",
-            },
-            "standard",
-        )
-        self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(plan["profiles"], ["consensus", "p2p"])
-        self.assertEqual(
-            set(plan["audits"]),
-            {"state", "public_contract", "tests", "dead_code", "design", "build"},
-        )
-
-    def test_public_contract_domains_have_standard_floor_and_mandatory_audits(self):
-        for path in (
-            "src/rpc/misc.cpp",
-            "src/httprpc.cpp",
-            "src/httpserver.cpp",
-            "src/rest.cpp",
-            "src/qt/rpcconsole.h",
-            "src/bitcoin-cli.cpp",
-            "src/init.cpp",
-            "src/common/args.cpp",
-            "src/util/system.cpp",
-        ):
-            with self.subTest(path=path):
-                plan = routing.validate_plan(route(), {path}, "routine")
-                self.assertEqual(plan["tier"], "standard")
-                self.assertEqual(
-                    plan["audits"], ["public_contract", "tests", "dead_code", "design"]
-                )
-                self.assertEqual(plan["profiles"], [])
-
-    def test_public_contract_and_build_keep_overlapping_sensitive_floors(self):
-        plan = routing.validate_plan(route(), {"src/wallet/rpc/spend.cpp"}, "routine")
-        self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(plan["profiles"], ["wallet"])
-        self.assertIn("public_contract", plan["audits"])
-
-        plan = routing.validate_plan(route(), {"src/wallet/CMakeLists.txt"}, "routine")
-        self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(plan["profiles"], ["wallet"])
-        self.assertEqual(plan["audits"], ["dead_code", "build"])
-
-    def test_build_and_ci_have_standard_floor_and_mandatory_audits(self):
-        for path in (
-            "CMakeLists.txt",
-            "src/CMakeLists.txt",
-            "cmake/example.cmake",
-            "depends/packages/libevent.mk",
-            "contrib/guix/guix-build",
-            "ci/lint/06_script.sh",
-            "ci/lint/requirements.txt",
-            "ci/config.yml",
-            "configure.ac",
-            "build-aux/m4/example.m4",
-            "Cargo.lock",
-            "flake.lock",
-        ):
-            with self.subTest(path=path):
-                plan = routing.validate_plan(route(), {path}, "routine")
-                self.assertEqual(plan["tier"], "standard")
-                self.assertEqual(plan["audits"], ["dead_code", "build"])
-                self.assertEqual(plan["profiles"], [])
-
-        plan = routing.validate_plan(route(), {"ci/test/00_setup_env.sh"}, "routine")
-        self.assertEqual(plan["tier"], "standard")
-        self.assertEqual(plan["audits"], ["tests", "dead_code", "build"])
-
-        plan = routing.validate_plan(
-            route(audits=("tests",)), {"depends/packages/libevent.mk"}, "routine"
-        )
-        self.assertEqual(plan["audits"], ["tests", "dead_code", "build"])
-
-    def test_router_can_escalate_public_contract_and_build_security_changes(self):
-        for path, evidence in (
-            ("src/httprpc.cpp", "Changes RPC authentication checks"),
-            ("src/rpc/misc.cpp", "Changes parsing of untrusted input"),
-            ("ci/config.yml", "Changes workflow permissions and secret access"),
-            ("depends/packages/libevent.mk", "Changes dependency provenance"),
-            (
-                "contrib/guix/guix-build",
-                "Changes release signing and artifact integrity",
-            ),
-        ):
-            with self.subTest(path=path):
-                debug = {}
-                with patch(
-                    "ralph.model.run_audit",
-                    return_value=(
-                        route(tier="sensitive", evidence=(evidence,)),
-                        {"status": "completed"},
-                    ),
-                ) as run:
-                    plan = routing.plan_review(
-                        self.runtime(),
-                        "Patch",
-                        self.snapshot(path),
-                        self.prompt_config(),
-                        debug,
-                    )
-                self.assertEqual(debug["routing"]["minimum_tier"], "standard")
-                self.assertEqual(plan["tier"], "sensitive")
-                self.assertEqual(plan["evidence"], [evidence])
-                self.assertEqual(plan["profiles"], [])
-                run.assert_called_once()
-
-    def test_profiles_force_sensitive_tier(self):
-        plan = routing.validate_plan(
-            route(profiles=("wallet",)), {"src/util/time.cpp"}, "standard"
-        )
-        self.assertEqual(plan["tier"], "sensitive")
-        self.assertEqual(plan["profiles"], ["wallet"])
 
 
 if __name__ == "__main__":

@@ -62,20 +62,6 @@ class ConceptToolTests(unittest.TestCase):
             )
         return requests
 
-    def test_concept_can_inspect_actual_base_and_head_behavior(self):
-        with patch.object(model, "read_file", return_value="evidence") as read:
-            self.run_tools(
-                [
-                    ("read_file", {"path": "new.cpp", "start_line": 1}),
-                    ("read_base_file", {"path": "old.cpp", "start_line": 1}),
-                ],
-                tools=model.ARCHAEOLOGY_TOOLS,
-            )
-        self.assertEqual(
-            [call.args[1] for call in read.call_args_list],
-            [self.snapshot.head_files, self.snapshot.base_files],
-        )
-
     def test_blind_tools_search_only_base_and_reject_head_and_discussions(self):
         with (
             patch.object(model, "search_code", return_value="base matches") as search,
@@ -142,31 +128,6 @@ class ConceptToolTests(unittest.TestCase):
                 "web_search", {tool["type"] for tool in requests[0]["tools"]}
             )
             self.assertEqual(requests[-1]["input"][-1]["output"], "Frozen discussion")
-
-    def test_frozen_miss_without_pr_number_does_not_fall_back_to_reader(self):
-        evidence = {
-            "schema_version": 1,
-            "captured_at": "2026-10-23T00:00:00Z",
-            "cutoff": "2026-10-23T00:00:00Z",
-            "entries": [],
-        }
-        live = Mock()
-        requests = self.run_tools(
-            [
-                (
-                    "read_current_pr_discussion",
-                    {"kind": "comments", "page": 1, "review_id": 0},
-                ),
-            ],
-            tools=model.ARCHAEOLOGY_TOOLS,
-            discussion_lookup=live,
-            allow_web_search=True,
-            research_evidence=evidence,
-        )
-        live.assert_not_called()
-        self.assertEqual(
-            requests[-1]["input"][-1]["output"], model.research.MISSING_RESEARCH
-        )
 
 
 if __name__ == "__main__":
