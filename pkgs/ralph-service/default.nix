@@ -3,6 +3,7 @@
   stdenvNoCC,
   python3,
   git,
+  systemd,
   makeWrapper,
   ralph,
 }:
@@ -31,7 +32,7 @@ stdenvNoCC.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    for launcher in bot.py evaluate.py followup.py; do
+    for launcher in bot.py evaluate.py followup.py monitor.py; do
       install -Dm755 "$launcher" $out/libexec/ralph-service/"$launcher"
     done
     for module in ralph_service/*.py; do
@@ -50,6 +51,15 @@ stdenvNoCC.mkDerivation {
       --add-flags $out/libexec/ralph-service/followup.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
       --prefix PATH : ${lib.makeBinPath [ git ]}
+    makeWrapper ${python3.interpreter} $out/bin/ralph-telegram \
+      --add-flags $out/libexec/ralph-service/monitor.py \
+      --prefix PYTHONPATH : ${ralph}/libexec/ralph \
+      --prefix PATH : ${
+        lib.makeBinPath [
+          git
+          systemd
+        ]
+      }
     runHook postInstall
   '';
 

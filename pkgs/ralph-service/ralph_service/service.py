@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ralph import trace as core_trace
-from . import badge, config, forgejo, github, monitor, report, repository, trace
+from . import badge, config, forgejo, github, report, repository, trace
 from ralph import repository as local_repository
 from ralph import engine, model, spend, runner
 from .research import discussion_lookup
@@ -783,10 +783,6 @@ def main():
         help="Upstream GitHub owner/repo with matching PR numbers",
     )
     parser.add_argument("--github-token-file", type=Path)
-    parser.add_argument("--telegram-token-file", type=Path)
-    parser.add_argument(
-        "--telegram-chat-id", help="Telegram channel @username or numeric chat ID"
-    )
     parser.add_argument(
         "--prompt-file", type=Path, help="Markdown file containing the review prompt"
     )
@@ -848,14 +844,6 @@ def main():
         parser.error("workers must be positive")
     if (args.github_repository is None) != (args.github_token_file is None):
         parser.error("--github-repository and --github-token-file must be set together")
-    if (args.telegram_chat_id is None) != (args.telegram_token_file is None):
-        parser.error(
-            "--telegram-chat-id and --telegram-token-file must be set together"
-        )
-    if args.telegram_token_file is not None and (
-        args.report_dir is None or args.report_base_url is None
-    ):
-        parser.error("Telegram publication requires --report-dir and --report-base-url")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     bot_config = config.BotConfig(
         args.origin,
@@ -905,13 +893,6 @@ def main():
     )
     if github_token == "":
         parser.error("GitHub token file must not be empty")
-    telegram_token = (
-        args.telegram_token_file.read_text().strip()
-        if args.telegram_token_file
-        else None
-    )
-    if telegram_token == "" or args.telegram_chat_id == "":
-        parser.error("Telegram token and chat ID must not be empty")
     if (
         not api_key
         or not ppq_api_key
@@ -937,33 +918,6 @@ def main():
         review_limit_usd=args.ppq_review_budget_usd,
     )
     logging.info("review queue recovered_claims=%d workers=%d", recovered, args.workers)
-    if telegram_token is not None:
-        # Establish the baseline before review workers can complete new jobs.
-        try:
-            notifications = monitor.NotificationStore(
-                args.state_dir / "telegram.sqlite3"
-            )
-            notifications.observe(
-                args.state_dir,
-                bot_config.report_base_url,
-                bot_config.repository_url,
-                report_dir=bot_config.report_dir,
-            )
-        except (OSError, sqlite3.Error):
-            logging.warning("Telegram monitoring state unavailable; will retry")
-        threading.Thread(
-            target=monitor.run_monitor,
-            name="telegram-monitor",
-            args=(
-                args.state_dir,
-                bot_config.report_dir,
-                bot_config.report_base_url,
-                bot_config.repository_url,
-                telegram_token,
-                args.telegram_chat_id,
-            ),
-            daemon=True,
-        ).start()
     for index in range(args.workers):
         threading.Thread(
             target=worker,

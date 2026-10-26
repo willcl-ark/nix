@@ -54,26 +54,20 @@ class TelegramError(Exception):
         self.retry_after = retry_after
 
 
-def send_message(token, chat_id, text):
+def api_request(token, method, data, *, timeout=30):
     request = urllib.request.Request(
-        f"https://api.telegram.org/bot{quote(token, safe=':')}/sendMessage",
-        data=json.dumps(
-            {
-                "chat_id": chat_id,
-                "text": text,
-                "link_preview_options": {"is_disabled": True},
-            }
-        ).encode(),
+        f"https://api.telegram.org/bot{quote(token, safe=':')}/{method}",
+        data=json.dumps(data).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
         try:
             payload = json.loads(exc.read(65536))
-        except (ValueError, OSError):
+        except (ValueError, OSError, HTTPException):
             payload = {}
         finally:
             exc.close()
@@ -84,9 +78,26 @@ def send_message(token, chat_id, text):
     except (OSError, ValueError, HTTPException):
         # urllib errors can include the token-bearing request URL.
         raise TelegramError() from None
-    if not isinstance(payload, dict) or payload.get("ok") is not True:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("ok") is not True
+        or "result" not in payload
+    ):
         parameters = payload.get("parameters") if isinstance(payload, dict) else None
         retry_after = (
             parameters.get("retry_after", 60) if isinstance(parameters, dict) else 60
         )
         raise TelegramError(retry_after) from None
+    return payload["result"]
+
+
+def send_message(token, chat_id, text):
+    return api_request(
+        token,
+        "sendMessage",
+        {
+            "chat_id": chat_id,
+            "text": text,
+            "link_preview_options": {"is_disabled": True},
+        },
+    )

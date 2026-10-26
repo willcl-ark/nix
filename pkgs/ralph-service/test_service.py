@@ -114,51 +114,6 @@ class ServiceTests(unittest.TestCase):
             },
         }
 
-    def test_telegram_requires_paired_options_and_public_reports(self):
-        required = [
-            "ralph-service",
-            "--state-dir",
-            str(self.state_dir),
-            "--origin",
-            self.bot_config.origin,
-            "--repository",
-            self.bot_config.repository,
-            "--forgejo-api",
-            self.bot_config.forgejo_api,
-            "--openai-key-file",
-            "/unused/openai",
-            "--ppq-key-file",
-            "/unused/ppq",
-            "--webhook-secret-file",
-            "/unused/webhook",
-            "--forgejo-token-file",
-            "/unused/forgejo",
-            "--bot-login",
-            "ralph",
-        ]
-        for flags, message in (
-            (["--telegram-token-file", "/unused/telegram"], "must be set together"),
-            (["--telegram-chat-id", "123"], "must be set together"),
-            (
-                [
-                    "--telegram-token-file",
-                    "/unused/telegram",
-                    "--telegram-chat-id",
-                    "123",
-                ],
-                "requires --report-dir and --report-base-url",
-            ),
-        ):
-            with (
-                self.subTest(flags=flags),
-                patch("sys.argv", required + flags),
-                patch("sys.stderr", new_callable=io.StringIO) as stderr,
-                self.assertRaises(SystemExit) as raised,
-            ):
-                service.main()
-            self.assertEqual(raised.exception.code, 2)
-            self.assertIn(message, stderr.getvalue())
-
     def test_migrate_state_upgrades_all_ledgers_without_a_jobs_database(self):
         (self.state_dir / "jobs.sqlite3").unlink()
         filenames = ("spend.sqlite3", "ppq-spend.sqlite3", "followup/spend.sqlite3")

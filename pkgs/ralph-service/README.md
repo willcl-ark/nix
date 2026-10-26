@@ -9,6 +9,7 @@ The package installs:
 - `ralph-service`, the webhook receiver, queue workers and explicit state converter.
 - `ralph-evaluate`, frozen capture/replay, spending inspection and offline summaries.
 - `ralph-followup`, background assessment of previously published findings.
+- `ralph-telegram`, independent Telegram publication, monitoring and channel commands.
 
 The `ralph` command now performs a local review and accepts no service flags.
 Change explicit service package overrides to `packages.<system>.ralph-service`
@@ -104,19 +105,31 @@ and missing findings exports preserve it. Upstream PR numbers must match the
 mirror, and the upstream must be open at the reviewed head before a write.
 GitHub credentials are separate from Forgejo credentials and model tools.
 
-Optional `--telegram-token-file /run/secrets/telegram-token` and
-`--telegram-chat-id @channel` publish reviews to a Telegram channel. A personal
-chat uses its numeric chat ID after starting the bot. Both
-report options are required. Each post contains the PR title and links to the
-PR and full report. The full review is included when the complete post fits
-4,096 UTF-16 code units; longer reviews use the title and links only. An
-exported finding with severity exactly `major` adds `🚨 Major finding` in
-either form.
+Run `ralph-telegram` separately from the review daemon with `--state-dir`,
+`--report-dir`, `--report-base-url`, `--repository-url`,
+`--telegram-token-file /run/secrets/telegram-token` and
+`--telegram-chat-id @channel`. Use a numeric channel ID for a private channel.
+The monitor reads review state and costs, publishes completed reviews, sends
+grouped terminal failure alerts, and delivers a daily digest at 21:00 UTC.
+It continues running when the review daemon stops.
 
-Telegram monitoring also sends a daily UTC digest and grouped terminal job
-failure alerts from the running daemon. There are no bot commands or extra
-timers. Use a bot token from `@BotFather`, grant the bot channel administrator
-permission to post, and supply the channel's `@username` or numeric chat ID.
-Keep the token in a runtime secret file readable by the service user. See the
+Each review post contains the PR title and links to the PR and full report.
+The full review is included when the complete post fits 4,096 UTF-16 code
+units; longer reviews use the title and links only. An exported finding with
+severity exactly `major` adds `🚨 Major finding` in either form.
+
+Post `/status` in the configured channel to see service states, queue and
+result totals, and estimated costs. `/help` lists the commands. Commands are
+read-only and channel-only. Keep the channel owner and bot as the only
+administrators allowed to post. Telegram channel posts conceal the author's
+user ID, so the monitor checks this administrator restriction for every
+command instead of trusting a displayed signature. Other channel members
+cannot post commands. Commands are ignored if the restriction cannot be
+verified, and direct messages are ignored.
+
+Use a bot token from `@BotFather`, grant the bot channel administrator
+permission to post, and keep its token in a runtime secret file readable by
+the service user. The monitor polls Telegram; no webhook or inbound port is
+needed. See the
 [module guide](../../modules/ralph/README.md#telegram-publishing-and-monitoring)
-for NixOS setup, digest timing and delivery behavior.
+for NixOS setup and delivery behavior.

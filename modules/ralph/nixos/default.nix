@@ -81,12 +81,6 @@ let
     "--github-repository"
     cfg.githubRepository
   ]
-  ++ lib.optionals cfg.telegram.enable [
-    "--telegram-token-file"
-    cfg.telegram.botTokenFile
-    "--telegram-chat-id"
-    cfg.telegram.chatId
-  ]
   ++ lib.optionals (cfg.repositoryUrl != null) [
     "--repository-url"
     cfg.repositoryUrl
@@ -500,6 +494,52 @@ in
       timerConfig = {
         OnBootSec = "2m";
         OnUnitInactiveSec = "5m";
+      };
+    };
+
+    systemd.services.ralph-telegram = lib.mkIf cfg.telegram.enable {
+      description = "Publish Ralph reviews and monitor service status on Telegram";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      serviceConfig = {
+        ExecStart = "${lib.getExe' cfg.package "ralph-telegram"} ${
+          lib.escapeShellArgs [
+            "--state-dir"
+            cfg.stateDir
+            "--report-dir"
+            cfg.reportDir
+            "--report-base-url"
+            cfg.reportBaseUrl
+            "--repository-url"
+            repositoryUrl
+            "--telegram-token-file"
+            cfg.telegram.botTokenFile
+            "--telegram-chat-id"
+            cfg.telegram.chatId
+          ]
+        }";
+        User = cfg.user;
+        Group = cfg.group;
+        StateDirectory = lib.removePrefix "/var/lib/" cfg.stateDir;
+        StateDirectoryMode = "0700";
+        WorkingDirectory = cfg.stateDir;
+        Restart = "always";
+        RestartSec = "10s";
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [
+          cfg.stateDir
+          cfg.reportDir
+        ];
+        ReadOnlyPaths = [
+          "-${cfg.stateDir}/jobs.sqlite3"
+          "-${cfg.stateDir}/spend.sqlite3"
+          "-${cfg.stateDir}/ppq-spend.sqlite3"
+          "-${cfg.stateDir}/followup"
+        ];
+        NoNewPrivileges = true;
+        PrivateTmp = true;
       };
     };
 

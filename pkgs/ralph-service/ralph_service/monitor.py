@@ -1,5 +1,6 @@
 """Durable Telegram notifications and UTC monitoring summaries."""
 
+import argparse
 import json
 import logging
 import sqlite3
@@ -10,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
-from . import report, telegram
+from . import commands, report, telegram
 
 LOGGER = logging.getLogger(__name__)
 
@@ -233,9 +234,11 @@ def run_monitor(
     chat_id,
     stop_event=None,
 ):
-    """Run in a background thread; retry Telegram independently of review workers."""
+    """Observe reviews and poll commands independently of the review daemon."""
     stop_event = stop_event or threading.Event()
     store = None
+    bot = None
+    next_scan = 0
     while not stop_event.is_set():
         if store is None:
             try:
@@ -244,14 +247,64 @@ def run_monitor(
                 LOGGER.warning("Telegram notification state unavailable; will retry")
                 stop_event.wait(30)
                 continue
+        if time.monotonic() >= next_scan:
+            try:
+                store.observe(
+                    state_dir, report_base_url, repository_url, report_dir=report_dir
+                )
+            except (OSError, sqlite3.Error):
+                LOGGER.warning("Telegram monitor could not read state; will retry")
+            try:
+                store.deliver(token, chat_id)
+            except (OSError, sqlite3.Error):
+                LOGGER.warning("Telegram notification state unavailable; will retry")
+            next_scan = time.monotonic() + 30
         try:
-            store.observe(
-                state_dir, report_base_url, repository_url, report_dir=report_dir
+            if bot is None:
+                bot = telegram.api_request(token, "getMe", {})
+            commands.poll_commands(
+                store,
+                token,
+                chat_id,
+                bot,
+                state_dir,
+                report_dir,
+                report_base_url,
+                timeout=max(1, min(20, int(next_scan - time.monotonic()))),
+            )
+        except telegram.TelegramError as exc:
+            LOGGER.warning("Telegram command polling failed; will retry")
+            delay = exc.retry_after
+            stop_event.wait(
+                delay if isinstance(delay, (int, float)) and delay > 0 else 60
             )
         except (OSError, sqlite3.Error):
-            LOGGER.warning("Telegram monitor could not read state; will retry")
-        try:
-            store.deliver(token, chat_id)
-        except (OSError, sqlite3.Error):
-            LOGGER.warning("Telegram notification state unavailable; will retry")
-        stop_event.wait(30)
+            LOGGER.warning("Telegram command state unavailable; will retry")
+            stop_event.wait(5)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--report-dir", type=Path, required=True)
+    parser.add_argument("--report-base-url", required=True)
+    parser.add_argument("--repository-url", required=True)
+    parser.add_argument("--telegram-token-file", type=Path, required=True)
+    parser.add_argument("--telegram-chat-id", required=True)
+    args = parser.parse_args()
+    try:
+        token = args.telegram_token_file.read_text().strip()
+    except (OSError, UnicodeError):
+        parser.error("could not read Telegram token file")
+    if not token or not args.telegram_chat_id.strip():
+        parser.error("Telegram token and chat ID must not be empty")
+    args.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    run_monitor(
+        args.state_dir,
+        args.report_dir,
+        args.report_base_url.rstrip("/"),
+        args.repository_url.rstrip("/"),
+        token,
+        args.telegram_chat_id,
+    )

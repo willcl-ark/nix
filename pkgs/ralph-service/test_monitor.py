@@ -1,3 +1,4 @@
+import io
 import json
 import sqlite3
 import tempfile
@@ -213,6 +214,13 @@ class MonitorTests(unittest.TestCase):
                 "NotificationStore",
                 side_effect=[sqlite3.OperationalError(), store],
             ) as constructor,
+            patch.object(monitor.time, "monotonic", side_effect=[0, 0, 0, 31, 31, 31]),
+            patch.object(
+                monitor.telegram,
+                "api_request",
+                return_value={"id": 1, "username": "bot"},
+            ),
+            patch.object(monitor.commands, "poll_commands") as poll,
             self.assertLogs(monitor.LOGGER, level="WARNING"),
         ):
             monitor.run_monitor(
@@ -227,7 +235,75 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(constructor.call_count, 2)
         self.assertEqual(store.observe.call_count, 2)
         self.assertEqual(store.deliver.call_count, 2)
-        self.assertEqual(stop.wait.call_count, 3)
+        self.assertEqual(stop.wait.call_count, 1)
+        self.assertEqual(poll.call_count, 2)
+
+    def test_command_api_failure_does_not_stop_review_observation(self):
+        from unittest.mock import Mock
+
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, True]
+        store = Mock()
+        with (
+            patch.object(monitor, "NotificationStore", return_value=store),
+            patch.object(monitor.time, "monotonic", side_effect=[0, 0, 61, 61, 61]),
+            patch.object(
+                monitor.telegram,
+                "api_request",
+                side_effect=[monitor.telegram.TelegramError(), {"id": 1}],
+            ),
+            patch.object(monitor.commands, "poll_commands"),
+            self.assertLogs(monitor.LOGGER, level="WARNING"),
+        ):
+            monitor.run_monitor(
+                self.root,
+                self.root / "reports",
+                "https://reports.example",
+                "https://forge.example/repo",
+                "secret",
+                "channel",
+                stop,
+            )
+        self.assertEqual(store.observe.call_count, 2)
+        self.assertEqual(store.deliver.call_count, 2)
+        stop.wait.assert_called_once_with(60)
+
+    def test_standalone_monitor_cli(self):
+        token = self.root / "token"
+        token.write_text("secret\n")
+        args = [
+            "ralph-telegram",
+            "--state-dir",
+            str(self.root),
+            "--report-dir",
+            str(self.root / "reports"),
+            "--report-base-url",
+            "https://reports.example/",
+            "--repository-url",
+            "https://forge.example/repo/",
+            "--telegram-token-file",
+            str(token),
+            "--telegram-chat-id",
+            "-100123",
+        ]
+        with patch("sys.argv", args), patch.object(monitor, "run_monitor") as run:
+            monitor.main()
+        run.assert_called_once_with(
+            self.root,
+            self.root / "reports",
+            "https://reports.example",
+            "https://forge.example/repo",
+            "secret",
+            "-100123",
+        )
+        token.write_text("\n")
+        with (
+            patch("sys.argv", args),
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            self.assertRaises(SystemExit),
+        ):
+            monitor.main()
+        self.assertIn("must not be empty", stderr.getvalue())
 
     def test_grouped_failure_overflow_includes_remaining_count(self):
         failures = [(i, 1, i) for i in range(300)]
