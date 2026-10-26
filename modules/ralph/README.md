@@ -575,10 +575,15 @@ See [PPQ integration guide](https://ppq.ai/llms.txt).
 
 ### GitHub major findings
 
-Set `services.ralph.githubRepository` to the upstream `owner/repo` and
-`services.ralph.githubTokenFile` to a runtime secret file to enable GitHub
-comments. The upstream and mirror must use matching PR numbers. Public reports
-must also be enabled through `reportDir` and `reportBaseUrl`.
+Set `services.ralph.githubPostMajorFindings = true` to enable GitHub comments.
+It defaults to `false`. Configure `githubRepository` with the upstream
+`owner/repo` and `githubTokenFile` with a runtime secret file. The upstream and
+mirror must use matching PR numbers. Public reports must also be enabled through
+`reportDir` and `reportBaseUrl`.
+
+Set `githubPostMajorFindings = false` to stop GitHub posting while retaining
+the repository and token configuration. Forgejo reviews and the second Sol
+verification of Major findings still run. Existing GitHub comments remain.
 
 Ralph keeps one GitHub comment per PR, containing only findings whose severity
 is exactly `major`, using their final edited wording, plus a full-report link.

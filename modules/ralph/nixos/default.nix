@@ -75,7 +75,7 @@ let
     "--bot-login"
     cfg.botLogin
   ]
-  ++ lib.optionals (cfg.githubTokenFile != null && cfg.githubRepository != null) [
+  ++ lib.optionals cfg.githubPostMajorFindings [
     "--github-token-file"
     cfg.githubTokenFile
     "--github-repository"
@@ -142,6 +142,8 @@ in
       example = "https://git.example.org/api/v1/repos/owner/repo";
       description = "Forgejo repository API URL.";
     };
+
+    githubPostMajorFindings = lib.mkEnableOption "posting verified Major findings to GitHub";
 
     githubTokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -324,11 +326,12 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = (cfg.githubTokenFile == null) == (cfg.githubRepository == null);
-        message = "services.ralph.githubTokenFile and githubRepository must be set together.";
+        assertion =
+          !cfg.githubPostMajorFindings || (cfg.githubTokenFile != null && cfg.githubRepository != null);
+        message = "services.ralph.githubPostMajorFindings requires githubTokenFile and githubRepository.";
       }
       {
-        assertion = cfg.githubRepository == null || (cfg.reportDir != null && cfg.reportBaseUrl != null);
+        assertion = !cfg.githubPostMajorFindings || (cfg.reportDir != null && cfg.reportBaseUrl != null);
         message = "services.ralph GitHub publication requires reportDir and reportBaseUrl.";
       }
       {
