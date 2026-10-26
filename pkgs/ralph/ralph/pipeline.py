@@ -4,7 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-from . import coverage, model, protocol, routing
+from . import coverage, feedback, model, protocol, routing
 from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
 from .repository import audit_developer_notes, focused_review_input
 from .spend import BudgetExceeded
@@ -184,6 +184,22 @@ def _record_validation_failure(record, error):
         record["validation_error"] = str(error)
 
 
+def _verifier_schema(backport_evidence, feedback_packet):
+    schema = (
+        protocol.BACKPORT_VERIFIER_SCHEMA
+        if backport_evidence is not None
+        else protocol.VERIFIER_SCHEMA
+    )
+    if feedback_packet is not None:
+        return protocol.object_schema(
+            {
+                **schema["properties"],
+                "review_reconciliation": feedback.RECONCILIATION_SCHEMA,
+            }
+        )
+    return schema
+
+
 def _verify_candidates(
     run_stage,
     input_text,
@@ -193,6 +209,8 @@ def _verify_candidates(
     concept_candidate,
     debug,
     backport_evidence=None,
+    feedback_packet=None,
+    feedback_mappings=None,
 ):
     stages = debug["stages"]
     verified_concept = None
@@ -200,14 +218,16 @@ def _verify_candidates(
     accepted = []
     finding_candidates = {}
     assessed_backport = None
+    schema = _verifier_schema(backport_evidence, feedback_packet)
+    prompt = prompt_config.audit_prompts["verifier"]
+    if feedback_packet is not None:
+        prompt += "\n\n" + feedback.RECONCILIATION_INSTRUCTIONS
     try:
         verified = run_stage(
             "verifier",
             input_text,
-            prompt_config.audit_prompts["verifier"],
-            protocol.BACKPORT_VERIFIER_SCHEMA
-            if backport_evidence is not None
-            else protocol.VERIFIER_SCHEMA,
+            prompt,
+            schema,
         )
         if backport_evidence is not None:
             payload = json.loads(verified)
@@ -219,9 +239,25 @@ def _verify_candidates(
             except protocol.InvalidReview as exc:
                 debug["backport_assessment"]["limitations"].append(str(exc))
             verified = json.dumps(payload)
+        reconciliation = None
+        if feedback_packet is not None:
+            payload = json.loads(verified)
+            reconciliation = payload.pop("review_reconciliation", None)
+            verified = json.dumps(payload)
         result, accepted = protocol.verification(
             verified, candidates, snapshot, concept_candidate
         )
+        if feedback_packet is not None:
+            try:
+                debug["review_memory"] = feedback.reconcile(
+                    feedback_packet,
+                    reconciliation,
+                    candidates,
+                    snapshot,
+                    mappings=feedback_mappings,
+                )
+            except Exception as exc:
+                stages["verifier"]["feedback_validation_error"] = str(exc)
         if assessed_backport is not None:
             debug["backport_assessment"] = assessed_backport
         stages["verifier"]["coverage"] = result["coverage"]
@@ -450,6 +486,16 @@ def review_with_independent_passes(
     ppq_budget = runtime.ppq_budget
     research_evidence = case.research_evidence
     backport_evidence = case.backport_evidence
+    feedback_packet = (
+        case.review_feedback
+        if case.review_feedback and case.review_feedback.get("findings")
+        else None
+    )
+    feedback_mappings = None
+    if case.review_feedback is not None:
+        debug["review_memory"] = feedback.reconcile(
+            case.review_feedback, [], [], snapshot
+        )
     if backport_evidence is not None:
         debug["backport_evidence"] = backport_evidence
         debug["backport_assessment"] = {
@@ -494,6 +540,14 @@ def review_with_independent_passes(
                     ],
                     "concept_candidate": concept_candidate,
                     **(
+                        {
+                            "review_feedback": feedback_packet,
+                            "feedback_mappings": feedback_mappings,
+                        }
+                        if feedback_packet is not None
+                        else {}
+                    ),
+                    **(
                         {"blind_alternatives": alternatives_candidate}
                         if alternatives_candidate is not None
                         else {}
@@ -517,6 +571,11 @@ def review_with_independent_passes(
                     "reasoning": {"effort": effort},
                     "instructions": prompt_config.audit_prompts["verifier"]
                     + (
+                        "\n\n" + feedback.RECONCILIATION_INSTRUCTIONS
+                        if feedback_packet is not None
+                        else ""
+                    )
+                    + (
                         "\n\n" + BACKPORT_REMIT if backport_evidence is not None else ""
                     ),
                     "input": [
@@ -536,9 +595,9 @@ def review_with_independent_passes(
                             "type": "json_schema",
                             "name": "verifier",
                             "strict": True,
-                            "schema": protocol.BACKPORT_VERIFIER_SCHEMA
-                            if backport_evidence is not None
-                            else protocol.VERIFIER_SCHEMA,
+                            "schema": _verifier_schema(
+                                backport_evidence, feedback_packet
+                            ),
                         }
                     },
                 },
@@ -759,6 +818,52 @@ def review_with_independent_passes(
 
     protect_verification()
 
+    if feedback_packet is not None:
+        settings = prompt_config.profile.stages["archaeologist"]
+        record = {
+            "model": settings.model,
+            "status": "running",
+            "turns": [],
+            "tools": [],
+            "max_output_tokens": min(settings.max_output_tokens, 4000),
+        }
+        stages["feedback"] = record
+        try:
+            answer, response = runtime.audit(
+                "feedback",
+                feedback.FEEDBACK_INSTRUCTIONS,
+                json.dumps(
+                    {
+                        "review_feedback": feedback_packet,
+                        "candidate_findings": candidates,
+                    }
+                ),
+                model_name=settings.model,
+                max_output_tokens=record["max_output_tokens"],
+                response_schema=feedback.FEEDBACK_SCHEMA,
+                reasoning_effort=settings.reasoning_effort,
+                debug_record=record,
+            )
+            if response["status"] != "completed":
+                raise protocol.InvalidReview("Feedback response was incomplete")
+            record["status"] = "completed"
+            record["raw_output"] = answer
+            feedback_mappings = feedback.parse_feedback(
+                answer, feedback_packet, candidates
+            )
+            record["coverage"] = {"status": "complete", "limitations": []}
+            debug["stage_outputs"]["feedback"] = answer
+        except model.StaleReview:
+            raise
+        except Exception as exc:
+            record.update(
+                status="budget_exhausted"
+                if isinstance(exc, BudgetExceeded)
+                else "failed",
+                error_type=type(exc).__name__,
+            )
+        protect_verification()
+
     if is_current is not None and not is_current():
         raise model.StaleReview()
     verified = _verify_candidates(
@@ -770,6 +875,8 @@ def review_with_independent_passes(
         concept_candidate,
         debug,
         backport_evidence,
+        feedback_packet,
+        feedback_mappings,
     )
     findings, concept_summary = _edit_findings(
         run_stage, prompt_config, verified, debug
@@ -809,6 +916,28 @@ def review_with_independent_passes(
     published = _published_findings(
         verified, findings, candidate_sources, prompt_config.models, was_edited
     )
+    for entry in debug.get("review_memory", []):
+        candidate_ids = set(entry.get("current_candidate_ids", []))
+        entry["current_finding_ids"] = [
+            finding["id"]
+            for finding in published
+            if candidate_ids
+            and set(verified.candidate_ids[finding["id"]]) <= candidate_ids
+        ]
+        if entry["current_finding_ids"] and entry["status"] in {"fixed", "invalid"}:
+            entry.update(
+                status="unclear",
+                reason="The reconciliation conflicts with a verified current finding.",
+                collapsed=False,
+            )
+        severity_order = {"suggestion": 0, "minor": 1, "major": 2, "critical": 3}
+        if any(
+            finding["id"] in entry["current_finding_ids"]
+            and severity_order.get(finding["severity"], 3)
+            > severity_order.get(entry.get("severity"), 0)
+            for finding in published
+        ):
+            entry["collapsed"] = False
     published_by_id = {finding["id"]: finding for finding in published}
     debug["finding_attribution"] = [
         {
@@ -841,6 +970,7 @@ def review_with_independent_passes(
         concept_summary,
         verified_alternatives,
         debug.get("backport_assessment"),
+        review_memory=debug.get("review_memory"),
     )
     concept_concern = (
         verified.concept is not None

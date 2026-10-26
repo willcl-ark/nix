@@ -91,6 +91,38 @@ def findings_export(result):
     return findings if isinstance(findings, list) else None
 
 
+def review_memory_export(result):
+    """Return retained PR findings when the engine exports review memory."""
+    if (
+        not isinstance(result, dict)
+        or type(result.get("schema_version")) is not int
+        or result["schema_version"] != 1
+    ):
+        return []
+    output = result.get("output")
+    if (
+        not isinstance(output, dict)
+        or type(output.get("schema_version")) is not int
+        or output["schema_version"] < 1
+    ):
+        return []
+    exports = output.get("exports")
+    memory = exports.get("review_memory") if isinstance(exports, dict) else None
+    return (
+        [item for item in memory if isinstance(item, dict)]
+        if isinstance(memory, list)
+        else []
+    )
+
+
+def unresolved_memory(result):
+    return [
+        item
+        for item in review_memory_export(result)
+        if item.get("status") not in {"fixed", "invalid"}
+    ]
+
+
 def result_metrics(result):
     run = result.get("run") if isinstance(result, dict) else None
     metrics = run.get("metrics") if isinstance(run, dict) else None

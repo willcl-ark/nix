@@ -196,5 +196,51 @@ class ProtocolTests(unittest.TestCase):
             protocol.collation(response, [], concept)
 
 
+class ReviewMemoryRenderingTests(unittest.TestCase):
+    def test_unresolved_history_survives_absent_rediscovery(self):
+        memory = [
+            {
+                "title": "Existing index problem",
+                "body": "</details><script>bad</script>",
+                "severity": "major",
+                "status": "unclear",
+                "author_position": "address_elsewhere",
+            }
+        ]
+        rendered = protocol.render([], review_memory=memory)
+        self.assertIn("1 major", rendered)
+        self.assertIn("Existing index problem", rendered)
+        self.assertNotIn("no actionable", rendered)
+        self.assertNotIn("<script>", rendered)
+        self.assertIn("&lt;/details&gt;", rendered)
+
+    def test_only_confirmed_repeat_is_collapsed(self):
+        finding = {
+            "id": "finding:1",
+            "kind": "bug",
+            "severity": "major",
+            "title": "Repeated issue",
+            "path": "a.cpp",
+            "line": 1,
+            "side": "head",
+            "body": "Repeated body",
+        }
+        memory = [
+            {
+                **finding,
+                "status": "still_present",
+                "collapsed": True,
+                "current_finding_ids": ["finding:1"],
+            }
+        ]
+        rendered = protocol.render([finding], review_memory=memory)
+        self.assertNotIn("##### Findings", rendered)
+        self.assertIn("Repeated body", rendered)
+        memory[0]["collapsed"] = False
+        self.assertIn(
+            "##### Findings", protocol.render([finding], review_memory=memory)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

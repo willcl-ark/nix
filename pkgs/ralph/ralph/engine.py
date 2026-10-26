@@ -18,6 +18,7 @@ class ReviewCase:
     source: dict | None = None
     research_evidence: object | None = None
     backport_evidence: dict | None = None
+    review_feedback: dict | None = None
 
 
 @dataclass
@@ -44,8 +45,9 @@ class Runtime:
         allow_web_search=False,
         attempt=None,
     ):
-        from . import research
+        from . import feedback, research
 
+        feedback.validate_packet(case.review_feedback, case.source, case.snapshot)
         research.validate(case.research_evidence)
         self.case = case
         self.api_key = api_key

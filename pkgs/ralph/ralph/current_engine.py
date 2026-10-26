@@ -107,4 +107,6 @@ def run(case, runtime, configured):
     }
     if case.backport_evidence is not None:
         exports["backport_assessment"] = data["backport_assessment"]
+    if case.review_feedback is not None:
+        exports["review_memory"] = data.get("review_memory", [])
     return Output(result.content, data, exports, schema_version=2)

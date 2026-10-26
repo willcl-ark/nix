@@ -16,7 +16,7 @@ _SCOPE_NOTE = re.compile(
     re.IGNORECASE,
 )
 
-CONTEXT_STAGES = {"archaeologist", "alternatives"}
+CONTEXT_STAGES = {"archaeologist", "alternatives", "feedback"}
 FAILURES = {"failed", "invalid", "budget_exhausted"}
 
 

@@ -586,3 +586,25 @@ The local CLI detects commit trailers and uses available local objects without
 network access. It reports unverified source PR membership as a limitation. The
 companion service acquires source PR metadata and pins upstream history before
 calling the engine. Neither mode requires a personal fish function or skill path.
+
+## Author feedback on subsequent reviews
+
+Re-reviews can carry findings from previous published reviews of the same PR.
+Independent discovery still reads the new code without author replies. A bounded
+feedback pass then maps explicit author replies to earlier findings and current
+candidates. The verifier checks the technical claims against source code.
+
+An author saying “addressing elsewhere” or “won't fix” does not resolve a finding.
+A repeat may move into the report's previously discussed section only when the
+verifier confirms the same mechanism and consequence, with evidence from both
+base and head that the PR does not introduce or worsen it. Findings that remain
+unresolved are retained with their original identity, severity and assessment
+history, including when discovery does not find them again. Missing or invalid
+reconciliation keeps them unresolved. Fixed and invalid decisions require source
+evidence; author intent alone is insufficient.
+
+This memory is restricted to one repository and PR. First reviews do not invoke
+the feedback pass. The structured `review_memory` export preserves the history;
+report summaries and downstream consumers must account for unresolved entries as
+well as newly published findings. Frozen evaluation cases include the captured
+feedback packet and its identity checks.
