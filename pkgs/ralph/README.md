@@ -350,7 +350,8 @@ flowchart LR
 | Concept objection is unsupported or invalid | Withhold the objection; retain verified code findings. |
 | Editing fails, exceeds its budget, or changes the accepted ID set | Keep all accepted findings with their original verified wording and metadata. |
 
-The verifier may merge candidates or discover an issue with no candidate IDs.
+The verifier may merge supplied candidates, but cannot introduce new code findings.
+Every code decision must cite at least one supplied candidate ID.
 It checks conceptual feedback separately from code findings. Supported concept
 objections can be edited without code findings; an independently verified
 optional alternative is rendered directly.

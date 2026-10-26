@@ -158,7 +158,11 @@ VERIFIER_SCHEMA = object_schema(
             "type": "array",
             "items": object_schema(
                 {
-                    "candidate_ids": STRINGS,
+                    "candidate_ids": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "minItems": 1,
+                    },
                     "disposition": {
                         "type": "string",
                         "enum": ["publish", "drop", "unresolved"],
@@ -504,6 +508,8 @@ def verification(text, candidates, snapshot, concept_assessment=None):
             candidate_id for candidate_id in ids if candidate_id not in expected
         ]
         errors = []
+        if not ids:
+            errors.append("Decision must identify at least one supplied candidate ID")
         if repeated_ids:
             errors.append(
                 "Repeated candidate IDs within decision: " + ", ".join(repeated_ids)
@@ -555,7 +561,7 @@ def verification(text, candidates, snapshot, concept_assessment=None):
                 result["coverage"]["limitations"].append(f"Finding withheld: {error}")
             else:
                 accepted.append({**finding, "id": f"finding:{len(accepted) + 1}"})
-        elif finding is not None or not ids:
+        elif finding is not None:
             raise InvalidReview("Only publish decisions may introduce a finding")
         normalized_decisions.append(decision)
 

@@ -859,7 +859,7 @@ class PipelineTests(unittest.TestCase):
             )
         )
 
-    def test_attribution_retains_merged_sources_and_verifier_discovery_after_editing(
+    def test_attribution_retains_merged_sources_and_rejects_verifier_discovery(
         self,
     ):
         self.tier, self.audits = "standard", ["tests"]
@@ -893,11 +893,6 @@ class PipelineTests(unittest.TestCase):
                     "concept_summary": None,
                     "findings": [
                         {
-                            "id": "finding:2",
-                            "title": "Edited verifier finding",
-                            "body": "Verified text",
-                        },
-                        {
                             "id": "finding:1",
                             "title": "Edited shared finding",
                             "body": "Verified text",
@@ -917,19 +912,16 @@ class PipelineTests(unittest.TestCase):
             attribution["finding:1"]["candidate_ids"], ["independent:1", "tests:1"]
         )
         self.assertEqual(attribution["finding:1"]["title"], "Edited shared finding")
-        self.assertEqual(attribution["finding:2"]["raised_by"], ["verifier"])
-        self.assertEqual(attribution["finding:2"]["candidate_ids"], [])
-        self.assertEqual(attribution["finding:2"]["title"], "Edited verifier finding")
-        first, second = self.result.findings
-        self.assertEqual([first["id"], second["id"]], ["finding:1", "finding:2"])
+        self.assertEqual(set(attribution), {"finding:1"})
+        (first,) = self.result.findings
+        self.assertEqual(first["id"], "finding:1")
+        self.assertNotIn("Verifier discovery", self.result.content)
+        self.assertEqual(self.debug["coverage"]["verification"]["status"], "partial")
         self.assertEqual(first["title"], self.published["title"])
         self.assertEqual(first["body"], self.published["body"])
         self.assertEqual(first["presented_title"], "Edited shared finding")
         self.assertEqual(first["presented_body"], "Verified text")
         self.assertEqual(first["raised_by"], ["independent", "tests"])
-        self.assertEqual(second["title"], "Verifier discovery")
-        self.assertEqual(second["presented_title"], "Edited verifier finding")
-        self.assertEqual(second["raised_by"], ["verifier"])
         self.assertEqual(first["security"], self.published["security"])
         self.assertEqual(first["source_evidence"], self.published["source_evidence"])
         self.assertEqual(
@@ -1026,7 +1018,7 @@ class PipelineTests(unittest.TestCase):
                             "finding": self.published,
                         },
                         {
-                            "candidate_ids": [],
+                            "candidate_ids": ["independent:1"],
                             "disposition": "publish",
                             "reason": "Policy requires release notes",
                             "finding": {
@@ -1036,7 +1028,7 @@ class PipelineTests(unittest.TestCase):
                         },
                     ]
                 )
-            return discovery()
+            return discovery([candidate()])
 
         content = self.run_review(review)
         self.assertIn(self.published["body"], content)

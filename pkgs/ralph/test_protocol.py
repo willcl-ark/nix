@@ -464,9 +464,9 @@ class ProtocolTests(unittest.TestCase):
         candidates = [{"id": "tests:1"}, {"id": "design:1"}]
         valid = {
             "candidate_ids": ["design:1"],
-            "disposition": "drop",
-            "reason": "The claim does not hold.",
-            "finding": None,
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
         }
         repeated = {
             "candidate_ids": ["tests:1", "tests:1"],
@@ -479,14 +479,19 @@ class ProtocolTests(unittest.TestCase):
             self.verification([repeated, valid]), candidates, self.snapshot
         )
 
-        self.assertEqual(accepted, [])
+        self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         self.assertEqual(result["decisions"][0], valid)
         self.assertEqual(result["decisions"][1]["candidate_ids"], ["tests:1"])
         self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
         self.assertIn("Repeated candidate IDs", result["validation_errors"][0]["error"])
 
     def test_overlapping_candidate_ids_withhold_all_overlapping_decisions(self):
-        candidates = [{"id": "tests:1"}, {"id": "design:1"}, {"id": "docs:1"}]
+        candidates = [
+            {"id": "tests:1"},
+            {"id": "design:1"},
+            {"id": "docs:1"},
+            {"id": "independent:1"},
+        ]
         overlap_a = {
             "candidate_ids": ["tests:1", "design:1"],
             "disposition": "publish",
@@ -499,19 +504,19 @@ class ProtocolTests(unittest.TestCase):
             "reason": "Rejected",
             "finding": None,
         }
-        new = {
-            "candidate_ids": [],
+        valid = {
+            "candidate_ids": ["independent:1"],
             "disposition": "publish",
-            "reason": "New issue",
-            "finding": {**self.finding, "title": "New verifier issue"},
+            "reason": "Verified independent issue",
+            "finding": {**self.finding, "title": "Independent issue"},
         }
 
         result, accepted = protocol.verification(
-            self.verification([overlap_a, overlap_b, new]), candidates, self.snapshot
+            self.verification([overlap_a, overlap_b, valid]), candidates, self.snapshot
         )
 
-        self.assertEqual(accepted, [{**new["finding"], "id": "finding:1"}])
-        self.assertEqual(result["decisions"][0], new)
+        self.assertEqual(accepted, [{**valid["finding"], "id": "finding:1"}])
+        self.assertEqual(result["decisions"][0], valid)
         self.assertEqual(
             result["decisions"][1]["candidate_ids"], ["tests:1", "design:1", "docs:1"]
         )
@@ -541,7 +546,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
         self.assertIn("omitted", result["validation_errors"][0]["error"])
 
-    def test_publish_without_candidate_ids_preserves_new_verifier_finding(self):
+    def test_publish_without_candidate_ids_withholds_new_verifier_finding(self):
         decision = {
             "candidate_ids": [],
             "disposition": "publish",
@@ -553,9 +558,48 @@ class ProtocolTests(unittest.TestCase):
             self.verification([decision]), [], self.snapshot
         )
 
-        self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
-        self.assertEqual(result["decisions"], [decision])
-        self.assertEqual(result["validation_errors"], [])
+        self.assertEqual(accepted, [])
+        self.assertEqual(result["coverage"]["status"], "partial")
+        self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
+        self.assertIsNone(result["decisions"][0]["finding"])
+        self.assertEqual(result["validation_errors"][0]["candidate_ids"], [])
+
+    def test_empty_candidate_ids_preserve_valid_decisions(self):
+        valid = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
+        for ids in ([], [""]):
+            for disposition in ("publish", "drop", "unresolved"):
+                invalid = {
+                    "candidate_ids": ids,
+                    "disposition": disposition,
+                    "reason": "No supplied candidate",
+                    "finding": self.finding if disposition == "publish" else None,
+                }
+                for decisions in ([invalid, valid], [valid, invalid]):
+                    with self.subTest(
+                        ids=ids, disposition=disposition, decisions=decisions
+                    ):
+                        result, accepted = protocol.verification(
+                            self.verification(decisions),
+                            [{"id": "tests:1"}],
+                            self.snapshot,
+                        )
+                        self.assertEqual(
+                            accepted, [{**self.finding, "id": "finding:1"}]
+                        )
+                        self.assertEqual(result["decisions"][0], valid)
+                        withheld = result["decisions"][1]
+                        self.assertEqual(withheld["disposition"], "unresolved")
+                        self.assertIsNone(withheld["finding"])
+                        self.assertEqual(result["coverage"]["status"], "partial")
+                        self.assertTrue(result["coverage"]["limitations"])
+                        self.assertEqual(
+                            result["validation_errors"][0]["candidate_ids"], ids
+                        )
 
     def test_concept_publish_is_separate_from_finding_decisions(self):
         concept = {

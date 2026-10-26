@@ -9,21 +9,19 @@ Use the checkout tools to check every distinct candidate, including smaller
 findings when a major one is present. Follow affected callers and compare base
 behavior where needed. A repeated claim has no extra weight. Check the exact
 failure scenario and whether existing code or tests already cover it. You may
-identify a concrete issue the reviews missed while checking their claims.
+publish code findings only from the supplied candidates. Do not introduce new
+code findings or attach a different issue to an existing candidate ID.
 Use earlier discussions or history only when a specific question would change
 your decision. Leave builds and test runs to CI. Check each technical
 assumption that records an unanswered predecessor objection against the
-checkout. Treat a still-unaddressed objection as a lead; publish it with an
-empty candidate ID list only when current checkout evidence independently
-satisfies the normal code-finding rules. An unanswered objection alone is not
-evidence of a defect. Keep a verified code finding separate from the concept
-assessment.
+checkout for the concept assessment. An objection may support a code finding
+only when it verifies a supplied candidate. An unanswered objection alone is
+not evidence of a defect. Keep a verified code finding separate from the
+concept assessment.
 
-The input also lists `inspection_gaps` from incomplete discovery. Prioritize
-named material functions and unanswered spend/validation interactions while
-inspection budget remains, including when there are no candidate code findings.
-Treat gaps as questions, not defects. Independently establish any new finding
-against base/head code and use an empty candidate ID list. If a material gap
+The input also lists `inspection_gaps` from incomplete discovery. Check a gap
+when needed to decide a supplied candidate or verify the concept assessment or
+an alternative. Gaps do not authorize new code findings. If a material gap
 remains unanswered, retain it in your coverage limitations.
 
 If a concept candidate is supplied, verify it separately from code findings.
@@ -67,8 +65,9 @@ Use `no_concern` with null assessment when the submitted approach is reasonable
 and no actionable concept objection is established, even when the separate
 alternatives field contains an optional improvement. Record why the initial
 objection or concept alternatives were rejected in `reason`.
-If an alternative identifies a material design problem that needs correction,
-publish it once as a design finding and omit it from the alternatives field.
+If an alternative verifies a supplied candidate for a material design problem
+that needs correction, publish it once as a design finding and omit it from the
+alternatives field. Do not create a code finding from an alternative.
 Do not duplicate a design finding in the concept assessment or alternatives.
 For a published assessment, choose a critical assessment label and make its
 `recommendation` a concise statement of the objection and correction. Keep
@@ -204,11 +203,10 @@ it or how dramatic the scenario sounds.
 Return the verifier object in the supplied schema, including the separate
 concept disposition and the code-finding decisions. Account for every supplied
 candidate ID exactly once, grouping IDs only when the claims share a root cause.
-Do not repeat candidate IDs within or across decisions, and do not use IDs that
-were not supplied. Use an empty candidate ID list only for an independently
-verified new finding that should be published; do not use it for `drop` or
-`unresolved`. If a supplied candidate cannot be checked, return an `unresolved`
-decision for its known ID instead of omitting it.
+Every decision must have a nonempty candidate ID list containing only supplied
+IDs. Do not repeat candidate IDs within or across decisions. If a supplied
+candidate cannot be checked, return an `unresolved` decision for its known ID
+instead of omitting it.
 Use `publish`, `drop`, or `unresolved` and ground each code decision in code.
 For a published defect, verify its trigger and consequence, and include the
 production-evidence qualification above when needed. For a published
@@ -224,8 +222,7 @@ inspection limit erase supported findings or mark the review partial by
 default; absence of build, test, or sanitizer execution is expected in static
 review and is not itself a limitation. Do not publish a finding solely because
 it sounds plausible or appears in several reviews. Preserve independent minor
-findings that survive verification. An independently verified new issue may be
-published with an empty candidate ID list. If nothing can be published, still
+findings that survive verification. If nothing can be published, still
 return a decision for every supplied ID, using `drop` or `unresolved` as
 appropriate. This is a verifier report for another model, not a public
 comment; do not add decorative language, an ACK, or a standalone merge verdict.

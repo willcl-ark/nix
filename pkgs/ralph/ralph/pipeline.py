@@ -320,9 +320,8 @@ def _published_findings(verified, edited, candidate_sources, models, was_edited)
                 **finding,
                 "presented_title": presented[identifier]["title"],
                 "presented_body": presented[identifier]["body"],
-                "raised_by": sources or ["verifier"],
-                "raised_by_models": sorted({models[stage] for stage in sources})
-                or [models["verifier"]],
+                "raised_by": sources,
+                "raised_by_models": sorted({models[stage] for stage in sources}),
                 "verified_by": "verifier",
                 "verified_by_model": models["verifier"],
                 "edited_by": "collator" if was_edited else None,
