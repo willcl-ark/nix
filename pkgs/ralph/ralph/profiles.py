@@ -113,7 +113,7 @@ _DEFAULT_STAGES = {
     "script": _stage("gpt-6.1-sol", "high", 25_000, 48),
     "concurrency": _stage(effort="medium", output=8_000),
     "state": _stage(),
-    "public_contract": _stage("gpt-6.1-sol", output=25_000),
+    "public_contract": _stage("gpt-6.1-terra", output=25_000),
     "tests": _stage(),
     "dead_code": _stage(effort="medium", output=8_000, calls=48),
     "design": _stage(effort="xhigh", output=25_000),
@@ -149,7 +149,7 @@ def get_profile(name="default"):
             stage = stages[key]
             stages[key] = replace(
                 stage,
-                model="gpt-6.1-sol",
+                model=stage.model if key == "public_contract" else "gpt-6.1-sol",
                 reasoning_effort="xhigh"
                 if stage.reasoning_effort == "xhigh"
                 else "high",

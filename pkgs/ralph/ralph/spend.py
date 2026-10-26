@@ -32,8 +32,9 @@ RATES = {
     "glm-5.3": (Decimal("1.477"), Decimal("1.477"), Decimal("1.477"), Decimal("4.642")),
     "gpt-6-luna": (Decimal("0.1"), Decimal("0.01"), Decimal("0.125"), Decimal("0.5")),
     "gpt-6.1-sol": (Decimal("2"), Decimal("0.1"), Decimal("2.5"), Decimal("10")),
+    "gpt-6.1-terra": (Decimal("1"), Decimal("0.05"), Decimal("1.25"), Decimal("5")),
 }
-SNAPSHOT_MODEL = re.compile(r"(gpt-6-luna|gpt-6\.1-sol)-\d{4}-\d{2}-\d{2}")
+SNAPSHOT_MODEL = re.compile(r"(gpt-6-luna|gpt-6\.1-(?:sol|terra))-\d{4}-\d{2}-\d{2}")
 
 
 def web_search_calls(response):
