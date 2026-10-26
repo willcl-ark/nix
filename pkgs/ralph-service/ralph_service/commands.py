@@ -105,7 +105,7 @@ def poll_commands(
                 else:
                     text = (
                         "Ralph commands\n"
-                        "/status - Service health, review results and costs\n"
+                        "/status - Service health, review results and usage\n"
                         "/high <PR number> - Request a fresh high review\n"
                         "/help - Show these commands\n"
                         "Post commands in this channel as an administrator."

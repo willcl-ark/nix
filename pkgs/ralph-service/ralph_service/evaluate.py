@@ -15,7 +15,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ralph import trace as core_trace
-from . import config, forgejo, repository, research, review_feedback, stats, stats_page
+from . import (
+    config,
+    forgejo,
+    proxy_usage,
+    repository,
+    research,
+    review_feedback,
+    stats,
+    stats_page,
+)
 from ralph import repository as local_repository
 from ralph import engine, profiles, spend, runner, upstream
 from ralph import research as frozen_research
@@ -1115,6 +1124,8 @@ def main(argv=None):
     dashboard.add_argument("--report-dir", type=Path, required=True)
     dashboard.add_argument("--repository-url", required=True)
     dashboard.add_argument("--report-base-url", required=True)
+    dashboard.add_argument("--proxy-management-url")
+    dashboard.add_argument("--proxy-management-key-file", type=Path)
     args = parser.parse_args(argv)
 
     if args.command == "capture":
@@ -1184,7 +1195,23 @@ def main(argv=None):
         print(json.dumps(summarize_runs(args.runs), sort_keys=True))
         return 0
     if args.command == "stats":
+        if bool(args.proxy_management_url) != bool(args.proxy_management_key_file):
+            parser.error("proxy management URL and key file must be supplied together")
         summary = stats.collect_stats(args.state_dir, args.report_dir)
+        if args.proxy_management_url:
+            try:
+                key = args.proxy_management_key_file.read_text().strip()
+                summary["subscriptions"] = proxy_usage.collect_usage(
+                    args.proxy_management_url, key
+                )
+            except OSError:
+                summary["subscriptions"] = {
+                    "checked_at": summary["generated_at"],
+                    "status": "unavailable",
+                    "accounts": [],
+                }
+        else:
+            summary["subscriptions"] = {"status": "not_configured", "accounts": []}
         stats_page.save_stats(
             args.report_dir / "stats",
             summary,

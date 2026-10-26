@@ -1,8 +1,10 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
+from ralph.spend import Ledger
 from ralph_service import jobs, report, stats, stats_page
 
 
@@ -22,6 +24,99 @@ class StatsPageTests(unittest.TestCase):
         self.assertEqual(paired["completed_reviews"], 2)
         self.assertEqual(paired["sole_accepted"]["adversarial_claude"], 1)
         self.assertEqual(paired["sole_accepted"]["adversarial_gemini"], 1)
+
+    def test_usage_keeps_missing_fields_and_model_providers_explicit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Ledger(root / "spend.sqlite3")
+            with sqlite3.connect(root / "spend.sqlite3") as db:
+                for token, model, usage in (
+                    (
+                        "claude",
+                        "claude-opus-5-5",
+                        {"input_tokens": 100, "output_tokens": 20},
+                    ),
+                    (
+                        "openai",
+                        "gpt-6.1-sol",
+                        {
+                            "input_tokens": 200,
+                            "output_tokens": 30,
+                            "cached_tokens": 100,
+                            "cache_write_tokens": 0,
+                            "complete": True,
+                        },
+                    ),
+                    ("unknown", "gpt-6.1-sol", None),
+                ):
+                    db.execute(
+                        "INSERT INTO requests (token, review_id, stage, model, month, "
+                        "status, usage_json, cost_micros, reserved_micros) "
+                        "VALUES (?, 'pr:42:1:1', 'independent', ?, '2026-10', 'settled', ?, 1000000, 0)",
+                        (token, model, json.dumps(usage)),
+                    )
+            summary = stats.collect_stats(root, root / "reports")
+            totals = summary["spend"]["lifetime"]
+            self.assertEqual(totals["tokens"]["input"], 300)
+            self.assertEqual(totals["unknown_token_counts"]["cached"], 2)
+            self.assertEqual(totals["providers"]["claude"]["request_count"], 1)
+            self.assertEqual(totals["providers"]["openai"]["request_count"], 2)
+            self.assertFalse(summary["inventory"]["missing_sources"]["openai_ledger"])
+            self.assertEqual(stats_page._fmt_tokens(totals, "input"), "300 (partial)")
+            self.assertEqual(stats_page._cache_rate(totals), "N/A")
+            self.assertEqual(
+                stats_page._fmt_tokens(totals["providers"]["claude"], "cached"), "N/A"
+            )
+            public = root / "public"
+            stats_page.save_stats(
+                public,
+                summary,
+                "https://code.example.org/org/repo",
+                "https://reports.example.org",
+            )
+            html = "".join(path.read_text() for path in public.rglob("*.html"))
+            self.assertNotIn("$", html)
+
+    def test_subscription_quota_does_not_present_unavailable_accounts_as_unused(self):
+        summary = {
+            "subscriptions": {
+                "status": "partial",
+                "checked_at": "2026-10-27T10:05:00Z",
+                "accounts": [
+                    {
+                        "provider": "codex",
+                        "status": "ok",
+                        "plan": "Pro <script>",
+                        "windows": [
+                            {
+                                "name": "Weekly",
+                                "used_percent": 25,
+                                "resets_at": "2026-11-01T10:00:00Z",
+                            }
+                        ],
+                    },
+                    {
+                        "provider": "claude",
+                        "status": "unavailable",
+                        "plan": None,
+                        "windows": [
+                            {"name": "Weekly", "used_percent": 0, "resets_at": None}
+                        ],
+                    },
+                ],
+            },
+        }
+        html = stats_page._usage_html(summary)
+        self.assertIn("75.0%", html)
+        self.assertNotIn("100.0%", html)
+        self.assertIn("2026-10-27 10:05 UTC", html)
+        self.assertIn("2026-11-01 10:00 UTC", html)
+        self.assertIn("Pro &lt;script&gt;", html)
+        self.assertNotIn("Pro <script>", html)
+        self.assertIn(
+            "<td>claude</td><td>Unknown plan</td><td>Unknown</td><td>Unknown</td><td>Unknown</td>",
+            html,
+        )
 
     def test_dashboard_renders_collected_stats_and_escapes_untrusted_findings(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,10 +1,14 @@
+import json
+import sqlite3
 import tempfile
 import unittest
+import urllib.request
 from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from ralph_service import commands, monitor
+from ralph_service import commands, monitor, status
 
 
 class CommandTests(unittest.TestCase):
@@ -127,6 +131,99 @@ class CommandTests(unittest.TestCase):
             self.poll()
         self.assertEqual(self.messages(), {})
         self.assertIsNone(self.offset())
+
+    def test_status_reads_recorded_usage_and_stale_quota_without_network(self):
+        now = datetime.now(UTC)
+        for filename, usage in (
+            (
+                "spend.sqlite3",
+                {
+                    "input_tokens": 1234,
+                    "output_tokens": 345,
+                    "cached_tokens": 1200,
+                    "cache_write_tokens": 0,
+                    "complete": True,
+                },
+            ),
+            ("followup/spend.sqlite3", None),
+        ):
+            path = self.root / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute(
+                    "CREATE TABLE requests (review_id TEXT, stage TEXT, model TEXT, "
+                    "month TEXT, status TEXT, usage_json TEXT, cost_micros INTEGER, "
+                    "reserved_micros INTEGER, requested_at INTEGER)"
+                )
+                db.execute(
+                    "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "pr:42:1",
+                        "verifier",
+                        "claude-opus-5-5",
+                        now.strftime("%Y-%m"),
+                        "settled" if usage else "uncertain",
+                        json.dumps(usage) if usage else None,
+                        10,
+                        20,
+                        int(now.timestamp()) - 1,
+                    ),
+                )
+        (self.root / "stats").mkdir()
+        (self.root / "stats/stats.json").write_text(
+            json.dumps(
+                {
+                    "subscriptions": {
+                        "status": "ok",
+                        "checked_at": (now - timedelta(hours=1)).isoformat(),
+                        "accounts": [
+                            {
+                                "provider": "claude",
+                                "status": "ok",
+                                "windows": [
+                                    {
+                                        "name": "Weekly",
+                                        "used_percent": 37,
+                                        "resets_at": None,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                }
+            )
+        )
+        self.updates = [self.update(text="/status")]
+        with (
+            patch.object(status, "_services", return_value=[]),
+            patch.object(
+                urllib.request, "urlopen", side_effect=AssertionError("network request")
+            ),
+        ):
+            self.poll()
+        message = self.messages()["command:10"]
+        self.assertIn("2 requests", message)
+        self.assertIn("input 1,234", message)
+        self.assertIn("Missing usage: 1", message)
+        self.assertIn("63.0% remaining", message)
+        self.assertIn("stale", message)
+        self.assertNotIn("$", message)
+        self.assertIn("Reports: https://reports", message)
+        self.assertIn("Stats: https://reports/stats/", message)
+
+    def test_status_missing_usage_is_unavailable(self):
+        self.updates = [self.update(text="/status")]
+        with (
+            patch.object(status, "_services", return_value=[]),
+            patch.object(
+                urllib.request, "urlopen", side_effect=AssertionError("network request")
+            ),
+        ):
+            self.poll()
+        message = self.messages()["command:10"]
+        self.assertIn("Usage unavailable", message)
+        self.assertIn("Quota snapshot unavailable", message)
+        self.assertNotIn("input 0", message)
 
 
 if __name__ == "__main__":

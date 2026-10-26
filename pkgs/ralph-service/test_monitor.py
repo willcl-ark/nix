@@ -97,6 +97,51 @@ class MonitorTests(unittest.TestCase):
             self.store.deliver("secret", "channel", now=300)
             self.assertEqual(send.call_count, 3)
 
+    def test_digest_counts_recorded_usage_between_utc_21_hour_boundaries(self):
+        path = self.root / "followup/spend.sqlite3"
+        path.parent.mkdir()
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute(
+                "CREATE TABLE requests (review_id TEXT, stage TEXT, model TEXT, "
+                "month TEXT, status TEXT, usage_json TEXT, cost_micros INTEGER, "
+                "reserved_micros INTEGER, requested_at INTEGER)"
+            )
+            for started in (
+                "2026-10-26T20:59:59",
+                "2026-10-26T21:00:00",
+                "2026-10-27T20:59:59",
+                "2026-10-27T21:00:00",
+            ):
+                db.execute(
+                    "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "pr:1:1",
+                        "followup",
+                        "gpt-6-luna",
+                        "2026-10",
+                        "settled",
+                        json.dumps(
+                            {
+                                "input_tokens": 1,
+                                "output_tokens": 2,
+                                "cached_tokens": 0,
+                                "cache_write_tokens": 0,
+                                "complete": True,
+                            }
+                        ),
+                        99,
+                        0,
+                        timestamp(started),
+                    ),
+                )
+        self.observe(timestamp("2026-10-26T22:00:00"))
+        self.observe(timestamp("2026-10-27T22:00:00"))
+        message = self.messages()["digest:2026-10-26"]
+        self.assertIn("2 requests", message)
+        self.assertIn("input 2", message)
+        self.assertIn("output 4", message)
+        self.assertNotIn("$", message)
+
 
 if __name__ == "__main__":
     unittest.main()

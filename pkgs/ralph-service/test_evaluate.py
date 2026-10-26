@@ -41,6 +41,58 @@ class StatsCliTests(unittest.TestCase):
             json.loads((reports / "stats" / "stats.json").read_text())
             self.assertFalse(state.exists())
 
+    def test_stats_publishes_quota_snapshot_without_publishing_management_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            key = root / "management-key"
+            key.write_text("private-management-key\n")
+            reports = root / "public"
+            snapshot = {
+                "status": "ok",
+                "checked_at": "2026-10-26T12:00:00Z",
+                "accounts": [
+                    {
+                        "provider": "codex",
+                        "status": "ok",
+                        "plan": "pro",
+                        "windows": [
+                            {"name": "Weekly", "used_percent": 25, "resets_at": None}
+                        ],
+                    }
+                ],
+            }
+            args = [
+                "stats",
+                "--state-dir",
+                str(root / "state"),
+                "--report-dir",
+                str(reports),
+                "--repository-url",
+                "https://git.example.org/a/b",
+                "--report-base-url",
+                "https://review.example.org/traces",
+                "--proxy-management-url",
+                "http://127.0.0.1:8317",
+                "--proxy-management-key-file",
+                str(key),
+            ]
+            with patch.object(
+                evaluate.proxy_usage, "collect_usage", return_value=snapshot
+            ) as collect:
+                self.assertEqual(evaluate.main(args), 0)
+            collect.assert_called_once_with(
+                "http://127.0.0.1:8317", "private-management-key"
+            )
+            saved = json.loads((reports / "stats/stats.json").read_text())
+            self.assertEqual(saved["subscriptions"], snapshot)
+            for path in (reports / "stats").rglob("*"):
+                if path.is_file():
+                    self.assertNotIn("private-management-key", path.read_text())
+            key.unlink()
+            self.assertEqual(evaluate.main(args), 0)
+            saved = json.loads((reports / "stats/stats.json").read_text())
+            self.assertEqual(saved["subscriptions"]["status"], "unavailable")
+
 
 class EvaluateTests(unittest.TestCase):
     def setUp(self):

@@ -80,16 +80,28 @@ Codex and Claude requests share the proxy client key and `spend.sqlite3` review
 and monthly allowances. The default review allowance is $5, including Claude
 thinking and final-output reservations. No PPQ key or separate PPQ allowance
 is used for new reviews. Preserve any historical `ppq-spend.sqlite3`: statistics and status
-continue reading its costs.
+continue reading its recorded request and token usage.
 
-Daily and weekly cost tracking requires the request-timestamp migration in
+Request timestamps require the migration in
 `ralph-service --state-dir DIR --migrate-state`. The NixOS module runs it before
-starting the service. It backs up and upgrades both review spend databases and
+starting the service. It backs up and upgrades both review ledgers and
 `followup/spend.sqlite3`, skipping missing or already upgraded databases.
-Backups use the `.pre-timestamps.bak` suffix. Historical costs retain their
-accounting month and an unknown timestamp; the Usage page includes them in
-monthly totals and identifies their absence from daily and weekly charts.
-Stats reads never modify private state.
+Backups use the `.pre-timestamps.bak` suffix. Historical requests retain their
+accounting month and an unknown timestamp. Stats reads never modify private state.
+
+Public stats emphasize request counts and recorded tokens rather than dollar
+estimates. Missing usage and cache counts remain explicit. The ledger's existing
+API-equivalent reservations continue to bound workload; they do not measure
+subscription fees or remaining quota.
+
+The stats command can also take `--proxy-management-url` and
+`--proxy-management-key-file` together to collect passive Codex and Claude quota
+snapshots through CLIProxyAPI v8. Use a separate management key, not an inference
+client key. Only the stats process needs it. Snapshots expose no account identity,
+OAuth token or credential path. Quotas include usage outside Ralph, remain
+separate by window, and show reset times and collection time. Missing readings
+are unavailable, never zero. No inference requests or usage-queue reads are made.
+The bundled proxy UI does not need a separate frontend deployment.
 
 The `stats/limits/` page groups saved stage observations by agent, model,
 profile and configured cap. It shows usage at the cap, confirmed interruptions,
@@ -127,7 +139,7 @@ Run `ralph-telegram` separately from the review daemon with `--state-dir`,
 `--report-dir`, `--report-base-url`, `--repository-url`,
 `--telegram-token-file /run/secrets/telegram-token` and
 `--telegram-chat-id @channel`. Use a numeric channel ID for a private channel.
-The monitor reads review state and costs, publishes completed reviews, sends
+The monitor reads review state and recorded usage, publishes completed reviews, sends
 grouped terminal failure alerts, and delivers a daily digest at 21:00 UTC.
 It continues running when the review daemon stops.
 
@@ -137,7 +149,7 @@ units; longer reviews use the title and links only. An exported finding with
 severity exactly `major` adds `🚨 Major finding` in either form.
 
 Post `/status` in the configured channel to see service states, queue and
-result totals, and estimated costs. `/high <PR number>` requests a fresh review
+result totals, recorded token usage and the latest subscription quota snapshot. `/high <PR number>` requests a fresh review
 of an open PR in the configured repository using the high profile. It increases
 the harder core review stages and multiplies the shared review allowance by
 five; the monthly cap stays unchanged. `/help` lists the

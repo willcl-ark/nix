@@ -137,7 +137,7 @@ class NotificationStore:
                     f"Terminal failures: {counts.get('failed', 0)}\n"
                     f"Queue now: {pending} pending, {running} running\n"
                     "Counts use the period when this monitor observed completion.\n"
-                    + _daily_spend(Path(state_dir), completed_day)
+                    + _daily_usage(Path(state_dir), completed_day)
                 )
                 if report_base_url:
                     text += "\nReports: " + report_base_url.rstrip("/")
@@ -196,44 +196,11 @@ def _failure_message(failed, repository_url):
     return text
 
 
-def _daily_spend(state_dir, day):
-    start = (
-        datetime.combine(day, datetime.min.time(), UTC) + timedelta(hours=21)
-    ).timestamp()
-    lines = ["Spend for requests started in this period:"]
-    for label, filename in (
-        ("OpenAI", "spend.sqlite3"),
-        ("PPQ", "ppq-spend.sqlite3"),
-        ("Follow-up", "followup/spend.sqlite3"),
-    ):
-        try:
-            with closing(_readonly(state_dir / filename)) as db:
-                rows = db.execute(
-                    "SELECT cost_micros, reserved_micros, status FROM requests "
-                    "WHERE requested_at >= ? AND requested_at < ?",
-                    (start, start + 86400),
-                ).fetchall()
-        except sqlite3.Error:
-            lines.append(f"{label}: unavailable")
-            continue
-        known = sum(cost for cost, _, _ in rows if cost is not None)
-        outstanding = [
-            value
-            for _, value, status in rows
-            if status in {"reserved", "uncertain", "unknown"}
-        ]
-        unknown = len(outstanding)
-        reserved = sum(value for value in outstanding if value is not None)
-        detail = f"{label}: ${known / 1_000_000:.6f} known"
-        if unknown:
-            detail += (
-                f", {unknown} unknown cost(s), ${reserved / 1_000_000:.6f} reserved"
-            )
-            unknown_reservations = sum(value is None for value in outstanding)
-            if unknown_reservations:
-                detail += f", {unknown_reservations} unknown reservation(s)"
-        lines.append(detail)
-    return "\n".join(lines)
+def _daily_usage(state_dir, day):
+    from .status import recorded_usage
+
+    end = datetime.combine(day, datetime.min.time(), UTC) + timedelta(days=1, hours=21)
+    return "\n".join(recorded_usage(state_dir, end, include_month=False))
 
 
 def run_monitor(

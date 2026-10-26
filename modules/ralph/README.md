@@ -270,16 +270,36 @@ runs without telemetry are counted as uninstrumented. Use the page to choose
 limits for controlled same-head comparisons; reaching a limit alone does not
 prove the review would improve with more allowance.
 
-The Usage page shows total API cost for today, this week and this month, with
-daily, weekly and monthly charts covering the last 30 days, 12 weeks and 12
-months. These totals include current reviews, historical PPQ reviews and
-follow-up requests.
-Periods use request start times in UTC, Monday-starting weeks and calendar
-months; current periods are to date. Older requests have only an accounting
-month, so their costs remain in monthly totals and are identified as undated
-instead of being assigned invented days. Reservations and requests with unknown
-cost remain separate from recorded costs. Review-only breakdowns retain their
-existing scope.
+The Usage page shows recorded requests and input, output and cached tokens.
+Unknown usage remains explicit. These totals describe Ralph's own activity;
+subscription quotas also include other tools using the same accounts. Historical
+PPQ requests and follow-up assessments remain included. UTC accounting months
+retain older requests without inventing missing request timestamps.
+
+To add Codex and Claude subscription quotas from CLIProxyAPI v8:
+
+```nix
+services.ralph.subscriptionUsage = {
+  enable = true;
+  managementUrl = "http://127.0.0.1:8317";
+  managementKeyFile = "/run/secrets/cli-proxy-management-key";
+};
+```
+
+Set a separate nonempty `management.secret-key` in CLIProxyAPI. Inference client
+keys cannot authenticate management requests. Keep management bound to loopback
+with remote management disabled. The bundled `management.html` UI is optional;
+quota polling works with the control panel disabled. No separate frontend is
+needed. The stats service receives the management key through a systemd
+credential; the review daemon and Telegram monitor do not receive it.
+
+Stats polls upstream usage through the management API every five minutes,
+without running inference or draining the proxy's temporary usage queue. Public
+snapshots contain provider, plan when available, separate quota windows, reset
+times and optional credit balances. Account identities, OAuth tokens, credential
+paths and management keys are excluded. Failures are shown as unavailable, never
+as unused capacity. Snapshot time is visible. Provider credit balances are not
+converted into dollars, and subscription fees are not supplied by these endpoints.
 
 Addressed-finding checks run outside the main review service. When reports are
 configured, `ralph-followup.timer` runs every five minutes with its own budget,
@@ -289,13 +309,12 @@ checkout and ledgers under `stateDir/followup/`. It stores Git data in
 `stateDir/followup/spend.sqlite3`. The first run seeds the local history needed
 for future synchronize events; it does not automatically backfill old PR
 updates. `services.ralph.followupBudgetUsd` defaults to `0.10`. Follow-up
-assessment spend is shown in the addressed section, separate from main review
-costs.
+assessment request and token usage is shown in the addressed section.
 
-Distinct review jobs and paid request attempts are counted separately. Retries
-increase request counts and ledger spend; they do not duplicate the final
-findings. Known costs and unsettled reservations are shown separately, including
-failed requests. Verifier acceptance is not human validation or a recall
+Distinct review jobs and request attempts are counted separately. Retries
+increase request counts; they do not duplicate the final findings. Existing
+API-equivalent reservation controls remain workload safeguards, not measures of
+subscription charges or remaining quota. Verifier acceptance is not human validation or a recall
 measurement, and summed model time is not elapsed review time.
 
 The page is reachable under the report URL's `stats/` subdirectory. Hosts may
@@ -542,7 +561,7 @@ older cases before replaying them.
 - `reviewBudgetUsd = 5.00`: base per-review spending ceiling. The `high` profile
   uses five times this shared allowance. It spans retries and is not a target
   spend. Claude uses the same allowance; the monthly ceiling is unchanged.
-- `monthlyBudgetUsd = null`: optional ceiling on the month's recorded charges
+- `monthlyBudgetUsd = null`: optional ceiling on the month's API-equivalent usage
   and outstanding reservations.
 - `routingMode = "enabled"`: apply conservative routing.
 - `routingMode = "shadow"`: record the proposed route while requesting every
@@ -719,7 +738,7 @@ queuing a reply. Displayed author signatures are not used for authorization.
 
 Post `/status` to see the current states of `ralph.service`,
 `ralph-followup.service`, `ralph-stats.service` and `ralph-telegram.service`,
-plus queue counts, review results and estimated API costs. `/help` lists the
+plus queue counts, review results, recorded tokens and the latest subscription quotas. `/help` lists the
 commands. Post `/high 123` to request a fresh high-profile review of PR #123 in
 the configured repository, even if its current head was already reviewed.
 The reviewer checks that the PR is open before queuing it. These commands
@@ -748,9 +767,9 @@ Reviews with an exported finding whose severity is exactly `major` receive a
 The monitor checks for completed reviews and terminal job failures every 30
 seconds. Each check groups new terminal failures into one alert. The daily
 digest runs at 21:00 UTC and reports the preceding 24 hours' observed review
-completions and failures, current queue depth, and estimated spend by request
+completions and failures, current queue depth, and recorded usage by request
 date across the current review, historical PPQ and follow-up ledgers. Missing
-ledgers and unknown costs are identified. The reporting window runs from 21:00 to 21:00 UTC.
+ledgers and unknown usage are identified. The reporting window runs from 21:00 to 21:00 UTC.
 Counts use observation time because the job queue does
 not record completion timestamps.
 

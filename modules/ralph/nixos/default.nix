@@ -249,6 +249,26 @@ in
       description = "Optional monthly API allowance in USD, shared by reviews in this state directory.";
     };
 
+    subscriptionUsage = {
+      enable = lib.mkEnableOption "passive Codex and Claude subscription quota reporting";
+
+      managementUrl = lib.mkOption {
+        type = lib.types.str;
+        default = "http://127.0.0.1:8317";
+        description = "CLIProxyAPI v8 management server URL, without embedded credentials.";
+      };
+
+      managementKeyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          Runtime file containing the separate CLIProxyAPI management key.
+          Loaded only into the stats service through a systemd credential.
+          Public reports contain sanitized quotas, never account identities or keys.
+        '';
+      };
+    };
+
     routingMode = lib.mkOption {
       type = lib.types.enum [
         "enabled"
@@ -337,6 +357,16 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
+        assertion =
+          !cfg.subscriptionUsage.enable
+          || (
+            cfg.subscriptionUsage.managementKeyFile != null
+            && cfg.reportDir != null
+            && cfg.reportBaseUrl != null
+          );
+        message = "services.ralph.subscriptionUsage requires a managementKeyFile and public report configuration.";
+      }
+      {
         assertion = (cfg.githubTokenFile != null) == (cfg.githubRepository != null);
         message = "services.ralph.githubTokenFile and githubRepository must be set together.";
       }
@@ -410,18 +440,29 @@ in
         User = cfg.user;
         Group = cfg.group;
         ExecStart = "${cfg.package}/bin/ralph-evaluate ${
-          lib.escapeShellArgs [
-            "stats"
-            "--state-dir"
-            cfg.stateDir
-            "--report-dir"
-            cfg.reportDir
-            "--repository-url"
-            repositoryUrl
-            "--report-base-url"
-            cfg.reportBaseUrl
-          ]
+          lib.escapeShellArgs (
+            [
+              "stats"
+              "--state-dir"
+              cfg.stateDir
+              "--report-dir"
+              cfg.reportDir
+              "--repository-url"
+              repositoryUrl
+              "--report-base-url"
+              cfg.reportBaseUrl
+            ]
+            ++ lib.optionals cfg.subscriptionUsage.enable [
+              "--proxy-management-url"
+              cfg.subscriptionUsage.managementUrl
+              "--proxy-management-key-file"
+              "%d/proxy-management-key"
+            ]
+          )
         }";
+        LoadCredential = lib.optionals cfg.subscriptionUsage.enable [
+          "proxy-management-key:${cfg.subscriptionUsage.managementKeyFile}"
+        ];
         ProtectSystem = "strict";
         ProtectHome = true;
         ReadWritePaths = [ cfg.reportDir ];

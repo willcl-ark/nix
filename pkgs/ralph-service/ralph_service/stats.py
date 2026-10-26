@@ -29,7 +29,8 @@ PUBLIC_LIMITATION_NOTES = [
     "Model seconds are summed model turn elapsed_seconds, not wall time.",
     "Bot verification is not human validation.",
     "Shared attribution is noncausal.",
-    "Unknown costs and reservations are reported separately from known cost.",
+    "Token totals include reported usage only; missing token fields are marked partial.",
+    "Subscription quota includes other clients sharing the same account.",
 ]
 RESERVED_STATUSES = {"reserved", "uncertain", "unknown"}
 UNKNOWN_COST_STATUSES = RESERVED_STATUSES
@@ -495,8 +496,13 @@ def _provider_ledger_rows(provider, path):
 
 def _ledger_record(provider, row):
     usage = _parse_json(row["usage_json"])
-    tokens, usage_unknown, usage_incomplete = _usage_metrics(usage, row["status"])
+    tokens, usage_unknown, usage_incomplete, missing = _usage_metrics(
+        usage, row["status"]
+    )
     parsed = _parse_review_id(row["review_id"])
+    model = _normalize_model(row["model"] or "unknown")
+    if provider == "openai" and model.startswith("claude-"):
+        provider = "claude"
     return {
         "provider": provider,
         "review_id": row["review_id"],
@@ -504,7 +510,7 @@ def _ledger_record(provider, row):
         "job_id": parsed[1],
         "generation": parsed[2],
         "stage": row["stage"] or "unknown",
-        "model": _normalize_model(row["model"] or "unknown"),
+        "model": model,
         "month": row["month"] or "unknown",
         "requested_at": row["requested_at"],
         "status": row["status"] or "unknown",
@@ -513,6 +519,7 @@ def _ledger_record(provider, row):
         "tokens": tokens,
         "usage_unknown": usage_unknown,
         "usage_incomplete": usage_incomplete,
+        "missing_token_fields": missing,
     }
 
 
@@ -529,9 +536,9 @@ def _parse_json(text):
 def _usage_metrics(usage, status):
     tokens = {"input": 0, "output": 0, "cached": 0, "cache_write": 0}
     if status == "duplicate":
-        return tokens, False, False
+        return tokens, False, False, []
     if not isinstance(usage, dict):
-        return tokens, True, False
+        return tokens, True, False, list(tokens)
     fields = {
         "input": usage.get("input_tokens"),
         "output": usage.get("output_tokens"),
@@ -541,15 +548,14 @@ def _usage_metrics(usage, status):
     known_core = _is_nonnegative_int(fields["input"]) and _is_nonnegative_int(
         fields["output"]
     )
-    if not known_core:
-        return tokens, True, False
     for key, value in fields.items():
         if _is_nonnegative_int(value):
             tokens[key] = int(value)
-    incomplete = usage.get("complete") is not True or not _is_nonnegative_int(
-        fields["cache_write"]
+    incomplete = usage.get("complete") is not True or any(
+        not _is_nonnegative_int(fields[key]) for key in ("cached", "cache_write")
     )
-    return tokens, False, incomplete
+    missing = [name for name, value in fields.items() if not _is_nonnegative_int(value)]
+    return tokens, not known_core, incomplete, missing
 
 
 def _parse_review_id(review_id):
@@ -1243,6 +1249,12 @@ def _new_request_totals():
         "incomplete_usage_count": 0,
         "status_counts": Counter(),
         "tokens": {"input": 0, "output": 0, "cached": 0, "cache_write": 0},
+        "unknown_token_counts": {
+            "input": 0,
+            "output": 0,
+            "cached": 0,
+            "cache_write": 0,
+        },
         "providers": defaultdict(_new_provider_totals),
     }
 
@@ -1257,6 +1269,12 @@ def _new_provider_totals():
         "incomplete_usage_count": 0,
         "status_counts": Counter(),
         "tokens": {"input": 0, "output": 0, "cached": 0, "cache_write": 0},
+        "unknown_token_counts": {
+            "input": 0,
+            "output": 0,
+            "cached": 0,
+            "cache_write": 0,
+        },
     }
 
 
@@ -1274,6 +1292,8 @@ def _add_request(record, request):
     record["status_counts"][request["status"]] += 1
     for key, value in request["tokens"].items():
         record["tokens"][key] += value
+    for key in request.get("missing_token_fields", []):
+        record["unknown_token_counts"][key] += 1
     if "providers" in record and request.get("provider") is not None:
         _add_request(
             record["providers"][request["provider"]], {**request, "provider": None}
@@ -1290,6 +1310,7 @@ def _final_request_totals(record):
         "incomplete_usage_count": record["incomplete_usage_count"],
         "status_counts": dict(sorted(record["status_counts"].items())),
         "tokens": dict(record["tokens"]),
+        "unknown_token_counts": dict(record["unknown_token_counts"]),
     }
 
 
@@ -1301,6 +1322,7 @@ def _observed_review_totals(totals, observed):
         **totals,
         "known_cost_micros": None,
         "reserved_micros": None,
+        "tokens": dict.fromkeys(totals["tokens"]),
     }
 
 

@@ -3,7 +3,7 @@
 import hashlib
 import html
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -46,11 +46,6 @@ def _number(value):
     return None
 
 
-def _micros(value):
-    number = _number(value)
-    return int(number) if number is not None else None
-
-
 def _fmt_int(value):
     number = _number(value)
     return "N/A" if number is None else f"{int(number):,}"
@@ -61,16 +56,6 @@ def _fmt_decimal(value, digits=1):
     return "N/A" if number is None else f"{number:,.{digits}f}"
 
 
-def _fmt_money_micros(value):
-    micros = _micros(value)
-    if micros is None:
-        return "N/A"
-    dollars = micros / 1_000_000
-    if 0 < abs(dollars) < 0.01:
-        return f"${dollars:,.6f}"
-    return f"${dollars:,.2f}"
-
-
 def _fmt_percent(numerator, denominator):
     numerator = _number(numerator)
     denominator = _number(denominator)
@@ -79,12 +64,23 @@ def _fmt_percent(numerator, denominator):
     return f"{100 * numerator / denominator:.1f}%"
 
 
-def _cost_per_unit(cost_micros, denominator):
-    cost = _micros(cost_micros)
-    denominator = _number(denominator)
-    if cost is None or not denominator:
+def _fmt_tokens(record, name):
+    tokens = _mapping(record.get("tokens"))
+    value = tokens.get(name)
+    missing = _number(_mapping(record.get("unknown_token_counts")).get(name)) or 0
+    if missing:
+        if missing >= (_number(record.get("request_count")) or 0):
+            return "N/A"
+        return _fmt_int(value) + " (partial)"
+    return _fmt_int(value)
+
+
+def _cache_rate(record):
+    missing = _mapping(record.get("unknown_token_counts"))
+    if any(missing.get(name) for name in ("input", "cached")):
         return "N/A"
-    return _fmt_money_micros(cost / denominator)
+    tokens = _mapping(record.get("tokens"))
+    return _fmt_percent(tokens.get("cached"), tokens.get("input"))
 
 
 def _generated_at(summary):
@@ -219,18 +215,17 @@ def _analysis(summary):
     jobs = _field(inventory, "jobs_total")
     attempts = _field(lifetime, "request_count")
     failed = _field(inventory, "recorded_failed_attempts")
-    known = _field(month, "known_cost_micros")
     if _number(saved_reviews):
         sentence = (
             f"{_fmt_int(saved_reviews)} saved reviews; {_fmt_int(unique_prs)} pull requests have been queued. "
             f"{_fmt_int(_field(archaeology, 'research_completed'))} completed archaeology research. "
-            f"Current month known review spend is {_fmt_money_micros(known)}."
+            f"Current month review usage is {_fmt_int(month.get('request_count'))} request records."
         )
     else:
         sentence = "No saved reviews are in this summary yet."
     if _number(attempts) is not None and _number(jobs) is not None:
         sentence += (
-            f" Lifetime ledger accounting has {_fmt_int(attempts)} API request attempts for "
+            f" Lifetime ledger accounting has {_fmt_int(attempts)} request records for "
             f"{_fmt_int(jobs)} review jobs, including {_fmt_int(failed)} recorded failed attempts or retries."
         )
     return sentence
@@ -269,9 +264,9 @@ def _top_kpis(summary):
                 f"{_fmt_int(counts.get('partially_addressed'))} partially addressed",
             ),
             _kpi(
-                "Review cost this month",
-                _fmt_money_micros(month.get("known_cost_micros")),
-                f"{_fmt_money_micros(month.get('reserved_micros'))} reserved",
+                "Request records this month",
+                _fmt_int(month.get("request_count")),
+                "Ledger entries, including retries",
             ),
         ]
     )
@@ -440,41 +435,46 @@ def _addressed_section(summary):
         + f"<tbody>{count_rows}</tbody></table></div>"
         + "<div>"
         + f"<p>Assessment jobs: {_fmt_int(_field(addressed, 'assessment_jobs'))}</p>"
-        + f"<p>Assessment spend: {_fmt_money_micros(_field(spend, 'known_cost_micros'))} "
-        + f"known, {_fmt_money_micros(_field(spend, 'reserved_micros'))} reserved, "
-        + f"{_fmt_int(_field(spend, 'request_count'))} attempts.</p>"
+        + f"<p>Assessment usage: {_fmt_int(_field(spend, 'request_count'))} request records; "
+        + f"{_fmt_tokens(spend, 'input')} input tokens; "
+        + f"{_fmt_tokens(spend, 'output')} output tokens.</p>"
         + "</div></div>"
         + "</section>"
     )
 
 
-def _spend_rows(records):
+def _usage_rows(records):
     rows = []
     for record in _record_rows(records):
-        name = (
-            record["name"]
-            if "name" in record
-            else _field(record, "provider", default="unknown")
-        )
+        name = record.get("name", record.get("provider", "unknown"))
         rows.append(
-            "<tr>"
-            f"<td>{_escape(name)}</td>"
-            f"<td>{_fmt_int(_field(record, 'request_count'))}</td>"
-            f"<td>{_fmt_money_micros(_field(record, 'known_cost_micros'))}</td>"
-            f"<td>{_fmt_money_micros(_field(record, 'reserved_micros'))}</td>"
-            f"<td>{_fmt_int(_field(record, 'unknown_cost_request_count'))}</td>"
-            "</tr>"
+            _cells(
+                [
+                    _escape(name),
+                    _fmt_int(record.get("request_count")),
+                    _fmt_tokens(record, "input"),
+                    _fmt_tokens(record, "cached"),
+                    _fmt_tokens(record, "output"),
+                    _fmt_int(record.get("unknown_usage_count")),
+                ]
+            )
         )
     if not rows:
-        return "<p>No provider spend was recorded.</p>"
-    return (
-        "<table><thead><tr><th>Provider</th><th>API attempts</th><th>Known cost</th>"
-        "<th>Reserved</th><th>Unknown cost attempts</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        return "<p>No provider usage was recorded.</p>"
+    return _data_table(
+        [
+            "Provider",
+            "Records",
+            "Input tokens",
+            "Cached tokens",
+            "Output tokens",
+            "Unknown usage records",
+        ],
+        rows,
     )
 
 
-def _cost_trends_section(summary):
+def _usage_trends_section(summary):
     trends = _mapping(summary.get("cost_trends"))
     cards = []
     for key, label in (
@@ -483,141 +483,66 @@ def _cost_trends_section(summary):
         ("current_month", "This month"),
     ):
         period = _mapping(trends.get(key))
-        if period:
-            value = _fmt_money_micros(period.get("known_cost_micros"))
-            detail = (
-                f"{_fmt_int(period.get('request_count'))} attempts · "
-                f"{_fmt_money_micros(period.get('reserved_micros'))} reserved · "
-                f"{_fmt_int(period.get('unknown_cost_request_count'))} with unknown cost"
-            )
-        else:
-            value = "Unavailable"
-            detail = "No timestamped requests."
-        cards.append(_kpi(label, value, detail))
-
-    undated = _mapping(trends.get("undated"))
-    coverage_note = ""
-    if _number(undated.get("request_count")):
-        coverage = "partial" if trends.get("days") else "unavailable"
-        coverage_note = _section_note(
-            f"Daily and weekly totals are {coverage}. "
-            f"{_fmt_int(undated.get('request_count'))} requests have no timestamp and are "
-            f"included only in monthly totals: "
-            f"{_fmt_money_micros(undated.get('known_cost_micros'))} known cost, "
-            f"{_fmt_money_micros(undated.get('reserved_micros'))} reserved, "
-            f"{_fmt_int(undated.get('unknown_cost_request_count'))} with unknown cost."
+        cards.append(
+            _kpi(label, _fmt_int(period.get("request_count")), "Request records")
         )
-
     charts = []
     for key, title, description in (
-        (
-            "days",
-            "Daily cost · 30 days",
-            "Known cost per UTC day over the last 30 days.",
-        ),
+        ("days", "Daily request records · 30 days", "Request records per UTC day."),
         (
             "weeks",
-            "Weekly cost · 12 weeks",
-            "Known cost per UTC week over the last 12 weeks. Weeks start Monday.",
+            "Weekly request records · 12 weeks",
+            "Request records per UTC week. Weeks start Monday.",
         ),
         (
             "months",
-            "Monthly cost · 12 months",
-            "Known cost per accounting month over the last 12 months, including undated requests.",
+            "Monthly request records · 12 months",
+            "Request records per accounting month, including undated requests.",
         ),
     ):
         records = _list(trends.get(key))
         if records:
             charts.append(
-                _chart_svg(
-                    f"cost-{key}",
-                    title,
-                    description,
-                    records,
-                    "known_cost_micros",
-                    currency=True,
-                )
+                _chart_svg(f"usage-{key}", title, description, records, "request_count")
             )
-        else:
-            message = (
-                "No monthly request accounting was recorded."
-                if key == "months"
-                else "No timestamped requests."
-            )
-            charts.append(
-                f'<figure class="chart"><figcaption>{_escape(title)}</figcaption>'
-                f'<p class="note">{_escape(message)}</p></figure>'
-            )
-    return (
-        '<section id="cost-trends"><h2>Total cost</h2>'
-        + _section_note(
-            "Known costs from OpenAI reviews, PPQ requests and follow-up assessments, "
-            "including retries. All periods use UTC; weeks start Monday. "
-            "Current periods are to date."
+    undated = _mapping(trends.get("undated"))
+    note = ""
+    if _number(undated.get("request_count")):
+        note = _section_note(
+            f"{_fmt_int(undated.get('request_count'))} request records have no timestamp and appear only in monthly totals."
         )
-        + '<div class="cards cost-cards">'
+    return (
+        '<section id="usage-trends"><h2>Request activity</h2>'
+        + _section_note(
+            "Ralph request records include review and follow-up retries, duplicates and released reservations. All periods use UTC."
+        )
+        + '<div class="cards usage-cards">'
         + "".join(cards)
         + "</div>"
-        + _section_note(
-            "Unknown costs and reserved amounts are excluded from the totals and charts. "
-            "Charts show the available history in each window."
-        )
-        + coverage_note
+        + note
         + '<div class="charts">'
         + "".join(charts)
         + "</div></section>"
     )
 
 
-def _monthly_trend(summary):
-    months = _list(_mapping(summary.get("spend")).get("months"))
-    if not months:
-        return "<p>No monthly request accounting was recorded.</p>"
-    max_requests = (
-        max((_number(_field(month, "request_count")) or 0) for month in months) or 1
-    )
-    rows = []
-    for month in months:
-        requests = _number(_field(month, "request_count")) or 0
-        width = max(2, min(100, int(100 * requests / max_requests))) if requests else 0
-        rows.append(
-            '<div class="bar-row">'
-            f'<div class="bar-label">{_escape(_field(month, "month", default="unknown"))}</div>'
-            '<div class="bar-track">'
-            f'<div class="bar-fill" style="width:{width}%"></div>'
-            "</div>"
-            '<div class="bar-value">'
-            f"{_fmt_int(requests)} attempts, {_fmt_money_micros(_field(month, 'known_cost_micros'))}"
-            "</div>"
-            "</div>"
-        )
-    return "".join(rows)
-
-
-def _spend_section(summary):
-    spend = _mapping(summary.get("spend"))
-    current = _mapping(spend.get("current_month"))
-    lifetime = _mapping(spend.get("lifetime"))
-    current_providers = current.get("providers")
-    lifetime_providers = lifetime.get("providers")
+def _usage_section(summary):
+    usage = _mapping(summary.get("spend"))
+    current = _mapping(usage.get("current_month"))
+    lifetime = _mapping(usage.get("lifetime"))
     return (
-        '<section id="spend"><h2>Review spend and request attempts</h2>'
+        '<section id="requests"><h2>Review usage</h2>'
         + _section_note(
-            "Review spend includes OpenAI and PPQ ledger attempts, including failed or "
-            "superseded requests, and excludes follow-up assessments. "
-            "Unknown costs and reservations are kept separate from known settled cost."
+            "Durable Ralph ledgers include retries, failed requests, duplicates and released reservations. "
+            "Follow-up assessments appear separately. "
+            "Token totals sum reported fields; partial means some requests omitted that field. "
+            "Model family identifies the provider, not the account or authentication method."
         )
-        + '<div class="split">'
-        + "<div><h3>Current month</h3>"
-        + f'<p class="big">{_fmt_money_micros(_field(current, "known_cost_micros"))}</p>'
-        + _spend_rows(current_providers)
+        + '<div class="split"><div><h3>Current month</h3>'
+        + _usage_rows(current.get("providers"))
         + "</div><div><h3>Lifetime</h3>"
-        + f'<p class="big">{_fmt_money_micros(_field(lifetime, "known_cost_micros"))}</p>'
-        + _spend_rows(lifetime_providers)
-        + "</div></div>"
-        + "<h3>Monthly request accounting</h3>"
-        + _monthly_trend(summary)
-        + "</section>"
+        + _usage_rows(lifetime.get("providers"))
+        + "</div></div></section>"
     )
 
 
@@ -643,15 +568,11 @@ def _data_table(headers, rows):
         "Unique",
         "Shared",
         "Completion",
-        "Cost",
-        "Cost / accepted",
         "Executed",
         "Failed",
         "Findings",
         "Sole accepted",
         "Shared accepted",
-        "Known cost",
-        "Reserved",
     }
     return (
         "<table><thead><tr>"
@@ -782,7 +703,7 @@ def _stage_section(summary, repository_url, report_base_url):
                     ),
                     _fmt_int(statuses.get("failed", 0)),
                     _fmt_int(stage.get("accepted_findings")),
-                    _fmt_money_micros(ledger.get("known_cost_micros")),
+                    _fmt_int(ledger.get("request_count")),
                 ]
             )
         )
@@ -798,7 +719,7 @@ def _stage_section(summary, repository_url, report_base_url):
                     "Completion",
                     "Failed",
                     "Accepted",
-                    "Cost",
+                    "Records",
                 ],
                 rows,
                 "agents",
@@ -841,10 +762,6 @@ def _leaderboard_section(summary):
                         statuses.get("completed", 0) if stage else None,
                         _field(stage, "executed_runs"),
                     ),
-                    _fmt_money_micros(leader.get("known_cost_micros")),
-                    _fmt_money_micros(
-                        leader.get("known_cost_per_accepted_finding_micros")
-                    ),
                 ]
             )
         )
@@ -852,7 +769,7 @@ def _leaderboard_section(summary):
         '<section id="leaderboard"><h2>Agent leaderboard</h2>'
         '<p class="note">Ranked by verifier-accepted findings across saved reviews. Unique means '
         "one contributing agent; shared findings count for each contributor. Different agents "
-        "may review different PRs. Cost includes retries.</p>"
+        "may review different PRs.</p>"
         + (
             _data_table(
                 [
@@ -861,8 +778,6 @@ def _leaderboard_section(summary):
                     "Unique",
                     "Shared",
                     "Completion",
-                    "Cost",
-                    "Cost / accepted",
                 ],
                 rows,
             )
@@ -880,7 +795,6 @@ def _paired_section(summary):
     names = sorted(
         set(_mapping(paired.get("sole_accepted")))
         | set(_mapping(paired.get("shared_accepted")))
-        | set(_mapping(paired.get("known_cost_micros")))
     )
     if not names:
         body = "<p>No adversarial model comparison was recorded.</p>"
@@ -888,7 +802,6 @@ def _paired_section(summary):
         rows = []
         sole = _mapping(paired.get("sole_accepted"))
         shared = _mapping(paired.get("shared_accepted"))
-        cost = _mapping(paired.get("known_cost_micros"))
         for name in names:
             rows.append(
                 _cells(
@@ -896,10 +809,6 @@ def _paired_section(summary):
                         _escape(name),
                         _fmt_int(sole.get(name)),
                         _fmt_int(shared.get(name)),
-                        _fmt_money_micros(cost.get(name)),
-                        _fmt_money_micros(
-                            _mapping(paired.get("reserved_micros")).get(name)
-                        ),
                     ]
                 )
             )
@@ -908,8 +817,6 @@ def _paired_section(summary):
                 "Model group",
                 "Sole accepted",
                 "Shared accepted",
-                "Known cost",
-                "Reserved",
             ],
             rows,
         )
@@ -934,24 +841,20 @@ def _model_section(summary):
     else:
         rows = []
         for model in models:
-            tokens = _mapping(model.get("tokens"))
-            input_tokens = tokens.get("input")
-            cached_tokens = tokens.get("cached")
             rows.append(
                 "<tr>"
                 f"<td>{_escape(_field(model, 'provider', default='unknown'))}</td>"
                 f"<td>{_escape(_field(model, 'model', default='unknown'))}</td>"
                 f"<td>{_fmt_int(_field(model, 'request_count'))}</td>"
-                f"<td>{_fmt_money_micros(_field(model, 'known_cost_micros'))}</td>"
-                f"<td>{_fmt_int(input_tokens)}</td>"
-                f"<td>{_fmt_int(cached_tokens)}</td>"
-                f"<td>{_fmt_percent(cached_tokens, input_tokens)}</td>"
-                f"<td>{_fmt_int(tokens.get('output'))}</td>"
+                f"<td>{_fmt_tokens(model, 'input')}</td>"
+                f"<td>{_fmt_tokens(model, 'cached')}</td>"
+                f"<td>{_cache_rate(model)}</td>"
+                f"<td>{_fmt_tokens(model, 'output')}</td>"
                 "</tr>"
             )
         body = (
             "<table><thead><tr><th>Provider</th><th>Model</th><th>Attempts</th>"
-            "<th>Known cost</th><th>Input tokens</th><th>Cached tokens</th>"
+            "<th>Input tokens</th><th>Cached tokens</th>"
             "<th>Cache rate</th><th>Output tokens</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>"
         )
@@ -982,8 +885,6 @@ def _distribution_section(summary):
     if not distributions:
         return '<section id="distributions"><h2>Review distributions</h2><p>No distributions were recorded.</p></section>'
     labels = {
-        "saved_review_known_cost_micros": "Saved review known cost",
-        "saved_review_reserved_micros": "Saved review reserved",
         "saved_review_tools": "Tool calls",
         "saved_review_model_seconds": "Model seconds",
         "saved_review_conceptual_concern_citations": "Conceptual concern citations",
@@ -992,7 +893,7 @@ def _distribution_section(summary):
     rows = []
     for key, label in labels.items():
         record = _mapping(distributions.get(key))
-        formatter = _fmt_money_micros if key.endswith("_micros") else _fmt_decimal
+        formatter = _fmt_decimal
         rows.append(
             "<tr>"
             f"<td>{_escape(label)}</td>"
@@ -1040,9 +941,11 @@ def _reviews_table(reviews, repository_url, report_base_url):
                 "Research complete": archaeology.get("research_completed", False),
                 "Citations": archaeology.get("citation_count", "N/A"),
                 "Alternatives": archaeology.get("alternative_count", "N/A"),
-                "API attempts": ledger.get("request_count", "N/A"),
+                "Request records": ledger.get("request_count", "N/A"),
                 "Failed/retries": review.get("recorded_failed_attempts", "N/A"),
-                "Reserved": _fmt_money_micros(ledger.get("reserved_micros")),
+                "Input tokens": _fmt_tokens(ledger, "input"),
+                "Cached tokens": _fmt_tokens(ledger, "cached"),
+                "Output tokens": _fmt_tokens(ledger, "output"),
             }
         )
         rows.append(
@@ -1057,14 +960,14 @@ def _reviews_table(reviews, repository_url, report_base_url):
                     "unsupported"
                     if findings.get("export_status") == "unsupported"
                     else _fmt_int(findings.get("published")),
-                    _fmt_money_micros(ledger.get("known_cost_micros")),
+                    _fmt_int(ledger.get("request_count")),
                     _report_link(review, report_base_url),
                     "<details><summary>Details</summary>" + detail + "</details>",
                 ]
             )
         )
     return _interactive_table(
-        ["Review", "Status", "Coverage", "Findings", "Cost", "Report", "Details"],
+        ["Review", "Status", "Coverage", "Findings", "Records", "Report", "Details"],
         rows,
         "reviews",
     )
@@ -1108,17 +1011,15 @@ def _time_series(summary):
     return sorted(records, key=lambda item: item["period"])
 
 
-def _chart_svg(chart_id, title, description, records, field, currency=False):
+def _chart_svg(chart_id, title, description, records, field):
     width = 280
     height = 132
     right = 12
     top = 12
     bottom = 30
-    formatter = _fmt_money_micros if currency else _fmt_int
+    formatter = _fmt_int
     values = [_number(record.get(field)) for record in records]
-    max_value = max((value for value in values if value is not None), default=0) or (
-        1_000_000 if currency else 1
-    )
+    max_value = max((value for value in values if value is not None), default=0) or 1
     left = max(34, len(formatter(max_value)) * 6 + 12)
     x_span = width - left - right
     y_span = height - top - bottom
@@ -1152,11 +1053,6 @@ def _chart_svg(chart_id, title, description, records, field, currency=False):
             continue
         record = records[index]
         tooltip = f"{record['period']}: {formatter(record.get(field))}"
-        if currency:
-            tooltip += (
-                f" known cost; {_fmt_money_micros(record.get('reserved_micros'))} reserved; "
-                f"{_fmt_int(record.get('unknown_cost_request_count'))} with unknown cost"
-            )
         x, y = point
         circles.append(
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3">'
@@ -1270,7 +1166,7 @@ p { margin: .6rem 0 1rem; }
 .subline { display: block; font-size: .8rem; margin-top: .25rem; overflow-wrap: anywhere; }
 .subtitle { margin-bottom: 1.6rem; }
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
-.cards.cost-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+.cards.usage-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
 .card, section { background: #fff; border: 1px solid #dfe6ee; border-radius: .65rem; padding: 1.35rem; }
 section { margin-top: 1.25rem; }
 .card { border-top: 3px solid #207d84; }
@@ -1313,16 +1209,12 @@ footer { max-width: 90rem; margin: auto; padding: 0 1.2rem 2rem; color: #64748b;
 .chart-axis { stroke: #cbd5e1; }
 .chart-line { fill: none; stroke: #167780; stroke-width: 3; }
 .chart circle { fill: #167780; }
-.bar-row { display: grid; grid-template-columns: 6rem 1fr 16rem; gap: .65rem; align-items: center; margin: .6rem 0; }
-.bar-track { height: .55rem; background: #e7ebf0; border-radius: 1rem; overflow: hidden; }
-.bar-fill { height: 100%; background: #207d84; }
 @media (max-width: 750px) {
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   main { padding: 1.2rem .8rem; }
   section, .card { padding: 1rem; }
   nav { gap: 0; }
   nav a { padding: .5rem .65rem; }
-  .bar-row { grid-template-columns: 1fr; gap: .2rem; }
   .header-top { align-items: start; }
 }
 """
@@ -1471,13 +1363,13 @@ def _stage_html(summary, stage, repository_url, report_base_url):
             f"{_fmt_int(stage.get('executed_runs'))} executed runs; skipped excluded",
         )
         + _kpi(
-            "Known cost",
-            _fmt_money_micros(ledger.get("known_cost_micros")),
+            "Request records",
+            _fmt_int(ledger.get("request_count")),
             "Includes reruns and retries",
         )
         + _kpi(
-            "Cost / accepted",
-            _fmt_money_micros(stage.get("known_cost_per_accepted_finding_micros")),
+            "Input tokens",
+            _fmt_tokens(ledger, "input"),
         )
         + "</div><section><h2>Candidate findings</h2>"
         + _stage_findings_details(stage, repository_url, report_base_url)
@@ -1512,12 +1404,11 @@ def _stage_html(summary, stage, repository_url, report_base_url):
         + "<section><h2>Usage</h2>"
         + _key_value_table(
             {
-                "API attempts": _fmt_int(ledger.get("request_count")),
-                "Known cost": _fmt_money_micros(ledger.get("known_cost_micros")),
-                "Reserved": _fmt_money_micros(ledger.get("reserved_micros")),
-                "Unknown-cost attempts": _fmt_int(
-                    ledger.get("unknown_cost_request_count")
-                ),
+                "Request records": _fmt_int(ledger.get("request_count")),
+                "Input tokens": _fmt_tokens(ledger, "input"),
+                "Cached tokens": _fmt_tokens(ledger, "cached"),
+                "Output tokens": _fmt_tokens(ledger, "output"),
+                "Unknown usage records": _fmt_int(ledger.get("unknown_usage_count")),
             }
         )
         + "</section></div>"
@@ -1549,26 +1440,93 @@ def _addressed_html(summary, repository_url, report_base_url):
     return _page("Outcomes", summary, body, "../", "Outcomes")
 
 
+def _subscription_time(value):
+    if not isinstance(value, str):
+        return "Unknown"
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return "Unknown"
+    if timestamp.tzinfo is None:
+        return "Unknown"
+    return timestamp.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _subscriptions_section(summary):
+    subscriptions = _mapping(summary.get("subscriptions"))
+    rows = []
+    credit_notes = []
+    for account in _list(subscriptions.get("accounts")):
+        if not isinstance(account, dict):
+            continue
+        provider = _escape(account.get("provider", "unknown"))
+        plan = _escape(account.get("plan") or "Unknown plan")
+        windows = _list(account.get("windows")) if account.get("status") == "ok" else []
+        credits = (
+            _mapping(account.get("credits")) if account.get("status") == "ok" else {}
+        )
+        if credits:
+            if credits.get("unlimited") is True:
+                balance = "Unlimited"
+            elif credits.get("has_credits") is False:
+                balance = "None"
+            else:
+                balance = credits.get("balance")
+                balance = "Unknown" if balance is None else str(balance)
+            credit_notes.append(f"<p>{provider} credits: {_escape(balance)}.</p>")
+        if not windows:
+            rows.append(_cells([provider, plan, "Unknown", "Unknown", "Unknown"]))
+        for window in windows:
+            if not isinstance(window, dict):
+                continue
+            used = _number(window.get("used_percent"))
+            remaining = (
+                f"{100 - used:.1f}%"
+                if used is not None and 0 <= used <= 100
+                else "Unknown"
+            )
+            rows.append(
+                _cells(
+                    [
+                        provider,
+                        plan,
+                        _escape(window.get("name", "Unknown")),
+                        remaining,
+                        _escape(_subscription_time(window.get("resets_at"))),
+                    ]
+                )
+            )
+    status = subscriptions.get("status", "not_configured")
+    freshness = _subscription_time(subscriptions.get("checked_at"))
+    body = (
+        _data_table(["Provider", "Plan", "Window", "Remaining", "Resets"], rows)
+        if rows
+        else "<p>Subscription quota is unknown.</p>"
+    )
+    return (
+        '<section id="subscriptions"><h2>Subscription capacity</h2>'
+        + f"<p>Status: {_escape(status.replace('_', ' '))}. Checked: {_escape(freshness)}.</p>"
+        + body
+        + "".join(credit_notes)
+        + _section_note(
+            "Provider quota is a snapshot and includes all clients using the account. "
+            "Unknown capacity is not unused capacity. Token totals below measure Ralph usage, not subscription capacity."
+        )
+        + "</section>"
+    )
+
+
 def _usage_html(summary):
     limitations = _mapping(summary.get("limitations"))
     notes = "".join(
         f"<li>{_escape(note)}</li>" for note in _list(limitations.get("notes"))
     )
     overview = _mapping(summary.get("overview"))
-    costs = _mapping(
-        _mapping(summary.get("distributions")).get("saved_review_known_cost_micros")
-    )
     body = (
-        '<h1>Usage</h1><p class="subtitle">Spend, request accounting and operational diagnostics.</p>'
-        + _cost_trends_section(summary)
-        + '<div class="cards">'
-        + _kpi(
-            "Median review cost",
-            _fmt_money_micros(costs.get("median")),
-            f"Matched saved-review cohort: {_fmt_int(costs.get('count'))}",
-        )
-        + "</div>"
-        + _spend_section(summary)
+        '<h1>Usage</h1><p class="subtitle">Subscription capacity, request accounting and operational diagnostics.</p>'
+        + _subscriptions_section(summary)
+        + _usage_trends_section(summary)
+        + _usage_section(summary)
         + _model_section(summary)
         + "<details><summary>Routing and review distributions</summary>"
         + _routing_section(summary)
