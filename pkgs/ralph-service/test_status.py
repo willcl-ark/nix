@@ -139,7 +139,7 @@ class StatusTests(unittest.TestCase):
             path.parent.mkdir(exist_ok=True)
             with sqlite3.connect(path) as db:
                 db.execute(
-                    "CREATE TABLE requests (review_id, stage, model, month, status, usage_json, cost_micros, reserved_micros, requested_at)"
+                    "CREATE TABLE requests (month, status, cost_micros, reserved_micros, requested_at)"
                 )
                 for when, cost, reserved, state in (
                     (month - timedelta(seconds=1), 8000000, 0, "complete"),
@@ -149,9 +149,11 @@ class StatusTests(unittest.TestCase):
                     (self.now - timedelta(seconds=1), None, 3000000, "uncertain"),
                     (self.now, 16000000, 0, "complete"),
                     (None, 32000000, 0, "complete"),
+                    (start, 0, 64000000, "released"),
+                    (start, 0, 64000000, "duplicate"),
                 ):
                     db.execute(
-                        "INSERT INTO requests VALUES ('pr:1:1:1', 'review', 'model', ?, ?, '{}', ?, ?, ?)",
+                        "INSERT INTO requests VALUES (?, ?, ?, ?, ?)",
                         (
                             when.strftime("%Y-%m") if when else "2026-10",
                             state,

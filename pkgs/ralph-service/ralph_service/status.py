@@ -1,7 +1,9 @@
 """Read-only operational summary for the Telegram monitor."""
 
+import sqlite3
 import subprocess
 from collections import Counter
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -157,7 +159,8 @@ def _jobs(state_dir):
 
 
 def _spend(state_dir, now):
-    start = now - timedelta(hours=24)
+    start = (now - timedelta(hours=24)).timestamp()
+    end = now.timestamp()
     month = now.strftime("%Y-%m")
     lines = ["Estimated costs"]
     reservations = [0, 0]
@@ -170,20 +173,39 @@ def _spend(state_dir, now):
         ("PPQ", "ppq-spend.sqlite3"),
         ("Follow-up", "followup/spend.sqlite3"),
     ):
-        requests, missing = stats._provider_ledger_rows(label, state_dir / filename)
-        if missing:
+        totals = [Counter(), Counter()]
+        ledger_undated = False
+        try:
+            with closing(stats._connect_readonly(state_dir / filename)) as db:
+                rows = db.execute(
+                    "SELECT requested_at, month, status, cost_micros, reserved_micros "
+                    "FROM requests"
+                )
+                for row in rows:
+                    dated = isinstance(row["requested_at"], (int, float))
+                    ledger_undated |= not dated
+                    periods = (
+                        dated and start <= row["requested_at"] < end,
+                        row["month"] == month,
+                    )
+                    for total, included in zip(totals, periods):
+                        if not included:
+                            continue
+                        total["known_cost_micros"] += stats._nonnegative_int(
+                            row["cost_micros"]
+                        )
+                        request_status = row["status"] or "unknown"
+                        if request_status in stats.RESERVED_STATUSES:
+                            total["reserved_micros"] += stats._nonnegative_int(
+                                row["reserved_micros"]
+                            )
+                        if request_status in stats.UNKNOWN_COST_STATUSES:
+                            total["unknown_cost_request_count"] += 1
+        except sqlite3.Error:
             lines.append(f"{label}: unavailable")
             missing_sources = True
             continue
         available += 1
-        recent = [
-            row
-            for row in requests
-            if isinstance(row["requested_at"], (int, float))
-            and start.timestamp() <= row["requested_at"] < now.timestamp()
-        ]
-        monthly = [row for row in requests if row["month"] == month]
-        totals = [stats._request_totals(rows) for rows in (recent, monthly)]
         lines.append(
             f"{label}: 24h ${totals[0]['known_cost_micros'] / 1_000_000:,.2f}"
             f" · month ${totals[1]['known_cost_micros'] / 1_000_000:,.2f}"
@@ -191,9 +213,7 @@ def _spend(state_dir, now):
         for index, period in enumerate(totals):
             reservations[index] += period["reserved_micros"]
             unknown[index] += period["unknown_cost_request_count"]
-        undated |= any(
-            not isinstance(row["requested_at"], (int, float)) for row in requests
-        )
+        undated |= ledger_undated
     if not available:
         return lines + ["", "Reservations and unknown costs: unavailable"]
     lines.extend(
