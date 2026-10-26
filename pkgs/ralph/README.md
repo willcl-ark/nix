@@ -111,8 +111,8 @@ keep verification order even if the editor reorders the prose.
 
 The diagrams and implementation details below describe the `current` engine.
 
-These diagrams describe the checked-in defaults. [models.json](audits/models.json)
-assigns models; callers can replace the complete map with `--models-json`.
+These diagrams describe the checked-in defaults. [profiles.py](ralph/profiles.py) defines each review profile.
+Callers can replace the complete model map with `--models-json`.
 The [NixOS module documentation](../../modules/ralph/README.md)
 covers deployment and options. Mermaid diagrams render in supporting Markdown
 viewers; their source remains readable in a plain text editor.
@@ -139,7 +139,8 @@ flowchart LR
 
 The router can add coverage but cannot remove path-mandated coverage. A sensitive
 tier always adds adversarial review, even when no domain profile is selected.
-Profiles extend the adversarial prompt; they are not separate model calls.
+Domain profiles extend the adversarial prompt; they are not separate model calls.
+They are distinct from the `default` and `high` review settings profiles.
 
 | Changed paths, excluding tests where stated | Mandatory coverage / tier floor |
 | --- | --- |
@@ -537,3 +538,26 @@ For a before/after comparison, use the same PR head and inspect whether the new
 assessment recovers material history, recognises answered objections, and makes
 a defensible choice between approaches. A live rerun can see newer discussion;
 its evidence is not a frozen historical replay.
+
+## Review profiles
+
+The default profile preserves the stage settings listed above. Select the high
+profile with `ralph review ... --profile high`, or set `"profile": "high"` in
+an engine configuration. The CLI option overrides the configuration file.
+
+High uses gpt-6.1-sol for independent review, concurrency, state, dead code,
+design and verification. Core analysis and verification stages use at least
+high reasoning effort, retaining xhigh where already configured, and at least
+16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
+and the two PPQ reviewers retain their default settings. Tool limits are unchanged.
+
+High multiplies the configured OpenAI review allowance by five. Its 128,000-token
+verifier reserves at least $2.56 for its initial and finishing requests alone;
+the larger allowance leaves room for discovery. PPQ allowances are unchanged.
+The default multiplier is one. An allowance is a spend cap, not a target.
+
+A resolved profile records every stage's model, reasoning effort, output ceiling,
+and tool limits in the engine configuration snapshot and hash. Profiles keep
+routine, standard and sensitive tool limits explicit. Model overrides apply after
+profile selection; overriding the archaeologist model also selects that model
+for alternatives. Custom audit prompt directories contain prompts only.

@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ralph import config, engine, routing
+from ralph import config, engine, routing, profiles
 from ralph.protocol import InvalidReview
 from ralph.repository import MAX_REVIEW_BYTES
 from ralph.spend import BudgetExceeded
@@ -114,7 +114,9 @@ class RoutingTests(unittest.TestCase):
 
     def prompt_config(self):
         return SimpleNamespace(
-            models={"router": "gpt-6-luna"}, audit_prompts={"router": "Route this PR."}
+            models={"router": "gpt-6-luna"},
+            audit_prompts={"router": "Route this PR."},
+            profile=profiles.get_profile(),
         )
 
     def test_full_plan_selects_every_audit_and_profile(self):
@@ -222,12 +224,12 @@ class RoutingTests(unittest.TestCase):
             "src/blockstorage.h": ("consensus",),
             "src/chainstate.h": ("consensus",),
         }
-        for path, profiles in cases.items():
+        for path, expected_profiles in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(routing.minimum_tier({path}), "sensitive")
                 plan = routing.validate_plan(route(), {path}, "routine")
                 self.assertEqual(plan["tier"], "sensitive")
-                self.assertEqual(tuple(plan["profiles"]), profiles)
+                self.assertEqual(tuple(plan["profiles"]), expected_profiles)
 
         plan = routing.validate_plan(route(), {"src/sync.h"}, "routine")
         self.assertEqual(plan["tier"], "sensitive")

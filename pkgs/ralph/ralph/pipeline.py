@@ -33,28 +33,6 @@ FULL_CONTEXT_STAGES = {
     "verifier",
     "major_verifier",
 }
-DISCOVERY_TOOL_LIMITS = {"routine": 12, "standard": 24, "sensitive": 48}
-ARCHAEOLOGY_TOOL_LIMIT = 12
-
-
-def stage_settings(name):
-    if name == "collator":
-        return "low", model.MAX_COLLATOR_OUTPUT_TOKENS
-    if name == "design":
-        return "xhigh", 25_000
-    if name in PPQ_ADVERSARIAL_STAGES:
-        return "high", 32_000
-    if name == "verifier":
-        return "xhigh", model.MAX_VERIFIER_OUTPUT_TOKENS
-    if name == "major_verifier":
-        return "medium", 25_000
-    if name == "public_contract":
-        return "low", 25_000
-    if name in {*ADVERSARIAL_STAGES, "script"}:
-        return "high", 25_000
-    if name in {"concurrency", "dead_code"}:
-        return "medium", 8_000
-    return "low", 4_000
 
 
 def _stage_tools(name, runtime):
@@ -91,30 +69,16 @@ def _run_stage(
     outputs = debug["stage_outputs"]
     if name not in ADVERSARIAL_STAGES:
         debug["pipeline_stage"] = name
-    stage_model = prompt_config.models[
-        "archaeologist" if name == "alternatives" else name
-    ]
+    settings = prompt_config.profile.stages[name]
+    stage_model = settings.model
     record = {"model": stage_model, "status": "running", "turns": [], "tools": []}
     stages[name] = record
     if name in ADVERSARIAL_STAGES:
         record["profiles"] = list(plan["profiles"])
     try:
-        effort, output_tokens = stage_settings(name)
+        effort, output_tokens = settings.reasoning_effort, settings.max_output_tokens
         if tools:
-            calls = (
-                ARCHAEOLOGY_TOOL_LIMIT
-                if name in {"archaeologist", "alternatives"}
-                else 48
-                if name
-                in {
-                    *ADVERSARIAL_STAGES,
-                    "script",
-                    "dead_code",
-                    "verifier",
-                    "major_verifier",
-                }
-                else DISCOVERY_TOOL_LIMITS[plan["tier"]]
-            )
+            calls = settings.max_tool_calls[plan["tier"]]
             available_tools = _stage_tools(name, runtime)
             answer = runtime.review(
                 name,
@@ -124,6 +88,9 @@ def _run_stage(
                 record=record,
                 tools=available_tools,
                 max_tool_calls=calls,
+                max_context_calls=settings.max_context_calls,
+                max_history_calls=settings.max_history_calls,
+                max_web_search_calls_per_response=settings.max_web_search_calls_per_response,
                 max_output_tokens=output_tokens,
                 reasoning_effort=effort,
                 first_tool_required=bool(available_tools)
@@ -475,7 +442,11 @@ def review_with_independent_passes(
 
     def protect_verification():
         if budget is not None:
-            effort, output_tokens = stage_settings("verifier")
+            settings = prompt_config.profile.stages["verifier"]
+            effort, output_tokens = (
+                settings.reasoning_effort,
+                settings.max_output_tokens,
+            )
             tools = _stage_tools("verifier", runtime)
             debug["verification_budget"] = budget.protect(
                 {
@@ -486,7 +457,7 @@ def review_with_independent_passes(
                     "input": [{"role": "user", "content": verifier_input()}],
                     "tools": tools,
                     "tool_choice": "required",
-                    "max_tool_calls": model.MAX_WEB_SEARCH_CALLS_PER_RESPONSE,
+                    "max_tool_calls": settings.max_web_search_calls_per_response,
                     "max_output_tokens": output_tokens,
                     "text": {
                         "format": {

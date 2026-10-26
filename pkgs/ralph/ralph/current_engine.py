@@ -1,15 +1,20 @@
 """The existing routed Ralph review engine."""
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 
-from . import config, pipeline
+from . import config, pipeline, profiles
 from .engine import Output
 
 
 def configure(value):
     value = dict(value)
+    selected_profile = value.get("profile", "default")
+    profile = (
+        profiles.get_profile(selected_profile)
+        if isinstance(selected_profile, str)
+        else profiles.ReviewProfile.from_dict(selected_profile)
+    )
     prompts = value.get("prompts")
     if prompts is None:
         prompt_file = Path(value.get("prompt_file", config.DEFAULT_PROMPT_FILE))
@@ -20,25 +25,15 @@ def configure(value):
                 name: config.load_prompt_file(audit_dir / f"{name}.md")
                 for name in config.PROMPT_NAMES
             },
-            "models": config.validate_models(
-                json.loads(
-                    Path(value.get("models_json", audit_dir / "models.json")).read_text(
-                        encoding="utf-8"
-                    )
-                )
-            ),
         }
     else:
         prompts = dict(prompts)
-        if (
-            not isinstance(prompts.get("instructions"), str)
-            or not isinstance(prompts.get("audit_prompts"), dict)
-            or not isinstance(prompts.get("models"), dict)
+        if set(prompts) != {"instructions", "audit_prompts"}:
+            raise ValueError("prompts must contain only instructions and audit_prompts")
+        if not isinstance(prompts.get("instructions"), str) or not isinstance(
+            prompts.get("audit_prompts"), dict
         ):
-            raise ValueError(
-                "prompts must contain instructions, audit_prompts, and models"
-            )
-        config.validate_models(prompts["models"])
+            raise ValueError("prompts must contain instructions and audit_prompts")
         if set(prompts["audit_prompts"]) != set(config.PROMPT_NAMES):
             raise ValueError("prompt config must name each review prompt")
         if "prompt_file" in value:
@@ -51,15 +46,20 @@ def configure(value):
                 name: config.load_prompt_file(audit_dir / f"{name}.md")
                 for name in config.PROMPT_NAMES
             }
-        if "models_json" in value:
-            prompts["models"] = config.validate_models(
+    if "models_json" in value:
+        profile = profile.with_models(
+            config.validate_models(
                 json.loads(Path(value["models_json"]).read_text(encoding="utf-8"))
             )
-    prompt_config = config.PromptConfig(**prompts)
-    if any(not prompt.strip() for prompt in prompt_config.audit_prompts.values()):
+        )
+    if any(
+        not isinstance(prompt, str) or not prompt.strip()
+        for prompt in prompts["audit_prompts"].values()
+    ):
         raise ValueError("audit prompt files must not be empty")
     normalized = {
-        "prompts": asdict(prompt_config),
+        "prompts": prompts,
+        "profile": profile.to_dict(),
         "routing_mode": value.get("routing_mode", "enabled"),
         "blind_alternatives": value.get("blind_alternatives", True),
         "archaeology": value.get("archaeology", False),
@@ -85,7 +85,10 @@ def run(case, runtime, configured):
                 "archaeology requires PR context and discussion evidence or a reader"
             )
     runtime.debug["schema_version"] = 2
-    prompt_config = config.PromptConfig(**configured["prompts"])
+    prompt_config = config.PromptConfig(
+        **configured["prompts"],
+        profile=profiles.ReviewProfile.from_dict(configured["profile"]),
+    )
     result = pipeline.review_with_independent_passes(
         case,
         runtime,

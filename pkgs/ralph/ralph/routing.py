@@ -198,7 +198,12 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
                 prompt_config.audit_prompts["router"],
                 router_input,
                 model_name=prompt_config.models["router"],
-                max_output_tokens=4_000,
+                max_output_tokens=prompt_config.profile.stages[
+                    "router"
+                ].max_output_tokens,
+                reasoning_effort=prompt_config.profile.stages[
+                    "router"
+                ].reasoning_effort,
                 response_schema=ROUTER_SCHEMA,
                 debug_record=record,
             )

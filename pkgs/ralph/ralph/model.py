@@ -20,10 +20,8 @@ from .spend import BudgetExceeded, web_search_calls
 
 MAX_TOOL_CALLS = 48
 MAX_OUTPUT_TOKENS = 6_000
-MAX_VERIFIER_OUTPUT_TOKENS = 128_000
 MAX_AUDIT_OUTPUT_TOKENS = 4_000
 MAX_AUDIT_OUTPUT_BYTES = 4_000
-MAX_COLLATOR_OUTPUT_TOKENS = 6_000
 MAX_COLLATOR_OUTPUT_BYTES = 10_000
 MAX_CONTEXT_CALLS = 8
 MAX_HISTORY_CALLS = 8
@@ -552,6 +550,9 @@ def openai_review(
     max_output_tokens,
     tools=None,
     max_tool_calls=MAX_TOOL_CALLS,
+    max_context_calls=MAX_CONTEXT_CALLS,
+    max_history_calls=MAX_HISTORY_CALLS,
+    max_web_search_calls_per_response=MAX_WEB_SEARCH_CALLS_PER_RESPONSE,
     first_tool_required=True,
     stage_name="independent",
     on_response=None,
@@ -623,7 +624,7 @@ def openai_review(
             tool.get("type") in WEB_SEARCH_TOOL_TYPES for tool in tools
         ):
             per_response_search_limit = min(
-                MAX_WEB_SEARCH_CALLS_PER_RESPONSE, max(1, max_tool_calls - calls_used)
+                max_web_search_calls_per_response, max(1, max_tool_calls - calls_used)
             )
             data["max_tool_calls"] = per_response_search_limit
             data["include"] = ["web_search_call.action.sources"]
@@ -810,7 +811,7 @@ def openai_review(
                                 checkout, snapshot.diff_base_sha, args.get("query")
                             )
                         elif call["name"] in LIVE_RESEARCH_TOOL_NAMES:
-                            if context_calls >= MAX_CONTEXT_CALLS:
+                            if context_calls >= max_context_calls:
                                 answer = "Discussion lookup limit reached."
                             else:
                                 context_calls += 1
@@ -823,7 +824,7 @@ def openai_review(
                                 else:
                                     answer = "Discussion lookup unavailable."
                         elif call["name"] in {"blame_base", "read_commit"}:
-                            if history_calls >= MAX_HISTORY_CALLS:
+                            if history_calls >= max_history_calls:
                                 answer = "History lookup limit reached."
                             else:
                                 history_calls += 1

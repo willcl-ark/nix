@@ -140,6 +140,41 @@ class CLITest(unittest.TestCase):
             self.git("for-each-ref", "--format=%(refname)", "refs/ralph/local"), ""
         )
 
+    def test_high_profile_scales_only_openai_allowance(self):
+        from unittest.mock import patch
+        from ralph import cli, current_engine, engine
+
+        def run(case, runtime, configured):
+            self.assertEqual(configured["profile"]["name"], "high")
+            self.assertEqual(runtime.budget.ledger.review_limit_micros, 10_000_000)
+            self.assertEqual(runtime.ppq_budget.ledger.review_limit_micros, 3_000_000)
+            return engine.Output("Review", {}, {})
+
+        with patch.object(current_engine, "run", side_effect=run), patch("sys.stdout"):
+            code = cli.main(
+                [
+                    "review",
+                    "HEAD^..HEAD",
+                    str(self.repo),
+                    "--openai-key-file",
+                    str(self.key),
+                    "--ppq-key-file",
+                    str(self.key),
+                    "--review-budget-usd",
+                    "2",
+                    "--ppq-review-budget-usd",
+                    "3",
+                    "--profile",
+                    "high",
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            self.result()["run"]["allowances"], {"openai_usd": 10.0, "ppq_usd": 3.0}
+        )
+
     def test_output_is_optional(self):
         result = self.cli(output=False)
         self.assertEqual(result.returncode, 0, result.stderr)

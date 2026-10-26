@@ -553,21 +553,39 @@ class PipelineTests(unittest.TestCase):
 
     def test_adversarial_deepseek_has_extra_output_headroom(self):
         self.assertEqual(
-            pipeline.stage_settings("adversarial_deepseek"), ("high", 32_000)
+            (
+                self.prompts.profile.stages["adversarial_deepseek"].reasoning_effort,
+                self.prompts.profile.stages["adversarial_deepseek"].max_output_tokens,
+            ),
+            ("high", 32_000),
         )
-        self.assertEqual(pipeline.stage_settings("adversarial"), ("high", 25_000))
+        self.assertEqual(
+            (
+                self.prompts.profile.stages["adversarial"].reasoning_effort,
+                self.prompts.profile.stages["adversarial"].max_output_tokens,
+            ),
+            ("high", 25_000),
+        )
 
     def test_verifier_uses_luna_with_xhigh_reasoning(self):
         self.assertEqual(self.prompts.models["verifier"], "gpt-6-luna")
-        self.assertEqual(model.MAX_VERIFIER_OUTPUT_TOKENS, 128_000)
         self.assertEqual(
-            pipeline.stage_settings("verifier"),
-            ("xhigh", model.MAX_VERIFIER_OUTPUT_TOKENS),
+            (
+                self.prompts.profile.stages["verifier"].reasoning_effort,
+                self.prompts.profile.stages["verifier"].max_output_tokens,
+            ),
+            ("xhigh", 128_000),
         )
 
     def test_public_contract_uses_sol_with_low_reasoning(self):
         self.assertEqual(self.prompts.models["public_contract"], "gpt-6.1-sol")
-        self.assertEqual(pipeline.stage_settings("public_contract"), ("low", 25_000))
+        self.assertEqual(
+            (
+                self.prompts.profile.stages["public_contract"].reasoning_effort,
+                self.prompts.profile.stages["public_contract"].max_output_tokens,
+            ),
+            ("low", 25_000),
+        )
 
     def plan(self, *args, **kwargs):
         result = {
@@ -795,7 +813,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(efforts["adversarial"], "high")
         self.assertEqual(output_limits["adversarial"], 25_000)
         self.assertEqual(efforts["verifier"], "xhigh")
-        self.assertEqual(output_limits["verifier"], model.MAX_VERIFIER_OUTPUT_TOKENS)
+        self.assertEqual(output_limits["verifier"], 128_000)
         self.assertIn(("verifier", "gpt-6-luna"), self.calls)
         self.assertIn("incomplete", content)
         self.assertEqual(
@@ -1028,12 +1046,8 @@ class PipelineTests(unittest.TestCase):
             return discovery()
 
         self.run_review(review, budget=budget)
-        self.assertEqual(
-            budget.payloads[0]["max_output_tokens"], model.MAX_VERIFIER_OUTPUT_TOKENS
-        )
-        self.assertEqual(
-            budget.payloads[1]["max_output_tokens"], model.MAX_VERIFIER_OUTPUT_TOKENS
-        )
+        self.assertEqual(budget.payloads[0]["max_output_tokens"], 128_000)
+        self.assertEqual(budget.payloads[1]["max_output_tokens"], 128_000)
         self.assertEqual(budget.payloads[2]["reasoning"]["effort"], "xhigh")
         self.assertIn("independent:1", budget.payloads[2]["input"][0]["content"])
 

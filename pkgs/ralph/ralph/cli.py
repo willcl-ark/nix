@@ -12,7 +12,7 @@ import tempfile
 from urllib.parse import urlsplit
 import uuid
 
-from . import engine, repository, research, runner, spend
+from . import engine, profiles, repository, research, runner, spend
 
 
 def _read_json(path):
@@ -150,6 +150,7 @@ def parser():
     review.add_argument("--context", type=Path)
     review.add_argument("--research-evidence", type=Path)
     review.add_argument("--engine", default="current")
+    review.add_argument("--profile", choices=profiles.PROFILE_NAMES)
     review.add_argument("--engine-config", type=Path)
     review.add_argument("--archaeology", choices=("auto", "on", "off"))
     review.add_argument("--openai-key-file", type=Path, required=True)
@@ -191,12 +192,13 @@ def _review(args, cancellation):
                 "audit_prompt_dir",
                 "models_json",
                 "routing_mode",
+                "profile",
             )
             if getattr(args, name) is not None
         }
         if args.engine != "current" and (args.archaeology is not None or overrides):
             raise ValueError(
-                "Archaeology and prompt/model overrides require the current engine"
+                "Archaeology and prompt/model/profile overrides require the current engine"
             )
         settings.update(
             {
@@ -220,6 +222,12 @@ def _review(args, cancellation):
             selected = engine.load(args.engine, settings)
         except Exception as error:
             raise ValueError(f"Could not configure review engine: {error}") from error
+        multiplier = (
+            selected.config["profile"]["budget_multiplier"]
+            if args.engine == "current"
+            else 1
+        )
+        args.review_budget_usd *= multiplier
         api_key = _key(args.openai_key_file)
         if args.ppq_key_file is not None and args.ppq_review_budget_usd is None:
             raise ValueError(
