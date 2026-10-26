@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import config, pipeline, profiles
 from .engine import Output
@@ -63,6 +64,7 @@ def configure(value):
         "routing_mode": value.get("routing_mode", "enabled"),
         "blind_alternatives": value.get("blind_alternatives", True),
         "archaeology": value.get("archaeology", False),
+        "openai_api_base": value.get("openai_api_base", "https://api.openai.com/v1"),
     }
     if normalized["routing_mode"] not in {"enabled", "shadow", "full"}:
         raise ValueError("Unknown routing mode")
@@ -70,10 +72,29 @@ def configure(value):
         raise ValueError("blind_alternatives must be a boolean")
     if type(normalized["archaeology"]) is not bool:
         raise ValueError("archaeology must be a boolean")
+    if not isinstance(normalized["openai_api_base"], str):
+        raise ValueError("openai_api_base must be an HTTP URL without credentials")
+    normalized["openai_api_base"] = normalized["openai_api_base"].rstrip("/")
+    endpoint = urlsplit(normalized["openai_api_base"])
+    if (
+        endpoint.scheme not in {"http", "https"}
+        or not endpoint.hostname
+        or endpoint.username is not None
+        or endpoint.password is not None
+        or endpoint.query
+        or endpoint.fragment
+    ):
+        raise ValueError("openai_api_base must be an HTTP URL without credentials")
     return normalized
 
 
 def run(case, runtime, configured):
+    if "openai_api_base" not in configured:
+        raise ValueError(
+            "Saved engine configuration has no OpenAI endpoint; "
+            "requeue the review or recapture the evaluation"
+        )
+    runtime.openai_api_base = configured["openai_api_base"]
     if configured["archaeology"]:
         if (
             not isinstance(case.source, dict)

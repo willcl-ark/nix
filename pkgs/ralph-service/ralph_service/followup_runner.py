@@ -206,6 +206,8 @@ def assess_job(
     jobs,
     job,
     prior_assessments,
+    *,
+    api_base="https://api.openai.com/v1",
 ):
     history = history_before(jobs, job)
     checkout = state_dir / FOLLOWUP_DIR / CHECKOUT_DIR
@@ -230,6 +232,7 @@ def assess_job(
         prompt,
         stage_model,
         spend.RequestBudget(ledger, _review_id(job)),
+        api_base=api_base,
     )
 
 
@@ -245,6 +248,8 @@ def run_once(
     stage_model,
     budget_usd,
     batch_size=DEFAULT_BATCH_SIZE,
+    *,
+    api_base="https://api.openai.com/v1",
 ):
     state_dir = Path(state_dir)
     followup_dir = state_dir / FOLLOWUP_DIR
@@ -281,6 +286,7 @@ def run_once(
                 jobs,
                 job,
                 prior_assessments,
+                api_base=api_base,
             )
         except Exception as exc:
             logging.warning(
@@ -308,6 +314,7 @@ def main(argv=None):
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--origin", required=True)
     parser.add_argument("--openai-key-file", type=Path, required=True)
+    parser.add_argument("--openai-api-base", default="https://api.openai.com/v1")
     parser.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT_FILE)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--budget-usd", type=float, default=0.10)
@@ -331,6 +338,7 @@ def main(argv=None):
         stage_model,
         args.budget_usd,
         batch_size=args.batch_size,
+        api_base=args.openai_api_base,
     )
     return 0
 

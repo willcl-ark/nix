@@ -51,6 +51,7 @@ class Runtime:
         research.validate(case.research_evidence)
         self.case = case
         self.api_key = api_key
+        self.openai_api_base = "https://api.openai.com/v1"
         self.ppq_api_key = ppq_api_key
         self.budget = budget
         self.ppq_budget = ppq_budget
@@ -106,7 +107,7 @@ class Runtime:
             else budget
         )
         selected_api_base = api_base or (
-            "https://api.ppq.ai/v1" if is_ppq else "https://api.openai.com/v1"
+            "https://api.ppq.ai/v1" if is_ppq else self.openai_api_base
         )
         return openai_review(
             api_key,
@@ -172,6 +173,7 @@ class Runtime:
             debug=debug_record,
             model_name=model_name,
             max_output_tokens=max_output_tokens,
+            api_base=self.openai_api_base,
         )
 
     def metrics(self):

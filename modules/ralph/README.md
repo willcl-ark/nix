@@ -373,6 +373,43 @@ Set the Forgejo webhook to `POST` JSON to
 and store the same value in `webhookSecretFile`. Select custom pull request
 events.
 
+## Codex subscription trial through CLIProxyAPI
+
+Import `will-nix.nixosModules.cli-proxy-api` alongside the Ralph module and
+provision the proxy's runtime configuration and Codex login as described in
+the [CLIProxyAPI module](../cli-proxy-api/README.md). Then configure Ralph:
+
+```nix
+services.cli-proxy-api = {
+  enable = true;
+  configFile = "/run/secrets/cli-proxy-api.yaml";
+};
+services.ralph = {
+  openaiApiBase = "http://127.0.0.1:8317/v1";
+  openaiKeyFile = "/run/secrets/ralph/proxy-key";
+};
+```
+
+The key file contains the proxy's client access key, not the subscription OAuth
+token. OpenAI review stages, audits and follow-up assessments use the proxy;
+PPQ reviewers keep their own endpoint and key. Ralph retains its prompts and
+tool execution. A failed proxy request does not fall back to the paid OpenAI API.
+
+Stop new review intake and let active work finish before changing the endpoint
+and key together. Queued jobs and frozen evaluations retain their recorded
+engine configuration; requeue or recapture them for the new endpoint. Verify
+the proxy's authenticated model list contains the configured OpenAI model IDs,
+then run one local review with the proxy URL in `--engine-config` and inspect
+its result before resuming the service queue. The local command does not publish
+review comments.
+
+The existing dollar allowances and reports become API-equivalent usage
+estimates for subscription-backed calls. They do not measure subscription quota
+or charges. CLIProxyAPI strips Codex's `max_output_tokens`, so the requested
+output cap no longer bounds each response or its reservation. A response can
+exceed the local allowance before returned usage is settled. Subscription limits
+are enforced upstream. PPQ retains its existing paid accounting.
+
 ## Options
 
 Required deployment options:
@@ -384,7 +421,7 @@ Required deployment options:
 - `services.ralph.forgejoApi`: Forgejo repository API URL ending in
   `/api/v1/repos/owner/repo`.
 - `services.ralph.openaiKeyFile`: file containing the OpenAI API
-  key.
+  key or the configured proxy's client access key.
 - `services.ralph.ppqKeyFile`: file containing the PPQ API key.
 - `services.ralph.webhookSecretFile`: file containing the Forgejo
   webhook secret.
@@ -424,7 +461,7 @@ be derived from `forgejoApi`.
   its resolved settings when queuing each run. Do not put secrets in it.
   The current engine accepts resolved `prompts`, or `prompt_file`,
   `audit_prompt_dir` and `models_json`, plus `profile`, `routing_mode`, `archaeology` and
-  `blind_alternatives`.
+  `blind_alternatives` and `openai_api_base`.
   The service enables archaeology for PR context with discussion access.
 
 The current-engine options `promptFile`, `auditPromptDir`, `modelsJson` and
@@ -433,6 +470,11 @@ The current-engine options `promptFile`, `auditPromptDir`, `modelsJson` and
 current-only options explicitly with a non-current engine is rejected.
 Engine-produced Markdown is the published review body. Structured data stays
 private unless an engine explicitly provides a supported export.
+
+`services.ralph.openaiApiBase` defaults to `https://api.openai.com/v1`.
+It sets the current engine's OpenAI-compatible Responses endpoint and the
+follow-up endpoint. An explicit `engineConfig.openai_api_base` takes precedence
+for both. Credentials belong only in `openaiKeyFile`, never in the URL.
 
 Jobs retain their selected profile and resolved engine configuration across
 retries and restarts. Each attempt records its actual engine code identity.

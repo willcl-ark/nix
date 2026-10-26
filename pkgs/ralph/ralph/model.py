@@ -550,6 +550,7 @@ def run_audit(
     reasoning_effort="low",
     is_current=None,
     debug=None,
+    api_base="https://api.openai.com/v1",
 ):
     model = model_name
     limits = _limit_metrics(output_tokens=max_output_tokens)
@@ -574,7 +575,7 @@ def run_audit(
         }
     try:
         result, payload, elapsed = request_response(
-            api_key, data, name, on_response, budget, is_current
+            api_key, data, name, on_response, budget, is_current, api_base=api_base
         )
     except StaleReview:
         if debug is not None:

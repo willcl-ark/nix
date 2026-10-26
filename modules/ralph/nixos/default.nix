@@ -12,9 +12,11 @@ let
     ralph = pkgs.callPackage ../../../pkgs/ralph { };
   };
   currentEngine = cfg.engine == "current";
+  openaiApiBase = cfg.engineConfig.openai_api_base or cfg.openaiApiBase;
   currentEngineConfigDefaults = lib.optionalAttrs currentEngine (
     {
       routing_mode = cfg.routingMode;
+      openai_api_base = cfg.openaiApiBase;
     }
     // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.promptFile != null) {
       prompt_file = toString cfg.promptFile;
@@ -305,7 +307,14 @@ in
 
     openaiKeyFile = lib.mkOption {
       type = lib.types.str;
-      description = "Path to a file containing the OpenAI API key.";
+      description = "Path to a file containing the OpenAI API key or the configured proxy's access key.";
+    };
+
+    openaiApiBase = lib.mkOption {
+      type = lib.types.str;
+      default = "https://api.openai.com/v1";
+      example = "http://127.0.0.1:8317/v1";
+      description = "OpenAI-compatible Responses API base URL for the current engine and follow-up assessments. PPQ uses its own endpoint.";
     };
 
     ppqKeyFile = lib.mkOption {
@@ -465,6 +474,8 @@ in
               cfg.origin
               "--openai-key-file"
               cfg.openaiKeyFile
+              "--openai-api-base"
+              openaiApiBase
               "--budget-usd"
               (toString cfg.followupBudgetUsd)
             ]

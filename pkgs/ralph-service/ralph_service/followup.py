@@ -403,6 +403,8 @@ def assess_completed_review(
     stage_model,
     budget,
     is_current=None,
+    *,
+    api_base="https://api.openai.com/v1",
 ):
     record = {"assessed_at": _now(), "model": stage_model, "findings": []}
     if not history:
@@ -476,7 +478,12 @@ def assess_completed_review(
             },
         }
         result, payload, elapsed = model.request_response(
-            api_key, data, "addressed_findings", budget=budget, is_current=is_current
+            api_key,
+            data,
+            "addressed_findings",
+            budget=budget,
+            is_current=is_current,
+            api_base=api_base,
         )
         text = model.output_text(result.get("output", []))
         record["turn"] = model.response_record(result, payload, elapsed)

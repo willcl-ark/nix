@@ -40,6 +40,26 @@ PPQ credentials are optional for local review. Supplying `--ppq-key-file` also
 requires an explicit `--ppq-review-budget-usd` allowance. The OpenAI default is
 USD 1.00. Use `--help` for budget and trusted local engine options.
 
+The current engine can send its OpenAI requests through CLIProxyAPI while
+keeping PPQ on its own endpoint. Put the proxy URL in an engine configuration:
+
+```json
+{"openai_api_base": "http://127.0.0.1:8317/v1"}
+```
+
+Pass this file with `--engine-config` and use the proxy's access-key file with
+`--openai-key-file`. Ralph still supplies the prompts and executes tools; no
+coding CLI is launched. The URL is recorded in engine identity, so keep
+credentials out of it. Review stages and audits use this URL without falling
+back to the OpenAI endpoint on failure.
+
+With subscription authentication, dollar totals are API-equivalent usage
+estimates, not subscription charges or quota measurements. CLIProxyAPI removes
+`max_output_tokens` before forwarding Codex requests, so a response can exceed
+Ralph's requested output allowance and its reservation before usage is settled.
+The proxy/provider enforces subscription limits. Configure only subscription
+credentials in the proxy if paid upstream fallback is unwanted.
+
 Archaeology defaults off for local changes. `--context FILE` can supply versioned
 review context and optional source metadata, for example:
 

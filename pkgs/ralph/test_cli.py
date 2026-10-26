@@ -162,6 +162,118 @@ class CLITest(unittest.TestCase):
             self.result()["run"]["allowances"], {"openai_usd": 10.0, "ppq_usd": 3.0}
         )
 
+    def test_proxy_routes_review_and_audit_without_redirecting_ppq(self):
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from ralph import cli, current_engine, engine, model
+
+        proxy = "http://127.0.0.1:8317/v1"
+        original = engine.load().identity["config_sha256"]
+        self.configure(openai_api_base=proxy + "/")
+        ppq_key = self.root / "ppq-key"
+        ppq_key.write_text("ppq credential")
+
+        def respond(request, **kwargs):
+            data = json.loads(request.data)
+            return io.BytesIO(
+                json.dumps(
+                    {
+                        "model": data["model"],
+                        "status": "completed",
+                        "usage": {"input_tokens": 10, "output_tokens": 4},
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "Review"}],
+                            }
+                        ],
+                    }
+                ).encode()
+            )
+
+        def review(case, runtime, *args):
+            for provider in ("openai", "ppq"):
+                runtime.review(
+                    provider,
+                    "patch",
+                    prompt="Review.",
+                    model_name="gpt-6-luna",
+                    tools=[],
+                    max_tool_calls=0,
+                    max_output_tokens=100,
+                    reasoning_effort="low",
+                    response_schema=None,
+                    provider=provider,
+                )
+            runtime.audit(
+                "audit",
+                "Review.",
+                "patch",
+                model_name="gpt-6-luna",
+                max_output_tokens=100,
+                response_schema=None,
+            )
+            return SimpleNamespace(content="Review", findings=[], concept_concern=False)
+
+        with (
+            patch.object(
+                current_engine.pipeline,
+                "review_with_independent_passes",
+                side_effect=review,
+            ),
+            patch.object(model.urllib.request, "urlopen", side_effect=respond) as send,
+            patch("sys.stdout"),
+        ):
+            code = cli.main(
+                [
+                    "review",
+                    "HEAD^..HEAD",
+                    str(self.repo),
+                    "--openai-key-file",
+                    str(self.key),
+                    "--ppq-key-file",
+                    str(ppq_key),
+                    "--ppq-review-budget-usd",
+                    "1",
+                    "--engine-config",
+                    str(self.settings),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [call.args[0].full_url for call in send.call_args_list],
+            [
+                proxy + "/responses",
+                "https://api.ppq.ai/v1/responses",
+                proxy + "/responses",
+            ],
+        )
+        self.assertEqual(
+            [call.args[0].get_header("Authorization") for call in send.call_args_list],
+            [
+                "Bearer test credential",
+                "Bearer ppq credential",
+                "Bearer test credential",
+            ],
+        )
+        identity = self.result()["engine"]
+        self.assertEqual(identity["config"]["openai_api_base"], proxy)
+        self.assertNotEqual(identity["config_sha256"], original)
+        self.assertNotIn("test credential", self.output.read_text())
+
+    def test_saved_config_without_endpoint_requires_recapture(self):
+        from ralph import engine
+
+        configured = engine.load().config
+        del configured["openai_api_base"]
+        saved = engine.load(config=configured, configured=True)
+        with self.assertRaisesRegex(ValueError, "requeue.*recapture"):
+            saved.run(None, None)
+
     def test_failure_artifact(self):
         self.configure(fail=True)
         result = self.cli()

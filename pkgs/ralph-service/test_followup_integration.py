@@ -237,10 +237,22 @@ class FollowupIntegrationTests(unittest.TestCase):
                 return_value=io.BytesIO(json.dumps(response).encode()),
             ) as send:
                 self.assertEqual(
-                    followup_runner.run_once(state, str(origin), "key", *prompts, 0.10),
+                    followup_runner.run_once(
+                        state,
+                        str(origin),
+                        "proxy-key",
+                        *prompts,
+                        0.10,
+                        api_base="http://127.0.0.1:8317/v1",
+                    ),
                     1,
                 )
                 send.assert_called_once()
+                request = send.call_args.args[0]
+                self.assertEqual(request.full_url, "http://127.0.0.1:8317/v1/responses")
+                self.assertEqual(
+                    request.get_header("Authorization"), "Bearer proxy-key"
+                )
             self.assertEqual(
                 before,
                 [hashlib.sha256(path.read_bytes()).digest() for path in protected],
