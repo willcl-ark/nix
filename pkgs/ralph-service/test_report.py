@@ -7,6 +7,71 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    def test_experiment_artifacts_are_visible_without_exposing_runner_internals(self):
+        command = {
+            "id": "command:1",
+            "finding_id": "finding:1",
+            "side": "head",
+            "revision": "a" * 40,
+            "command": "python test_repro.py",
+            "status": "completed",
+            "exit_code": 1,
+            "output": "AssertionError: <expected>",
+            "patch": "+++ test_repro.py\n+assert False\n",
+            "capture_complete": True,
+            "private_environment": "PRIVATE-CREDENTIAL",
+        }
+        result = {
+            "schema_version": 1,
+            "engine": {"name": "current"},
+            "run": {"status": "completed"},
+            "output": {
+                "schema_version": 2,
+                "data": {
+                    "schema_version": 2,
+                    "coverage": {
+                        "status": "complete",
+                        "experiments": {
+                            "status": "partial",
+                            "limitations": ["Control unavailable"],
+                        },
+                    },
+                    "stages": {
+                        "write_verifier": {
+                            "status": "completed",
+                            "results": [
+                                {
+                                    "finding_id": "finding:1",
+                                    "outcome": "inconclusive",
+                                    "reason": "Control unavailable",
+                                    "command_ids": ["command:1"],
+                                }
+                            ],
+                            "execution": {
+                                "head_sha": "a" * 40,
+                                "commands": [command],
+                                "private_path": "PRIVATE-CREDENTIAL",
+                            },
+                        }
+                    },
+                },
+                "exports": {"findings": []},
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, result, "experiment-review")
+            html = (root / name).read_text()
+            public = json.loads((root / "experiment-review.json").read_text())
+        execution = public["stages"]["write_verifier"]["execution"]
+        self.assertEqual(execution["commands"][0]["patch"], command["patch"])
+        self.assertEqual(execution["commands"][0]["exit_code"], 1)
+        self.assertEqual(public["status"], "completed")
+        self.assertEqual(public["coverage"]["experiments"]["status"], "partial")
+        self.assertIn("AssertionError: &lt;expected&gt;", html)
+        self.assertIn("Experiment evidence", html)
+        self.assertNotIn("PRIVATE-CREDENTIAL", html + json.dumps(public))
+
     def test_failed_review_exports_status_and_safe_provider_diagnostic(self):
         result = {
             "schema_version": 1,

@@ -49,8 +49,8 @@ TOOL_FIELDS = (
     "retrieved_at",
     "frozen",
 )
-COVERAGE_STATUSES = {"complete", "partial", "failed", "unknown"}
-COVERAGE_CATEGORIES = {"inspection", "context", "verification"}
+COVERAGE_STATUSES = {"complete", "partial", "failed", "unknown", "not_requested"}
+COVERAGE_CATEGORIES = {"inspection", "context", "verification", "experiment"}
 CONCEPT_FIELDS = (
     "status",
     "stage",
@@ -135,7 +135,7 @@ def _public_coverage(coverage):
         "status": _coverage_status(coverage),
         "limitations": _strings(coverage.get("limitations")),
     }
-    for key in ("context", "verification"):
+    for key in ("context", "verification", "experiments"):
         child = coverage.get(key)
         if isinstance(child, dict):
             record[key] = {
@@ -279,6 +279,51 @@ def _public_stages(debug):
         raw_output = stage.get("raw_output")
         if isinstance(raw_output, str):
             record["raw_output"] = raw_output
+        if name == "write_verifier":
+            record["results"] = [
+                {
+                    **_filtered(item, ("finding_id", "outcome", "reason")),
+                    "command_ids": _strings(item.get("command_ids")),
+                }
+                for item in stage.get("results", [])
+                if isinstance(item, dict)
+            ]
+            execution = stage.get("execution")
+            if isinstance(execution, dict):
+                record["execution"] = {
+                    **_filtered(
+                        execution,
+                        (
+                            "head_sha",
+                            "diff_base_sha",
+                            "environment",
+                            "fresh_workspace_per_command",
+                        ),
+                    ),
+                    "errors": _strings(execution.get("errors")),
+                    "commands": [
+                        _filtered(
+                            command,
+                            (
+                                "id",
+                                "finding_id",
+                                "side",
+                                "revision",
+                                "command",
+                                "status",
+                                "exit_code",
+                                "output",
+                                "patch",
+                                "output_truncated",
+                                "patch_truncated",
+                                "capture_complete",
+                                "error",
+                            ),
+                        )
+                        for command in execution.get("commands", [])
+                        if isinstance(command, dict)
+                    ],
+                }
         public[str(name)] = record
     return public
 
@@ -528,7 +573,10 @@ def _coverage_html(coverage, detailed=False):
     for key, label in (
         ("context", "Historical context"),
         ("verification", "Verification"),
+        ("experiments", "Optional experiments"),
     ):
+        if key == "experiments" and key not in coverage:
+            continue
         child = coverage.get(key) if isinstance(coverage.get(key), dict) else {}
         child_status = child.get("status", "unknown")
         child_limits = child.get("limitations") or []
@@ -811,12 +859,26 @@ def _stage_html(name, stage, stage_output):
     error = _paragraphs(stage, (("error_message", "Provider error"),))
     if "http_status" in stage:
         error = f"<p>HTTP status: {_escape(stage['http_status'])}</p>" + error
+    experiments = ""
+    if name == "write_verifier":
+        experiments = (
+            "<h4>Experiment evidence</h4>"
+            "<p>Experiments inform the final Major check. Inconclusive results "
+            "do not prevent publication based on source evidence.</p>"
+            + _json_html(
+                {
+                    "results": stage.get("results", []),
+                    "execution": stage.get("execution", {}),
+                }
+            )
+        )
     return (
         f"<details><summary>{_escape(title)}</summary>"
         f"{error}"
         f"{coverage}"
         f"{outputs}"
-        f"<details><summary>Stage metadata</summary>{_json_html({key: value for key, value in stage.items() if key != 'raw_output'})}</details>"
+        f"{experiments}"
+        f"<details><summary>Stage metadata</summary>{_json_html({key: value for key, value in stage.items() if key not in {'raw_output', 'execution', 'results'}})}</details>"
         "</details>"
     )
 
