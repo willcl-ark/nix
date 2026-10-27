@@ -7,9 +7,8 @@ import re
 import subprocess
 import time
 import urllib.error
-import urllib.request
 
-from . import research, upstream
+from . import research, transport, upstream
 from .repository import (
     find_paths,
     read_file,
@@ -385,7 +384,9 @@ class StaleReview(Exception):
 
 def _request_payload(data):
     # Codex rejects this field. Retain it only for search cost reservations.
-    return json.dumps({k: v for k, v in data.items() if k != "max_tool_calls"}).encode()
+    payload = {k: v for k, v in data.items() if k != "max_tool_calls"}
+    payload["stream"] = True
+    return json.dumps(payload).encode()
 
 
 def _provider_error_message(error, api_key):
@@ -396,6 +397,10 @@ def _provider_error_message(error, api_key):
             body = json.loads(error.read(8192))
     except (OSError, ValueError, http.client.HTTPException):
         return None
+    return _provider_error_detail(body, api_key)
+
+
+def _provider_error_detail(body, api_key):
     if not isinstance(body, dict):
         return None
     detail = body.get("error", body.get("detail"))
@@ -428,23 +433,14 @@ def request_response(
     on_retry_failure=None,
 ):
     payload = _request_payload(data)
-    request = urllib.request.Request(
-        f"{api_base.rstrip('/')}/responses",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
+    url = f"{api_base.rstrip('/')}/responses"
     for attempt in range(MAX_REQUEST_ATTEMPTS):
         if is_current is not None and not is_current():
             raise StaleReview("review head changed before model request")
         token = budget.reserve(stage_name, data) if budget is not None else None
         attempt_started = time.monotonic()
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                result = json.load(response)
+            result = transport.request(url, payload, api_key, timeout)
             if not isinstance(result, dict):
                 raise ValueError("OpenAI response was not a JSON object")
         except Exception as exc:
@@ -460,6 +456,11 @@ def request_response(
             if http_error:
                 exc.provider_error_message = _provider_error_message(exc, api_key)
                 retryable = exc.code == 429 or 500 <= exc.code < 600
+            elif isinstance(exc, transport.StreamError):
+                exc.provider_error_message = _provider_error_detail(
+                    {"error": exc.error}, api_key
+                )
+                retryable = exc.retryable
             else:
                 retryable = isinstance(
                     exc,
@@ -548,9 +549,9 @@ def request_failure_record(data, error):
     }
     if isinstance(error, urllib.error.HTTPError):
         record["http_status"] = error.code
-        message = getattr(error, "provider_error_message", None)
-        if message:
-            record["error_message"] = message
+    message = getattr(error, "provider_error_message", None)
+    if message:
+        record["error_message"] = message
     return record
 
 

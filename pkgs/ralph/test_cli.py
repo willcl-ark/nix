@@ -200,7 +200,6 @@ class CLITest(unittest.TestCase):
         self.assertEqual(self.result()["run"]["allowances"], {"openai_usd": 10.0})
 
     def test_proxy_routes_both_providers_and_audits(self):
-        import io
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -210,23 +209,19 @@ class CLITest(unittest.TestCase):
         original = engine.load().identity["config_sha256"]
         self.configure(openai_api_base=proxy + "/")
 
-        def respond(request, **kwargs):
-            data = json.loads(request.data)
-            return io.BytesIO(
-                json.dumps(
+        def respond(url, payload, api_key, timeout):
+            data = json.loads(payload)
+            return {
+                "model": data["model"],
+                "status": "completed",
+                "usage": {"input_tokens": 10, "output_tokens": 4},
+                "output": [
                     {
-                        "model": data["model"],
-                        "status": "completed",
-                        "usage": {"input_tokens": 10, "output_tokens": 4},
-                        "output": [
-                            {
-                                "type": "message",
-                                "content": [{"type": "output_text", "text": "Review"}],
-                            }
-                        ],
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "Review"}],
                     }
-                ).encode()
-            )
+                ],
+            }
 
         def review(case, runtime, *args, comment_format):
             for stage_model in ("gpt-6-luna", "claude-opus-5-5"):
@@ -257,7 +252,7 @@ class CLITest(unittest.TestCase):
                 "review_with_independent_passes",
                 side_effect=review,
             ),
-            patch.object(model.urllib.request, "urlopen", side_effect=respond) as send,
+            patch.object(model.transport, "request", side_effect=respond) as send,
             patch("sys.stdout"),
         ):
             code = cli.main(
@@ -275,7 +270,7 @@ class CLITest(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         self.assertEqual(
-            [call.args[0].full_url for call in send.call_args_list],
+            [call.args[0] for call in send.call_args_list],
             [
                 proxy + "/responses",
                 proxy + "/responses",
@@ -283,11 +278,11 @@ class CLITest(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [call.args[0].get_header("Authorization") for call in send.call_args_list],
+            [call.args[2] for call in send.call_args_list],
             [
-                "Bearer test credential",
-                "Bearer test credential",
-                "Bearer test credential",
+                "test credential",
+                "test credential",
+                "test credential",
             ],
         )
         identity = self.result()["engine"]

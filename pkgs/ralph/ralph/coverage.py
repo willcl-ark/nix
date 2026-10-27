@@ -39,6 +39,8 @@ def _failure(stage):
     error = stage.get("error_type")
     return {
         "HTTPError": "Model API request failed.",
+        "StreamError": "Model API stream failed.",
+        "ConnectionError": "Model API connection ended before completion.",
         "TimeoutError": "Model API request timed out.",
         "TimeoutExpired": "Repository inspection timed out.",
     }.get(error, "Stage did not complete" + (f" ({error})." if error else "."))

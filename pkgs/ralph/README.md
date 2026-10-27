@@ -24,7 +24,7 @@ templates for comment structure, an offline preview and example reviews. The
 [collator prompt](agents/collator/prompt.md) controls the wording of accepted
 findings. The runtime validates findings and enforces tool and spending limits.
 
-From the repository root:
+From the repository root, using Python with `aiohttp` installed:
 
 ```sh
 python3 pkgs/ralph/review.py check-agents
@@ -339,9 +339,11 @@ does not receive concept research output or current PR discussion.
 | alternatives | Same as archaeologist | low | 4,000 | Neutral problem, goal and baseline; base-only code tools |
 | collator | gpt-6-luna | low | 6,000 | Accepted findings and conceptual assessment; no tools |
 
-Model requests default to a 1,800-second socket timeout in both review profiles,
-including requests with tools enabled, final responses and follow-ups. The
-timeout applies to blocking socket operations, not the whole request or review.
+Model requests use Responses event streams with a 1,800-second deadline per
+attempt in both review profiles, including tool calls, final responses and
+follow-ups. The deadline includes connecting and reading the response;
+heartbeats cannot extend it. Ralph consumes the terminal response, preserving
+usage and reasoning, and executes tools only after a completed response.
 Ralph still makes at most three attempts per request, so three stalled attempts
 can take about 90 minutes.
 

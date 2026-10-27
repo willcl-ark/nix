@@ -1,5 +1,4 @@
 import hashlib
-import io
 import json
 import sqlite3
 import subprocess
@@ -232,9 +231,9 @@ class FollowupIntegrationTests(unittest.TestCase):
                 ],
             }
             with patch.object(
-                model.urllib.request,
-                "urlopen",
-                return_value=io.BytesIO(json.dumps(response).encode()),
+                model.transport,
+                "request",
+                return_value=response,
             ) as send:
                 self.assertEqual(
                     followup_runner.run_once(
@@ -248,11 +247,10 @@ class FollowupIntegrationTests(unittest.TestCase):
                     1,
                 )
                 send.assert_called_once()
-                request = send.call_args.args[0]
-                self.assertEqual(request.full_url, "http://127.0.0.1:8317/v1/responses")
                 self.assertEqual(
-                    request.get_header("Authorization"), "Bearer proxy-key"
+                    send.call_args.args[0], "http://127.0.0.1:8317/v1/responses"
                 )
+                self.assertEqual(send.call_args.args[2], "proxy-key")
             self.assertEqual(
                 before,
                 [hashlib.sha256(path.read_bytes()).digest() for path in protected],
@@ -266,7 +264,7 @@ class FollowupIntegrationTests(unittest.TestCase):
             self.assertEqual(addressed["status_counts"]["addressed"], 1)
             self.assertEqual(addressed["findings"][0]["old_head"], old_head)
             self.assertEqual(addressed["findings"][0]["new_head"], new_head)
-            with patch.object(model.urllib.request, "urlopen") as send:
+            with patch.object(model.transport, "request") as send:
                 self.assertEqual(
                     followup_runner.run_once(state, str(origin), "key", *prompts, 0.10),
                     0,

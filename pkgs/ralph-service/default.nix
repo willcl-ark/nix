@@ -8,6 +8,9 @@
   ralph,
 }:
 
+let
+  python = python3.withPackages (ps: [ ps.aiohttp ]);
+in
 stdenvNoCC.mkDerivation {
   pname = "ralph-service";
   version = "0.1.0";
@@ -17,7 +20,7 @@ stdenvNoCC.mkDerivation {
   nativeBuildInputs = [
     git
     makeWrapper
-    python3
+    python
   ];
 
   doCheck = true;
@@ -26,7 +29,7 @@ stdenvNoCC.mkDerivation {
     export HOME="$TMPDIR"
     export PYTHONDONTWRITEBYTECODE=1
     export PYTHONPATH="${ralph}/libexec/ralph"
-    ${python3.interpreter} -m unittest discover -s . -p 'test_*.py'
+    ${python.interpreter} -m unittest discover -s . -p 'test_*.py'
     runHook postCheck
   '';
 
@@ -39,19 +42,19 @@ stdenvNoCC.mkDerivation {
       install -Dm644 "$module" $out/libexec/ralph-service/"$module"
     done
     install -Dm644 audits/addressed_findings.md $out/libexec/ralph-service/audits/addressed_findings.md
-    makeWrapper ${python3.interpreter} $out/bin/ralph-service \
+    makeWrapper ${python.interpreter} $out/bin/ralph-service \
       --add-flags $out/libexec/ralph-service/bot.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
       --prefix PATH : ${lib.makeBinPath [ git ]}
-    makeWrapper ${python3.interpreter} $out/bin/ralph-evaluate \
+    makeWrapper ${python.interpreter} $out/bin/ralph-evaluate \
       --add-flags $out/libexec/ralph-service/evaluate.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
       --prefix PATH : ${lib.makeBinPath [ git ]}
-    makeWrapper ${python3.interpreter} $out/bin/ralph-followup \
+    makeWrapper ${python.interpreter} $out/bin/ralph-followup \
       --add-flags $out/libexec/ralph-service/followup.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
       --prefix PATH : ${lib.makeBinPath [ git ]}
-    makeWrapper ${python3.interpreter} $out/bin/ralph-telegram \
+    makeWrapper ${python.interpreter} $out/bin/ralph-telegram \
       --add-flags $out/libexec/ralph-service/monitor.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
       --prefix PATH : ${

@@ -6,6 +6,9 @@
   makeWrapper,
 }:
 
+let
+  python = python3.withPackages (ps: [ ps.aiohttp ]);
+in
 stdenvNoCC.mkDerivation {
   pname = "ralph";
   version = "0.1.0";
@@ -15,7 +18,7 @@ stdenvNoCC.mkDerivation {
   nativeBuildInputs = [
     git
     makeWrapper
-    python3
+    python
   ];
 
   doCheck = true;
@@ -23,7 +26,7 @@ stdenvNoCC.mkDerivation {
     runHook preCheck
     export HOME="$TMPDIR"
     export PYTHONDONTWRITEBYTECODE=1
-    ${python3.interpreter} -m unittest discover -s . -p 'test_*.py'
+    ${python.interpreter} -m unittest discover -s . -p 'test_*.py'
     runHook postCheck
   '';
 
@@ -36,7 +39,7 @@ stdenvNoCC.mkDerivation {
     cp -r agents final_comment $out/libexec/ralph/
     mkdir -p $out/share/ralph
     cp -r agents final_comment $out/share/ralph/
-    makeWrapper ${python3.interpreter} $out/bin/ralph \
+    makeWrapper ${python.interpreter} $out/bin/ralph \
       --add-flags $out/libexec/ralph/review.py \
       --prefix PATH : ${lib.makeBinPath [ git ]}
     runHook postInstall

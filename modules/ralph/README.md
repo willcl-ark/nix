@@ -515,9 +515,10 @@ services.ralph.engineConfig.stages.verifier = {
 };
 ```
 
-Model requests default to a 1,800-second socket timeout in both review profiles,
-including follow-ups. Stage overrides can set `timeout` and `final_timeout`.
-Socket timeouts apply to blocking operations, not the whole request or review.
+Model requests use Responses event streams with a 1,800-second deadline per
+attempt in both review profiles, including follow-ups. Stage overrides can set
+`timeout` and `final_timeout`. The deadline includes connecting and reading the
+response; proxy heartbeats cannot extend it.
 The existing limit of three attempts can mean about 90 minutes waiting for
 three stalled attempts to fail.
 
