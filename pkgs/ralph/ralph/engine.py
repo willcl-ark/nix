@@ -90,6 +90,7 @@ class Runtime:
         api_base=None,
         timeout=1800,
         final_timeout=1800,
+        experiment_session=None,
     ):
         from .model import openai_review
 
@@ -125,6 +126,11 @@ class Runtime:
             ),
             timeout=timeout,
             final_timeout=final_timeout,
+            **(
+                {"experiment_session": experiment_session}
+                if experiment_session is not None
+                else {}
+            ),
             backport_evidence=self.case.backport_evidence,
             research_evidence=(
                 self.case.research_evidence

@@ -129,6 +129,53 @@ class ConceptToolTests(unittest.TestCase):
             )
             self.assertEqual(requests[-1]["input"][-1]["output"], "Frozen discussion")
 
+    def test_experiment_dispatch_requires_writer_and_advertised_tool(self):
+        from ralph.experiments import TOOLS
+
+        session = Mock()
+        session.dispatch.return_value = '{"exit_code": 1}'
+        arguments = {"finding_id": "F1", "side": "head", "command": "pytest"}
+        calls = [("experiment_run", arguments)]
+        requests = self.run_tools(
+            calls,
+            tools=TOOLS,
+            stage_name="write_verifier",
+            experiment_session=session,
+        )
+        session.dispatch.assert_called_once_with("experiment_run", arguments)
+        self.assertEqual(requests[-1]["input"][-1]["output"], '{"exit_code": 1}')
+        session.reset_mock()
+        self.run_tools(
+            calls,
+            tools=model.BASE_TOOLS,
+            stage_name="write_verifier",
+            experiment_session=session,
+        )
+        session.dispatch.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "restricted to write_verifier"):
+            self.run_tools(
+                calls, tools=TOOLS, stage_name="verifier", experiment_session=session
+            )
+        session.dispatch.assert_not_called()
+
+    def test_experiment_cancellation_aborts_model_loop(self):
+        from ralph.experiments import TOOLS
+
+        session = Mock()
+        session.dispatch.side_effect = model.StaleReview()
+        with self.assertRaises(model.StaleReview):
+            self.run_tools(
+                [
+                    (
+                        "experiment_run",
+                        {"finding_id": "F1", "side": "head", "command": "true"},
+                    )
+                ],
+                tools=TOOLS,
+                stage_name="write_verifier",
+                experiment_session=session,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

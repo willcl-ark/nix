@@ -431,16 +431,23 @@ def request_response(
     api_base="https://api.openai.com/v1",
     timeout=1800,
     on_retry_failure=None,
+    deadline=None,
 ):
     payload = _request_payload(data)
     url = f"{api_base.rstrip('/')}/responses"
     for attempt in range(MAX_REQUEST_ATTEMPTS):
         if is_current is not None and not is_current():
             raise StaleReview("review head changed before model request")
+        request_timeout = timeout
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("write-verifier stage deadline expired")
+            request_timeout = min(timeout, remaining)
         token = budget.reserve(stage_name, data) if budget is not None else None
         attempt_started = time.monotonic()
         try:
-            result = transport.request(url, payload, api_key, timeout)
+            result = transport.request(url, payload, api_key, request_timeout)
             if not isinstance(result, dict):
                 raise ValueError("OpenAI response was not a JSON object")
         except Exception as exc:
@@ -483,6 +490,8 @@ def request_response(
             failure.update(retry=True, retry_delay_seconds=delay)
             if on_retry_failure is not None:
                 on_retry_failure(failure)
+            if deadline is not None:
+                delay = min(delay, max(0, deadline - time.monotonic()))
             time.sleep(delay)
         else:
             break
@@ -756,7 +765,10 @@ def openai_review(
     backport_evidence=None,
     timeout=1800,
     final_timeout=1800,
+    experiment_session=None,
 ):
+    if experiment_session is not None and stage_name != "write_verifier":
+        raise ValueError("Experiment tools are restricted to write_verifier")
     tools = available_tools(
         TOOLS if tools is None else tools,
         discussion_lookup,
@@ -800,6 +812,8 @@ def openai_review(
     request_options = (
         {"api_base": api_base} if api_base != "https://api.openai.com/v1" else {}
     )
+    if experiment_session is not None:
+        request_options["deadline"] = experiment_session.deadline
     calls_used = 0
     context_calls = 0
     history_calls = 0
@@ -998,6 +1012,11 @@ def openai_review(
                         args = json.loads(call["arguments"])
                         if call.get("name") not in allowed_tools:
                             answer = "Unknown or unavailable tool."
+                        elif call["name"] == "experiment_run":
+                            if experiment_session is None:
+                                answer = "Experiment execution is unavailable."
+                            else:
+                                answer = experiment_session.dispatch(call["name"], args)
                         elif call["name"] == "find_paths":
                             answer = find_paths(files, args.get("query"))
                         elif call["name"] == "find_base_paths":

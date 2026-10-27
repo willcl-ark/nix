@@ -79,6 +79,32 @@ class ModelBudgetTests(unittest.TestCase):
                 )
             self.assertEqual(budget.events[-1], ("fail", "token", expected_unknown))
 
+    def test_stage_deadline_bounds_request_retries_without_new_reservations(self):
+        budget = FakeBudget()
+        clock = [100.0]
+
+        def request(_url, _payload, _key, timeout):
+            self.assertEqual(timeout, 2.0)
+            clock[0] += timeout
+            raise TimeoutError("request deadline")
+
+        with (
+            patch.object(model.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(model.time, "sleep"),
+            patch.object(model.transport, "request", side_effect=request) as send,
+            self.assertRaisesRegex(TimeoutError, "stage deadline expired"),
+        ):
+            model.request_response(
+                "secret",
+                {"model": "gpt-6.1-sol"},
+                "write_verifier",
+                budget=budget,
+                timeout=1800,
+                deadline=102.0,
+            )
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual([event[0] for event in budget.events], ["reserve", "fail"])
+
     def test_transient_requests_retry_same_conversation_and_account_each_attempt(self):
         budget = FakeBudget()
         debug = {}
