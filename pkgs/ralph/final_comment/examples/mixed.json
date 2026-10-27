@@ -1,0 +1,66 @@
+{
+  "findings": [
+    {
+      "id": "finding:1",
+      "kind": "defect",
+      "severity": "major",
+      "title": "Keep the old index until the replacement is committed",
+      "path": "src/index.cpp",
+      "line": 42,
+      "side": "head",
+      "body": "An interrupted write leaves the next startup with neither index. Keep the old file until the replacement has been written and committed."
+    },
+    {
+      "id": "finding:2",
+      "kind": "suggestion",
+      "severity": "suggestion",
+      "title": "Reuse the existing temporary-directory fixture",
+      "path": "test/index_tests.cpp",
+      "line": 18,
+      "side": "head",
+      "body": "The shared fixture already removes its temporary directory after a failed assertion. Reusing it would remove the duplicate cleanup path."
+    },
+    {
+      "id": "finding:3",
+      "kind": "design",
+      "severity": "minor",
+      "title": "Keep file ownership in the index writer",
+      "path": "src/index.cpp",
+      "line": 27,
+      "side": "head",
+      "body": "Moving the replacement operation into the writer would give one component responsibility for creating and committing the new file."
+    }
+  ],
+  "concept_summary": "Replacing the index in one operation reduces the recovery states that callers must handle. The writer still needs a clear rule for when the replacement becomes durable.",
+  "alternatives": [
+    {
+      "name": "Commit through a temporary file",
+      "concept": "Write the replacement beside the existing index and rename it after commit.",
+      "benefit": "A failed write leaves the current index available.",
+      "cost": "The update temporarily needs space for both copies.",
+      "unresolved": "Directory synchronization still needs to be checked on each supported platform.",
+      "citations": ["https://example.invalid/index-design"]
+    }
+  ],
+  "review_memory": [
+    {
+      "key": "prior:1",
+      "title": "A failed cleanup can leave a stale temporary file",
+      "body": "A subsequent update can reuse the stale temporary filename. Remove or replace it before writing a new index.",
+      "path": "src/index.cpp",
+      "line": 61,
+      "side": "head",
+      "severity": "minor",
+      "status": "still_present",
+      "source_head": "example-old-revision",
+      "reason": "The cleanup path is unchanged in this revision.",
+      "author_position": "address_elsewhere",
+      "author_comments": [
+        {"url": "https://example.invalid/review#reply", "updated_at": "2026-01-01"}
+      ],
+      "collapsed": true,
+      "current_finding_ids": []
+    }
+  ],
+  "limitations": ["The storage failure scenario was checked in source; it was not reproduced on a running node."]
+}

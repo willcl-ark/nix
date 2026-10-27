@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "title": "Keep the old index until the replacement is committed",
+      "body": "An interrupted write leaves the next startup with neither index. Keep the old file until the replacement has been written and committed.",
+      "path": "src/index.cpp",
+      "line": 42,
+      "side": "head"
+    }
+  ],
+  "head_sha": "example-revision",
+  "report_url": "https://example.invalid/ralph/report",
+  "has_retained": true
+}

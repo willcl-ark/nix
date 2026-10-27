@@ -210,7 +210,7 @@ class EvaluateTests(unittest.TestCase):
         self.origin.rename(self.root / "unavailable-origin.git")
         ledger = spend.Ledger(self.root / "spend.sqlite3")
 
-        def review(review_case, runtime, *args):
+        def review(review_case, runtime, *args, comment_format):
             self.assertEqual(review_case.backport_evidence, packet)
             runtime.debug["backport_assessment"] = {"verdict": "Needs clarification"}
             return pipeline.ReviewResult("Backport review", [], False)
@@ -291,7 +291,7 @@ class EvaluateTests(unittest.TestCase):
         self.origin.rename(self.root / "unavailable-origin.git")
         ledger = spend.Ledger(self.root / "spend.sqlite3")
 
-        def review(case, runtime, *args):
+        def review(case, runtime, *args, comment_format):
             self.assertEqual(case.review_feedback, packet)
             return pipeline.ReviewResult("Known concern remains.", [], False)
 
@@ -390,7 +390,7 @@ class EvaluateTests(unittest.TestCase):
             self.root / "spend.sqlite3", review_limit_usd=1, monthly_limit_usd=20
         )
 
-        def review(case, runtime, prompts, *args):
+        def review(case, runtime, prompts, *args, comment_format):
             self.assertEqual(prompts.profile.name, "high")
             self.assertEqual(runtime.budget.ledger.review_limit_micros, 5_000_000)
             self.assertEqual(runtime.budget.ledger.monthly_limit_micros, 20_000_000)
@@ -433,6 +433,8 @@ class EvaluateTests(unittest.TestCase):
             routing_mode,
             blind_alternatives,
             archaeology,
+            *,
+            comment_format,
         ):
             self.assertEqual(review_case.review, case["review_input"])
             self.assertNotIn("Expected issue", review_case.review)

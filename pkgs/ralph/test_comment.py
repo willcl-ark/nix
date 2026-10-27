@@ -1,0 +1,88 @@
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import final_comment
+
+COMMENT_DIR = Path(final_comment.__file__).parent
+
+
+class CommentTests(unittest.TestCase):
+    def test_preview_examples_work_from_an_unrelated_directory(self):
+        examples = COMMENT_DIR / "examples"
+        with tempfile.TemporaryDirectory() as directory:
+            for example in sorted(examples.glob("*.json")):
+                with self.subTest(example=example.name):
+                    if example.name == "github.json":
+                        arguments = ["--github"]
+                        renderer = final_comment.render_github
+                    else:
+                        arguments = (
+                            [] if example.name == "mixed.json" else [str(example)]
+                        )
+                        renderer = final_comment.render
+                    result = subprocess.run(
+                        [sys.executable, str(COMMENT_DIR / "preview.py"), *arguments],
+                        cwd=directory,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    self.assertEqual(
+                        result.stdout,
+                        renderer(**json.loads(example.read_text())) + "\n",
+                    )
+
+    def test_layout_edits_use_the_saved_template_snapshot(self):
+        comment_format = final_comment.load_format()
+        comment_format["finding"] = "${body}\n\n${title}: ${location} (${side})"
+        comment_format["comment"] = (
+            comment_format["comment"]
+            .replace("${limitations}", "")
+            .replace("${findings}", "${limitations}\n\n${findings}")
+        )
+        snapshot = json.loads(json.dumps(comment_format))
+        example = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())
+        with patch.object(final_comment, "load_format", side_effect=AssertionError):
+            rendered = final_comment.render(**example, comment_format=snapshot)
+        finding = example["findings"][0]
+        self.assertIn(finding["body"] + "\n\n" + finding["title"] + ": ", rendered)
+        self.assertLess(
+            rendered.index(example["limitations"][0]), rendered.index(finding["body"])
+        )
+
+    def test_template_validation_rejects_omitted_notices_and_invalid_placeholders(self):
+        comment_format = final_comment.load_format()
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            for name, template in comment_format.items():
+                (directory / f"{name}.md").write_text(template)
+            for template in (
+                comment_format["comment"].replace("${verification_failed}", ""),
+                comment_format["comment"] + "\n${unknown}",
+                comment_format["comment"] + "\n${unfinished",
+            ):
+                with self.subTest(template=template):
+                    (directory / "comment.md").write_text(template)
+                    with self.assertRaisesRegex(ValueError, r"comment\.md"):
+                        final_comment.load_format(directory)
+
+    def test_failed_verification_retains_references_without_republishing_bodies(self):
+        example = json.loads(
+            (COMMENT_DIR / "examples" / "verification-failed.json").read_text()
+        )
+        rendered = final_comment.render(**example)
+        for previous in example["review_memory"]:
+            self.assertIn(previous["title"], rendered)
+            self.assertIn(previous["status"], rendered)
+            self.assertNotIn(previous["body"], rendered)
+        for limitation in example["limitations"]:
+            self.assertIn(limitation, rendered)
+
+
+if __name__ == "__main__":
+    unittest.main()

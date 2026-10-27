@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import patch
 
+from ralph import engine
 from ralph_service import github
 
 
@@ -43,6 +44,11 @@ class GitHubTests(unittest.TestCase):
         return github.publish_major_findings("owner/repo", "github-token", 42, result)
 
     def test_only_major_findings_with_report(self):
+        result = self.result()
+        result["engine"] = engine.load().identity
+        result["engine"]["config"]["comment_format"]["finding"] = (
+            "${body}\n\n${title} (${location}, ${side})"
+        )
         with patch.object(
             github,
             "github_request",
@@ -53,7 +59,7 @@ class GitHubTests(unittest.TestCase):
                 {},
             ],
         ) as request:
-            self.assertEqual(self.publish(self.result()), "created")
+            self.assertEqual(self.publish(result), "created")
         args = request.call_args.args
         self.assertEqual(
             args[:3], ("github-token", "/repos/owner/repo/issues/42/comments", "POST")
@@ -68,6 +74,7 @@ class GitHubTests(unittest.TestCase):
             self.assertIn(included, body)
         for excluded in ("Original", "Minor"):
             self.assertNotIn(excluded, body)
+        self.assertLess(body.index("Edited body"), body.index("Edited title"))
 
     def test_failed_review_cannot_create_update_or_delete_major_comment(self):
         for findings in (self.result()["output"]["exports"]["findings"], []):

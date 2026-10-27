@@ -3,7 +3,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from ralph import protocol
+import final_comment
 from ralph_service import telegram
 
 
@@ -66,7 +66,7 @@ class TelegramTests(unittest.TestCase):
             }
         ]
         result = self.result(
-            protocol.render([], ["Verifier unavailable"], review_memory=memory)
+            final_comment.render([], ["Verifier unavailable"], review_memory=memory)
         )
         result["output"]["exports"]["review_memory"] = memory
         text = self.render(result)

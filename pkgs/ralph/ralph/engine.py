@@ -185,8 +185,12 @@ def _canonical_json(value):
 def _code_hash(module):
     package_dir = Path(__file__).parent
     digest = hashlib.sha256()
-    for path in sorted(package_dir.glob("*.py")):
-        digest.update(path.name.encode())
+    paths = [
+        *package_dir.glob("*.py"),
+        *(package_dir.parent / "final_comment").glob("*.py"),
+    ]
+    for path in sorted(paths):
+        digest.update(str(path.relative_to(package_dir.parent)).encode())
         digest.update(b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")

@@ -44,3 +44,15 @@ class StageConfigurationTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, message),
             ):
                 current_engine.configure({"stages": stages})
+
+    def test_comment_templates_change_identity_and_survive_config_reload(self):
+        baseline = engine.load()
+        settings = baseline.config
+        settings["comment_format"]["finding"] = (
+            "${body}\n\n${title} ${location} ${side}"
+        )
+        changed = engine.load(config=settings)
+        self.assertNotEqual(
+            changed.identity["config_sha256"], baseline.identity["config_sha256"]
+        )
+        self.assertEqual(current_engine.configure(changed.config), changed.config)

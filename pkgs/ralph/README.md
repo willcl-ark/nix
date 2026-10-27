@@ -11,6 +11,10 @@ style and engine-specific checks; current-engine tests and diagnostics do not
 prescribe another engine's review format.
 
 
+Edit the [comment templates](final_comment/README.md) to change section order,
+headings or finding layout. The directory includes an offline preview and example
+reviews; no credentials or model requests are needed.
+
 `packages.<system>.ralph` installs only the `ralph` review command. The
 [companion package](../ralph-service/README.md) supplies the webhook service,
 frozen evaluator, reports, statistics and follow-up scheduler.

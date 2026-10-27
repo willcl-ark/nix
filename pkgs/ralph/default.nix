@@ -39,6 +39,8 @@ stdenvNoCC.mkDerivation {
       install -Dm644 "$audit" $out/libexec/ralph/"$audit"
       install -Dm644 "$audit" $out/share/ralph/"$audit"
     done
+    cp -r final_comment $out/libexec/ralph/
+    cp -r final_comment $out/share/ralph/
     makeWrapper ${python3.interpreter} $out/bin/ralph \
       --add-flags $out/libexec/ralph/review.py \
       --prefix PATH : ${lib.makeBinPath [ git ]}

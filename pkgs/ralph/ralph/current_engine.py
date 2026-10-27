@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from final_comment import load_format, validate_format
+
 from . import config, pipeline, profiles
 from .engine import Output
 
@@ -62,6 +64,9 @@ def configure(value):
     normalized = {
         "prompts": prompts,
         "profile": profile.to_dict(),
+        "comment_format": validate_format(value["comment_format"])
+        if "comment_format" in value
+        else load_format(),
         "routing_mode": value.get("routing_mode", "enabled"),
         "blind_alternatives": value.get("blind_alternatives", True),
         "archaeology": value.get("archaeology", False),
@@ -118,6 +123,7 @@ def run(case, runtime, configured):
         configured["routing_mode"],
         configured["blind_alternatives"],
         configured["archaeology"],
+        comment_format=configured["comment_format"],
     )
     data = {**runtime.debug, "schema_version": 2}
     exports = {

@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import final_comment
 from ralph import protocol
 
 
@@ -147,7 +148,8 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(edited[0]["severity"], "suggestion")
         self.assertEqual(edited[1]["kind"], "design")
         self.assertIn(
-            "incomplete", protocol.render(edited, ["A selected audit was unavailable."])
+            "incomplete",
+            final_comment.render(edited, ["A selected audit was unavailable."]),
         )
 
     def test_finding_must_refer_to_changed_file_on_correct_side(self):
@@ -211,7 +213,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
                 "source_head": "original-revision",
             }
         ]
-        rendered = protocol.render(
+        rendered = final_comment.render(
             [], ["Verifier request failed."], review_memory=memory
         )
         self.assertIn("##### Findings", rendered)
@@ -230,7 +232,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         for status in ("fixed", "invalid"):
             memory[0]["status"] = status
             self.assertNotIn(
-                "Existing index problem", protocol.render([], review_memory=memory)
+                "Existing index problem", final_comment.render([], review_memory=memory)
             )
         memory[0]["status"] = "unclear"
 
@@ -244,7 +246,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
                 "author_comments": [{"url": "https://example.org/reply"}],
             }
         )
-        rendered = protocol.render([], review_memory=memory)
+        rendered = final_comment.render([], review_memory=memory)
         main, history = rendered.split(
             "##### Previous findings and author responses", 1
         )
@@ -277,15 +279,15 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
                 "current_finding_ids": ["finding:1"],
             }
         ]
-        rendered = protocol.render([finding], review_memory=memory)
+        rendered = final_comment.render([finding], review_memory=memory)
         self.assertNotIn("##### Findings", rendered)
         self.assertIn("Repeated body", rendered)
         memory[0]["collapsed"] = False
         self.assertIn(
-            "##### Findings", protocol.render([finding], review_memory=memory)
+            "##### Findings", final_comment.render([finding], review_memory=memory)
         )
         memory[0].update(collapsed=True, author_position="none", author_comments=[])
-        rendered = protocol.render([finding], review_memory=memory)
+        rendered = final_comment.render([finding], review_memory=memory)
         self.assertIn("##### Findings", rendered)
         self.assertNotIn("<details>", rendered)
         self.assertEqual(rendered.count("Repeated body"), 1)
@@ -319,7 +321,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             "collapsed": False,
         }
         memory = [original, duplicate]
-        rendered = protocol.render([], review_memory=memory)
+        rendered = final_comment.render([], review_memory=memory)
         self.assertIn("##### Findings", rendered)
         self.assertNotIn("##### Previous findings", rendered)
         self.assertIn("**Major**", rendered)
@@ -336,7 +338,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             "side": "head",
             "body": "Current verified concern body",
         }
-        rendered = protocol.render([current], review_memory=memory)
+        rendered = final_comment.render([current], review_memory=memory)
         self.assertEqual(rendered.count("Current verified concern body"), 1)
         self.assertNotIn("Duplicate concern body", rendered)
         self.assertNotIn("Original concern body", rendered)
@@ -348,7 +350,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             "id": "finding:2",
             "body": "A separate verified concern body",
         }
-        rendered = protocol.render([current, second_current], review_memory=memory)
+        rendered = final_comment.render([current, second_current], review_memory=memory)
         self.assertIn("Current verified concern body", rendered)
         self.assertIn("A separate verified concern body", rendered)
         self.assertNotIn("Duplicate concern body", rendered)
@@ -358,7 +360,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             author_comments=[{"url": "https://example.org/second-reply"}],
             collapsed=True,
         )
-        rendered = protocol.render([current], review_memory=memory)
+        rendered = final_comment.render([current], review_memory=memory)
         self.assertNotIn("##### Findings", rendered)
         self.assertIn("##### Previous findings and author responses", rendered)
         self.assertEqual(rendered.count("Duplicate concern body"), 1)
@@ -367,7 +369,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
 
         original["status"] = "fixed"
         duplicate.update(author_position="none", author_comments=[], collapsed=False)
-        rendered = protocol.render([], review_memory=memory)
+        rendered = final_comment.render([], review_memory=memory)
         self.assertIn("Duplicate concern body", rendered)
         self.assertIn("##### Findings", rendered)
         self.assertIn("Status: fixed", rendered)

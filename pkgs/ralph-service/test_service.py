@@ -413,7 +413,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.jobs.recover(), 1)
         stop_event = threading.Event()
 
-        def review(*_args):
+        def review(*_args, comment_format):
             with closing(sqlite3.connect(self.state_dir / "jobs.sqlite3")) as db:
                 stored = json.loads(
                     db.execute(

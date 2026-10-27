@@ -4,6 +4,8 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from final_comment import render
+
 from . import coverage, feedback, model, protocol, routing
 from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
 from .repository import audit_developer_notes, focused_review_input
@@ -476,6 +478,8 @@ def review_with_independent_passes(
     routing_mode="enabled",
     blind_alternatives=True,
     archaeology=False,
+    *,
+    comment_format=None,
 ):
     review = case.review
     snapshot = case.snapshot
@@ -972,7 +976,7 @@ def review_with_independent_passes(
     if budget is not None:
         debug["budget"] = budget.summary()
     debug.pop("pipeline_stage", None)
-    content = protocol.render(
+    content = render(
         findings,
         debug["coverage"]["limitations"],
         concept_summary,
@@ -980,6 +984,7 @@ def review_with_independent_passes(
         debug.get("backport_assessment"),
         review_memory=debug.get("review_memory"),
         verification_failed=debug["coverage"]["verification"]["status"] == "failed",
+        comment_format=comment_format,
     )
     concept_concern = (
         verified.concept is not None

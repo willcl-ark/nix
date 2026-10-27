@@ -4,6 +4,7 @@ import json
 import urllib.request
 import urllib.error
 
+from final_comment import render_github
 from ralph import trace
 
 
@@ -78,25 +79,21 @@ def publish_major_findings(repository, token, number, result):
     report_url = result["run"].get("report_url")
     if not report_url:
         raise urllib.error.URLError("GitHub publication requires a full report URL")
-    sections = [marker]
-    if findings:
-        sections.append(f"Ralph found major issues at {result['head_sha']}.")
-    if retained:
-        sections.append(
-            "Previously discussed major concerns remain unresolved. "
-            "Their original findings and current assessments are retained in the full report."
+    identity = result.get("engine", {})
+    comment_format = None
+    if identity.get("name") == "current":
+        comment_format = identity["config"]["comment_format"]
+    body = (
+        marker
+        + "\n\n"
+        + render_github(
+            findings,
+            head_sha=result["head_sha"],
+            report_url=report_url,
+            has_retained=bool(retained),
+            comment_format=comment_format,
         )
-    for finding in findings:
-        title = finding.get("presented_title") or finding["title"]
-        body = finding.get("presented_body") or finding["body"]
-        location = finding.get("path") or ""
-        if finding.get("line") is not None:
-            location += f":{finding['line']}"
-        sections.append(
-            f"**{title}** ({location}, {finding.get('side', 'head')})\n\n{body}"
-        )
-    sections.append(f"[Full report]({report_url})")
-    body = "\n\n".join(sections)
+    )
     if comment is None:
         github_request(
             token, f"{base}/issues/{number}/comments", "POST", {"body": body}

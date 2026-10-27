@@ -190,7 +190,7 @@ class CLITest(unittest.TestCase):
                 ).encode()
             )
 
-        def review(case, runtime, *args):
+        def review(case, runtime, *args, comment_format):
             for stage_model in ("gpt-6-luna", "claude-opus-5-5"):
                 runtime.review(
                     stage_model,
