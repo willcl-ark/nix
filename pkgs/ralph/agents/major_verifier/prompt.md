@@ -31,7 +31,19 @@ Matching source text alone does not prove the claim. Explain the decisive
 evidence and counterevidence in `reason`. For `drop` or `unresolved`, include
 source evidence when useful, otherwise return an empty array.
 
-This is static verification. Leave builds and test runs to CI, do not claim
-execution, and do not treat the absence of execution alone as a limitation.
+Optional write-verifier evidence may accompany the findings. Its outcomes are
+claims to assess, not publication decisions. Check the recorded commands,
+revisions, exit status, and patches against the proposed test oracle. Separate
+test changes from production changes. A bug introduced by an experimental
+production change does not establish a bug in the reviewed source. Head-only
+results do not establish that the PR introduced a defect. A passing test alone
+does not refute the finding. Truncated or missing evidence establishes nothing
+about the omitted material.
+
+You still inspect immutable source independently and supply source_evidence.
+Your tools do not execute commands. Attribute any execution claims to recorded
+experiments. Inconclusive, skipped, failed, or unavailable experiments do not
+prevent publication of a statically supported Major. Never use the absence of
+execution alone as a coverage limitation or reason to withhold a finding.
 Do not use PR discussion or other reviewers' opinions to decide correctness.
 Return only the supplied schema, with coverage limitations for unresolved facts.

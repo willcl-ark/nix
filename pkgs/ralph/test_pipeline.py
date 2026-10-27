@@ -5,6 +5,7 @@ from threading import Barrier
 from unittest.mock import Mock, patch
 
 from ralph import config, engine, model, pipeline, protocol, repository, runner
+from ralph.spend import BudgetExceeded
 
 COMPLETE = {"status": "complete", "limitations": []}
 
@@ -96,7 +97,9 @@ class PipelineTests(unittest.TestCase):
                 return verification()
             return discovery(sensitive=stage == "independent")
 
-        result = self.run_review(review)
+        with patch.object(pipeline.experiments, "ExperimentSession") as session:
+            result = self.run_review(review)
+        session.assert_not_called()
         self.assertEqual(self.debug["routing"]["selected"]["tier"], "sensitive")
         self.assertIn("adversarial", stages)
         self.assertIn("adversarial_claude", stages)
@@ -133,6 +136,33 @@ class PipelineTests(unittest.TestCase):
                         for i, finding in enumerate(findings, 1)
                     ]
                 )
+            if stage == "write_verifier":
+                payload = json.loads(args[1].split("Experiment input:\n")[1])
+                self.assertEqual(
+                    [f["id"] for f in payload["findings"]], ["finding:1", "finding:2"]
+                )
+                self.assertTrue(
+                    all(
+                        f["body"] == "Final public wording" for f in payload["findings"]
+                    )
+                )
+                self.assertEqual(kwargs["reasoning_effort"], "high")
+                self.assertIn(
+                    "experiment_run", [tool.get("name") for tool in kwargs["tools"]]
+                )
+                return json.dumps(
+                    {
+                        "results": [
+                            {
+                                "finding_id": finding["id"],
+                                "outcome": "inconclusive",
+                                "reason": "Risk cannot be reproduced practically",
+                                "command_ids": [],
+                            }
+                            for finding in payload["findings"]
+                        ]
+                    }
+                )
             self.assertEqual(stage, "major_verifier")
             payload = json.loads(args[1].split("Major verification input:\n")[1])
             self.assertEqual(
@@ -140,6 +170,10 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertTrue(
                 all(f["body"] == "Final public wording" for f in payload["findings"])
+            )
+            self.assertIn("inconclusive", payload["experiment_evidence"])
+            self.assertNotIn(
+                "experiment_run", [tool.get("name") for tool in kwargs["tools"]]
             )
             return json.dumps(
                 {
@@ -170,13 +204,22 @@ class PipelineTests(unittest.TestCase):
             return json.dumps(result), response
 
         budget = Mock()
-        self.run_review(review, edit, budget=budget)
+        self.run_review(review, edit, budget=budget, writer=review)
         self.assertEqual(
-            order, ["independent", "verifier", "collator", "major_verifier"]
+            order,
+            ["independent", "verifier", "collator", "write_verifier", "major_verifier"],
         )
         self.assertIn(
             "major_verifier", budget.protect.call_args.kwargs["exempt_stages"]
         )
+        self.assertNotIn(
+            "write_verifier", budget.protect.call_args.kwargs["exempt_stages"]
+        )
+        self.assertEqual(
+            budget.protect.call_args.args[0]["text"]["format"]["name"], "major_verifier"
+        )
+        self.assertEqual(self.debug["coverage"]["verification"]["status"], "complete")
+        self.assertEqual(self.debug["coverage"]["experiments"]["status"], "partial")
         self.assertEqual(
             [f["id"] for f in self.result.findings],
             ["finding:1", "finding:3", "finding:4"],
@@ -188,6 +231,118 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             self.debug["stages"]["verifier"]["decisions"][1]["disposition"], "publish"
         )
+
+    def major_review(self, *args, **kwargs):
+        stage = kwargs["stage_name"]
+        if stage == "independent":
+            return discovery([candidate()])
+        if stage == "verifier":
+            return verification(
+                [
+                    {
+                        "candidate_ids": ["independent:1"],
+                        "disposition": "publish",
+                        "reason": "Supported by source",
+                        "finding": {
+                            **self.published,
+                            "severity": "major",
+                            "kind": "defect",
+                        },
+                    }
+                ]
+            )
+        self.assertEqual(stage, "major_verifier")
+        return json.dumps(
+            {
+                "coverage": COMPLETE,
+                "decisions": [
+                    {
+                        "finding_id": "finding:1",
+                        "disposition": "publish",
+                        "reason": "Independent source evidence supports Major",
+                        "source_evidence": self.published["source_evidence"],
+                    }
+                ],
+            }
+        )
+
+    def test_optional_writer_failures_preserve_static_publication(self):
+        self.tier, self.audits = "routine", []
+        for failure in (
+            RuntimeError("Sandbox unavailable"),
+            BudgetExceeded("Protected final budget"),
+            protocol.InvalidReview("Invalid writer output"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                self.debug = {}
+                self.run_review(self.major_review, writer=Mock(side_effect=failure))
+                self.assertEqual(
+                    self.result.findings[0]["verified_by"], "major_verifier"
+                )
+                self.assertEqual(self.debug["coverage"]["status"], "complete")
+                self.assertEqual(self.debug["coverage"]["limitations"], [])
+                self.assertTrue(self.debug["coverage"]["experiments"]["limitations"])
+
+    def test_writer_evidence_reaches_final_verifier_without_deciding_publication(self):
+        self.tier, self.audits = "routine", []
+        for outcome in ("reproduced", "refuted"):
+            with self.subTest(outcome=outcome):
+                self.debug = {}
+
+                def writer(*args, outcome=outcome, **kwargs):
+                    kwargs["experiment_session"].record["commands"].append(
+                        {
+                            "id": "cmd-1",
+                            "finding_id": "finding:1",
+                            "side": "head",
+                            "status": "completed",
+                            "capture_complete": True,
+                            "revision": self.snapshot.head_sha,
+                            "command": "python test.py",
+                            "exit_code": 1,
+                            "output": "AssertionError",
+                            "patch": "+assert invariant()",
+                        }
+                    )
+                    return json.dumps(
+                        {
+                            "results": [
+                                {
+                                    "finding_id": "finding:1",
+                                    "outcome": outcome,
+                                    "reason": "Interpretation to be checked independently",
+                                    "command_ids": ["cmd-1"],
+                                }
+                            ]
+                        }
+                    )
+
+                def reviewer(*args, outcome=outcome, **kwargs):
+                    if kwargs["stage_name"] == "major_verifier":
+                        payload = json.loads(
+                            args[1].split("Major verification input:\n")[1]
+                        )
+                        evidence = json.loads(payload["experiment_evidence"])
+                        self.assertEqual(evidence["results"][0]["outcome"], outcome)
+                        self.assertEqual(
+                            evidence["execution"]["commands"][0]["output"],
+                            "AssertionError",
+                        )
+                    return self.major_review(*args, **kwargs)
+
+                self.run_review(reviewer, writer=writer)
+                self.assertEqual(
+                    self.result.findings[0]["verified_by"], "major_verifier"
+                )
+
+    def test_stale_write_verification_aborts_review(self):
+        self.tier, self.audits = "routine", []
+        with self.assertRaises(model.StaleReview):
+            self.run_review(
+                self.major_review, writer=Mock(side_effect=model.StaleReview())
+            )
+        self.assertEqual(self.debug["stages"]["write_verifier"]["status"], "stale")
+        self.assertNotIn("major_verifier", self.debug["stages"])
 
     def test_major_verifier_failures_withhold_only_majors(self):
         self.debug = {}
@@ -343,10 +498,31 @@ class PipelineTests(unittest.TestCase):
         archaeology_enabled=False,
         backport_evidence=None,
         review_feedback=None,
+        writer=None,
     ):
+        def review_with_experiments(*args, **kwargs):
+            if kwargs["stage_name"] == "write_verifier":
+                if writer is not None:
+                    return writer(*args, **kwargs)
+                payload = json.loads(args[1].split("Experiment input:\n")[1])
+                return json.dumps(
+                    {
+                        "results": [
+                            {
+                                "finding_id": finding["id"],
+                                "outcome": "inconclusive",
+                                "reason": "No practical experiment",
+                                "command_ids": [],
+                            }
+                            for finding in payload["findings"]
+                        ]
+                    }
+                )
+            return reviewer(*args, **kwargs)
+
         with (
             patch.object(pipeline.routing, "plan_review", side_effect=self.plan),
-            patch.object(model, "openai_review", side_effect=reviewer),
+            patch.object(model, "openai_review", side_effect=review_with_experiments),
             patch.object(model, "run_audit", side_effect=editor or self.edit),
             patch.object(
                 protocol,

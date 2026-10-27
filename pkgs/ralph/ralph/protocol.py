@@ -229,6 +229,25 @@ def backport_assessment(value, evidence):
     return value
 
 
+WRITE_VERIFIER_SCHEMA = object_schema(
+    {
+        "results": {
+            "type": "array",
+            "items": object_schema(
+                {
+                    "finding_id": STRING,
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["reproduced", "refuted", "inconclusive"],
+                    },
+                    "reason": STRING,
+                    "command_ids": STRINGS,
+                }
+            ),
+        }
+    }
+)
+
 MAJOR_VERIFIER_SCHEMA = object_schema(
     {
         "coverage": COVERAGE,
@@ -697,6 +716,54 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     result["decisions"] = normalized_decisions
     result["validation_errors"] = validation_errors
     return result, accepted
+
+
+def write_verification(text, findings, execution):
+    """Validate interpretations against command records from the trusted runner."""
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise InvalidReview("Invalid write verifier JSON") from exc
+    _object(result, WRITE_VERIFIER_SCHEMA["properties"])
+    if not isinstance(result["results"], list):
+        raise InvalidReview("Invalid write verifier results")
+    expected = {finding["id"] for finding in findings}
+    commands = {command["id"]: command for command in execution["commands"]}
+    seen = set()
+    for item in result["results"]:
+        _object(
+            item,
+            WRITE_VERIFIER_SCHEMA["properties"]["results"]["items"]["properties"],
+        )
+        _text(item, ("finding_id", "reason"))
+        identifier = item["finding_id"]
+        if identifier not in expected or identifier in seen:
+            raise InvalidReview("Unknown or repeated write verifier finding ID")
+        seen.add(identifier)
+        if item["outcome"] not in ("reproduced", "refuted", "inconclusive"):
+            raise InvalidReview("Invalid write verifier outcome")
+        references = item["command_ids"]
+        if not isinstance(references, list) or any(
+            not isinstance(reference, str) for reference in references
+        ):
+            raise InvalidReview("Invalid write verifier command IDs")
+        if len(set(references)) != len(references) or any(
+            reference not in commands or commands[reference]["finding_id"] != identifier
+            for reference in references
+        ):
+            raise InvalidReview("Unknown, repeated, or mismatched experiment command")
+        if item["outcome"] in {"reproduced", "refuted"} and not any(
+            (item["outcome"] == "refuted" or commands[reference]["side"] == "head")
+            and commands[reference]["status"] == "completed"
+            and commands[reference].get("capture_complete") is True
+            for reference in references
+        ):
+            raise InvalidReview(
+                "Conclusive evidence requires a completed command with captured evidence, at head for reproduction"
+            )
+    if seen != expected:
+        raise InvalidReview("Write verifier omitted finding results")
+    return result
 
 
 def major_verification(text, findings, snapshot):

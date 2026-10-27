@@ -3,8 +3,8 @@
 Ralph loads a selected local review engine. The default `current` engine performs
 static reviews of committed Bitcoin Core changes, discovers candidate findings in independent
 passes, checks them against repository evidence, and returns verified findings
-and a separately verified conceptual assessment. It does not build or execute
-reviewed code. The engine owns its Markdown and structured result; other engines need
+and a separately verified conceptual assessment. Surviving Major findings can
+receive an optional build/test experiment in an isolated disposable workspace. The engine owns its Markdown and structured result; other engines need
 not use the stages, diagnostics or exports described below. Operators can load
 only trusted engine modules included in the package. Engines own their output
 style and engine-specific checks; current-engine tests and diagnostics do not
@@ -304,10 +304,11 @@ A failed Claude pass is reported as incomplete coverage.
 ```mermaid
 flowchart LR
     verify["Verify candidates<br/>+ concept evidence"] --> edit["Edit accepted findings<br/>+ concept objection"]
-    edit --> major["Verify Major wording<br/>Sol 6.1 medium"]
+    edit --> write["Attempt Major reproduction<br/>Sol 6.1 high"]
+    write --> major["Verify Major wording<br/>Sol 6.1 medium"]
     major --> render["Render review<br/>+ coverage limitations"]
     classDef optional stroke-dasharray: 5 4
-    class edit,major optional
+    class edit,write,major optional
 ```
 
 Editing runs only when findings or a concept objection survive verification.
@@ -317,6 +318,46 @@ This includes Major design findings. Other severities skip it. Sol checks the
 final edited title and body, with independent reads of the pinned base/head,
 before either the mirror review or GitHub export can publish them. It returns
 verdicts only and cannot rewrite, add, merge, or downgrade findings.
+
+The write-verifier attempts experiments before that final check. It can report
+`reproduced`, `refuted`, or `inconclusive`, with references to runner-recorded
+commands. None of these outcomes alone decides publication. The final Major
+verifier assesses the evidence and exact wording. An impractical reproduction,
+missing environment, timeout, or writer failure still permits publication based
+on sufficient source evidence. A passing test alone does not refute a finding.
+
+Experiments use the pinned Bix development environment supplied by the Nix
+package. Each `experiment_run` starts with pristine head or comparison-base
+source in a bounded temporary filesystem. Include every edit, build and test in
+one script; a later call does not retain earlier edits or build products. The
+runner records the revision, command, exit status, bounded output, and source
+patch including new tests. Commands execute without host credentials, service
+state or outbound network; functional tests have private loopback. Failure to
+start the sandbox leaves the finding eligible for static verification.
+
+The NixOS module provisions a delegated cgroup for experiments. Each experiment
+has an 8 GiB total memory limit including temporary files, no swap, 128 tasks,
+and two CPUs of aggregate execution time per wall-clock interval. Experiments
+share a 30-minute stage deadline with model requests, and service workers
+serialize experiments. Commands should build under `/tmp/build` so recorded
+source patches are not filled with compiler output.
+
+For a standalone CLI run, start a delegated user service and identify its
+subtree before invoking Ralph:
+
+```sh
+systemd-run --user --collect --wait --pipe \
+  -p 'Delegate=cpu memory pids' -p DelegateSubgroup=controller \
+  bash -c '
+    group=$(sed -n "s/^0:://p" /proc/self/cgroup)
+    export RALPH_WRITE_VERIFIER_CGROUP="/sys/fs/cgroup${group%/controller}"
+    exec ralph "$@"
+  ' ralph review topic /path/to/repo --base origin/master \
+  --openai-key-file /path/to/openai-key
+```
+
+Without a delegated subtree or the packaged experiment environment, execution
+is unavailable and the final Major check still considers source evidence.
 
 Skipped audits do not make model calls. All review stages use the configured
 OpenAI-compatible endpoint and key. Concept research is advisory. Negative,
@@ -340,6 +381,7 @@ does not receive concept research output or current PR discussion.
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
 | verifier, all tiers | claude-opus-5-5 | medium | 64,000 | Original input, candidates, concept candidate, code and research tools |
+| write_verifier, only when Majors survive | gpt-6.1-sol | high | 12,000 | Final Major wording, immutable source tools and isolated experiment commands |
 | major_verifier, only when Majors survive | gpt-6.1-sol | medium | 25,000 | Original input and final Major wording; code and base history tools |
 | archaeologist | gpt-6-luna | low | 4,000 | Original input, base/head code tools, current discussion and research tools |
 | alternatives | Same as archaeologist | low | 4,000 | Neutral problem, goal and baseline; base-only code tools |
@@ -404,12 +446,14 @@ through competing workers' monthly spending. Failed discovery becomes a coverage
 limitation; failed verification publishes no unverified findings. Failed editing
 falls back to verified wording.
 The Major pass uses the remaining shared allowance, reserving its own final
-response. It has no extra allowance or protected share during discovery. A
+response. The optional write-verifier protects the final Major pass before
+spending on experiments. Neither stage receives an extra review allowance. A
 budget or API failure, invalid response, or missing decision withholds all
 pending Majors. Explicit `drop` and `unresolved` verdicts withhold those findings;
 non-Majors and concept results remain available. Medium effort and the 25,000
 token limit are initial settings, not a measured accuracy guarantee.
-Custom agent directories must include the `major_verifier` agent.
+Custom agent directories must include the `write_verifier` and `major_verifier`
+agents. Saved profiles without the new stage must be recaptured.
 The companion GitHub publisher also requires second-verifier provenance for
 every Major, including saved publication retries. An unchecked batch is skipped
 without posting or deleting a comment.
@@ -441,7 +485,8 @@ flowchart LR
     pool["Valid candidates"] --> verify["Verify claims"]
     verify --> accept["Validate findings<br/>+ assign IDs"]
     accept --> edit["Edit wording"]
-    edit --> major["Double-check Major wording"]
+    edit --> write["Attempt Major reproduction"]
+    write --> major["Double-check Major wording"]
     major --> render["Render verified feedback"]
 ```
 
@@ -696,7 +741,8 @@ revisions, evidence, required fixes and limitations. Unavailable originals,
 unverified source membership and incomplete review prevent a `Faithful` verdict.
 Normal code findings still require valid source evidence and changed-line anchors.
 The upstream tools read only resolved original commits and their parents, under
-existing tool budgets. Reviews remain static; they do not execute builds or tests.
+existing tool budgets. Major findings can use the same optional isolated
+experiments as ordinary reviews.
 
 The local CLI detects commit trailers and uses available local objects without
 network access. It reports unverified source PR membership as a limitation. The

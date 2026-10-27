@@ -61,6 +61,7 @@ def summarize(debug):
     inspections = []
     contexts = []
     verifications = []
+    experiments = []
     concept = (debug.get("concept_assessment") or {}).get("verification") or {}
     concept_reason = (
         concept.get("reason") if concept.get("disposition") == "unresolved" else None
@@ -73,6 +74,17 @@ def summarize(debug):
 
     for name, stage in stages.items():
         if name in {"router", "collator"} or stage.get("status") == "skipped":
+            continue
+        if name == "write_verifier":
+            state = stage.get("status")
+            status = "complete" if state == "completed" else "partial"
+            if state in FAILURES:
+                issue(name, "experiment", _failure(stage))
+            for result in stage.get("results", []):
+                if result["outcome"] == "inconclusive":
+                    issue(name, "experiment", result["reason"])
+                    status = "partial"
+            experiments.append(status)
             continue
         category = (
             "context"
@@ -167,7 +179,7 @@ def summarize(debug):
     limitations = [
         f"{item['stage']}: {item['reason']}"
         for item in issues
-        if item["category"] != "context"
+        if item["category"] not in {"context", "experiment"}
     ]
     context_limits = [
         f"{item['stage']}: {item['reason']}"
@@ -191,6 +203,12 @@ def summarize(debug):
             "limitations": context_limits,
         },
         "verification": {"status": verification, "limitations": verification_limits},
+        "experiments": {
+            "status": _status(experiments) if experiments else "not_requested",
+            "limitations": [
+                item["reason"] for item in issues if item["category"] == "experiment"
+            ],
+        },
         "issues": issues,
         "notes": notes,
     }

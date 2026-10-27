@@ -1,8 +1,8 @@
 # Agent flow
 
 Ralph gathers candidate findings in independent passes, verifies them against
-source, then edits and formats the accepted findings. Reviews are static; agents
-do not build or execute the code under review.
+source, then edits and formats the accepted findings. An optional write-verifier
+can build and test surviving Major findings in an isolated disposable workspace.
 
 ```mermaid
 flowchart TD
@@ -13,7 +13,8 @@ flowchart TD
     audits --> feedback[Author-feedback mapping, when supplied]
     feedback --> verifier[Verifier]
     verifier --> collator[Collator]
-    collator --> major[Major verifier, when needed]
+    collator --> write[Write-verifier, when Majors survive]
+    write --> major[Major verifier, when needed]
     major --> comment[Comment templates]
 ```
 
@@ -53,7 +54,11 @@ whether they still hold; an author's disagreement alone cannot dismiss them.
 
 The [collator](collator/prompt.md) edits accepted wording without repository
 access. It must preserve finding IDs, locations and the accepted claims.
-Findings classified as Major then receive a second source check from the
+The [write-verifier](write_verifier/prompt.md) can attempt reproduction of Major
+findings with Sol 6.1 high. It reports experimental evidence and limitations.
+Inconclusive experiments and runner failures do not veto supported findings.
+Each experiment starts from clean source; edits and test runs belong in one
+complete script. Findings classified as Major then receive a final check from the
 [major verifier](major_verifier/prompt.md), using their final public wording.
 
 Failed verification withholds unverified findings. Failed editing falls back to

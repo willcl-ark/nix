@@ -70,7 +70,9 @@ The supported tool sets are:
 
 The runtime still applies evidence availability, operator web permission and
 stage restrictions. Blind alternatives can only inspect the comparison base.
-Tools run inside the existing read-only repository and spending limits. A new
+Source tools read immutable repository snapshots. Only `write_verifier` receives
+experiment commands for an isolated disposable copy; it shares the review
+spending ceiling and preserves final-verifier headroom. A new
 tool implementation or a new pipeline stage requires Python changes. Model IDs
 must have accounting rates in [spend.py](ralph/spend.py).
 

@@ -29,6 +29,7 @@ STAGE_NAMES = (
     "alternatives",
     "feedback",
     "verifier",
+    "write_verifier",
     "major_verifier",
     "collator",
 )

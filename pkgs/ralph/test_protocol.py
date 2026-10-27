@@ -8,6 +8,47 @@ from ralph import protocol
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_write_verifier_requires_matching_execution_for_conclusive_claims(self):
+        findings = [{"id": "finding:1"}]
+        command = {
+            "id": "cmd-1",
+            "finding_id": "finding:1",
+            "side": "head",
+            "status": "completed",
+            "capture_complete": True,
+        }
+        result = {
+            "finding_id": "finding:1",
+            "outcome": "reproduced",
+            "reason": "Regression assertion failed",
+            "command_ids": ["cmd-1"],
+        }
+
+        def verify(item=result, commands=None):
+            return protocol.write_verification(
+                json.dumps({"results": [item]}),
+                findings,
+                {"commands": [command] if commands is None else commands},
+            )
+
+        self.assertEqual(verify()["results"], [result])
+        with self.assertRaises(protocol.InvalidReview):
+            verify(commands=[])
+        with self.assertRaises(protocol.InvalidReview):
+            verify(commands=[{**command, "finding_id": "finding:2"}])
+        with self.assertRaises(protocol.InvalidReview):
+            verify(commands=[{**command, "status": "timeout"}])
+        with self.assertRaises(protocol.InvalidReview):
+            verify(commands=[{**command, "capture_complete": False}])
+        with self.assertRaises(protocol.InvalidReview):
+            verify(commands=[{**command, "side": "base"}])
+        with self.assertRaises(protocol.InvalidReview):
+            verify({**result, "outcome": "refuted", "command_ids": []})
+        inconclusive = {**result, "outcome": "inconclusive", "command_ids": []}
+        self.assertEqual(verify(inconclusive, [])["results"], [inconclusive])
+        with self.assertRaises(protocol.InvalidReview):
+            protocol.write_verification('{"results": []}', findings, {"commands": []})
+
     def setUp(self):
         self.snapshot = SimpleNamespace(
             changed_paths={"src/example.cpp"},

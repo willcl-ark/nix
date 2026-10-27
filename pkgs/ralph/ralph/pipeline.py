@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from final_comment import render
 
-from . import coverage, feedback, model, protocol, routing
+from . import coverage, experiments, feedback, model, protocol, routing
 from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
 from .repository import audit_developer_notes, focused_review_input
 from .spend import BudgetExceeded
@@ -32,6 +32,7 @@ FULL_CONTEXT_STAGES = {
     "independent",
     *ADVERSARIAL_STAGES,
     "verifier",
+    "write_verifier",
     "major_verifier",
 }
 
@@ -45,7 +46,11 @@ def _backport_input(input_text, evidence):
 def _stage_tools(name, runtime, settings):
     research_evidence = runtime.case.research_evidence
     discussion_lookup = runtime.discussion_lookup if research_evidence is None else None
-    allow_web_search = runtime.allow_web_search and research_evidence is None
+    allow_web_search = (
+        runtime.allow_web_search
+        and research_evidence is None
+        and name != "write_verifier"
+    )
     tools = model.TOOL_SETS[settings.tool_set]
     if name == "alternatives":
         # Blind alternatives can only inspect the comparison base.
@@ -56,7 +61,7 @@ def _stage_tools(name, runtime, settings):
     return model.available_tools(
         tools,
         discussion_lookup
-        if name not in {"script", "dead_code", "major_verifier"}
+        if name not in {"script", "dead_code", "write_verifier", "major_verifier"}
         else None,
         evidence,
         allow_web_search,
@@ -64,7 +69,16 @@ def _stage_tools(name, runtime, settings):
 
 
 def _run_stage(
-    runtime, prompt_config, plan, name, input_text, prompt, schema, *, tools=True
+    runtime,
+    prompt_config,
+    plan,
+    name,
+    input_text,
+    prompt,
+    schema,
+    *,
+    tools=True,
+    experiment_session=None,
 ):
     debug = runtime.debug
     stages = debug["stages"]
@@ -82,6 +96,8 @@ def _run_stage(
         if tools:
             calls = settings.max_tool_calls[plan["tier"]]
             available_tools = _stage_tools(name, runtime, settings)
+            if experiment_session is not None:
+                available_tools = [*available_tools, *experiments.TOOLS]
             answer = runtime.review(
                 name,
                 input_text,
@@ -103,6 +119,11 @@ def _run_stage(
                 response_schema=schema,
                 timeout=settings.timeout,
                 final_timeout=settings.final_timeout,
+                **(
+                    {"experiment_session": experiment_session}
+                    if experiment_session is not None
+                    else {}
+                ),
             )
         else:
             answer, response = runtime.audit(
@@ -344,6 +365,120 @@ def _edit_findings(run_stage, prompt_config, verified, debug):
     return findings, concept_summary
 
 
+EXPERIMENT_EVIDENCE_CHARS = 48000
+
+
+def _major_input(review, majors, evidence):
+    return (
+        review
+        + "\n\nMajor verification input:\n"
+        + json.dumps({"findings": majors, "experiment_evidence": evidence})
+    )
+
+
+def _experiment_evidence(record):
+    # Keep the runner's complete artifacts in the trace. The final verifier gets
+    # a bounded excerpt and must not infer anything from omitted evidence.
+    evidence = json.dumps(
+        {
+            key: record[key]
+            for key in ("status", "results", "execution", "reason", "error_type")
+            if key in record
+        }
+    )
+    if len(evidence) > EXPERIMENT_EVIDENCE_CHARS:
+        evidence = (
+            evidence[:EXPERIMENT_EVIDENCE_CHARS] + "\n[Experiment evidence truncated]"
+        )
+    return evidence
+
+
+def _write_majors(run_stage, runtime, prompt_config, review, snapshot, findings):
+    majors = [finding for finding in findings if finding["severity"] == "major"]
+    stages = runtime.debug["stages"]
+    stages["write_verifier"] = {
+        "model": prompt_config.models["write_verifier"],
+        "status": "skipped",
+        "turns": [],
+        "tools": [],
+        "reason": "No major findings to investigate",
+    }
+    if not majors:
+        return
+    session = None
+    try:
+        if runtime.budget is not None:
+            settings = prompt_config.profile.stages["major_verifier"]
+            prompt = prompt_config.audit_prompts["major_verifier"]
+            # Backslashes reserve the JSON escaping overhead of the excerpt too.
+            input_text = _major_input(
+                review, majors, "\\" * (EXPERIMENT_EVIDENCE_CHARS + 100)
+            )
+            if runtime.case.backport_evidence is not None:
+                input_text = _backport_input(input_text, runtime.case.backport_evidence)
+                prompt += "\n\n" + prompt_config.audit_prompts["backport"]
+            runtime.debug["major_verification_budget"] = runtime.budget.protect(
+                {
+                    "model": settings.model,
+                    "store": False,
+                    "reasoning": {"effort": settings.reasoning_effort},
+                    "instructions": prompt,
+                    "input": [{"role": "user", "content": input_text}],
+                    "tools": _stage_tools("major_verifier", runtime, settings),
+                    "tool_choice": "required",
+                    "max_tool_calls": settings.max_web_search_calls_per_response,
+                    "max_output_tokens": settings.max_output_tokens,
+                    "text": {
+                        "format": {
+                            "type": "json_schema",
+                            "name": "major_verifier",
+                            "strict": True,
+                            "schema": protocol.MAJOR_VERIFIER_SCHEMA,
+                        }
+                    },
+                },
+                exempt_stages={"major_verifier"},
+            )
+        session = experiments.ExperimentSession(
+            snapshot,
+            [finding["id"] for finding in majors],
+            is_current=runtime.is_current,
+        )
+        with session:
+            answer = run_stage(
+                "write_verifier",
+                review
+                + "\n\nExperiment input:\n"
+                + json.dumps(
+                    {
+                        "findings": majors,
+                        "head_sha": snapshot.head_sha,
+                        "diff_base_sha": snapshot.diff_base_sha,
+                    }
+                ),
+                prompt_config.audit_prompts["write_verifier"],
+                protocol.WRITE_VERIFIER_SCHEMA,
+                experiment_session=session,
+            )
+            result = protocol.write_verification(answer, majors, session.record)
+            stages["write_verifier"]["results"] = result["results"]
+    except model.StaleReview:
+        stages["write_verifier"]["status"] = "stale"
+        raise
+    except Exception as exc:
+        record = stages["write_verifier"]
+        if record["status"] == "skipped":
+            record.update(status="failed", error_type=type(exc).__name__)
+        _record_validation_failure(record, exc)
+        record["reason"] = (
+            "Optional experiment did not complete; static verification continues."
+        )
+    finally:
+        record = stages["write_verifier"]
+        if session is not None:
+            record["execution"] = session.record
+
+
 def _verify_majors(
     run_stage, prompt_config, review, snapshot, verified, findings, debug
 ):
@@ -362,9 +497,9 @@ def _verify_majors(
     try:
         answer = run_stage(
             "major_verifier",
-            review
-            + "\n\nMajor verification input:\n"
-            + json.dumps({"findings": majors}),
+            _major_input(
+                review, majors, _experiment_evidence(stages["write_verifier"])
+            ),
             prompt_config.audit_prompts["major_verifier"],
             protocol.MAJOR_VERIFIER_SCHEMA,
         )
@@ -587,13 +722,23 @@ def review_with_independent_passes(
     )
     notes = None
 
-    def run_stage(name, input_text, prompt, schema, *, tools=True):
+    def run_stage(
+        name, input_text, prompt, schema, *, tools=True, experiment_session=None
+    ):
         if backport_evidence is not None and name != "collator":
             input_text = _backport_input(input_text, backport_evidence)
             prompt += "\n\n" + prompt_config.audit_prompts["backport"]
         # Read the current plan after any discovery-driven escalation.
         return _run_stage(
-            runtime, prompt_config, plan, name, input_text, prompt, schema, tools=tools
+            runtime,
+            prompt_config,
+            plan,
+            name,
+            input_text,
+            prompt,
+            schema,
+            tools=tools,
+            experiment_session=experiment_session,
         )
 
     def discover(name):
@@ -849,6 +994,7 @@ def review_with_independent_passes(
     findings, concept_summary = _edit_findings(
         run_stage, prompt_config, verified, debug
     )
+    _write_majors(run_stage, runtime, prompt_config, review, snapshot, findings)
     findings = _verify_majors(
         run_stage, prompt_config, review, snapshot, verified, findings, debug
     )
