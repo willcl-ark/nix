@@ -14,10 +14,12 @@ on:
       bitcoin_pr:
         description: Public bitcoin/bitcoin PR number to use as the review case
         required: true
+        default: "36665"
         type: string
       proxy_url:
         description: CLIProxyAPI HTTPS URL over Tailscale, ending in /v1
         required: true
+        default: "https://nero.tail1977.ts.net/v1"
         type: string
 
 permissions:
