@@ -44,8 +44,8 @@ class StageSettings:
     max_context_calls: int = 8
     max_history_calls: int = 8
     max_web_search_calls_per_response: int = 2
-    timeout: int = 180
-    final_timeout: int = 180
+    timeout: int = 1800
+    final_timeout: int = 1800
 
     def __post_init__(self):
         if not isinstance(self.model, str) or not supports_model(self.model):

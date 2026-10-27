@@ -88,8 +88,8 @@ class Runtime:
         research_evidence=None,
         budget=_DEFAULT_BUDGET,
         api_base=None,
-        timeout=180,
-        final_timeout=180,
+        timeout=1800,
+        final_timeout=1800,
     ):
         from .model import openai_review
 
@@ -144,7 +144,7 @@ class Runtime:
         response_schema,
         reasoning_effort="low",
         debug_record=None,
-        timeout=180,
+        timeout=1800,
     ):
         from .model import run_audit
 

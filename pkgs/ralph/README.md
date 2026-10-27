@@ -339,9 +339,11 @@ does not receive concept research output or current PR discussion.
 | alternatives | Same as archaeologist | low | 4,000 | Neutral problem, goal and baseline; base-only code tools |
 | collator | gpt-6-luna | low | 6,000 | Accepted findings and conceptual assessment; no tools |
 
-Claude adversarial requests and both verifiers' final requests with tools
-disabled have a 600-second socket timeout. Other model requests retain the
-180-second timeout.
+Model requests default to a 1,800-second socket timeout in both review profiles,
+including requests with tools enabled, final responses and follow-ups. The
+timeout applies to blocking socket operations, not the whole request or review.
+Ralph still makes at most three attempts per request, so three stalled attempts
+can take about 90 minutes.
 
 The initial review input allows 300,000 UTF-8 bytes. Larger patches are replaced
 by a changed-file inventory so stages can inspect them with `read_diff`.
@@ -625,8 +627,7 @@ design and verification. Core analysis and verification stages use at least
 high reasoning effort, retaining xhigh where already configured, and at least
 16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
 and the Claude reviewer retain their default settings. Claude stays at Opus
-5.5, `xhigh`, 64,000 output tokens and a 600-second timeout. Tool limits are
-unchanged.
+5.5, `xhigh` and 64,000 output tokens. Tool limits are unchanged.
 
 High multiplies the configured shared review allowance by five. Its 128,000-token
 verifier reserves at least $2.56 for its initial and finishing requests alone;
@@ -650,21 +651,20 @@ through `stages`. These partial overrides apply after the selected agent profile
     "verifier": {
       "model": "claude-opus-5-5",
       "reasoning_effort": "xhigh",
-      "max_output_tokens": 64000,
-      "timeout": 600,
-      "final_timeout": 600
+      "max_output_tokens": 64000
     }
   }
 }
 ```
 
 Pass this file with `--engine-config`. Unspecified settings retain their
-resolved defaults. Supported settings also include `max_tool_calls`,
-`max_context_calls`, `max_history_calls` and
+resolved defaults. Supported settings also include `timeout`, `final_timeout`,
+`max_tool_calls`, `max_context_calls`, `max_history_calls`,
 `max_web_search_calls_per_response` and `tool_set`. `max_tool_calls` names all three tiers,
 `routine`, `standard` and `sensitive`. Unknown stages and fields are rejected;
 models must have known accounting rates. Ralph records the resolved settings in
 the profile snapshot and hash, including timeouts, for retries and evaluation.
+Explicit timeout overrides and saved jobs retain their configured values.
 All stages continue to use the same endpoint, key and review allowance.
 
 ## Backport reviews

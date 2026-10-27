@@ -70,8 +70,7 @@ remains visible in reports and stats. See the [specialist design](../../pkgs/ral
 
 Sensitive changes receive parallel independent Sol 6.1 and Claude Opus 5.5
 adversarial reviews. Claude uses `claude-opus-5-5` at `xhigh` through the same
-configured OpenAI-compatible proxy, with a 64,000-token response allowance and
-600-second request timeout in both review profiles.
+configured OpenAI-compatible proxy, with a 64,000-token response allowance.
 Selected consensus, wallet, and P2P profiles add the same domain instructions
 to both reviews. Concurrency covers C++ lifetime, locks and shared state; state
 covers persistence and recovery. Public-contract and build audits cover exposed
@@ -513,16 +512,21 @@ services.ralph.engineConfig.stages.verifier = {
   model = "claude-opus-5-5";
   reasoning_effort = "xhigh";
   max_output_tokens = 64000;
-  timeout = 600;
-  final_timeout = 600;
 };
 ```
+
+Model requests default to a 1,800-second socket timeout in both review profiles,
+including follow-ups. Stage overrides can set `timeout` and `final_timeout`.
+Socket timeouts apply to blocking operations, not the whole request or review.
+The existing limit of three attempts can mean about 90 minutes waiting for
+three stalled attempts to fail.
 
 The same map accepts inspection limits such as `max_tool_calls`,
 `max_context_calls` and `max_history_calls`. `max_tool_calls` names all three
 tiers, `routine`, `standard` and `sensitive`. Unknown stages and fields are
 rejected. Resolved overrides are recorded in the profile identity and retained
-for retries and frozen evaluation. They do not change follow-up settings.
+for retries and frozen evaluation. Existing timeout overrides and saved jobs
+keep their configured values. Stage overrides do not change follow-up settings.
 
 Jobs retain their selected profile and resolved engine configuration across
 retries and restarts. Each attempt records its actual engine code identity.

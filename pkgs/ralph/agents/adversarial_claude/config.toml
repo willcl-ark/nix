@@ -7,5 +7,5 @@ max_tool_calls = { routine = 72, standard = 72, sensitive = 72 }
 max_context_calls = 8
 max_history_calls = 8
 max_web_search_calls_per_response = 2
-timeout = 600
-final_timeout = 600
+timeout = 1800
+final_timeout = 1800

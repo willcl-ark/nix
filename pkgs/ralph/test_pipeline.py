@@ -769,8 +769,9 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(kwargs["model"], self.prompts.models[stage])
                 if stage == "adversarial_claude":
                     self.assertTrue(kwargs["first_tool_required"])
-                    self.assertEqual(kwargs["timeout"], 600)
-                    self.assertEqual(kwargs["final_timeout"], 600)
+                    settings = self.prompts.profile.stages[stage]
+                    self.assertEqual(kwargs["timeout"], settings.timeout)
+                    self.assertEqual(kwargs["final_timeout"], settings.final_timeout)
                 else:
                     self.assertTrue(kwargs["first_tool_required"])
                 rendezvous.wait(timeout=5)

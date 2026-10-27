@@ -7,8 +7,8 @@ max_tool_calls = { routine = 48, standard = 48, sensitive = 48 }
 max_context_calls = 8
 max_history_calls = 8
 max_web_search_calls_per_response = 2
-timeout = 180
-final_timeout = 180
+timeout = 1800
+final_timeout = 1800
 
 [profiles.high]
 model = "gpt-6.1-sol"

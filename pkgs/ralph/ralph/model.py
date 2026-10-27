@@ -424,7 +424,7 @@ def request_response(
     budget=None,
     is_current=None,
     api_base="https://api.openai.com/v1",
-    timeout=180,
+    timeout=1800,
     on_retry_failure=None,
 ):
     payload = _request_payload(data)
@@ -627,7 +627,7 @@ def run_audit(
     is_current=None,
     debug=None,
     api_base="https://api.openai.com/v1",
-    timeout=180,
+    timeout=1800,
 ):
     model = model_name
     limits = _limit_metrics(output_tokens=max_output_tokens)
@@ -753,8 +753,8 @@ def openai_review(
     api_base="https://api.openai.com/v1",
     research_evidence=None,
     backport_evidence=None,
-    timeout=180,
-    final_timeout=180,
+    timeout=1800,
+    final_timeout=1800,
 ):
     tools = available_tools(
         TOOLS if tools is None else tools,
