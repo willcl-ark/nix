@@ -2,6 +2,7 @@ import tempfile
 import unittest
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -200,6 +201,26 @@ class BotTests(unittest.TestCase):
         self.assertEqual(
             request.full_url,
             "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin/issues/42",
+        )
+        with patch.object(
+            urllib.request, "urlopen", return_value=Response(b"[]")
+        ) as send:
+            path = "/issues/42/comments?limit=10&page=2"
+            forgejo.public_discussion_request(self.bot_config, path)
+            forgejo.public_discussion_request(
+                replace(
+                    self.bot_config,
+                    forgejo_api="https://api.github.com/repos/bitcoin/bitcoin",
+                    repository_url="https://github.com/bitcoin/bitcoin",
+                ),
+                path,
+            )
+        self.assertEqual(
+            [call.args[0].full_url for call in send.call_args_list],
+            [
+                "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin" + path,
+                "https://api.github.com/repos/bitcoin/bitcoin/issues/42/comments?per_page=10&page=2",
+            ],
         )
         with (
             patch.object(

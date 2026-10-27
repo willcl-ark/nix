@@ -5,6 +5,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -138,7 +139,7 @@ class EvaluateTests(unittest.TestCase):
             ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
         ).stdout.strip()
 
-    def capture(self, labels=()):
+    def capture(self, labels=(), token="token"):
         details = {
             "title": "Pinned input",
             "body": "Review this.",
@@ -149,6 +150,8 @@ class EvaluateTests(unittest.TestCase):
 
         def discussion(_bot_config, path):
             now = "2026-09-30T00:00:00Z"
+            if path == "/pulls/42":
+                return details
             if path == "/issues/42":
                 return {
                     "number": 42,
@@ -170,14 +173,17 @@ class EvaluateTests(unittest.TestCase):
             patch.object(forgejo, "public_discussion_request", side_effect=discussion),
         ):
             path = evaluate.capture_case(
-                "token",
+                token,
                 self.checkout,
                 self.root / "cases",
                 42,
                 self.bot_config,
                 self.review_engine,
             )
-        request.assert_called_once_with(self.bot_config, "token", "/pulls/42")
+        if token is None:
+            request.assert_not_called()
+        else:
+            request.assert_called_once_with(self.bot_config, token, "/pulls/42")
         return path
 
     def test_backport_replay_preserves_sources_offline_and_checks_packet_hash(self):
@@ -455,7 +461,12 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(ledger.review_limit_micros, 1_000_000)
 
     def test_replay_needs_no_forgejo_or_remote_git_and_keeps_labels_separate(self):
-        manifest = self.capture()
+        self.bot_config = replace(
+            self.bot_config,
+            forgejo_api="https://api.github.com/repos/example/repo",
+            repository_url="https://github.com/example/repo",
+        )
+        manifest = self.capture(token=None)
         case = json.loads(manifest.read_text(encoding="utf-8"))
         labels = {case["case_id"]: ["Expected issue held out of model input"]}
         self.git(self.work, "commit", "--allow-empty", "-qm", "New PR head")
@@ -481,6 +492,9 @@ class EvaluateTests(unittest.TestCase):
             comment_format,
         ):
             self.assertEqual(review_case.review, case["review_input"])
+            self.assertEqual(
+                review_case.source["url"], "https://github.com/example/repo/pull/42"
+            )
             self.assertNotIn("Expected issue", review_case.review)
             self.assertEqual(review_case.snapshot.head_sha, case["head_sha"])
             self.assertEqual(review_case.snapshot.merge_base, case["merge_base"])

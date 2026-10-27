@@ -84,9 +84,17 @@ def forgejo_request(bot_config, token, path, method="GET", data=None):
 
 
 def public_discussion_request(bot_config, path):
-    """Read only discussion data available without Forgejo credentials."""
+    """Read only discussion data available without credentials."""
+    url = urllib.parse.urlsplit(f"{bot_config.forgejo_api}{path}")
+    if url.hostname == "api.github.com":
+        query = urllib.parse.parse_qsl(url.query, keep_blank_values=True)
+        url = url._replace(
+            query=urllib.parse.urlencode(
+                [("per_page" if key == "limit" else key, value) for key, value in query]
+            )
+        )
     request = urllib.request.Request(
-        f"{bot_config.forgejo_api}{path}",
+        url.geturl(),
         headers={"Accept": "application/json", "User-Agent": "ralph/1.0"},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -94,6 +102,15 @@ def public_discussion_request(bot_config, path):
     if len(content) > MAX_DISCUSSION_RESPONSE_BYTES:
         raise ValueError("Public discussion response exceeds context limit")
     return json.loads(content)
+
+
+def pull_request_url(bot_config, number):
+    path = (
+        "pull"
+        if urllib.parse.urlsplit(bot_config.repository_url).hostname == "github.com"
+        else "pulls"
+    )
+    return f"{bot_config.repository_url}/{path}/{number}"
 
 
 def search_discussions(bot_config, query, current_pr, cutoff=None):
@@ -315,7 +332,7 @@ def read_current_pr_discussion(
     title, body = _discussion_title_body(issue, cutoff, 4000)
     result = (
         f"Current PR #{number}: {title}\n"
-        f"{bot_config.repository_url}/pulls/{number}\n"
+        f"{pull_request_url(bot_config, number)}\n"
         f"{'Cutoff' if cutoff else 'Retrieved at'}: {cutoff or _retrieved_at()}\n"
         f"Description:\n{body}\n"
     )

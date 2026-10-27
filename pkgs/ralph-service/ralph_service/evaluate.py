@@ -150,7 +150,11 @@ def verify_case_pins(checkout, manifest):
 
 
 def pull_request_details(bot_config, token, number):
-    pull = forgejo.forgejo_request(bot_config, token, f"/pulls/{number}")
+    pull = (
+        forgejo.public_discussion_request(bot_config, f"/pulls/{number}")
+        if token is None
+        else forgejo.forgejo_request(bot_config, token, f"/pulls/{number}")
+    )
     base_ref = (pull.get("base") or {}).get("ref") or ""
     api_head = (pull.get("head") or {}).get("sha") or ""
     title = pull.get("title") or ""
@@ -514,7 +518,7 @@ def run_case(
                     "kind": "pull_request",
                     "repository": bot_config.github_repository or bot_config.repository,
                     "number": manifest["pr"],
-                    "url": f"{bot_config.repository_url}/pulls/{manifest['pr']}",
+                    "url": forgejo.pull_request_url(bot_config, manifest["pr"]),
                 },
                 research_evidence=research_evidence,
                 backport_evidence=backport_evidence,
@@ -1055,7 +1059,7 @@ def main(argv=None):
     capture.add_argument("--state-dir", type=Path, required=True)
     capture.add_argument("--output-dir", type=Path, required=True)
     add_config_args(capture)
-    capture.add_argument("--forgejo-token-file", type=Path, required=True)
+    capture.add_argument("--forgejo-token-file", type=Path)
     capture.add_argument("--engine", default="current")
     capture.add_argument("--engine-config", type=Path)
     capture.add_argument("--agents-dir", type=Path)
@@ -1136,7 +1140,11 @@ def main(argv=None):
             ValueError,
         ) as exc:
             parser.error(f"could not configure review engine: {exc}")
-        token = read_secret(args.forgejo_token_file, "Forgejo token")
+        token = (
+            read_secret(args.forgejo_token_file, "Forgejo token")
+            if args.forgejo_token_file is not None
+            else None
+        )
         requests = _research_requests(args.research_requests_json)
         checkout = args.state_dir / "evaluation-checkout"
         for number in args.prs:
