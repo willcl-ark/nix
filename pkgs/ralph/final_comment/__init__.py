@@ -84,6 +84,7 @@ def render(
     verification_failed=False,
     *,
     comment_format=None,
+    review_tier=None,
 ):
     if comment_format is None:
         comment_format = load_format()
@@ -312,11 +313,20 @@ def render(
                 f"- {limitation}" for limitation in dict.fromkeys(limitations)
             ),
         )
-    return _render_sections(comment_format["comment"], sections)
+    content = _render_sections(comment_format["comment"], sections)
+    if review_tier:
+        content += f"\n\nReview tier: {review_tier}"
+    return content
 
 
 def render_github(
-    findings, *, head_sha, report_url, has_retained=False, comment_format=None
+    findings,
+    *,
+    head_sha,
+    report_url,
+    has_retained=False,
+    comment_format=None,
+    review_tier=None,
 ):
     """Format major findings already selected and checked for publication."""
     comment_format = (
@@ -335,7 +345,7 @@ def render_github(
                 side=finding.get("side", "head"),
             )
         )
-    return _render_sections(
+    content = _render_sections(
         comment_format["github"],
         {
             "new_findings_notice": (
@@ -351,3 +361,6 @@ def render_github(
             "report_url": report_url,
         },
     )
+    if review_tier:
+        content += f"\n\nReview tier: {review_tier}"
+    return content

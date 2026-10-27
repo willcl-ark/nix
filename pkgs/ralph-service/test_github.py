@@ -76,6 +76,34 @@ class GitHubTests(unittest.TestCase):
             self.assertNotIn(excluded, body)
         self.assertLess(body.index("Edited body"), body.index("Edited title"))
 
+    def test_comment_uses_final_selected_tier_or_omits_missing_route(self):
+        for routing in (
+            {"proposed": {"tier": "light"}, "selected": {"tier": "sensitive"}},
+            {"proposed": {"tier": "light"}},
+            {},
+        ):
+            with self.subTest(routing=routing):
+                result = self.result()
+                result["engine"] = engine.load().identity
+                result["output"]["schema_version"] = 2
+                result["output"]["data"] = {"schema_version": 2, "routing": routing}
+                with patch.object(
+                    github,
+                    "github_request",
+                    side_effect=[
+                        {"id": 7},
+                        [],
+                        {"state": "open", "head": {"sha": "a" * 40}},
+                        {},
+                    ],
+                ) as request:
+                    self.assertEqual(self.publish(result), "created")
+                body = request.call_args.args[3]["body"]
+                self.assertEqual("Review tier:" in body, "selected" in routing)
+                if "selected" in routing:
+                    self.assertIn("Review tier: sensitive", body)
+                self.assertNotIn("Review tier: light", body)
+
     def test_failed_review_cannot_create_update_or_delete_major_comment(self):
         for findings in (self.result()["output"]["exports"]["findings"], []):
             with self.subTest(findings=bool(findings)):

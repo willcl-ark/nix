@@ -73,10 +73,13 @@ comment_format=snapshot)` uses that snapshot without rereading files. Saved
 engine configurations include the snapshot so template edits change run
 identity and replay keeps the original format.
 
+Both renderers accept `review_tier` to append the final selected routing tier
+after the template content. When no tier is available, they omit the footer.
+
 `render_github(findings, *, head_sha, report_url, has_retained=False,
-comment_format=None)` formats the shorter upstream comment. The service selects
-publishable findings and retains ownership of comment markers, revision checks
-and publication. `--github` previews only its visible text.
+comment_format=None, review_tier=None)` formats the shorter upstream comment.
+The service selects publishable findings and retains ownership of comment
+markers, revision checks and publication. `--github` previews only its visible text.
 
 Run the relevant checks from the repository root:
 

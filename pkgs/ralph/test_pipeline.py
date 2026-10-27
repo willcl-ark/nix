@@ -85,6 +85,24 @@ def candidate(title="Simplify fixture"):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_comment_reports_final_tier_after_overview_escalation(self):
+        self.tier, self.audits = "standard", []
+        stages = []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            stages.append(stage)
+            if stage == "verifier":
+                return verification()
+            return discovery(sensitive=stage == "independent")
+
+        result = self.run_review(review)
+        self.assertEqual(self.debug["routing"]["selected"]["tier"], "sensitive")
+        self.assertIn("adversarial", stages)
+        self.assertIn("adversarial_claude", stages)
+        self.assertIn("Review tier: sensitive", result)
+        self.assertNotIn("Review tier: standard", result)
+
     def test_major_verifier_checks_only_major_final_wording(self):
         self.tier, self.audits = "routine", []
         findings = [

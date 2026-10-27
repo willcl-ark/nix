@@ -92,6 +92,10 @@ def publish_major_findings(repository, token, number, result):
             report_url=report_url,
             has_retained=bool(retained),
             comment_format=comment_format,
+            review_tier=trace.current_diagnostics(result)
+            .get("routing", {})
+            .get("selected", {})
+            .get("tier"),
         )
     )
     if comment is None:

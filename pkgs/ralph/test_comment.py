@@ -37,6 +37,23 @@ class CommentTests(unittest.TestCase):
                         renderer(**json.loads(example.read_text())) + "\n",
                     )
 
+    def test_review_tier_preserves_empty_review_and_is_optional(self):
+        rendered = final_comment.render([], review_tier="sensitive")
+        self.assertIn("Review tier: sensitive", rendered)
+        self.assertIn("I found no actionable issues", rendered)
+        self.assertNotIn("Review tier:", final_comment.render([]))
+        for tier in ("sensitive", None):
+            with self.subTest(tier=tier):
+                rendered = final_comment.render_github(
+                    [],
+                    head_sha="abc",
+                    report_url="https://example.com/report",
+                    review_tier=tier,
+                )
+                self.assertEqual("Review tier:" in rendered, tier is not None)
+                if tier:
+                    self.assertIn("Review tier: sensitive", rendered)
+
     def test_layout_edits_use_the_saved_template_snapshot(self):
         comment_format = final_comment.load_format()
         comment_format["finding"] = "${body}\n\n${title}: ${location} (${side})"

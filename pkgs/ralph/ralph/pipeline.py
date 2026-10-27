@@ -954,6 +954,7 @@ def review_with_independent_passes(
         verified_alternatives,
         debug.get("backport_assessment"),
         review_memory=debug.get("review_memory"),
+        review_tier=plan["tier"],
         verification_failed=debug["coverage"]["verification"]["status"] == "failed",
         comment_format=comment_format,
     )
