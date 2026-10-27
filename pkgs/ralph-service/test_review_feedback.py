@@ -32,6 +32,7 @@ class ReviewFeedbackTests(unittest.TestCase):
                             {
                                 "id": "F1",
                                 "title": "Recovery",
+                                "summary": "Recovery fails after an interrupted write.",
                                 "body": "Bug",
                                 "severity": "major",
                                 "path": "a.cpp",
@@ -40,7 +41,7 @@ class ReviewFeedbackTests(unittest.TestCase):
                         ]
                     },
                 },
-                "run": {},
+                "run": {"report_url": "https://reports.example/original.html"},
             },
         }
 
@@ -67,26 +68,39 @@ class ReviewFeedbackTests(unittest.TestCase):
     def test_memory_survives_no_rediscovery_and_unavailable_discussion(self):
         old = self.collect([self.old], allow_discussions=False)
         original = old["findings"][0]
+        self.assertEqual(
+            original["summary"], "Recovery fails after an interrupted write."
+        )
+        self.assertEqual(
+            original["source_report_url"], "https://reports.example/original.html"
+        )
         carried = {
             **original,
             "author_position": "deferred",
             "status": "unclear",
             "collapsed": True,
         }
+        del carried["source_report_url"]
         newer = {
             **self.old,
             "id": 2,
             "generation": 2,
             "review_result": {
-                "output": {"exports": {"findings": [], "review_memory": [carried]}}
+                "output": {"exports": {"findings": [], "review_memory": [carried]}},
+                "run": {"report_url": "https://reports.example/newer.html"},
             },
         }
         with patch.object(
             review_feedback, "_comments", side_effect=ValueError("unavailable")
         ):
             packet = self.collect([self.old, newer])
-        self.assertEqual(packet["findings"], [carried])
+        self.assertEqual(
+            packet["findings"],
+            [{**carried, "source_report_url": original["source_report_url"]}],
+        )
         self.assertTrue(packet["errors"])
+        without_original = self.collect([newer], allow_discussions=False)
+        self.assertNotIn("source_report_url", without_original["findings"][0])
         foreign = {
             **self.old,
             "review_result": {
@@ -99,6 +113,16 @@ class ReviewFeedbackTests(unittest.TestCase):
     def test_rediscovery_keeps_original_identity_and_stable_fingerprint(self):
         original = self.collect([self.old], allow_discussions=False)["findings"][0]
         current = {**original, "current_finding_ids": ["F2"]}
+        presented = {
+            "title": "Recovery after restart",
+            "summary": "Restarting after an interrupted write loses recovery data.",
+            "body": "Preserve the recovery file until the write completes.",
+            "severity": "major",
+            "kind": "defect",
+            "path": "a.cpp",
+            "line": 3,
+            "side": "head",
+        }
         newer = {
             **self.old,
             "id": 2,
@@ -108,7 +132,15 @@ class ReviewFeedbackTests(unittest.TestCase):
                 "output": {
                     "schema_version": 1,
                     "exports": {
-                        "findings": [{"id": "F2", "title": "Recovery"}],
+                        "findings": [
+                            {
+                                "id": "F2",
+                                **presented,
+                                "body": "Unedited body",
+                                "presented_body": presented["body"],
+                                "source_evidence": "Full source excerpt",
+                            }
+                        ],
                         "review_memory": [current],
                     },
                 },
@@ -120,8 +152,28 @@ class ReviewFeedbackTests(unittest.TestCase):
         second = self.collect(
             [self.old, newer], allow_discussions=False, cutoff="2026-02-01T00:00:00Z"
         )
-        self.assertEqual(first["findings"], [current])
+        expected = {**current, "last_presented_findings": [presented]}
+        self.assertEqual(first["findings"], [expected])
         self.assertEqual(first["fingerprint"], second["fingerprint"])
+        no_rediscovery = {
+            **newer,
+            "id": 3,
+            "generation": 3,
+            "review_result": {
+                "output": {
+                    "exports": {
+                        "findings": [],
+                        "review_memory": [{**current, "current_finding_ids": []}],
+                    }
+                }
+            },
+        }
+        following = self.collect(
+            [self.old, newer, no_rediscovery], allow_discussions=False
+        )
+        self.assertEqual(
+            following["findings"], [{**expected, "current_finding_ids": []}]
+        )
 
     def test_only_trusted_author_text_is_captured_uninterpreted(self):
         malicious = (

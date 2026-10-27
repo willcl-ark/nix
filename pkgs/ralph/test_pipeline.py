@@ -200,6 +200,7 @@ class PipelineTests(unittest.TestCase):
             text, response = self.edit(*args, **kwargs)
             result = json.loads(text)
             for finding in result["findings"]:
+                finding["summary"] = "Final impact summary"
                 finding["body"] = "Final public wording"
             return json.dumps(result), response
 
@@ -225,6 +226,11 @@ class PipelineTests(unittest.TestCase):
             ["finding:1", "finding:3", "finding:4"],
         )
         self.assertEqual(self.result.findings[0]["verified_by"], "major_verifier")
+        self.assertEqual(self.result.findings[0]["summary"], self.published["summary"])
+        self.assertEqual(
+            self.result.findings[0]["presented_summary"], "Final impact summary"
+        )
+        self.assertIn("Final impact summary", self.result.content)
         self.assertEqual(self.result.findings[0]["raised_by"], ["independent"])
         self.assertEqual(self.result.findings[1]["verified_by"], "verifier")
         self.assertEqual(self.debug["decisions"][1]["disposition"], "drop")
@@ -441,6 +447,7 @@ class PipelineTests(unittest.TestCase):
             "line": 3,
             "side": "head",
             "title": "Simplify fixture",
+            "summary": "Duplicated setup makes the fixtures harder to maintain.",
             "body": "Reuse the fixture while preserving the regression check.",
             "security": {
                 "classification": "non_security",
@@ -483,7 +490,12 @@ class PipelineTests(unittest.TestCase):
             {
                 "concept_summary": concept_summary,
                 "findings": [
-                    {"id": item["id"], "title": item["title"], "body": item["body"]}
+                    {
+                        "id": item["id"],
+                        "title": item["title"],
+                        "summary": item["summary"],
+                        "body": item["body"],
+                    }
                     for item in findings
                 ],
             }
@@ -599,7 +611,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(entry["severity"], self.published["severity"])
         self.assertEqual(entry["status"], "unclear")
         self.assertFalse(entry["collapsed"])
-        self.assertIn("##### Findings", self.result.content)
+        self.assertIn("##### Previous findings", self.result.content)
         self.assertIn(self.published["title"], self.result.content)
         self.assertNotIn("Previous findings and author responses", self.result.content)
 
@@ -640,6 +652,7 @@ class PipelineTests(unittest.TestCase):
                     "status": reconciliation_status,
                     "candidate_ids": ["independent:1"],
                     "unchanged": True,
+                    "unchanged_since_report": True,
                     "reason": "The same setup appears in base and head.",
                     "source_evidence": [
                         {**self.published["source_evidence"][0], "side": side}
@@ -683,12 +696,21 @@ class PipelineTests(unittest.TestCase):
         entry = self.debug["review_memory"][0]
         self.assertEqual(entry["status"], "still_present")
         self.assertTrue(entry["collapsed"])
+        self.assertTrue(entry["unchanged_since_report"])
+        self.assertEqual(entry["checked_head"], self.snapshot.head_sha)
         self.assertEqual(entry["current_finding_ids"], ["finding:1"])
 
         self.published["severity"] = "minor"
         self.run_review(reviewer, editor=audit, review_feedback=packet)
         self.assertFalse(self.debug["review_memory"][0]["collapsed"])
+        self.assertFalse(self.debug["review_memory"][0]["unchanged_since_report"])
         self.assertEqual(self.result.findings[0]["severity"], "minor")
+
+        packet["findings"][0]["last_presented_findings"] = [dict(self.published)]
+        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.assertTrue(self.debug["review_memory"][0]["unchanged_since_report"])
+        self.assertFalse(self.debug["review_memory"][0]["collapsed"])
+        self.assertNotIn("##### Findings", self.result.content)
 
         for reconciliation_status in ("fixed", "invalid"):
             with self.subTest(reconciliation_status=reconciliation_status):
@@ -709,7 +731,10 @@ class PipelineTests(unittest.TestCase):
         self.run_review(reviewer, editor=audit, review_feedback=packet)
         self.assertTrue(all(not e["collapsed"] for e in self.debug["review_memory"]))
         self.assertEqual(self.debug["review_memory"][1]["duplicate_of"], "previous:1")
-        self.assertIn("##### Findings", self.result.content)
+        self.assertIn("##### Previous findings", self.result.content)
+        self.assertTrue(
+            all(e["unchanged_since_report"] for e in self.debug["review_memory"])
+        )
 
     def test_invalid_reconciliation_preserves_normal_verified_finding(self):
         self.tier, self.audits = "routine", []

@@ -1,5 +1,6 @@
 """Render verified review results with contributor-editable Markdown templates."""
 
+from html import escape
 from pathlib import Path
 from string import Template
 from urllib.parse import urlsplit
@@ -17,8 +18,10 @@ _PLACEHOLDERS = {
     ),
     "backport": ("verdict", "summary", "details"),
     "findings": ("findings",),
-    "severity": ("heading", "findings"),
-    "finding": ("title", "location", "side", "body"),
+    "finding": ("severity", "title", "summary", "location", "side", "body"),
+    "retained": ("label", "summary", "location", "side", "body", "provenance"),
+    "provenance": ("provenance",),
+    "resolved": ("history",),
     "design": ("design",),
     "alternatives": ("alternatives",),
     "history": ("unresolved_notice", "history"),
@@ -122,36 +125,20 @@ def render(
         key = entry.get("duplicate_of") or entry.get("key") or index
         memory_groups.setdefault(key, []).append(entry)
 
-    def has_response(entry):
-        return entry.get("author_position", "none") != "none" and bool(
-            entry.get("author_comments")
-        )
-
     def active_entries(group):
         return [
             entry for entry in group if entry.get("status") not in ("fixed", "invalid")
         ]
 
-    collapsed_ids = {
-        finding_id
-        for group in memory_groups.values()
-        if active_entries(group)
-        and all(
-            has_response(entry)
-            and entry.get("collapsed")
-            and entry.get("status") == "still_present"
-            for entry in active_entries(group)
-        )
-        for entry in active_entries(group)
-        for finding_id in entry.get("current_finding_ids", [])
-    }
     finding_groups = {}
     design_findings = []
 
     def finding_text(finding):
         return fill(
             "finding",
+            severity=finding["severity"].capitalize(),
             title=finding.get("title", ""),
+            summary=finding["summary"],
             location=f"{finding.get('path', '')}:{finding.get('line', '')}",
             side=finding.get("side", "head"),
             body=finding.get("body", ""),
@@ -159,96 +146,145 @@ def render(
 
     def previous_report(entry):
         status = entry.get("status", "unclear")
-        previous = "Previously reported"
+        parts = []
         if status == "unclear":
-            previous += "; not confirmed against this revision"
-        elif status == "still_present":
-            previous += "; verified as still present in this revision"
-        text = f"{previous}. Status: {status}. Author position: {entry.get('author_position', 'none')}."
+            parts.append("Not confirmed against this revision.")
+        elif status == "fixed":
+            parts.append("Fixed.")
+        elif status == "invalid":
+            parts.append("No longer considered actionable.")
         if entry.get("source_head"):
-            text += f" Originally reported at `{entry['source_head']}`."
-        if entry.get("reason"):
-            text += " " + entry["reason"]
+            parts.append(f"First reported at `{entry['source_head']}`.")
+        report_url = entry.get("source_report_url", "")
+        if urlsplit(report_url).scheme in ("https", "http"):
+            report_url = report_url.replace("(", "%28").replace(")", "%29")
+            parts.append(f"[Original review]({report_url}).")
+        if entry.get("checked_head"):
+            parts.append(f"Last checked at `{entry['checked_head']}`.")
+        if entry.get("reason") and status != "still_present":
+            parts.append(entry["reason"])
+        position = {
+            "address_elsewhere": "The author plans to address this separately.",
+            "wontfix": "The author does not plan to fix this.",
+            "rejected": "The author disagrees with this finding.",
+        }.get(entry.get("author_position"))
+        if position:
+            parts.append(position)
         for comment in entry.get("author_comments", []):
             url = comment.get("url", "")
             if urlsplit(url).scheme in ("https", "http"):
                 url = url.replace("(", "%28").replace(")", "%29")
-                text += f" [Author reply]({url}) {comment.get('updated_at', '')}"
-        return text
+                parts.append(
+                    f"[Author reply]({url}) {comment.get('updated_at', '')}".rstrip()
+                )
+        return " ".join(parts)
 
     severity_order = ("critical", "major", "minor", "suggestion")
+
+    def published_findings(entry):
+        if entry.get("last_presented_findings"):
+            return entry["last_presented_findings"]
+        finding = dict(entry)
+        for field in ("title", "summary", "body"):
+            if entry.get("presented_" + field):
+                finding[field] = entry["presented_" + field]
+        return [finding]
 
     def representative(group):
         return min(
             group,
-            key=lambda entry: severity_order.index(entry.get("severity", "suggestion")),
+            key=lambda entry: min(
+                severity_order.index(finding.get("severity", "suggestion"))
+                for finding in published_findings(entry)
+            ),
         )
 
-    def memory_text(group, finding):
-        text = finding_text(finding)
+    def provenance(group):
         if len(group) == 1:
-            return text + "\n\n" + previous_report(group[0])
+            return previous_report(group[0])
         reports = [
             f"- {entry.get('path', '')}:{entry.get('line', '')}. {previous_report(entry)}"
             for entry in group
         ]
-        return (
-            text + "\n\nPrevious reports of the same concern:\n\n" + "\n".join(reports)
+        return "Previous reports of the same concern:\n\n" + "\n".join(reports)
+
+    def memory_text(groups, finding):
+        active = [entry for group in groups for entry in active_entries(group)]
+        status = (
+            "still present"
+            if active and all(item.get("status") == "still_present" for item in active)
+            else "not confirmed"
+            if active
+            else "resolved"
+        )
+        return fill(
+            "retained",
+            label=escape(
+                f"[{finding['severity'].capitalize()} · {status}] {finding['title']}"
+            ),
+            summary=finding.get("summary", ""),
+            location=f"{finding.get('path', '')}:{finding.get('line', '')}",
+            side=finding.get("side", "head"),
+            body=finding.get("body", ""),
+            provenance="\n\n".join(provenance(group) for group in groups),
         )
 
-    remaining = dict(memory_groups)
+    matched_groups = set()
+    history = []
+    resolved_history = []
+    unresolved_history = []
     for finding in findings:
-        if finding["id"] in collapsed_ids:
-            continue
         text = finding_text(finding)
-        for key, group in list(remaining.items()):
-            ids = {
-                identifier
+        linked = {
+            key: group
+            for key, group in memory_groups.items()
+            if any(
+                finding["id"] in entry.get("current_finding_ids", [])
                 for entry in active_entries(group)
-                for identifier in entry.get("current_finding_ids", [])
-            }
-            if finding["id"] in ids:
-                text = memory_text(group, finding)
-                del remaining[key]
-                break
+            )
+        }
+        if linked:
+            matched_groups.update(linked)
+            if all(
+                entry.get("status") == "still_present"
+                and entry.get("unchanged_since_report")
+                for group in linked.values()
+                for entry in active_entries(group)
+            ):
+                history.append(memory_text(linked.values(), finding))
+                unresolved_history.append(finding)
+                continue
+            text += "\n\n" + fill(
+                "provenance",
+                provenance="\n\n".join(provenance(group) for group in linked.values()),
+            )
         if finding["kind"] == "design":
             design_findings.append(text)
         else:
             finding_groups.setdefault(finding["severity"], []).append(text)
-    history = []
-    unresolved_history = []
-    for group in remaining.values():
-        active = active_entries(group)
-        eligible = active or [entry for entry in group if has_response(entry)]
-        if not eligible:
+    for key, group in memory_groups.items():
+        if key in matched_groups:
             continue
+        active = active_entries(group)
+        eligible = active or group
         entry = representative(eligible)
-        if verification_failed:
-            history.append(
-                f"- **{entry.get('title', '')}** ({entry.get('path', '')}:"
-                f"{entry.get('line', '')}, {entry.get('side', 'head')}). "
-                f"Status: {entry.get('status', 'unclear')}."
-            )
-        elif all(has_response(item) for item in eligible):
-            history.append(memory_text(group, entry))
-            if active:
-                unresolved_history.append(entry)
-        else:
-            finding_groups.setdefault(entry.get("severity", "suggestion"), []).append(
-                memory_text(group, entry)
-            )
+        for finding in published_findings(entry):
+            if verification_failed:
+                history.append(
+                    f"- **{finding.get('title', '')}** ({finding.get('path', '')}:"
+                    f"{finding.get('line', '')}, {finding.get('side', 'head')}). "
+                    f"Status: {entry.get('status', 'unclear')}."
+                )
+            elif active:
+                history.append(memory_text([group], finding))
+                unresolved_history.append(finding)
+            else:
+                resolved_history.append(memory_text([group], finding))
     rendered_findings = []
-    for severity, heading in (
-        ("critical", "Critical"),
-        ("major", "Major"),
-        ("minor", "Minor"),
-        ("suggestion", "Suggestions"),
-    ):
+    for severity in severity_order:
         group = finding_groups.get(severity, [])
         if group:
-            rendered_findings.append(
-                fill("severity", heading=heading, findings="\n\n".join(group))
-            )
+            rendered_findings.extend(group)
     if rendered_findings:
         sections["findings"] = fill("findings", findings="\n\n".join(rendered_findings))
     rendered_design = []
@@ -277,7 +313,7 @@ def render(
         sections["alternatives"] = fill(
             "alternatives", alternatives="\n\n".join(rendered_alternatives)
         )
-    if history:
+    if history or resolved_history:
         unresolved_notice = ""
         if unresolved_history:
             severities = {}
@@ -288,9 +324,10 @@ def render(
                 f"{count} {severity}" for severity, count in severities.items()
             )
             unresolved_notice = (
-                f"Previously reported concerns remain unresolved: {counts}. "
-                "Author deferral or disagreement does not resolve a finding.\n\n"
+                f"Previously reported concerns remain unresolved: {counts}.\n\n"
             )
+        if resolved_history:
+            history.append(fill("resolved", history="\n\n".join(resolved_history)))
         if verification_failed:
             sections["history"] = fill("history_failed", history="\n\n".join(history))
         else:
@@ -340,6 +377,8 @@ def render_github(
         rendered.append(
             Template(comment_format["finding"]).substitute(
                 title=finding.get("presented_title") or finding["title"],
+                severity=finding["severity"].capitalize(),
+                summary=finding.get("presented_summary") or finding["summary"],
                 body=finding.get("presented_body") or finding["body"],
                 location=location,
                 side=finding.get("side", "head"),

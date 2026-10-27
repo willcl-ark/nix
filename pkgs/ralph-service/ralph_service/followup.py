@@ -106,6 +106,7 @@ def _published_findings(job):
             "title": title,
             "path": path,
             "line": line,
+            "summary": item.get("presented_summary") or item.get("summary", ""),
             "body": item.get("presented_body") or item.get("body", ""),
             "source_head": _head(job) or "",
         }
@@ -319,6 +320,7 @@ def _model_input(
                 "title": candidate["title"],
                 "path": candidate["path"],
                 "source_head": source_head,
+                "summary": candidate.get("summary", ""),
                 "body": candidate.get("body", ""),
                 "source_to_new_path_diff": source_to_new_diff,
                 "old_file_excerpt": old_file_excerpt,

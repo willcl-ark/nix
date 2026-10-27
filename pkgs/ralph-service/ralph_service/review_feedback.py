@@ -187,7 +187,8 @@ def collect_review_feedback(
             if isinstance(entry, dict)
             for candidate_id in entry.get("current_finding_ids", [])
         }
-        for item in trace.findings_export(result) or []:
+        findings = trace.findings_export(result) or []
+        for item in findings:
             if (
                 not isinstance(item, dict)
                 or not item.get("id")
@@ -200,6 +201,7 @@ def collect_review_feedback(
                 "source_job_id": row["id"],
                 "source_generation": row["generation"],
                 "source_head": result.get("head_sha") or row["head"],
+                "source_report_url": result.get("run", {}).get("report_url"),
                 "status": "unclear",
                 "key": f"{row['id']}:{row['generation']}:{item['id']}",
             }
@@ -212,6 +214,34 @@ def collect_review_feedback(
                 for field in ("source_job_id", "source_generation", "finding_id")
             )
             if all(value is not None for value in key):
+                source_report_url = previous.get(key, {}).get("source_report_url")
+                if source_report_url and not item.get("source_report_url"):
+                    item = {**item, "source_report_url": source_report_url}
+                last_presented = [
+                    {
+                        **{
+                            field: finding.get(f"presented_{field}")
+                            or finding.get(field)
+                            for field in ("title", "summary", "body")
+                            if finding.get(f"presented_{field}") or finding.get(field)
+                        },
+                        **{
+                            field: finding[field]
+                            for field in ("severity", "kind", "path", "line", "side")
+                            if field in finding
+                        },
+                    }
+                    for finding in findings
+                    if isinstance(finding, dict)
+                    and finding.get("id") in item.get("current_finding_ids", [])
+                ]
+                last_presented = (
+                    last_presented
+                    or item.get("last_presented_findings")
+                    or previous.get(key, {}).get("last_presented_findings")
+                )
+                if last_presented:
+                    item = {**item, "last_presented_findings": last_presented}
                 previous[key] = item
     if not previous:
         return None

@@ -29,16 +29,16 @@ in its current form" when supplied. Keep the supporting costs, limited benefit,
 and alternative. Do not replace it with "consider simplifying" or generic
 hedging. Keep criticism about the proposal, not the author's motives or ability.
 
-Edit each accepted title and body into concise, clear review prose. Do not add
-repository facts, preconditions, locations, or fixes unless the verifier
+Edit each accepted title, summary, and body into concise, clear review prose.
+Do not add repository facts, preconditions, locations, or fixes unless the verifier
 supplied them. Keep verified facts distinct from uncertainty. For judgment calls
 about documentation, design, or scope, state the reason plainly. State proven
 behavior directly while preserving limits on production evidence. Do not say
 "I think" in every finding.
 
 Return the collator object in the supplied schema. Include every accepted
-finding ID exactly once, with its edited title and body. If a concept assessment
-is supplied, set `concept_summary` to two or three sentences for the public
+finding ID exactly once, with its edited title, summary, and body. If a concept
+assessment is supplied, set `concept_summary` to two or three sentences for the public
 review's "Concept and approach" paragraph under "Design and approach". If no
 concept assessment is supplied,
 set `concept_summary` to null. Do not omit a supplied concept assessment.

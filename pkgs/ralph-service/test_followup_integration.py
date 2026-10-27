@@ -115,6 +115,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                 "path": "sample.cpp",
                 "line": 1,
                 "side": "head",
+                "summary": "A zero divisor crashes the operation.",
                 "body": "Reject a zero divisor.",
                 "kind": "defect",
                 "severity": "medium",
@@ -149,6 +150,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                                 "title", finding.get("title")
                             ),
                             "presented_body": finding.get("body", ""),
+                            "presented_summary": finding.get("summary", ""),
                         }
                     )
                 jobs.save_result(
@@ -251,6 +253,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                     send.call_args.args[0], "http://127.0.0.1:8317/v1/responses"
                 )
                 self.assertEqual(send.call_args.args[2], "proxy-key")
+                self.assertIn(finding["summary"], send.call_args.args[1].decode())
             self.assertEqual(
                 before,
                 [hashlib.sha256(path.read_bytes()).digest() for path in protected],

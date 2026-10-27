@@ -7,6 +7,40 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    def test_finding_summary_and_explanation_survive_public_report(self):
+        finding = {
+            "id": "finding:1",
+            "title": "Handle a zero divisor",
+            "summary": "A zero divisor crashes the operation.",
+            "body": "Reject zero before dividing the supplied value.",
+        }
+        for engine_name in ("current", "external"):
+            with (
+                self.subTest(engine=engine_name),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                result = {
+                    "schema_version": 1,
+                    "engine": {"name": engine_name},
+                    "output": {
+                        "schema_version": 2,
+                        "data": {
+                            "schema_version": 2,
+                            "decisions": [
+                                {"disposition": "publish", "finding": finding}
+                            ],
+                        },
+                        "exports": {"findings": [finding]},
+                    },
+                }
+                root = Path(directory)
+                name = report.save_report(root, 123, result, "finding-review")
+                rendered = (root / name).read_text()
+                public = json.loads((root / "finding-review.json").read_text())
+                for field in ("summary", "body"):
+                    self.assertIn(finding[field], rendered)
+                    self.assertEqual(public["findings"][0][field], finding[field])
+
     def test_experiment_artifacts_are_visible_without_exposing_runner_internals(self):
         command = {
             "id": "command:1",

@@ -1,3 +1,3 @@
-${unresolved_notice}##### Previous findings and author responses
+${unresolved_notice}##### Previous findings
 
 ${history}

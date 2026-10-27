@@ -1,5 +1,8 @@
+import shutil
+import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -7,6 +10,29 @@ from ralph import config, current_engine, engine, pipeline
 
 
 class StageConfigurationTests(unittest.TestCase):
+    def test_shared_finding_format_is_loaded_and_frozen_with_prompts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agents_dir = Path(directory) / "agents"
+            shutil.copytree(config.DEFAULT_AGENTS_DIR, agents_dir)
+            baseline = engine.load(config={"agents_dir": str(agents_dir)})
+            format_file = agents_dir / "shared/finding-format.md"
+            instruction = "A changed instruction for public findings."
+            format_file.write_text(instruction + "\n", encoding="utf-8")
+            changed = engine.load(config={"agents_dir": str(agents_dir)})
+            for stage in ("verifier", "collator"):
+                self.assertTrue(
+                    changed.config["prompts"]["audit_prompts"][stage].endswith(
+                        "\n\n" + instruction
+                    )
+                )
+            self.assertNotEqual(
+                baseline.identity["config_sha256"], changed.identity["config_sha256"]
+            )
+            format_file.write_text(" \n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "finding format must not be empty"):
+                config.PromptConfig.load(agents_dir)
+            self.assertEqual(current_engine.configure(changed.config), changed.config)
+
     def test_stage_override_survives_high_profile_and_changes_identity(self):
         baseline = engine.load(config={"profile": "high"})
         changed = engine.load(
@@ -89,7 +115,7 @@ class StageConfigurationTests(unittest.TestCase):
         baseline = engine.load()
         settings = baseline.config
         settings["comment_format"]["finding"] = (
-            "${body}\n\n${title} ${location} ${side}"
+            "${body}\n\n${severity} ${title} ${summary} ${location} ${side}"
         )
         changed = engine.load(config=settings)
         self.assertNotEqual(

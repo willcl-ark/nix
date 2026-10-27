@@ -54,6 +54,11 @@ whether they still hold; an author's disagreement alone cannot dismiss them.
 
 The [collator](collator/prompt.md) edits accepted wording without repository
 access. It must preserve finding IDs, locations and the accepted claims.
+Both stages automatically receive the [public finding format](shared/finding-format.md),
+which defines the title, summary, and collapsible explanation. Edit that shared
+file to change their writing guidance together. The loaded text is saved with
+each review's resolved prompts.
+
 The [write-verifier](write_verifier/prompt.md) can attempt reproduction of Major
 findings with Sol 6.1 high. It reports experimental evidence and limitations.
 Inconclusive experiments and runner failures do not veto supported findings.

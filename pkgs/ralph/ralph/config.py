@@ -74,4 +74,9 @@ class PromptConfig:
         )
         if any(not prompt.strip() for prompt in prompts.values()):
             raise ValueError("agent prompt files must not be empty")
+        finding_format = load_prompt_file(agents_dir / "shared/finding-format.md")
+        if not finding_format.strip():
+            raise ValueError("shared finding format must not be empty")
+        for name in ("verifier", "collator"):
+            prompts[name] += f"\n\n{finding_format}"
         return cls(prompts.pop("independent"), prompts, selected)

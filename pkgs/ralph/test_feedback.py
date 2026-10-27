@@ -63,6 +63,7 @@ class FeedbackTests(unittest.TestCase):
             "status": "still_present",
             "candidate_ids": ["review:1"],
             "unchanged": False,
+            "unchanged_since_report": True,
             "reason": "The new trigger still reaches the shared limitation.",
             "source_evidence": [
                 {
@@ -92,6 +93,7 @@ class FeedbackTests(unittest.TestCase):
         record = self.reconcile([self.assessment(status="fixed", source_evidence=[])])
         self.assertEqual(record["status"], "unclear")
         self.assertFalse(record["collapsed"])
+        self.assertFalse(record["unchanged_since_report"])
         self.assertEqual(record["severity"], "major")
 
     def test_undiscovered_and_previously_collapsed_findings_survive(self):
@@ -106,15 +108,21 @@ class FeedbackTests(unittest.TestCase):
     def test_collapse_requires_checked_base_and_head_and_explicit_reply(self):
         assessment = self.assessment(unchanged=True)
         self.assertFalse(self.reconcile([assessment])["collapsed"])
+        self.assertTrue(self.reconcile([assessment])["unchanged_since_report"])
         assessment["source_evidence"] = [
             {"path": "index.cpp", "line": 1, "side": side, "excerpt": "shared_limit();"}
             for side in ("base", "head")
         ]
         record = self.reconcile([assessment])
         self.assertTrue(record["collapsed"])
+        self.assertTrue(record["unchanged_since_report"])
+        self.assertEqual(record["checked_head"], self.snapshot.head_sha)
         self.assertEqual(record["status"], "still_present")
         self.assertEqual(record["body"], self.packet["findings"][0]["body"])
         self.assertFalse(self.reconcile([assessment], {"mappings": []})["collapsed"])
+        self.assertTrue(
+            self.reconcile([assessment], {"mappings": []})["unchanged_since_report"]
+        )
 
     def test_invalid_references_and_fabricated_evidence_fail_open(self):
         for field, value in (

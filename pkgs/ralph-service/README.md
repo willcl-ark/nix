@@ -83,6 +83,12 @@ agents by default. Use `--agents-dir DIR` or `services.ralph.agentsDir` to selec
 a complete alternate agent directory. `ralph-evaluate capture` and `run` accept
 the same option; replay keeps the captured settings unless explicitly overridden.
 
+New findings show an actionable title and one sentence explaining the impact,
+with the detailed explanation in an expandable section. Unchanged retained
+findings use compact expandable entries. Resolved findings stay in collapsed
+history as the service updates the same comment each round. Saved review reports
+preserve both the summary and detailed explanation.
+
 The follow-up command loads its own `audits/addressed_findings.md` and default
 model. Use `ralph-followup --prompt-file FILE --model MODEL` to override those
 settings. Main-review agent settings do not affect follow-up.

@@ -8,7 +8,8 @@
       "path": "src/index.cpp",
       "line": 42,
       "side": "head",
-      "body": "An interrupted write leaves the next startup with neither index. Keep the old file until the replacement has been written and committed."
+      "body": "An interrupted write leaves the next startup with neither index. Keep the old file until the replacement has been written and committed.",
+      "summary": "An interrupted replacement can leave the next startup without either index."
     },
     {
       "id": "finding:2",
@@ -18,7 +19,8 @@
       "path": "test/index_tests.cpp",
       "line": 18,
       "side": "head",
-      "body": "The shared fixture already removes its temporary directory after a failed assertion. Reusing it would remove the duplicate cleanup path."
+      "body": "The shared fixture already removes its temporary directory after a failed assertion. Reusing it would remove the duplicate cleanup path.",
+      "summary": "The shared fixture would remove duplicate cleanup code."
     },
     {
       "id": "finding:3",
@@ -28,7 +30,8 @@
       "path": "src/index.cpp",
       "line": 27,
       "side": "head",
-      "body": "Moving the replacement operation into the writer would give one component responsibility for creating and committing the new file."
+      "body": "Moving the replacement operation into the writer would give one component responsibility for creating and committing the new file.",
+      "summary": "The writer should own both creation and commit of the replacement."
     }
   ],
   "concept_summary": "Replacing the index in one operation reduces the recovery states that callers must handle. The writer still needs a clear rule for when the replacement becomes durable.",
@@ -59,7 +62,26 @@
         {"url": "https://example.invalid/review#reply", "updated_at": "2026-01-01"}
       ],
       "collapsed": true,
-      "current_finding_ids": []
+      "current_finding_ids": [],
+      "summary": "A later update can reuse a temporary file left by failed cleanup.",
+      "unchanged_since_report": true,
+      "checked_head": "example-new-revision",
+      "source_report_url": "https://example.invalid/ralph/previous-report"
+    },
+    {
+      "key": "prior:2",
+      "title": "Release the file lock after a failed write",
+      "summary": "A failed update could prevent the next update from acquiring the lock.",
+      "body": "The error path returned before releasing the file lock. The new scope guard now releases the lock on every exit.",
+      "path": "src/index.cpp",
+      "line": 75,
+      "side": "head",
+      "severity": "major",
+      "status": "fixed",
+      "source_head": "example-old-revision",
+      "checked_head": "example-new-revision",
+      "reason": "The scope guard covers the early return.",
+      "author_position": "none"
     }
   ],
   "limitations": ["The storage failure scenario was checked in source; it was not reproduced on a running node."]

@@ -565,6 +565,7 @@ def _published_findings(verified, edited, candidate_sources, models, was_edited)
             {
                 **finding,
                 "presented_title": presented[identifier]["title"],
+                "presented_summary": presented[identifier]["summary"],
                 "presented_body": presented[identifier]["body"],
                 "raised_by": sources,
                 "raised_by_models": sorted({models[stage] for stage in sources}),
@@ -1043,15 +1044,29 @@ def review_with_independent_passes(
                 status="unclear",
                 reason="The reconciliation conflicts with a verified current finding.",
                 collapsed=False,
+                unchanged_since_report=False,
             )
         severity_order = {"suggestion": 0, "minor": 1, "major": 2, "critical": 3}
-        if any(
-            finding["id"] in entry["current_finding_ids"]
-            and severity_order.get(finding["severity"], 3)
-            > severity_order.get(entry.get("severity"), 0)
-            for finding in published
-        ):
+        current_severity = max(
+            (
+                severity_order.get(finding["severity"], 3)
+                for finding in published
+                if finding["id"] in entry["current_finding_ids"]
+            ),
+            default=-1,
+        )
+        original_severity = severity_order.get(entry.get("severity"), 0)
+        if current_severity > original_severity:
             entry["collapsed"] = False
+        previous_severity = max(
+            (
+                severity_order.get(finding.get("severity"), 3)
+                for finding in entry.get("last_presented_findings", [])
+            ),
+            default=original_severity,
+        )
+        if current_severity > previous_severity:
+            entry["unchanged_since_report"] = False
     for finding in published:
         linked_groups = {
             entry.get("duplicate_of") or entry["key"]
@@ -1075,6 +1090,7 @@ def review_with_independent_passes(
             "finding_id": finding["id"],
             **{key: finding[key] for key in ("title", "path", "line", "side")},
             "presented_body": finding["body"],
+            "presented_summary": finding["summary"],
             "candidate_ids": finding_candidates[finding["id"]],
             **{
                 key: published_by_id[finding["id"]][key]

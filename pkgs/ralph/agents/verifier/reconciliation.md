@@ -13,6 +13,17 @@ suppression rules for other PRs. Author replies may inform author intent and pre
 verifier exclusion of historical discussion. Normal findings still require normal
 verification; replies cannot alter their technical verdicts.
 
+Separately set `unchanged_since_report` for compact presentation. Compare the
+current claim with `last_presented_findings` when supplied, otherwise the stored
+prior finding. Set it true only for a source-verified `still_present` concern
+whose trigger, mechanism and consequence have no material new information since
+that report. Rewording or a moved source line alone is not a material change.
+A repeated regression introduced by this PR can be unchanged since its report
+even though `unchanged` above must be false. Identical revision hashes alone do
+not establish this: a newly verified trigger or consequence still matters.
+Use false when the comparison is uncertain. This presentation decision does not
+authorize suppressing upstream publication or change the technical status.
+
 Identify duplicate historical reports using duplicate_of, even if discovery did
 not rediscover them. Use another supplied prior_key only when source inspection
 confirms the same failure mechanism and consequence, with matching technical

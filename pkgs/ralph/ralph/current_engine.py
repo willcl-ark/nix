@@ -93,6 +93,13 @@ def run(case, runtime, configured):
             "Saved engine configuration has no OpenAI endpoint; "
             "requeue the review or recapture the evaluation"
         )
+    try:
+        validate_format(configured["comment_format"])
+    except ValueError as exc:
+        raise ValueError(
+            "Saved comment format is incompatible; "
+            "requeue the review or recapture the evaluation"
+        ) from exc
     runtime.openai_api_base = configured["openai_api_base"]
     if configured["archaeology"]:
         if (

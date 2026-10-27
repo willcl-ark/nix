@@ -62,6 +62,7 @@ class ProtocolTests(unittest.TestCase):
             "line": 5,
             "side": "head",
             "title": "Consolidate duplicate setup",
+            "summary": "Duplicate setup makes the regression test harder to maintain.",
             "body": "Reuse the existing fixture while keeping the regression assertion.",
             "security": {
                 "classification": "non_security",
@@ -162,8 +163,8 @@ class ProtocolTests(unittest.TestCase):
         ]
         for edits in (
             [],
-            [{"id": "invented", "title": "New", "body": "Claim"}],
-            [{"id": "finding:1", "title": "A", "body": "B"}] * 2,
+            [{"id": "invented", "title": "New", "summary": "Impact", "body": "Claim"}],
+            [{"id": "finding:1", "title": "A", "summary": "Impact", "body": "B"}] * 2,
         ):
             with self.subTest(edits=edits), self.assertRaises(protocol.InvalidReview):
                 protocol.collation(self.collation(edits), accepted)
@@ -173,11 +174,13 @@ class ProtocolTests(unittest.TestCase):
                     {
                         "id": "finding:1",
                         "title": "Short title",
+                        "summary": "Edited impact",
                         "body": "Edited wording",
                     },
                     {
                         "id": "finding:2",
                         "title": "Design title",
+                        "summary": "Design impact",
                         "body": "Design wording",
                     },
                 ]
@@ -187,11 +190,50 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(concept_summary)
         self.assertEqual(edited[0]["path"], self.finding["path"])
         self.assertEqual(edited[0]["severity"], "suggestion")
+        self.assertEqual(edited[0]["summary"], "Edited impact")
         self.assertEqual(edited[1]["kind"], "design")
         self.assertIn(
             "incomplete",
             final_comment.render(edited, ["A selected audit was unavailable."]),
         )
+
+    def test_public_findings_require_explicit_nonempty_summary(self):
+        decision = {
+            "candidate_ids": ["tests:1"],
+            "disposition": "publish",
+            "reason": "Verified",
+            "finding": self.finding,
+        }
+        _, accepted = protocol.verification(
+            self.verification([decision]), [{"id": "tests:1"}], self.snapshot
+        )
+        self.assertEqual(accepted[0]["summary"], self.finding["summary"])
+        for summary in (None, "", "  "):
+            finding = dict(self.finding)
+            if summary is None:
+                del finding["summary"]
+            else:
+                finding["summary"] = summary
+            with self.subTest(summary=summary):
+                result, accepted = protocol.verification(
+                    self.verification([{**decision, "finding": finding}]),
+                    [{"id": "tests:1"}],
+                    self.snapshot,
+                )
+                self.assertEqual(accepted, [])
+                self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
+
+                edit = {
+                    "id": "finding:1",
+                    "title": finding["title"],
+                    "body": finding["body"],
+                }
+                if summary is not None:
+                    edit["summary"] = summary
+                with self.assertRaises(protocol.InvalidReview):
+                    protocol.collation(
+                        self.collation([edit]), [{**self.finding, "id": "finding:1"}]
+                    )
 
     def test_finding_must_refer_to_changed_file_on_correct_side(self):
         decision = {
@@ -240,180 +282,189 @@ class ProtocolTests(unittest.TestCase):
 
 
 class ReviewMemoryRenderingTests(unittest.TestCase):
-    def test_unresolved_history_survives_absent_rediscovery(self):
-        memory = [
-            {
-                "title": "Existing index problem",
-                "body": "Check `block->nStatus` before use.",
-                "severity": "major",
-                "status": "unclear",
-                "author_position": "none",
-                "path": "src/example.cpp",
-                "line": 5,
-                "side": "head",
-                "source_head": "original-revision",
-            }
-        ]
-        rendered = final_comment.render(
-            [], ["Verifier request failed."], review_memory=memory
-        )
-        self.assertIn("##### Findings", rendered)
-        self.assertIn("**Major**", rendered)
-        self.assertIn("**Existing index problem** (src/example.cpp:5, head)", rendered)
-        self.assertIn("original-revision", rendered)
-        self.assertIn("not confirmed against this revision", rendered)
-        self.assertIn("Check `block->nStatus` before use.", rendered)
-        self.assertIn(
-            "##### Review limitations\n\n- Verifier request failed.", rendered
-        )
-        self.assertNotIn("no actionable", rendered)
-        self.assertNotIn("<", rendered)
-        self.assertNotIn("&gt;", rendered)
-
-        for status in ("fixed", "invalid"):
-            memory[0]["status"] = status
-            self.assertNotIn(
-                "Existing index problem", final_comment.render([], review_memory=memory)
-            )
-        memory[0]["status"] = "unclear"
-
-        memory.append(
-            {
-                "title": "Author discussed this finding",
-                "body": "A separate concern",
-                "severity": "minor",
-                "status": "still_present",
-                "author_position": "wontfix",
-                "author_comments": [{"url": "https://example.org/reply"}],
-            }
-        )
-        rendered = final_comment.render([], review_memory=memory)
-        main, history = rendered.split(
-            "##### Previous findings and author responses", 1
-        )
-        self.assertIn("Existing index problem", main)
-        self.assertNotIn("Existing index problem", history)
-        self.assertNotIn("Author discussed this finding", main)
-        self.assertIn("Author discussed this finding", history)
-        self.assertIn("[Author reply](https://example.org/reply)", history)
-        self.assertIn("verified as still present", history)
-        self.assertNotIn("<", rendered)
-
-    def test_only_confirmed_repeat_is_collapsed(self):
-        finding = {
+    def finding(self, **changes):
+        return {
             "id": "finding:1",
             "kind": "bug",
+            "title": "Existing index problem",
+            "summary": "An interrupted write loses the index.",
+            "body": "Keep the old index until replacement completes.",
             "severity": "major",
-            "title": "Repeated issue",
-            "path": "a.cpp",
-            "line": 1,
+            "path": "src/example.cpp",
+            "line": 5,
             "side": "head",
-            "body": "Repeated body",
+            **changes,
         }
-        memory = [
-            {
-                **finding,
-                "status": "still_present",
-                "collapsed": True,
-                "author_position": "address_elsewhere",
-                "author_comments": [{"url": "https://example.org/reply"}],
-                "current_finding_ids": ["finding:1"],
-            }
-        ]
-        rendered = final_comment.render([finding], review_memory=memory)
+
+    def memory(self, **changes):
+        return {
+            **self.finding(),
+            "key": "old:1",
+            "status": "still_present",
+            "unchanged": False,
+            "unchanged_since_report": True,
+            "source_head": "original-revision",
+            "checked_head": "current-revision",
+            "source_report_url": "https://example.org/old-report",
+            "author_position": "none",
+            "current_finding_ids": ["finding:1"],
+            "reason": "Lengthy repeated verification proof.",
+            **changes,
+        }
+
+    def test_unchanged_repeat_is_compact_without_author_response(self):
+        finding = self.finding()
+        # A PR-introduced regression can still repeat the previous report.
+        memory = self.memory()
+        rendered = final_comment.render([finding], review_memory=[memory])
         self.assertNotIn("##### Findings", rendered)
-        self.assertIn("Repeated body", rendered)
-        memory[0]["collapsed"] = False
         self.assertIn(
-            "##### Findings", final_comment.render([finding], review_memory=memory)
+            "<summary>[Major · still present] Existing index problem</summary>",
+            rendered,
         )
-        memory[0].update(collapsed=True, author_position="none", author_comments=[])
-        rendered = final_comment.render([finding], review_memory=memory)
+        self.assertEqual(rendered.count(finding["body"]), 1)
+        self.assertIn(finding["summary"], rendered)
+        self.assertNotIn(memory["reason"], rendered)
+        self.assertIn("current-revision", rendered)
+        self.assertIn("[Original review](https://example.org/old-report)", rendered)
+
+        memory["unchanged_since_report"] = False
+        memory["unchanged"] = True
+        rendered = final_comment.render([finding], review_memory=[memory])
         self.assertIn("##### Findings", rendered)
-        self.assertNotIn("<details>", rendered)
-        self.assertEqual(rendered.count("Repeated body"), 1)
+        self.assertIn(finding["summary"], rendered.split("<details>", 1)[0])
+
+    def test_uncertain_and_resolved_findings_keep_their_records(self):
+        memory = self.memory(
+            status="unclear", unchanged_since_report=False, current_finding_ids=[]
+        )
+        rendered = final_comment.render([], review_memory=[memory])
+        self.assertIn("[Major · not confirmed]", rendered)
+        self.assertIn("Not confirmed against this revision", rendered)
+        self.assertIn(memory["body"], rendered)
+        for status in ("fixed", "invalid"):
+            with self.subTest(status=status):
+                memory["status"] = status
+                rendered = final_comment.render([], review_memory=[memory])
+                self.assertIn("<summary>Resolved findings</summary>", rendered)
+                self.assertIn(memory["body"], rendered)
+                self.assertIn(
+                    "Fixed."
+                    if status == "fixed"
+                    else "No longer considered actionable.",
+                    rendered,
+                )
+                self.assertIn(memory["reason"], rendered)
+                self.assertNotIn("remain unresolved", rendered)
+
+        # Existing review records still retain their explanation.
+        del memory["summary"]
+        self.assertIn(memory["body"], final_comment.render([], review_memory=[memory]))
 
     def test_duplicate_reports_share_one_body_and_keep_each_origin(self):
-        original = {
-            "key": "old:1",
-            "title": "Original report",
-            "body": "Original concern body",
-            "severity": "minor",
-            "path": "a.cpp",
-            "line": 1,
-            "source_head": "first-revision",
-            "status": "still_present",
-            "author_position": "wontfix",
-            "author_comments": [{"url": "https://example.org/reply"}],
-            "collapsed": True,
-            "current_finding_ids": ["finding:1"],
-        }
-        duplicate = {
-            **original,
-            "key": "old:2",
-            "duplicate_of": "old:1",
-            "title": "Duplicate report",
-            "body": "Duplicate concern body",
-            "severity": "major",
-            "line": 9,
-            "source_head": "second-revision",
-            "author_position": "none",
-            "author_comments": [],
-            "collapsed": False,
-        }
+        original = self.memory(
+            severity="minor",
+            author_position="wontfix",
+            author_comments=[{"url": "https://example.org/reply"}],
+        )
+        duplicate = self.memory(
+            key="old:2",
+            duplicate_of="old:1",
+            source_head="second-revision",
+            line=9,
+            body="Duplicate concern body",
+        )
         memory = [original, duplicate]
         rendered = final_comment.render([], review_memory=memory)
-        self.assertIn("##### Findings", rendered)
-        self.assertNotIn("##### Previous findings", rendered)
-        self.assertIn("**Major**", rendered)
-        self.assertNotIn("Original concern body", rendered)
-        self.assertEqual(rendered.count("Duplicate concern body"), 1)
-        for origin in ("a.cpp:1", "a.cpp:9", "first-revision", "second-revision"):
+        self.assertEqual(rendered.count(duplicate["body"]), 1)
+        self.assertNotIn(original["body"], rendered)
+        for origin in (
+            "src/example.cpp:5",
+            "src/example.cpp:9",
+            "original-revision",
+            "second-revision",
+        ):
             self.assertIn(origin, rendered)
-        self.assertIn("https://example.org/reply", rendered)
-
-        current = {
-            **duplicate,
-            "id": "finding:1",
-            "kind": "bug",
-            "side": "head",
-            "body": "Current verified concern body",
-        }
+        self.assertIn("[Author reply](https://example.org/reply)", rendered)
+        current = self.finding(body="Current verified explanation.")
         rendered = final_comment.render([current], review_memory=memory)
-        self.assertEqual(rendered.count("Current verified concern body"), 1)
-        self.assertNotIn("Duplicate concern body", rendered)
-        self.assertNotIn("Original concern body", rendered)
-        self.assertIn("##### Findings", rendered)
-
-        duplicate["current_finding_ids"].append("finding:2")
-        second_current = {
-            **current,
-            "id": "finding:2",
-            "body": "A separate verified concern body",
-        }
-        rendered = final_comment.render([current, second_current], review_memory=memory)
-        self.assertIn("Current verified concern body", rendered)
-        self.assertIn("A separate verified concern body", rendered)
-        self.assertNotIn("Duplicate concern body", rendered)
-
-        duplicate.update(
-            author_position="address_elsewhere",
-            author_comments=[{"url": "https://example.org/second-reply"}],
-            collapsed=True,
-        )
-        rendered = final_comment.render([current], review_memory=memory)
+        self.assertEqual(rendered.count(current["body"]), 1)
+        self.assertNotIn(duplicate["body"], rendered)
         self.assertNotIn("##### Findings", rendered)
-        self.assertIn("##### Previous findings and author responses", rendered)
-        self.assertEqual(rendered.count("Duplicate concern body"), 1)
-        self.assertNotIn("Current verified concern body", rendered)
-        self.assertIn("https://example.org/second-reply", rendered)
 
-        original["status"] = "fixed"
-        duplicate.update(author_position="none", author_comments=[], collapsed=False)
-        rendered = final_comment.render([], review_memory=memory)
-        self.assertIn("Duplicate concern body", rendered)
-        self.assertIn("##### Findings", rendered)
-        self.assertIn("Status: fixed", rendered)
+    def test_retained_html_labels_are_escaped(self):
+        memory = self.memory(title="Check <script> & bounds", current_finding_ids=[])
+        rendered = final_comment.render([], review_memory=[memory])
+        self.assertIn("Check &lt;script&gt; &amp; bounds</summary>", rendered)
+        self.assertNotIn("<script>", rendered)
+
+    def test_each_current_finding_checks_all_linked_prior_groups(self):
+        first = self.finding(body="First current explanation.")
+        second = self.finding(
+            id="finding:2", title="Second issue", body="Second current explanation."
+        )
+        shared = self.memory(current_finding_ids=["finding:1", "finding:2"])
+        rendered = final_comment.render([first, second], review_memory=[shared])
+        self.assertNotIn("##### Findings", rendered)
+        self.assertEqual(rendered.count(shared["source_head"]), 2)
+        for finding in (first, second):
+            self.assertEqual(rendered.count(finding["body"]), 1)
+
+        changed = self.memory(
+            key="old:2",
+            unchanged_since_report=False,
+            source_head="another-revision",
+            body="Another historical explanation.",
+        )
+        rendered = final_comment.render(
+            [first, second], review_memory=[shared, changed]
+        )
+        main, history = rendered.split("##### Previous findings", 1)
+        self.assertIn(first["body"], main)
+        self.assertIn(second["body"], history)
+        for entry in (shared, changed):
+            self.assertIn(entry["source_head"], main)
+            self.assertNotIn(entry["body"], rendered)
+        self.assertNotIn("Previous reports of the same concern", rendered)
+
+    def test_historical_entries_preserve_their_published_wording(self):
+        memory = self.memory(
+            presented_title="Published title",
+            presented_summary="Published summary.",
+            presented_body="Published explanation.",
+        )
+        rendered = final_comment.render([], review_memory=[memory])
+        for field in ("title", "summary", "body"):
+            self.assertIn(memory["presented_" + field], rendered)
+            self.assertNotIn(memory[field], rendered)
+
+        memory["last_presented_findings"] = [
+            self.finding(
+                title="Latest title",
+                summary="Latest summary.",
+                body="Latest explanation.",
+                severity="critical",
+            ),
+            self.finding(
+                title="Second latest title",
+                summary="Second latest summary.",
+                body="Second latest explanation.",
+                severity="minor",
+            ),
+        ]
+        memory["severity"] = "minor"
+        duplicate = self.memory(key="old:2", duplicate_of="old:1")
+        for failed in (False, True):
+            rendered = final_comment.render(
+                [], review_memory=[memory, duplicate], verification_failed=failed
+            )
+            for finding in memory["last_presented_findings"]:
+                self.assertIn(finding["title"], rendered)
+                self.assertEqual(finding["body"] in rendered, not failed)
+            self.assertNotIn(memory["presented_body"], rendered)
+            self.assertNotIn(memory["body"], rendered)
+            if not failed:
+                self.assertIn("[Critical · still present] Latest title", rendered)
 
 
 if __name__ == "__main__":

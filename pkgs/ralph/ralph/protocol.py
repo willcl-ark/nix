@@ -75,6 +75,7 @@ FINDING = object_schema(
         "security": SECURITY_ASSESSMENT,
         **LOCATION,
         "title": STRING,
+        "summary": {"type": "string", "minLength": 1},
         "body": STRING,
         "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE, "minItems": 1},
     }
@@ -276,6 +277,7 @@ COLLATOR_SCHEMA = object_schema(
                 {
                     "id": STRING,
                     "title": STRING,
+                    "summary": {"type": "string", "minLength": 1},
                     "body": STRING,
                 }
             ),
@@ -534,7 +536,7 @@ def _published_finding(finding, snapshot):
         raise InvalidReview("Invalid severity")
     if finding["kind"] not in FINDING["properties"]["kind"]["enum"]:
         raise InvalidReview("Invalid finding kind")
-    _text(finding, ("title", "body"))
+    _text(finding, ("title", "summary", "body"))
     security = finding["security"]
     _object(security, SECURITY_ASSESSMENT["properties"])
     if (
@@ -830,8 +832,8 @@ def collation(text, accepted, concept_assessment=None):
     seen = set()
     edited = []
     for finding in result["findings"]:
-        _object(finding, ("id", "title", "body"))
-        _text(finding, ("id", "title", "body"))
+        _object(finding, ("id", "title", "summary", "body"))
+        _text(finding, ("id", "title", "summary", "body"))
         identifier = finding["id"]
         if identifier not in originals or identifier in seen:
             raise InvalidReview("Collator added or repeated a finding")

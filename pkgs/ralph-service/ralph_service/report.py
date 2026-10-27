@@ -26,7 +26,16 @@ ATTRIBUTION_FIELDS = (
     "edited_by",
     "edited_by_model",
 )
-FINDING_FIELDS = ("kind", "severity", "path", "line", "side", "title", "body")
+FINDING_FIELDS = (
+    "kind",
+    "severity",
+    "path",
+    "line",
+    "side",
+    "title",
+    "summary",
+    "body",
+)
 CANDIDATE_FIELDS = (
     "kind",
     "path",
@@ -774,6 +783,7 @@ def _finding_detail(finding, index):
         "evidence",
         "correction",
         "uncertainty",
+        "summary",
         "body",
     ):
         if finding.get(key):
@@ -826,6 +836,7 @@ def _decisions_html(decisions):
             finding_html = (
                 f"<p><strong>{_escape(finding.get('title'))}</strong>"
                 f" {_escape(location)}</p>"
+                f"<p>{_escape(finding.get('summary'))}</p>"
                 f"<pre>{_escape(finding.get('body'))}</pre>"
             )
         sections.append(
@@ -1000,6 +1011,7 @@ def _export_findings_html(record):
             f"<td>{_escape(finding.get('kind', 'unknown'))}</td>"
             f"<td>{_escape(finding.get('presented_title') or finding.get('title', ''))}</td>"
             f"<td><code>{_escape(location)}</code></td>"
+            f"<td>{_escape(finding.get('presented_summary') or finding.get('summary', ''))}</td>"
             f"<td>{_escape(finding.get('presented_body') or finding.get('body', ''))}</td>"
             "</tr>"
         )
@@ -1007,7 +1019,7 @@ def _export_findings_html(record):
         return "<p>The supported findings export contained no readable items.</p>"
     return (
         "<table><thead><tr><th>ID</th><th>Severity</th><th>Kind</th>"
-        "<th>Title</th><th>Location</th><th>Details</th></tr></thead><tbody>"
+        "<th>Title</th><th>Location</th><th>Summary</th><th>Details</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
     )

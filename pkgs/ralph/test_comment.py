@@ -56,7 +56,9 @@ class CommentTests(unittest.TestCase):
 
     def test_layout_edits_use_the_saved_template_snapshot(self):
         comment_format = final_comment.load_format()
-        comment_format["finding"] = "${body}\n\n${title}: ${location} (${side})"
+        comment_format["finding"] = (
+            "${body}\n\n${title}: ${location} (${side}) [${severity}]\n\n${summary}"
+        )
         comment_format["comment"] = (
             comment_format["comment"]
             .replace("${limitations}", "")
@@ -99,6 +101,30 @@ class CommentTests(unittest.TestCase):
             self.assertNotIn(previous["body"], rendered)
         for limitation in example["limitations"]:
             self.assertIn(limitation, rendered)
+
+    def test_findings_show_summary_before_collapsed_explanation(self):
+        example = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())
+        rendered = final_comment.render(**example)
+        finding = example["findings"][0]
+        before, details = rendered.split("<details>", 1)
+        self.assertIn("[Major] " + finding["title"], before)
+        self.assertIn(finding["summary"], before)
+        self.assertNotIn(finding["body"], before)
+        self.assertIn(finding["body"], details)
+        self.assertIn("src/index.cpp:42", details)
+
+    def test_github_uses_collated_summary_with_collated_body(self):
+        example = json.loads((COMMENT_DIR / "examples" / "github.json").read_text())
+        example["findings"][0].update(
+            presented_title="Edited title",
+            presented_summary="Edited summary.",
+            presented_body="Edited explanation.",
+        )
+        rendered = final_comment.render_github(**example)
+        before, details = rendered.split("<details>", 1)
+        self.assertIn("Edited summary.", before)
+        self.assertIn("Edited explanation.", details)
+        self.assertNotIn(example["findings"][0]["summary"], rendered)
 
 
 if __name__ == "__main__":

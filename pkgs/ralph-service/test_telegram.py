@@ -58,7 +58,7 @@ class TelegramTests(unittest.TestCase):
         memory = [
             {
                 "key": "prior:1",
-                "title": "Check height",
+                "title": "Check height < limit",
                 "body": "Guard `block->nStatus`.",
                 "severity": "major",
                 "status": "unclear",
@@ -70,12 +70,13 @@ class TelegramTests(unittest.TestCase):
         )
         result["output"]["exports"]["review_memory"] = memory
         text = self.render(result)
-        self.assertIn("**Check height**", text)
+        self.assertIn("Check height < limit", text)
         self.assertIn("Guard `block->nStatus`.", text)
         self.assertIn("old-head", text)
         self.assertIn("Verifier unavailable", text)
         self.assertNotIn("<h6>", text)
         self.assertNotIn("<details>", text)
+        self.assertNotIn("<summary>", text)
         self.assertNotIn("&gt;", text)
 
     def test_http_rate_limit_is_sanitized_and_preserves_retry_delay(self):

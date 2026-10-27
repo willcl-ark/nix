@@ -11,6 +11,7 @@ prompt, model, reasoning effort or tool limit.
 | Instructions shared by discovery agents | [shared/discovery.md](agents/shared/discovery.md) |
 | A specialist's review | `<agent>/prompt.md`, such as [design/prompt.md](agents/design/prompt.md) |
 | Which leads survive verification | [verifier/prompt.md](agents/verifier/prompt.md) |
+| Public finding structure and writing guidance | [shared/finding-format.md](agents/shared/finding-format.md) |
 | Wording of accepted findings | [collator/prompt.md](agents/collator/prompt.md) |
 | Comment headings, order and finding layout | [final_comment](final_comment/README.md) |
 | An agent's model, reasoning or limits | `<agent>/config.toml` |
@@ -83,6 +84,9 @@ Frozen evaluations keep those saved values until explicitly given new settings.
 
 ## Shared prompts and special cases
 
+- [shared/finding-format.md](agents/shared/finding-format.md) is automatically
+  appended to verifier and collator prompts when loading an agent directory.
+  Saved reviews retain the loaded text for replay.
 - Both adversarial reviewers use [adversarial/prompt.md](agents/adversarial/prompt.md).
   Claude's config points to that file; its model and limits remain independent.
   Domain instructions live in [adversarial/domains](agents/adversarial/domains).

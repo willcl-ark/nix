@@ -299,6 +299,15 @@ class CLITest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requeue.*recapture"):
             saved.run(None, None)
 
+    def test_saved_comment_format_requires_recapture_before_review(self):
+        from ralph import engine
+
+        configured = engine.load().config
+        configured["comment_format"]["finding"] = "${title} ${location} ${side} ${body}"
+        saved = engine.load(config=configured, configured=True)
+        with self.assertRaisesRegex(ValueError, "requeue.*recapture"):
+            saved.run(None, None)
+
     def test_failure_artifact(self):
         self.configure(fail=True)
         result = self.cli()

@@ -48,6 +48,7 @@ class SourceEvidenceTests(unittest.TestCase):
             "line": 1,
             "side": "head",
             "title": "Positional caller breaks",
+            "summary": "Existing positional arguments no longer match the helper.",
             "body": "The caller supplies wait and timeout positionally.",
             "security": {
                 "classification": "non_security",

@@ -35,6 +35,7 @@ ASSESSMENT = object_schema(
         "duplicate_of": {"type": ["string", "null"]},
         "candidate_ids": STRINGS,
         "unchanged": {"type": "boolean"},
+        "unchanged_since_report": {"type": "boolean"},
         "reason": STRING,
         "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE},
     }
@@ -150,7 +151,10 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
                 raise InvalidReview("Invalid duplicate finding reference")
             if assessment["status"] not in ASSESSMENT["properties"]["status"]["enum"]:
                 raise InvalidReview("Invalid reconciliation status")
-            if type(assessment["unchanged"]) is not bool:
+            if (
+                type(assessment["unchanged"]) is not bool
+                or type(assessment["unchanged_since_report"]) is not bool
+            ):
                 raise InvalidReview("Invalid unchanged assessment")
             if (
                 not isinstance(assessment["reason"], str)
@@ -212,6 +216,8 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
                         "author_position",
                         "comment_ids",
                         "collapsed",
+                        "unchanged_since_report",
+                        "checked_head",
                         "current_candidate_ids",
                         "duplicate_of",
                     )
@@ -227,6 +233,12 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
             source_evidence=decision["source_evidence"] if decision else [],
             current_candidate_ids=decision["candidate_ids"] if decision else [],
             current_finding_ids=[],
+            checked_head=snapshot.head_sha if decision else None,
+            unchanged_since_report=bool(
+                decision
+                and decision["status"] == "still_present"
+                and decision["unchanged_since_report"]
+            ),
             duplicate_of=duplicates[entry["key"]]
             if decision
             else entry.get("duplicate_of"),

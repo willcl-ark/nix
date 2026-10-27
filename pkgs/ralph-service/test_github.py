@@ -21,8 +21,10 @@ class GitHubTests(unittest.TestCase):
                             "id": "finding:1",
                             "severity": severity,
                             "title": "Original",
+                            "summary": "Original summary",
                             "body": "Original body",
                             "presented_title": "Edited title",
+                            "presented_summary": "Edited summary",
                             "presented_body": "Edited body",
                             "verified_by": "major_verifier",
                             "path": "src/test.cpp",
@@ -33,6 +35,7 @@ class GitHubTests(unittest.TestCase):
                             "id": "finding:2",
                             "severity": "minor",
                             "title": "Minor",
+                            "summary": "Minor summary",
                             "body": "Minor body",
                         },
                     ]
@@ -47,7 +50,7 @@ class GitHubTests(unittest.TestCase):
         result = self.result()
         result["engine"] = engine.load().identity
         result["engine"]["config"]["comment_format"]["finding"] = (
-            "${body}\n\n${title} (${location}, ${side})"
+            "${body}\n\n[${severity}] ${title}: ${summary} (${location}, ${side})"
         )
         with patch.object(
             github,

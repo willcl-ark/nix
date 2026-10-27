@@ -22,7 +22,9 @@ stay beside the default settings.
 The [final_comment/](final_comment/README.md) directory contains Markdown
 templates for comment structure, an offline preview and example reviews. The
 [collator prompt](agents/collator/prompt.md) controls the wording of accepted
-findings. The runtime validates findings and enforces tool and spending limits.
+findings. Each new finding shows its severity, title and one-sentence summary;
+the explanation and suggested change are expandable. The runtime validates
+findings and enforces tool and spending limits.
 
 From the repository root, using Python with `aiohttp` installed:
 
@@ -757,13 +759,16 @@ feedback pass then maps explicit author replies to earlier findings and current
 candidates. The verifier checks the technical claims against source code.
 
 An author saying “addressing elsewhere” or “won't fix” does not resolve a finding.
-Unresolved findings without a recorded direct author response stay in the main
-review body, including when discovery does not find them again. A verified current
-finding appears there once. A repeat may move into the report's previously discussed
-section only with a direct author response and when the verifier confirms the
-same mechanism and consequence, with evidence from both base and head that the PR
-does not introduce or worsen it. Findings that remain unresolved are retained with
-their original identity, severity and assessment history, including when discovery does not find them again. Missing or invalid
+New or worsened findings keep a visible summary. Verified unchanged findings
+appear as compact expandable entries with their severity, title and status.
+Earlier findings remain in the comment even when discovery does not find them
+again. Their full text, original revision, last checked revision and available
+review and author-reply links remain inside the entry. Fixed and invalid findings
+remain under expandable resolved history, including those without an author reply.
+This visual folding does not change upstream publication policy: suppressing a
+repeated upstream finding still requires an explicit author response and evidence
+from both base and head that the PR does not introduce or worsen it.
+Findings retain their original identity, severity and assessment history. Missing or invalid
 reconciliation keeps them unresolved and labels them as not confirmed against the
 current revision. Fixed and invalid decisions require source evidence; author
 intent alone is insufficient.
@@ -773,8 +778,8 @@ mechanism and consequence, even when discovery does not rediscover them. Confirm
 duplicates share one displayed concern with each original location, revision and
 assessment retained. Similar wording or a shared current candidate does not merge
 reports. Existing duplicate links survive unavailable verification, while every
-report keeps its own status and author feedback. An unanswered active report keeps
-the concern prominent. Review bodies, history and limitations use Markdown;
+report keeps its own status and author feedback. An unanswered active report still
+counts as unresolved. Review bodies, history and limitations use Markdown;
 structured finding records remain the source for subsequent reviews.
 
 This memory is restricted to one repository and PR. First reviews do not invoke
