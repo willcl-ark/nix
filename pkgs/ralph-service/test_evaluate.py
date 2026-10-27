@@ -112,6 +112,7 @@ class EvaluateTests(unittest.TestCase):
         (self.work / "code.txt").write_text("base\n", encoding="utf-8")
         self.git(self.work, "add", "code.txt")
         self.git(self.work, "commit", "-qm", "Base")
+        self.api_base = self.git(self.work, "rev-parse", "HEAD")
         self.git(self.work, "push", "origin", "HEAD:refs/heads/master")
         (self.work / "code.txt").write_text("head\n", encoding="utf-8")
         self.git(self.work, "add", "code.txt")
@@ -144,7 +145,7 @@ class EvaluateTests(unittest.TestCase):
             "title": "Pinned input",
             "body": "Review this.",
             "labels": [{"name": label} for label in labels],
-            "base": {"ref": "master"},
+            "base": {"ref": "master", "sha": self.api_base},
             "head": {"sha": self.git(self.work, "rev-parse", "HEAD")},
         }
 
@@ -460,14 +461,28 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(result["effective_config"]["review_budget_usd"], 5)
         self.assertEqual(ledger.review_limit_micros, 1_000_000)
 
-    def test_replay_needs_no_forgejo_or_remote_git_and_keeps_labels_separate(self):
+    def test_merged_pr_replay_keeps_diff_offline_and_labels_separate(self):
         self.bot_config = replace(
             self.bot_config,
             forgejo_api="https://api.github.com/repos/example/repo",
             repository_url="https://github.com/example/repo",
         )
+        head = self.git(self.work, "rev-parse", "HEAD")
+        merge_base = self.api_base
+        self.git(self.work, "checkout", "--detach", merge_base)
+        (self.work / "target.txt").write_text("Target branch change.\n")
+        self.git(self.work, "add", "target.txt")
+        self.git(self.work, "commit", "-qm", "Target advances before merge")
+        self.api_base = self.git(self.work, "rev-parse", "HEAD")
+        self.git(self.work, "merge", "--no-ff", head, "-m", "Merge PR")
+        self.git(self.work, "push", "origin", "HEAD:refs/heads/master")
+        self.git(self.work, "checkout", "--detach", head)
         manifest = self.capture(token=None)
         case = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(case["base_ref"], "master")
+        self.assertEqual(case["base_sha"], self.api_base)
+        self.assertEqual(case["merge_base"], merge_base)
+        self.assertIn("-base\n+head", case["review_input"])
         labels = {case["case_id"]: ["Expected issue held out of model input"]}
         self.git(self.work, "commit", "--allow-empty", "-qm", "New PR head")
         self.git(self.work, "push", "--force", "origin", "HEAD:refs/pull/42/head")
@@ -498,6 +513,7 @@ class EvaluateTests(unittest.TestCase):
             self.assertNotIn("Expected issue", review_case.review)
             self.assertEqual(review_case.snapshot.head_sha, case["head_sha"])
             self.assertEqual(review_case.snapshot.merge_base, case["merge_base"])
+            self.assertEqual(review_case.snapshot.changed_paths, {"code.txt"})
             self.assertEqual(prompt_config.models, self.prompt_config.models)
             self.assertIsNone(runtime.discussion_lookup)
             self.assertIs(runtime.allow_web_search, False)
