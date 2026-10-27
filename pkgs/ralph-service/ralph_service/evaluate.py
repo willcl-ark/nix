@@ -156,6 +156,7 @@ def pull_request_details(bot_config, token, number):
         else forgejo.forgejo_request(bot_config, token, f"/pulls/{number}")
     )
     base_ref = (pull.get("base") or {}).get("ref") or ""
+    api_base = (pull.get("base") or {}).get("sha") or ""
     api_head = (pull.get("head") or {}).get("sha") or ""
     title = pull.get("title") or ""
     description = pull.get("body") or ""
@@ -169,6 +170,8 @@ def pull_request_details(bot_config, token, number):
         or base_ref.endswith(".lock")
     ):
         raise ValueError(f"PR {number} has an invalid base branch")
+    if not isinstance(api_base, str) or not local_repository.SHA.fullmatch(api_base):
+        raise ValueError(f"PR {number} has an invalid API base SHA")
     if api_head and (
         not isinstance(api_head, str) or not local_repository.SHA.fullmatch(api_head)
     ):
@@ -177,6 +180,7 @@ def pull_request_details(bot_config, token, number):
         raise ValueError(f"PR {number} has invalid title or description")
     details = {
         "base_ref": base_ref,
+        "api_base": api_base,
         "api_head": api_head,
         "title": title,
         "description": description,
@@ -224,7 +228,8 @@ def capture_case(
     base_sha, head_sha, review, skip = repository.collect_review(
         checkout,
         number,
-        details["base_ref"],
+        # The target branch may already contain the PR when capturing a merged case.
+        f"sha:{details['api_base']}",
         expected_head,
         details["title"],
         details["description"],

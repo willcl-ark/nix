@@ -169,6 +169,10 @@ class ComparisonTests(unittest.TestCase):
             self.assertTrue((results / side["artifact"]).is_file())
             self.assertTrue((results / side["markdown"]).is_file())
         self.assertTrue((results / "summary.md").is_file())
+        self.assertIn(
+            (results / "head" / "review.md").read_text(),
+            (results / "summary.md").read_text(),
+        )
         for path in results.rglob("*"):
             if path.is_file():
                 self.assertNotIn("synthetic-test-key", path.read_text())

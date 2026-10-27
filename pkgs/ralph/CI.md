@@ -20,7 +20,9 @@ that no longer matches the approved SHA. If the PR changes afterward, the run
 still uses the approved commit. Start a new comparison to evaluate a newer one.
 
 The workflow fetches the Bitcoin PR from GitHub and freezes its code, metadata
-and available discussion once. Both reviews use that same case. BASE takes the
+and available discussion once. Open and merged Bitcoin PRs are supported; capture
+pins the base commit recorded by GitHub so a merged PR retains its original diff.
+Both reviews use that same case. BASE takes the
 agent and template files from the merge base of the Ralph PR and the trusted
 runtime commit. HEAD takes those files from the approved PR commit. Both use
 Ralph's default profile and the same executable code from the default branch at
@@ -31,6 +33,12 @@ templates are exported. Candidate Python is never imported. Review tools read
 the frozen repository and discussion; replay disables live discussion lookup
 and hosted web search. This keeps the comparison repeatable, though model output
 can still vary between runs.
+
+The Actions summary compares findings, coverage, elapsed time, model/tool calls
+and reported token usage. Expand **BASE review** and **HEAD review** to read the
+rendered comments and their limitations. Missing metrics remain unavailable;
+token totals with missing usage are marked as partial. Very large reviews stay
+in the artifact to keep the summary within GitHub's size limit.
 
 Download `ralph-comparison-<run>-<attempt>` for `base/review.md`, `head/review.md`,
 the review JSON artifacts and `summary.json`. They record the revisions, resolved

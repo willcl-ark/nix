@@ -1,6 +1,7 @@
 """Compare approved PR agent data with its merge base using trusted Ralph code."""
 
 import argparse
+import html
 import json
 import os
 import re
@@ -12,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from final_comment import load_format
-from ralph import engine, spend
+from ralph import engine, spend, trace
 from ralph.repository import git_command, git_environment
 
 from . import config, evaluate
@@ -20,6 +21,8 @@ from . import config, evaluate
 MAX_FILE_BYTES = 1_000_000
 MAX_DATA_BYTES = 8_000_000
 DATA_ROOTS = ("pkgs/ralph/agents", "pkgs/ralph/final_comment")
+# Two reviews plus metadata must fit GitHub's 1 MiB job-summary limit.
+MAX_SUMMARY_REVIEW_BYTES = 400_000
 
 
 def _git(repository, *args):
@@ -215,6 +218,119 @@ def prepare(args):
     return 0
 
 
+def render_summary(summary, artifacts):
+    """Render saved results without running models or fetching review evidence."""
+    values = {}
+    partial_usage = []
+    incomplete_coverage = []
+    for side, artifact in artifacts.items():
+        metrics = trace.result_metrics(artifact) or {}
+        findings = trace.findings_export(artifact)
+        coverage = (trace.current_diagnostics(artifact).get("coverage") or {}).get(
+            "status"
+        )
+        if coverage in {"partial", "failed"}:
+            incomplete_coverage.append(side.upper())
+        if metrics.get("unknown_usage_count"):
+            partial_usage.append(side.upper())
+        wall = evaluate._iso_seconds(
+            artifact.get("started_at"), artifact.get("finished_at")
+        )
+        elapsed = None
+        if wall is not None:
+            minutes, seconds = divmod(round(wall), 60)
+            elapsed = f"{minutes}m {seconds:02}s"
+        sha = summary["sides"][side]["source_sha"]
+        values[side] = {
+            "Ralph commit": f"[`{sha[:7]}`](https://github.com/{summary['github_repository']}/commit/{sha})",
+            "Review status": summary["sides"][side]["status"],
+            "Coverage": coverage,
+            "Verified findings": None if findings is None else len(findings),
+            "Elapsed": elapsed,
+            "Model calls": metrics.get("model_turns"),
+            "Tool calls": metrics.get("tool_calls"),
+            "Input tokens reported": metrics.get("total_input_tokens"),
+            "Output tokens reported": metrics.get("total_output_tokens"),
+        }
+    rows = [
+        "# Ralph agent comparison",
+        "",
+        f"Ralph PR: {summary['github_repository']}#{summary['pull_request']}",
+        f"Review case: bitcoin/bitcoin#{summary['bitcoin_pr']}",
+        "",
+    ]
+    if incomplete_coverage:
+        rows.extend(
+            [
+                f"**Incomplete coverage: {', '.join(incomplete_coverage)}.** "
+                "Read the review limitations below.",
+                "",
+            ]
+        )
+    rows.extend(["| Metric | BASE | HEAD |", "| --- | --- | --- |"])
+    for metric in values["base"]:
+        cells = [metric]
+        for side in ("base", "head"):
+            value = values[side][metric]
+            cells.append(
+                "Unavailable"
+                if value is None
+                else f"{value:,}"
+                if isinstance(value, int)
+                else value
+            )
+        rows.append("| " + " | ".join(cells) + " |")
+    rows.extend(["", "Finding counts do not measure review quality.", ""])
+    if partial_usage:
+        rows.extend(
+            [
+                f"{', '.join(partial_usage)} token totals omit calls with unavailable usage.",
+                "",
+            ]
+        )
+    for side in ("base", "head"):
+        artifact = artifacts[side]
+        content = artifact.get("content") or "No rendered review was produced."
+        if error := artifact.get("error"):
+            content += (
+                "\n\n<pre>"
+                + html.escape(
+                    f"{error.get('type', 'Error')}: {error.get('message', '')}"[:2000]
+                )
+                + "</pre>"
+            )
+        if len(content.encode()) > MAX_SUMMARY_REVIEW_BYTES:
+            content = (
+                "This review exceeds the job-summary size allowance. "
+                f"Read `{side}/review.md` in the comparison artifact."
+            )
+        rows.extend(
+            [
+                "<details>",
+                f"<summary>{side.upper()} review</summary>",
+                "",
+                content,
+                "",
+                "</details>",
+                "",
+            ]
+        )
+    rows.extend(
+        [
+            "Full Markdown reviews and JSON results are in the downloadable comparison artifact.",
+            "",
+            "<details>",
+            "<summary>Run details</summary>",
+            "",
+            f"Runtime: `{summary['runtime_sha']}`",
+            f"Frozen case: `{summary['case_id']}`",
+            "",
+            "</details>",
+        ]
+    )
+    return "\n".join(rows) + "\n"
+
+
 def run(args):
     work = args.work_dir
     if not work.is_absolute():
@@ -249,6 +365,7 @@ def run(args):
     }
     summary["review_budget_usd"] = args.review_budget_usd
     summary["sides"] = {}
+    artifacts = {}
     for side in ("base", "head"):
         directory = evaluate.private_dir(results / side)
         identity = selected[side].identity
@@ -274,6 +391,7 @@ def run(args):
             artifact_path = directory / "failure.json"
             evaluate.write_private_json(artifact_path, artifact)
         (directory / "review.md").write_text(artifact.get("content") or "")
+        artifacts[side] = artifact
         summary["sides"][side] = {
             "status": artifact["run"]["status"],
             "source_sha": prepared[f"{side}_sha"],
@@ -287,25 +405,7 @@ def run(args):
             "evaluation": evaluate.summarize_runs([artifact_path]),
         }
     evaluate.write_private_json(results / "summary.json", summary)
-    rows = [
-        "# Ralph agent comparison",
-        "",
-        f"PR: {prepared['github_repository']}#{prepared['pull_request']}",
-        f"Runtime: `{prepared['runtime_sha']}`",
-        f"Bitcoin PR: bitcoin/bitcoin#{prepared['bitcoin_pr']}",
-        f"Frozen case: `{prepared['case_id']}`",
-        "",
-        "Files are in the workflow's downloadable comparison artifact.",
-        "",
-        "| Side | Commit | Status | Review | Artifact |",
-        "| --- | --- | --- | --- | --- |",
-    ]
-    for side, result in summary["sides"].items():
-        rows.append(
-            f"| {side.upper()} | `{result['source_sha']}` | {result['status']} | "
-            f"`{result['markdown']}` | `{result['artifact']}` |"
-        )
-    (results / "summary.md").write_text("\n".join(rows) + "\n")
+    (results / "summary.md").write_text(render_summary(summary, artifacts))
     print(results / "summary.md")
     return int(
         any(result["status"] != "completed" for result in summary["sides"].values())
