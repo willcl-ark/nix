@@ -69,6 +69,16 @@ class GitHubTests(unittest.TestCase):
         for excluded in ("Original", "Minor"):
             self.assertNotIn(excluded, body)
 
+    def test_failed_review_cannot_create_update_or_delete_major_comment(self):
+        for findings in (self.result()["output"]["exports"]["findings"], []):
+            with self.subTest(findings=bool(findings)):
+                result = self.result()
+                result["run"]["status"] = "failed"
+                result["output"]["exports"]["findings"] = findings
+                with patch.object(github, "github_request") as request:
+                    self.assertEqual(self.publish(result), "failed")
+                request.assert_not_called()
+
     def test_retained_major_updates_previous_comment_instead_of_deleting(self):
         result = self.result()
         exports = result["output"]["exports"]

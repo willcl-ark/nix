@@ -291,6 +291,25 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(self.process(job, github_token="read-token"), "updated")
         publish.assert_not_called()
 
+    def test_failed_review_delivery_completes_job_and_preserves_outcome(self):
+        job = self.enqueue()
+        result = self.saved_result("Review failed. Verified minor finding retained.")
+        result["run"]["status"] = "failed"
+        job["review_result"] = result
+        self.jobs.save_result(job, result)
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "publish_review", return_value="updated") as publish,
+            self.assertLogs(level="INFO") as logs,
+        ):
+            self.assertEqual(self.process(job), "updated")
+        self.assertEqual(publish.call_args.args[6], result["content"])
+        self.assertEqual(
+            self.jobs.latest_completed_result(42)["run"]["status"], "failed"
+        )
+        self.assertIsNone(self.jobs.claim())
+        self.assertTrue(any("review_status=failed" in line for line in logs.output))
+
     def test_github_publication_requires_explicit_flag(self):
         self.bot_config = replace(
             self.bot_config,

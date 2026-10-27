@@ -145,10 +145,11 @@ def log_review_outcome(
     error_type=None,
     http_status=None,
     http_host=None,
+    review_status="unknown",
 ):
     message = (
         "review outcome pr=%d action=%s head=%s outcome=%s "
-        "elapsed_seconds=%.2f model_turns=%s tool_calls=%s "
+        "review_status=%s elapsed_seconds=%.2f model_turns=%s tool_calls=%s "
         "input_tokens=%s output_tokens=%s estimated_usd=%s"
     )
     values = [
@@ -156,6 +157,7 @@ def log_review_outcome(
         action,
         short_sha(head_sha),
         outcome,
+        review_status,
         time.monotonic() - started,
         metric_value(metrics.get("model_turns")),
         metric_value(metrics.get("tool_calls")),
@@ -339,6 +341,7 @@ def process_job(
                     ):
                         jobs.complete(job)
                         outcome = "already-reviewed"
+                        run_status = "unknown"
                         return outcome
                 feedback = (
                     collect_review_feedback(
@@ -422,13 +425,14 @@ def process_job(
                 saved["run"]["pr_title"] = title
                 saved["run"]["review_context"] = expected_context
                 saved["run"]["review_fingerprint"] = review_fingerprint
-                run_status = "completed"
+                run_status = saved["run"]["status"]
                 result_record = saved
                 if not jobs.save_result(job, saved):
                     outcome = "superseded"
                     return outcome
             else:
                 result_record = saved
+                run_status = saved["run"]["status"]
                 engine_identity = saved["engine"]
                 base_sha = saved["base_sha"]
                 head_sha = saved["head_sha"]
@@ -594,11 +598,12 @@ def process_job(
             started,
             debug,
             runtime.metrics() if runtime else {},
-            logging.ERROR if failure else logging.INFO,
+            logging.ERROR if failure or run_status == "failed" else logging.INFO,
             debug.get("pipeline_stage", stage) if failure else None,
             type(failure).__name__ if failure else None,
             http_status,
             http_host,
+            review_status=run_status,
         )
         try:
             summary = ledger.summary()

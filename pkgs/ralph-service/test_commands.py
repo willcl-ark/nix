@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from ralph_service import commands, monitor, status
+from ralph_service import commands, jobs, monitor, status
 
 
 class CommandTests(unittest.TestCase):
@@ -134,6 +134,20 @@ class CommandTests(unittest.TestCase):
 
     def test_status_reads_recorded_usage_and_stale_quota_without_network(self):
         now = datetime.now(UTC)
+        store = jobs.JobStore(self.root / "jobs.sqlite3")
+        store.enqueue(
+            42, "master", "a" * 40, "opened", engine_identity={"name": "current"}
+        )
+        job = store.claim()
+        store.save_result(
+            job,
+            {
+                "schema_version": 1,
+                "run": {"status": "failed"},
+                "output": {"schema_version": 2, "exports": {"findings": []}},
+            },
+        )
+        store.complete(job)
         for filename, usage in (
             (
                 "spend.sqlite3",
@@ -202,6 +216,8 @@ class CommandTests(unittest.TestCase):
         ):
             self.poll()
         message = self.messages()["command:10"]
+        self.assertIn("All-time delivery jobs: 1 completed", message)
+        self.assertIn("Saved reviews: 1 · Failed reviews: 1", message)
         self.assertIn("2 requests", message)
         self.assertIn("input 1,234", message)
         self.assertIn("Missing usage: 1", message)

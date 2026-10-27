@@ -9,6 +9,39 @@ from ralph_service import jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
+    def test_failed_review_status_is_separate_from_completed_delivery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = jobs.JobStore(root / "jobs.sqlite3")
+            store.enqueue(
+                42, "master", "a" * 40, "opened", engine_identity={"name": "current"}
+            )
+            job = store.claim()
+            store.save_result(
+                job,
+                {
+                    "schema_version": 1,
+                    "run": {"status": "failed"},
+                    "output": {
+                        "schema_version": 2,
+                        "exports": {"findings": [{"severity": "minor"}]},
+                    },
+                },
+            )
+            store.complete(job)
+            summary = stats.collect_stats(root, root / "reports")
+        self.assertEqual(summary["reviews"][0]["status"], "complete")
+        self.assertEqual(summary["reviews"][0]["review_status"], "failed")
+        self.assertEqual(summary["overview"]["review_status"], {"failed": 1})
+        self.assertEqual(summary["overview"]["published_findings"], 1)
+        html = stats_page._reviews_table(
+            summary["reviews"],
+            "https://example.org/repo",
+            "https://example.org/reports",
+        )
+        self.assertIn("failed", html)
+        self.assertIn("Delivery", html)
+
     def test_adversarial_comparison_keeps_historical_gemini_and_counts_claude(self):
         paired = stats._new_adversarial_comparison()
         for secondary in ("adversarial_gemini", "adversarial_claude"):

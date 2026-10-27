@@ -7,6 +7,39 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    def test_failed_review_exports_status_and_safe_provider_diagnostic(self):
+        result = {
+            "schema_version": 1,
+            "engine": {"name": "current"},
+            "run": {"status": "failed"},
+            "output": {
+                "schema_version": 2,
+                "data": {
+                    "schema_version": 2,
+                    "stages": {
+                        "verifier": {
+                            "status": "failed",
+                            "error_message": "Unsupported parameter: max_tool_calls <bad>",
+                            "http_status": 400,
+                            "response_body": "PRIVATE-CREDENTIAL",
+                            "headers": {"Authorization": "PRIVATE-CREDENTIAL"},
+                        }
+                    },
+                },
+                "exports": {"findings": []},
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, result, "failed-review")
+            html = (root / name).read_text()
+            public = json.loads((root / "failed-review.json").read_text())
+        self.assertEqual(public["status"], "failed")
+        self.assertEqual(public["stages"]["verifier"]["http_status"], 400)
+        self.assertIn("Review failed", html)
+        self.assertIn("Unsupported parameter: max_tool_calls &lt;bad&gt;", html)
+        self.assertNotIn("PRIVATE-CREDENTIAL", html + json.dumps(public))
+
     def test_unknown_schema_does_not_export_retained_findings(self):
         result = {
             "schema_version": 1,

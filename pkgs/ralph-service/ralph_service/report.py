@@ -250,11 +250,14 @@ def _public_stages(debug):
             "reason",
             "error",
             "error_type",
+            "error_message",
             "validation_error",
             "incomplete_reason",
         ):
             if isinstance(stage.get(key), str):
                 record[key] = stage[key]
+        if type(stage.get("http_status")) is int:
+            record["http_status"] = stage["http_status"]
         if isinstance(stage.get("used_verified_wording"), bool):
             record["used_verified_wording"] = stage["used_verified_wording"]
         if "limits" in stage:
@@ -428,6 +431,7 @@ def _public_record(number, result, report_id):
     metrics = core_trace.result_metrics(result)
     record = {
         "report_id": report_id,
+        "status": (result.get("run") or {}).get("status", "unknown"),
         "pr": number,
         "head": result.get("head_sha"),
         "review": result.get("content", ""),
@@ -804,8 +808,12 @@ def _stage_html(name, stage, stage_output):
         if isinstance(stage.get("coverage"), dict)
         else ""
     )
+    error = _paragraphs(stage, (("error_message", "Provider error"),))
+    if "http_status" in stage:
+        error = f"<p>HTTP status: {_escape(stage['http_status'])}</p>" + error
     return (
         f"<details><summary>{_escape(title)}</summary>"
+        f"{error}"
         f"{coverage}"
         f"{outputs}"
         f"<details><summary>Stage metadata</summary>{_json_html({key: value for key, value in stage.items() if key != 'raw_output'})}</details>"
@@ -814,6 +822,13 @@ def _stage_html(name, stage, stage_output):
 
 
 def _html_report(record, json_name):
+    status = record.get("status", "unknown")
+    outcome = (
+        '<p class="notice"><strong>Review failed.</strong> '
+        "Verified findings and review history may still be present.</p>"
+        if status == "failed"
+        else f"<p>Review status: <strong>{_escape(status)}</strong></p>"
+    )
     profile = (
         f"<p>Review profile: {_escape(record['profile'])}</p>"
         if record.get("profile")
@@ -873,6 +888,7 @@ summary {{ cursor: pointer; font-weight: 600; }}
 <body>
 <header>
 <h1>Forgejo Review Report</h1>
+{outcome}
 <p>PR #{_escape(record["pr"])} at <code>{_escape(record["head"])}</code></p>
 {profile}
 <p><a href="{_escape(json_name)}" download>Download JSON report</a></p>

@@ -48,6 +48,14 @@ saved results rather than paying for another review. Transient transport failure
 have bounded job retries. Oversized inputs use a changed-file manifest and diff
 tools; if the PR prelude and manifest still exceed 200,000 bytes, review is skipped.
 
+Review outcome and delivery status are separate. A failed verifier marks the
+review as failed in its saved result, public report, logs and statistics. The
+service still delivers verified findings and review history, then completes the
+queue job so publication retries do not pay for another review. A failed review
+cannot create, update or delete the upstream GitHub major-findings comment.
+Public stage diagnostics include the bounded, redacted provider error message
+and HTTP status, without response bodies or headers.
+
 Sources: [service.py](ralph_service/service.py),
 [jobs.py](ralph_service/jobs.py), [repository.py](ralph_service/repository.py).
 

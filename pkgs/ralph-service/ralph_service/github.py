@@ -25,6 +25,8 @@ def github_request(token, path, method="GET", data=None):
 
 
 def publish_major_findings(repository, token, number, result):
+    if result["run"].get("status") == "failed":
+        return "failed"
     exported = trace.findings_export(result)
     if exported is None or result["run"].get("skipped"):
         return "skipped"

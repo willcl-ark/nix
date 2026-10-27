@@ -955,6 +955,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
                     + '<span class="subline">Job '
                     + _fmt_int(review.get("job_id"))
                     + "</span>",
+                    _escape(review.get("review_status", "unknown")),
                     _escape(review.get("status", "saved")),
                     _escape(review.get("coverage", "unknown")),
                     "unsupported"
@@ -967,7 +968,16 @@ def _reviews_table(reviews, repository_url, report_base_url):
             )
         )
     return _interactive_table(
-        ["Review", "Status", "Coverage", "Findings", "Records", "Report", "Details"],
+        [
+            "Review",
+            "Review status",
+            "Delivery",
+            "Coverage",
+            "Findings",
+            "Records",
+            "Report",
+            "Details",
+        ],
         rows,
         "reviews",
     )

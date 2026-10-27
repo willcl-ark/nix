@@ -83,6 +83,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
     overview = {
         "saved_reviews": 0,
         "published_reviews": 0,
+        "review_status": {},
         "saved_findings": 0,
         "published_findings": 0,
         "findings_unavailable_reviews": 0,
@@ -156,6 +157,9 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
 
         if not skipped:
             overview["saved_reviews"] += 1
+            review_status = (result.get("run") or {}).get("status", "unknown")
+            counts = overview["review_status"]
+            counts[review_status] = counts.get(review_status, 0) + 1
             overview[
                 "current_diagnostics_reviews"
                 if debug
@@ -207,6 +211,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "generation": row["generation"],
             "head": result.get("head_sha") or row["head"],
             "status": row["status"],
+            "review_status": (result.get("run") or {}).get("status", "unknown"),
             "job_attempts": row["attempts"],
             "recorded_failed_attempts": max(0, int(row["attempts"] or 0)),
             "skipped": skipped,

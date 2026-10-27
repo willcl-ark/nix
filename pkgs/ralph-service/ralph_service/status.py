@@ -115,10 +115,10 @@ def _jobs(state_dir):
     lines.extend(
         [
             "",
-            f"All-time runs: {counts['complete']:,} completed · {counts['failed']:,} failed · {counts['superseded']:,} superseded",
+            f"All-time delivery jobs: {counts['complete']:,} completed · {counts['failed']:,} failed · {counts['superseded']:,} superseded",
         ]
     )
-    saved = skipped = malformed = unavailable = exported = 0
+    saved = failed = skipped = malformed = unavailable = exported = 0
     severities = Counter()
     for row in rows:
         result, invalid = stats._review_result(row)
@@ -129,13 +129,16 @@ def _jobs(state_dir):
             skipped += 1
             continue
         saved += 1
+        failed += (result.get("run") or {}).get("status") == "failed"
         findings = stats._published_findings(result)
         if findings is None:
             unavailable += 1
         else:
             exported += 1
             severities.update(item.get("severity") or "unknown" for item in findings)
-    lines.append(f"Saved reviews: {saved:,} · Skipped: {skipped:,}")
+    lines.append(
+        f"Saved reviews: {saved:,} · Failed reviews: {failed:,} · Skipped: {skipped:,}"
+    )
     ordered = [
         severity
         for severity in ("critical", "major", "minor", "suggestion", "unknown")
