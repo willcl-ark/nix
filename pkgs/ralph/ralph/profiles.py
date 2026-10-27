@@ -90,7 +90,7 @@ class ReviewProfile:
             raise ValueError("Unknown review profile")
         if set(self.stages) != set(STAGE_NAMES):
             raise ValueError("Profile must name every review stage")
-        for name in ("router", "collator", "feedback"):
+        for name in ("collator", "feedback"):
             settings = self.stages[name]
             if settings.tool_set != "none" or any(settings.max_tool_calls.values()):
                 raise ValueError(f"{name} does not support tools")

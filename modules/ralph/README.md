@@ -43,18 +43,15 @@ It can inspect up to 20 lines of merge-base blame and read a related ancestor
 commit's message and file diff, with eight history calls per tool-enabled stage.
 Tool output is capped.
 
-A Luna router selects relevant specialists even for sensitive paths. Code rules
-set a minimum risk tier and require the applicable domain checks; they do not
-select every audit just because a change is sensitive. Incomplete input or
-failed routing requests the general set, excluding the script specialist. Routine changes use Luna.
-Header changes follow their domain's sensitivity rules; the `.h` extension
-alone does not force a full review. The router and reviewers can escalate
-based on changed behavior and inspect relevant headers with their tools.
-Ordinary RPC, CLI, build and CI changes have a standard floor and keep their
-matching specialist audits. Authentication, untrusted input, secrets, dependency
-provenance and release integrity can still trigger sensitive review. Overlapping
-critical domains retain their sensitive floor, including wallet RPC code.
-Documentation alone does not inherit a directory's sensitive floor.
+A Sol 6.1 router uses high reasoning and up to eight read-only code inspections
+to classify changed behavior and select relevant specialists. Paths require
+matching specialist audits, but never force a tier or adversarial profile.
+Comments in critical headers can be routine, and demonstrably mechanical wallet
+changes can be standard. Sensitive decisions identify a changed boundary or
+invariant; lower-tier critical refactors need evidence of preserved behavior.
+Incomplete input, failed routing or unresolved material context requests the
+general sensitive set, excluding the script specialist. Reviewers can still
+escalate when their inspection reveals sensitive behavior.
 See the [routing contracts](../../pkgs/ralph/README.md#audit-selection).
 The `script` specialist is selected by the router only for substantive changes
 to script execution/flags, signatures, witness/annex rules, spend-type acceptance,
@@ -154,7 +151,7 @@ the OpenAI spending allowance. The concept stage spends from the same capped
 review allowance as the OpenAI code stages, does not estimate savings and never
 stops later code stages. With an allowance of N inspections, the model can make
 up to N tool calls across at most N + 1 responses, leaving a final response
-without tools. The router and writing pass have no tools. The final response and
+without tools. The router has up to eight code inspections; the writing pass has no tools. The final response and
 all inspections remain subject to the spending ceiling. At the inspection limit,
 further reads are refused. The model returns supported findings and names
 material unanswered evidence. Debug output records the limit and which requests

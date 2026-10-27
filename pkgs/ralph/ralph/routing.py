@@ -4,10 +4,10 @@ import json
 import re
 
 from .config import ADVERSARIAL_PROFILES, AUDIT_NAMES
-from .protocol import InvalidReview, STRINGS, object_schema
+from .model import TOOL_SETS, StaleReview
+from .protocol import STRINGS, InvalidReview, object_schema
 from .repository import MAX_REVIEW_BYTES, is_test_path
 from .spend import BudgetExceeded
-from .model import StaleReview
 
 ROUTER_SCHEMA = object_schema(
     {
@@ -31,20 +31,9 @@ BUILD = re.compile(
     r"(?:CMakeLists\.txt|configure\.ac|guix\.sigs)(?:$|/)|"
     r".*/CMakeLists\.txt$|(?:Cargo|flake)\.lock$)"
 )
-CRYPTO = re.compile(r"^src/(?:crypto|secp256k1)(?:/|[._])")
 CONCURRENCY = re.compile(
     r"^src/(?:sync|threadsafety|scheduler|checkqueue|validationinterface|"
     r"util/thread|util/threadinterrupt)(?:[./_]|$)"
-)
-CONSENSUS = re.compile(
-    r"^src/(?:(?:consensus|primitives|script)/|"
-    r"(?:validation|coins|serialize|serialization|streams|key|pubkey|pow|"
-    r"chain|chainparams|undo|blockstorage|chainstate|kernel)(?:[./_]|$)|"
-    r"node/(?:chainstate|blockstorage)(?:[./_]|$))"
-)
-P2P = re.compile(
-    r"^src/(?:(?:net|policy)(?:[./_]|$)|"
-    r"(?:net_processing|netbase|addrman|txmempool|mempool)(?:[./_]|$))"
 )
 PUBLIC_CONTRACT = re.compile(
     r"^src/(?:(?:rpc|wallet/rpc)/|qt/rpcconsole(?:[./_]|$)|"
@@ -56,7 +45,6 @@ STATE = re.compile(
     r"(?:dbwrapper|txdb|blockstorage|chainstate)(?:[./_]|$)|"
     r"node/(?:chainstate|blockstorage)(?:[./_]|$))"
 )
-WALLET = re.compile(r"^src/wallet(?:/|[._])")
 
 
 def _doc_path(path):
@@ -68,20 +56,6 @@ def _doc_path(path):
 
 def _production_path(path):
     return not _doc_path(path) and not is_test_path(path) and not BUILD.search(path)
-
-
-def domain_profiles(paths):
-    profiles = set()
-    for path in paths:
-        if _doc_path(path) or is_test_path(path):
-            continue
-        if CONSENSUS.search(path):
-            profiles.add("consensus")
-        if WALLET.search(path):
-            profiles.add("wallet")
-        if P2P.search(path):
-            profiles.add("p2p")
-    return profiles
 
 
 def domain_audits(paths):
@@ -107,23 +81,6 @@ def domain_audits(paths):
     return audits
 
 
-def minimum_tier(paths):
-    if domain_profiles(paths):
-        return "sensitive"
-    if any(
-        (CONCURRENCY.search(path) or STATE.search(path) or CRYPTO.search(path))
-        for path in paths
-        if not _doc_path(path) and not is_test_path(path)
-    ):
-        return "sensitive"
-    if all(
-        _doc_path(path) or (is_test_path(path) and not BUILD.search(path))
-        for path in paths
-    ):
-        return "routine"
-    return "standard"
-
-
 def full_plan(reason):
     # Expensive script review needs a semantic trigger, not generic uncertainty.
     return {
@@ -135,8 +92,7 @@ def full_plan(reason):
     }
 
 
-def validate_plan(text, paths, floor):
-    floor = TIERS[max(TIERS.index(floor), TIERS.index(minimum_tier(paths)))]
+def validate_plan(text, paths):
     result = json.loads(text)
     if not isinstance(result, dict) or set(result) != set(ROUTER_SCHEMA["properties"]):
         raise InvalidReview("Invalid routing fields")
@@ -153,10 +109,9 @@ def validate_plan(text, paths, floor):
         raise InvalidReview("Unknown adversarial profile")
     if result["missing_context"]:
         return full_plan("Router reported missing context")
-    selected_profiles = set(result["profiles"]) | domain_profiles(paths)
+    selected_profiles = set(result["profiles"])
     if selected_profiles:
         result["tier"] = "sensitive"
-    result["tier"] = TIERS[max(TIERS.index(result["tier"]), TIERS.index(floor))]
     selected = set(result["audits"]) | domain_audits(paths)
     if all(_doc_path(path) or is_test_path(path) for path in paths):
         selected.discard("script")
@@ -173,7 +128,7 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
     if mode not in {"enabled", "shadow", "full"}:
         raise ValueError("Unknown routing mode")
     paths = sorted(snapshot.changed_paths)
-    floor = minimum_tier(paths)
+    settings = prompt_config.profile.stages["router"]
     record = {
         "model": prompt_config.models["router"],
         "status": "skipped",
@@ -189,31 +144,30 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
     else:
         # The complete manifest precedes the patch; a model cannot silently
         # classify only the excerpt it happened to receive.
-        router_input = (
-            json.dumps({"minimum_tier": floor, "changed_paths": paths}) + "\n" + review
-        )
+        router_input = json.dumps({"changed_paths": paths}) + "\n" + review
         try:
-            answer, response = runtime.audit(
+            answer = runtime.review(
                 "router",
-                prompt_config.audit_prompts["router"],
                 router_input,
+                prompt=prompt_config.audit_prompts["router"],
                 model_name=prompt_config.models["router"],
-                max_output_tokens=prompt_config.profile.stages[
-                    "router"
-                ].max_output_tokens,
-                reasoning_effort=prompt_config.profile.stages[
-                    "router"
-                ].reasoning_effort,
+                tools=TOOL_SETS[settings.tool_set],
+                # There is no selected tier until routing completes.
+                max_tool_calls=settings.max_tool_calls["standard"],
+                max_context_calls=settings.max_context_calls,
+                max_history_calls=settings.max_history_calls,
+                max_web_search_calls_per_response=settings.max_web_search_calls_per_response,
+                max_output_tokens=settings.max_output_tokens,
+                reasoning_effort=settings.reasoning_effort,
                 response_schema=ROUTER_SCHEMA,
-                debug_record=record,
-                timeout=prompt_config.profile.stages["router"].timeout,
+                record=record,
+                timeout=settings.timeout,
+                final_timeout=settings.final_timeout,
             )
-            record["status"] = response["status"]
+            record["status"] = "completed"
             record["raw_output"] = answer
             debug.setdefault("stage_outputs", {})["router"] = answer
-            if response["status"] != "completed":
-                raise InvalidReview("Router response incomplete")
-            proposed = validate_plan(answer, paths, floor)
+            proposed = validate_plan(answer, paths)
         except StaleReview:
             raise
         except BudgetExceeded as exc:
@@ -231,7 +185,6 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
         actual["audits"] = list(AUDIT_NAMES)
     debug["routing"] = {
         "mode": mode,
-        "minimum_tier": floor,
         "proposed": proposed,
         "selected": actual,
     }

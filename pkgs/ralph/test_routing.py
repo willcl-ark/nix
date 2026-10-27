@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from ralph import engine, profiles, routing
+from ralph.protocol import InvalidReview
 from ralph.repository import MAX_REVIEW_BYTES
 from ralph.spend import BudgetExceeded
 
@@ -27,6 +28,25 @@ def route(
 
 
 class RoutingTests(unittest.TestCase):
+    def test_semantic_tier_is_not_raised_by_critical_paths(self):
+        plan = routing.validate_plan(
+            route(tier="standard"),
+            {"src/wallet/wallet.cpp", "src/validation.cpp", "src/net.cpp"},
+        )
+        self.assertEqual(plan["tier"], "standard")
+        self.assertEqual(plan["profiles"], [])
+        self.assertIn("tests", plan["audits"])
+        self.assertIn("design", plan["audits"])
+
+        plan = routing.validate_plan(route(), {"src/kernel/bitcoinkernel.h"})
+        self.assertEqual(plan["tier"], "routine")
+
+        plan = routing.validate_plan(
+            route(tier="standard", profiles=("wallet",)), {"src/wallet/wallet.cpp"}
+        )
+        self.assertEqual(plan["tier"], "sensitive")
+        self.assertEqual(plan["profiles"], ["wallet"])
+
     def runtime(self):
         case = engine.ReviewCase("Patch", None)
         return engine.Runtime(case=case, api_key="key")
@@ -36,7 +56,7 @@ class RoutingTests(unittest.TestCase):
 
     def prompt_config(self):
         return SimpleNamespace(
-            models={"router": "gpt-6-luna"},
+            models={"router": profiles.get_profile().stages["router"].model},
             audit_prompts={"router": "Route this PR."},
             profile=profiles.get_profile(),
         )
@@ -48,21 +68,23 @@ class RoutingTests(unittest.TestCase):
         snapshot = self.snapshot("src/rpc/misc.cpp", "ci/test/00_setup_env.sh")
         review = f"Patch exceeds {MAX_REVIEW_BYTES} input bytes. Use read_diff"
         debug = {}
-        with patch("ralph.model.run_audit") as run:
+        with patch("ralph.model.openai_review") as run:
             plan = routing.plan_review(
                 self.runtime(), review, snapshot, prompt_config, debug
             )
         run.assert_not_called()
         self.assertEqual(plan, routing.full_plan("Initial patch is incomplete"))
 
-        for answer, status in (
-            ('{"tier": "routine"}', "completed"),
-            (route(), "incomplete"),
+        for answer in (
+            '{"tier": "routine"}',
+            InvalidReview("Router response incomplete"),
         ):
-            with self.subTest(status=status):
+            with self.subTest(answer=answer):
                 debug = {}
                 with patch(
-                    "ralph.model.run_audit", return_value=(answer, {"status": status})
+                    "ralph.model.openai_review",
+                    side_effect=answer if isinstance(answer, Exception) else None,
+                    return_value=answer,
                 ):
                     plan = routing.plan_review(
                         self.runtime(),
@@ -80,7 +102,7 @@ class RoutingTests(unittest.TestCase):
                 self.assertEqual(debug["stages"]["router"]["status"], "failed")
 
         plan = routing.validate_plan(
-            route(missing_context=("caller omitted",)), {"src/example.cpp"}, "standard"
+            route(missing_context=("caller omitted",)), {"src/example.cpp"}
         )
         self.assertEqual(plan, routing.full_plan("Router reported missing context"))
 
@@ -88,7 +110,7 @@ class RoutingTests(unittest.TestCase):
         debug = {}
         with (
             patch(
-                "ralph.model.run_audit",
+                "ralph.model.openai_review",
                 side_effect=BudgetExceeded("review spend limit would be exceeded"),
             ) as run,
             self.assertRaises(BudgetExceeded),
@@ -104,6 +126,36 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(debug["stages"]["router"]["status"], "budget_exhausted")
         self.assertEqual(debug["stages"]["router"]["error_type"], "BudgetExceeded")
         self.assertNotIn("routing", debug)
+
+    def test_router_can_inspect_pinned_code_without_a_path_floor(self):
+        debug = {}
+        prompt_config = self.prompt_config()
+        settings = prompt_config.profile.stages["router"]
+        runtime = self.runtime()
+        with patch("ralph.model.openai_review", return_value=route("standard")) as run:
+            plan = routing.plan_review(
+                runtime,
+                "Patch:\n+change",
+                self.snapshot("src/wallet/wallet.cpp"),
+                prompt_config,
+                debug,
+            )
+        self.assertEqual(plan["tier"], "standard")
+        manifest = json.loads(run.call_args.args[1].splitlines()[0])
+        self.assertEqual(manifest, {"changed_paths": ["src/wallet/wallet.cpp"]})
+        self.assertIs(run.call_args.args[2], runtime.case.snapshot)
+        options = run.call_args.kwargs
+        self.assertEqual(options["model"], settings.model)
+        self.assertEqual(options["max_tool_calls"], settings.max_tool_calls["standard"])
+        self.assertGreater(options["max_tool_calls"], 0)
+        self.assertEqual(options["reasoning_effort"], settings.reasoning_effort)
+        self.assertEqual(
+            {tool["name"] for tool in options["tools"]},
+            {"find_paths", "read_file", "read_base_file", "read_diff", "search_code"},
+        )
+        self.assertFalse(options["first_tool_required"])
+        self.assertEqual(debug["routing"]["selected"], plan)
+        self.assertEqual(debug["stages"]["router"]["status"], "completed")
 
 
 if __name__ == "__main__":

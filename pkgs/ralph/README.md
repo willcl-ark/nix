@@ -180,55 +180,61 @@ viewers; their source remains readable in a plain text editor.
 
 ## Audit selection
 
-Enabled routing combines the router's proposal with mandatory path coverage.
+Enabled routing uses Sol 6.1 at high reasoning to classify changed behavior and
+select adversarial domains. It receives the complete changed-path manifest and
+bounded patch, with up to eight read-only calls to inspect diffs, base/head code
+and callers. Calls are optional when the supplied evidence establishes the route.
+The router uses its configured standard-tier call allowance before a tier exists.
 
 ```mermaid
 flowchart LR
-    input["Patch + changed paths"] --> router["Router proposal<br/>or conservative fallback"]
-    router --> rules["Required audits<br/>+ risk floor"]
+    input["Patch + changed paths"] --> router["Semantic router<br/>with bounded code reads"]
+    router --> rules["Required specialist audits<br/>or conservative fallback"]
     rules --> plan["Selected review plan"]
 ```
 
 | Selection or escalation | Result |
 | --- | --- |
-| Enabled routing | Add mandatory path audits and profiles; never lower the path-based risk floor. |
+| Enabled routing | Use the semantic tier and profiles; add mandatory specialist audits from paths. |
 | Explicit full mode | Select every audit and profile, including script. |
 | Shadow mode | Record the routing proposal, then select every audit and profile, including script. This also applies after routing fallback. |
-| Invalid or failed routing, missing context, or oversized patch | Use the sensitive general plan with all profiles, excluding script. Full and shadow modes still include script. Budget exhaustion stops the attempt. |
+| Invalid or failed routing, material missing context, or oversized patch | Use the sensitive general plan with all profiles, excluding script. Full and shadow modes still include script. Budget exhaustion stops the attempt. |
 | Overview requests sensitive review from a lower tier | Add all general audits and profiles, excluding script. |
 | A focused audit requests sensitive review from a lower tier | Add adversarial, state and concurrency; keep selected profiles, or use all profiles if none were selected. |
 
-The router can add coverage but cannot remove path-mandated coverage. A sensitive
-tier always adds adversarial review, even when no domain profile is selected.
-Domain profiles extend the adversarial prompt; they are not separate model calls.
-They are distinct from the `default` and `high` review settings profiles.
+Paths do not impose a tier or add adversarial profiles. Comments in a consensus
+header can be routine; wallet logging and demonstrably mechanical refactors can
+be standard. Sensitive decisions must identify a changed security boundary or
+invariant. Downgrading a critical-subsystem refactor requires evidence that the
+relevant behavior is preserved. Unresolved material questions request conservative
+coverage. Selecting the semantic script specialist still requires sensitive review.
 
-| Changed paths, excluding tests where stated | Mandatory coverage / tier floor |
+A sensitive tier always adds adversarial review, even when no domain profile is
+selected. Domain profiles extend that prompt; they are not separate model calls.
+An explicit model request for an adversarial profile requires sensitive coverage,
+so a contradictory lower-tier proposal cannot silently skip that request.
+These profiles are distinct from the `default` and `high` review settings profiles.
+
+| Changed paths, excluding tests where stated | Mandatory specialist coverage |
 | --- | --- |
-| Documentation or tests only | Routine floor; tests audit for test changes |
+| Tests or production code | tests audit |
 | Any non-documentation path, including tests and recognized build files | dead_code audit |
-| Production code, excluding docs, tests and recognized build paths | Standard floor; tests and design audits |
-| Consensus, validation, script, chainstate, serialization and related paths | Sensitive; consensus profile |
-| Wallet paths | Sensitive; wallet profile |
-| Network, policy, mempool and related paths | Sensitive; p2p profile |
-| Synchronization, scheduler, queues, validation callbacks, thread utilities | Sensitive; concurrency audit |
-| Databases, indexes, wallet storage, chainstate and block storage | Sensitive; state audit |
-| RPC, CLI, HTTP, REST, initialization and argument handling | Standard; public_contract audit |
-| Recognized build paths, including CMake, depends, Guix, CI and Cargo/flake locks | Standard; build audit |
-| Crypto and secp256k1 paths | Sensitive floor |
+| Production code, excluding docs, tests and recognized build paths | design audit |
+| Synchronization, scheduler, queues, validation callbacks, thread utilities | concurrency audit |
+| Databases, indexes, wallet storage, chainstate and block storage | state audit |
+| RPC, CLI, HTTP, REST, initialization and argument handling | public_contract audit |
+| Recognized build paths, including CMake, depends, Guix, CI and Cargo/flake locks | build audit |
 
 These are summaries of the regex rules in [routing.py](ralph/routing.py).
-Documentation is excluded from directory-based coverage; `CMakeLists.txt` and
-`requirements.txt` are configuration despite their suffix. CI scripts under
-`ci/test/` retain both build and test audits. Rules overlap: wallet RPC and wallet build files still
-have a sensitive floor. The router can add audits, profiles or a higher tier
-based on behavior, including authentication, untrusted inputs, secrets,
-dependency provenance and release integrity. Empty audit and profile lists are
-valid when no coverage applies. Routine does not mean no review.
+Documentation files are excluded from directory-based coverage; `CMakeLists.txt`
+and `requirements.txt` are configuration despite their suffix. CI scripts under
+`ci/test/` retain both build and test audits. The router can add relevant audits.
+Empty audit and profile lists are valid when no coverage applies. Routine does
+not mean no review.
 
 ## Script and transaction-policy specialist
 
-The `script` audit is selected by the cheap router only for substantive changes
+The `script` audit is selected by the router only for substantive changes
 in script execution or flags, signatures and sighash commitments, witness or
 annex rules, spend-type acceptance, or transaction validity and fee-bumping
 constraints. Filenames and a sensitive tier do not select it automatically.
@@ -323,7 +329,7 @@ does not receive concept research output or current PR discussion.
 
 | Stage | Default model | Reasoning effort | Per-response output token ceiling | Evidence access |
 | --- | --- | --- | --- | --- |
-| router | gpt-6-luna | low | 4,000 | Supplied input only |
+| router | gpt-6.1-sol | high | 8,000 | Up to 8 code inspections |
 | independent | gpt-6-luna | low | 4,000 | Full tool set |
 | script | gpt-6.1-sol | high | 25,000 | Original input; code and base history, no discussion or web tools |
 | adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |

@@ -20,10 +20,10 @@ flowchart TD
 ## How agents are selected
 
 The [router](router/prompt.md) proposes a review tier, focused audits and
-adversarial domains. Rules based on changed paths add mandatory audits and set
-a minimum tier. The router can increase that coverage; it cannot lower the
-minimum. Discovery can also expand the selection when it finds a sensitive
-area that needs more review.
+adversarial domains from changed behavior, using bounded base/head code reads
+when needed. Path rules add mandatory specialist audits without forcing a tier
+or adversarial profile. Discovery can expand the selection when it finds a
+sensitive area that needs more review.
 
 The [independent](independent/prompt.md) agent reviews the overall change.
 Specialists cover script, concurrency, state, public contracts, build changes,

@@ -62,7 +62,7 @@ The supported tool sets are:
 
 | Tool set | Access requested |
 | --- | --- |
-| `none` | No tools, used by the router, feedback mapper and collator |
+| `none` | No tools, used by the feedback mapper and collator |
 | `focused` | Find paths, read files and diffs, search current code |
 | `full` | Code, comparison-base history and other discussion lookup |
 | `base` | Find, read and search files at the comparison base |
