@@ -11,9 +11,30 @@ style and engine-specific checks; current-engine tests and diagnostics do not
 prescribe another engine's review format.
 
 
-Edit the [comment templates](final_comment/README.md) to change section order,
-headings or finding layout. The directory includes an offline preview and example
-reviews; no credentials or model requests are needed.
+## Contributing prompts and comment formatting
+
+Start with [Contributing](CONTRIBUTING.md) to edit a prompt, model, reasoning
+effort or tool limit. The [agent flow](agents/README.md) explains selection and
+verification. Each agent has a `config.toml` and a Markdown prompt. Shared
+instructions have their own directory, and per-agent high-profile overrides
+stay beside the default settings.
+
+The [final_comment/](final_comment/README.md) directory contains Markdown
+templates for comment structure, an offline preview and example reviews. The
+[collator prompt](agents/collator/prompt.md) controls the wording of accepted
+findings. The runtime validates findings and enforces tool and spending limits.
+
+From the repository root:
+
+```sh
+python3 pkgs/ralph/review.py check-agents
+python3 pkgs/ralph/final_comment/preview.py > /tmp/ralph-comment.md
+python3 -m unittest discover -s pkgs/ralph -p 'test_*.py'
+```
+
+These checks and previews run without credentials or model requests. A prompt
+or template PR can stay entirely in those directories. Include an example of
+the intended behavior or preview when useful.
 
 `packages.<system>.ralph` installs only the `ralph` review command. The
 [companion package](../ralph-service/README.md) supplies the webhook service,
@@ -101,9 +122,9 @@ PR context and discussion evidence. Disabled archaeology and blind alternatives
 make no model requests and do not reduce ordinary code coverage. Hosted web
 permission is separate from discussion access.
 
-Custom main-review model maps must remove `addressed_findings`, and custom audit
-directories no longer need `addressed_findings.md`. Follow-up prompt and model
-settings belong to the companion and are configured separately.
+Follow-up prompt and model settings belong to the companion and are configured
+separately. Main review customizations use a complete `--agents-dir` tree or
+individual `stages` overrides in the engine configuration.
 
 ## Engine boundary
 
@@ -150,8 +171,9 @@ keep verification order even if the editor reorders the prose.
 
 The diagrams and implementation details below describe the `current` engine.
 
-These diagrams describe the checked-in defaults. [profiles.py](ralph/profiles.py) defines each review profile.
-Callers can replace the complete model map with `--models-json`.
+These diagrams describe the checked-in defaults. [agents/](agents/README.md)
+defines each review profile. Callers can use `--agents-dir` or override individual
+stage settings through `--engine-config`.
 The [NixOS module documentation](../../modules/ralph/README.md)
 covers deployment and options. Mermaid diagrams render in supporting Markdown
 viewers; their source remains readable in a plain text editor.
@@ -215,7 +237,7 @@ unrelated work in validation or policy files skip it. Generic missing context,
 routing failures and overview escalation do not add it. Explicit `full` and
 `shadow` modes still request every audit, including `script`.
 
-Its [prompt](audits/script.md) checks consensus versus policy, complete base/head
+Its [prompt](agents/script/prompt.md) checks consensus versus policy, complete base/head
 functions and relevant spend-type combinations. It distinguishes signed
 participants from inputs such as P2A anchors, and tests the premise of a new
 transaction-wide rule against existing exceptions. The PR #36466 all-input annex
@@ -236,7 +258,7 @@ still produces an explicit incomplete stage. Candidates go through the existing
 verifier, and named discovery gaps are passed to the verifier for targeted
 inspection. Remaining gaps stay visible in coverage. Stage stats include
 selection, execution, coverage, costs and sole/shared accepted findings.
-Custom model maps must include `script`; there is no fallback to an old map.
+Custom agent directories must include the `script` agent.
 
 ## Stages, models and evidence
 
@@ -352,7 +374,7 @@ require a first inspection. Claude uses automatic tool selection because Opus
 5.5 rejects forced tool calls; Ralph checks that inspection occurred. At limits,
 a final turn uses collected evidence and must preserve uncertainty.
 
-The [dead-code audit](audits/dead_code.md) runs on production, test, script and
+The [dead-code audit](agents/dead_code/prompt.md) runs on production, test, script and
 build changes, including deletions and mechanical refactors. Ordinary docs-only
 changes skip it unless routing requests it. It checks both new unused code and
 existing code orphaned by the PR, following removed references into unchanged
@@ -362,8 +384,7 @@ before recommending deletion. Findings use the normal suggestion and verifier
 flow; no runtime failure is required for a proven safe removal. Its 48-call
 limit allows reference tracing even on routine PRs and shares the existing
 spending ceiling. These settings have not been tuned against live reviews.
-Custom prompt directories need `dead_code.md`, and complete custom model maps
-must include `dead_code`.
+Custom agent directories must include the `dead_code` agent.
 
 The default estimated review allowance is USD 5.00, shared by Codex and Claude.
 Routing and discovery protect verifier headroom, refreshed as candidates
@@ -378,8 +399,7 @@ budget or API failure, invalid response, or missing decision withholds all
 pending Majors. Explicit `drop` and `unresolved` verdicts withhold those findings;
 non-Majors and concept results remain available. Medium effort and the 25,000
 token limit are initial settings, not a measured accuracy guarantee.
-Custom prompt directories must include `major_verifier.md`, and complete model
-maps must include `major_verifier`.
+Custom agent directories must include the `major_verifier` agent.
 The companion GitHub publisher also requires second-verifier provenance for
 every Major, including saved publication retries. An unchecked batch is skipped
 without posting or deleting a comment.
@@ -527,7 +547,7 @@ reported separately from review cost. These checks are not a causal claim.
 Profiles within one adversarial call get no separate causal credit.
 
 Sources: [protocol.py](ralph/protocol.py),
-[verifier prompt](audits/verifier.md), [collator prompt](audits/collator.md),
+[verifier prompt](agents/verifier/prompt.md), [collator prompt](agents/collator/prompt.md),
 [companion report.py](../ralph-service/ralph_service/report.py),
 [companion stats.py](../ralph-service/ralph_service/stats.py).
 
@@ -616,13 +636,12 @@ The default multiplier is one. An allowance is a spend cap, not a target.
 
 A resolved profile records every stage's model, reasoning effort, output ceiling,
 and tool limits in the engine configuration snapshot and hash. Profiles keep
-routine, standard and sensitive tool limits explicit. Model overrides apply after
-profile selection; overriding the archaeologist model also selects that model
-for alternatives. Custom audit prompt directories contain prompts only.
+routine, standard and sensitive tool limits explicit. Each agent owns its model
+and limits, including alternatives and feedback. A high-profile table overrides
+that agent's defaults; explicit stage overrides apply last.
 
 An engine configuration can override individual settings on any existing stage
-through `stages`. These partial overrides apply after profile selection and
-`models_json`. For example, to select Claude for verification:
+through `stages`. These partial overrides apply after the selected agent profile. For example, to select Claude for verification:
 
 ```json
 {
@@ -642,7 +661,7 @@ through `stages`. These partial overrides apply after profile selection and
 Pass this file with `--engine-config`. Unspecified settings retain their
 resolved defaults. Supported settings also include `max_tool_calls`,
 `max_context_calls`, `max_history_calls` and
-`max_web_search_calls_per_response`. `max_tool_calls` names all three tiers,
+`max_web_search_calls_per_response` and `tool_set`. `max_tool_calls` names all three tiers,
 `routine`, `standard` and `sensitive`. Unknown stages and fields are rejected;
 models must have known accounting rates. Ralph records the resolved settings in
 the profile snapshot and hash, including timeouts, for retries and evaluation.

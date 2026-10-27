@@ -1,0 +1,14 @@
+prompt = "prompt.md"
+tool_set = "full"
+model = "gpt-6.1-sol"
+reasoning_effort = "medium"
+max_output_tokens = 25000
+max_tool_calls = { routine = 72, standard = 72, sensitive = 72 }
+max_context_calls = 8
+max_history_calls = 8
+max_web_search_calls_per_response = 2
+timeout = 180
+final_timeout = 600
+
+[profiles.high]
+reasoning_effort = "high"

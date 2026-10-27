@@ -1,7 +1,5 @@
 """The existing routed Ralph review engine."""
 
-import json
-from pathlib import Path
 from urllib.parse import urlsplit
 
 from final_comment import load_format, validate_format
@@ -12,24 +10,35 @@ from .engine import Output
 
 def configure(value):
     value = dict(value)
+    removed = value.keys() & {"prompt_file", "audit_prompt_dir", "models_json"}
+    if removed:
+        raise ValueError(
+            f"Removed engine settings: {', '.join(sorted(removed))}; "
+            "use agents_dir and stages"
+        )
+    agents_dir = value.get("agents_dir", config.DEFAULT_AGENTS_DIR)
     selected_profile = value.get("profile", "default")
-    profile = (
-        profiles.get_profile(selected_profile)
-        if isinstance(selected_profile, str)
-        else profiles.ReviewProfile.from_dict(selected_profile)
-    )
     prompts = value.get("prompts")
-    if prompts is None:
-        prompt_file = Path(value.get("prompt_file", config.DEFAULT_PROMPT_FILE))
-        audit_dir = Path(value.get("audit_prompt_dir", config.DEFAULT_AUDIT_DIR))
+    if prompts is None or "agents_dir" in value:
+        loaded = config.PromptConfig.load(
+            agents_dir,
+            profile=selected_profile
+            if isinstance(selected_profile, str)
+            else selected_profile["name"],
+        )
+        profile = loaded.profile
+        if isinstance(selected_profile, dict) and "agents_dir" not in value:
+            profile = profiles.ReviewProfile.from_dict(selected_profile)
         prompts = {
-            "instructions": config.load_prompt_file(prompt_file),
-            "audit_prompts": {
-                name: config.load_prompt_file(audit_dir / f"{name}.md")
-                for name in config.PROMPT_NAMES
-            },
+            "instructions": loaded.instructions,
+            "audit_prompts": loaded.audit_prompts,
         }
     else:
+        profile = (
+            profiles.get_profile(selected_profile, agents_dir)
+            if isinstance(selected_profile, str)
+            else profiles.ReviewProfile.from_dict(selected_profile)
+        )
         prompts = dict(prompts)
         if set(prompts) != {"instructions", "audit_prompts"}:
             raise ValueError("prompts must contain only instructions and audit_prompts")
@@ -39,28 +48,12 @@ def configure(value):
             raise ValueError("prompts must contain instructions and audit_prompts")
         if set(prompts["audit_prompts"]) != set(config.PROMPT_NAMES):
             raise ValueError("prompt config must name each review prompt")
-        if "prompt_file" in value:
-            prompts["instructions"] = config.load_prompt_file(
-                Path(value["prompt_file"])
-            )
-        if "audit_prompt_dir" in value:
-            audit_dir = Path(value["audit_prompt_dir"])
-            prompts["audit_prompts"] = {
-                name: config.load_prompt_file(audit_dir / f"{name}.md")
-                for name in config.PROMPT_NAMES
-            }
-    if "models_json" in value:
-        profile = profile.with_models(
-            config.validate_models(
-                json.loads(Path(value["models_json"]).read_text(encoding="utf-8"))
-            )
-        )
     profile = profile.with_stages(value.get("stages", {}))
     if any(
         not isinstance(prompt, str) or not prompt.strip()
-        for prompt in prompts["audit_prompts"].values()
+        for prompt in (prompts["instructions"], *prompts["audit_prompts"].values())
     ):
-        raise ValueError("audit prompt files must not be empty")
+        raise ValueError("agent prompt files must not be empty")
     normalized = {
         "prompts": prompts,
         "profile": profile.to_dict(),

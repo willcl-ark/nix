@@ -143,6 +143,11 @@ def _key(path):
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     commands = result.add_subparsers(dest="command", required=True)
+    check = commands.add_parser(
+        "check-agents",
+        help="Validate agent settings, prompts and comment templates offline",
+    )
+    check.add_argument("--agents-dir", type=Path)
     review = commands.add_parser("review", help="Review committed local changes")
     review.add_argument("target")
     review.add_argument("repo", type=Path)
@@ -155,9 +160,7 @@ def parser():
     review.add_argument("--archaeology", choices=("auto", "on", "off"))
     review.add_argument("--openai-key-file", type=Path, required=True)
     review.add_argument("--review-budget-usd", type=float, default=5.00)
-    review.add_argument("--prompt-file", type=Path)
-    review.add_argument("--audit-prompt-dir", type=Path)
-    review.add_argument("--models-json", type=Path)
+    review.add_argument("--agents-dir", type=Path)
     review.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
     review.add_argument("--output", type=Path)
     return result
@@ -165,6 +168,18 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    if args.command == "check-agents":
+        try:
+            for profile in profiles.PROFILE_NAMES:
+                settings = {"profile": profile}
+                if args.agents_dir is not None:
+                    settings["agents_dir"] = str(args.agents_dir)
+                engine.load(config=settings)
+        except (OSError, ValueError, TypeError) as error:
+            print(f"ralph: {error}", file=sys.stderr)
+            return 2
+        print("Agent settings, prompts and comment templates are valid.")
+        return 0
     with _cancellation() as cancellation:
         code = _review(args, cancellation)
         return 128 + cancellation["signal"] if cancellation["signal"] else code
@@ -186,18 +201,14 @@ def _review(args, cancellation):
         overrides = {
             name: getattr(args, name)
             for name in (
-                "prompt_file",
-                "audit_prompt_dir",
-                "models_json",
+                "agents_dir",
                 "routing_mode",
                 "profile",
             )
             if getattr(args, name) is not None
         }
         if args.engine != "current" and (args.archaeology is not None or overrides):
-            raise ValueError(
-                "Archaeology and prompt/model/profile overrides require the current engine"
-            )
+            raise ValueError("Current-engine overrides require --engine current")
         settings.update(
             {
                 key: str(value) if isinstance(value, Path) else value

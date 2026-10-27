@@ -1,15 +1,17 @@
 """Validated review prompts."""
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .profiles import ReviewProfile, get_profile
-from .spend import supports_model
+from .profiles import (
+    DEFAULT_AGENTS_DIR,
+    STAGE_NAMES,
+    ReviewProfile,
+    get_profile,
+    load_agent_configs,
+)
 
 
-DEFAULT_PROMPT_FILE = Path(__file__).resolve().parent.parent / "prompt.md"
-DEFAULT_AUDIT_DIR = Path(__file__).resolve().parent.parent / "audits"
 AUDIT_NAMES = (
     "script",
     "concurrency",
@@ -21,42 +23,20 @@ AUDIT_NAMES = (
     "build",
 )
 ADVERSARIAL_PROFILES = ("consensus", "wallet", "p2p")
-MODEL_NAMES = (
-    "router",
-    "independent",
-    "adversarial",
-    "adversarial_claude",
-    *AUDIT_NAMES,
-    "archaeologist",
-    "verifier",
-    "major_verifier",
-    "collator",
-)
+SHARED_PROMPTS = {
+    "common": "shared/discovery.md",
+    "backport": "shared/backport.md",
+    "reconciliation": "verifier/reconciliation.md",
+    **{name: f"adversarial/domains/{name}.md" for name in ADVERSARIAL_PROFILES},
+}
 PROMPT_NAMES = (
-    "common",
-    "router",
-    "adversarial",
-    *ADVERSARIAL_PROFILES,
-    *AUDIT_NAMES,
-    "archaeologist",
-    "alternatives",
-    "verifier",
-    "major_verifier",
-    "collator",
+    *[name for name in STAGE_NAMES if name != "independent"],
+    *SHARED_PROMPTS,
 )
 
 
 def load_prompt_file(path):
     return path.read_text(encoding="utf-8").removesuffix("\n")
-
-
-def validate_models(models):
-    if set(models) != set(MODEL_NAMES) or any(
-        not isinstance(model, str) or not supports_model(model)
-        for model in models.values()
-    ):
-        raise ValueError("model config must name each review stage")
-    return models
 
 
 @dataclass(frozen=True)
@@ -67,24 +47,31 @@ class PromptConfig:
 
     @property
     def models(self):
-        return {name: self.profile.stages[name].model for name in MODEL_NAMES}
+        return {name: settings.model for name, settings in self.profile.stages.items()}
 
     @classmethod
     def load(
         cls,
-        prompt_file=DEFAULT_PROMPT_FILE,
-        audit_dir=DEFAULT_AUDIT_DIR,
-        models_json=None,
+        agents_dir=DEFAULT_AGENTS_DIR,
         profile="default",
     ):
-        prompts = {
-            name: load_prompt_file(audit_dir / f"{name}.md") for name in PROMPT_NAMES
-        }
+        agents_dir = Path(agents_dir).resolve()
+        configs = load_agent_configs(agents_dir)
+        selected = get_profile(profile, agents_dir, agent_configs=configs)
+        prompts = {}
+        for name, values in configs.items():
+            path = (agents_dir / name / values.get("prompt", "prompt.md")).resolve()
+            if not path.is_relative_to(agents_dir):
+                raise ValueError(
+                    f"{name}: prompt must stay inside the agents directory"
+                )
+            prompts[name] = load_prompt_file(path)
+        prompts.update(
+            {
+                name: load_prompt_file(agents_dir / path)
+                for name, path in SHARED_PROMPTS.items()
+            }
+        )
         if any(not prompt.strip() for prompt in prompts.values()):
-            raise ValueError("audit prompt files must not be empty")
-        selected = get_profile(profile)
-        if models_json is not None:
-            selected = selected.with_models(
-                validate_models(json.loads(models_json.read_text(encoding="utf-8")))
-            )
-        return cls(load_prompt_file(prompt_file), prompts, selected)
+            raise ValueError("agent prompt files must not be empty")
+        return cls(prompts.pop("independent"), prompts, selected)

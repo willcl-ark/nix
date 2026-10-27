@@ -460,15 +460,19 @@ Useful defaults:
 - `services.ralph.stateDir = "/var/lib/ralph"`
 - `services.ralph.commentMarker = null`, which uses
   `<!-- ralph:${repository} -->`
-- `services.ralph.promptFile = null`
-- `services.ralph.auditPromptDir = null`
+- `services.ralph.agentsDir = null`
 - `services.ralph.followupPromptFile = null`
 - `services.ralph.followupModel = null`
 
-Unset main-review prompt overrides resolve inside the imported core package.
+Main-review agent settings and prompts resolve inside the imported core package.
+Set `agentsDir` to use a complete alternate agents directory. Each agent has a
+`config.toml` and Markdown prompt under [pkgs/ralph/agents](../../pkgs/ralph/agents/).
+Edit [pkgs/ralph/final_comment](../../pkgs/ralph/final_comment/) to change the
+review comment templates. Run `python3 pkgs/ralph/review.py check-agents` from
+the repository root to validate contributor edits without credentials.
+
 Follow-up resolves its own bundled prompt and model independently. Set
-`followupPromptFile` and `followupModel` to customize follow-up; main-review
-`promptFile`, `auditPromptDir` and `modelsJson` never affect it.
+`followupPromptFile` and `followupModel` to customize follow-up.
 
 Set `repositoryUrl` only when the HTML URL in Forgejo webhook payloads cannot
 be derived from `forgejoApi`.
@@ -482,14 +486,14 @@ be derived from `forgejoApi`.
 - `services.ralph.engineConfig = { }`: JSON-serializable object passed to the
   selected engine. Ralph writes this configuration to the Nix store and pins
   its resolved settings when queuing each run. Do not put secrets in it.
-  The current engine accepts resolved `prompts`, or `prompt_file`,
-  `audit_prompt_dir` and `models_json`, plus `profile`, `routing_mode`, `archaeology` and
-  `blind_alternatives`, `openai_api_base` and `stages`.
+  The current engine accepts resolved `prompts`, or `agents_dir`, plus
+  `profile`, `routing_mode`, `archaeology`, `blind_alternatives`,
+  `openai_api_base` and `stages`.
   The service enables archaeology for PR context with discussion access.
 
-The current-engine options `promptFile`, `auditPromptDir`, `modelsJson` and
-`routingMode` remain convenience defaults for the current engine. Values in
-`engineConfig` take precedence over those defaults. Setting any of these
+The current-engine options `agentsDir` and `routingMode` provide convenience
+defaults for the current engine. Values in `engineConfig` take precedence over
+those defaults. Setting any of these
 current-only options explicitly with a non-current engine is rejected.
 Engine-produced Markdown is the published review body. Structured data stays
 private unless an engine explicitly provides a supported export.
@@ -500,9 +504,9 @@ follow-up endpoint. An explicit `engineConfig.openai_api_base` takes precedence
 for both. Credentials belong only in `openaiKeyFile`, never in the URL.
 
 Use `engineConfig.stages` to override individual settings on any existing
-review stage. Overrides apply after the selected `default` or `high` profile
-and `modelsJson`. Unspecified settings keep their resolved defaults. For example,
-to use Claude for verification as well as adversarial review:
+review stage. Overrides apply after the agent's settings for the selected
+`default` or `high` profile. Unspecified settings keep their resolved defaults.
+For example, to use Claude for verification as well as adversarial review:
 
 ```nix
 services.ralph.engineConfig.stages.verifier = {
@@ -567,18 +571,14 @@ older cases before replaying them.
 - `routingMode = "shadow"`: record the proposed route while requesting every
   audit. This costs more and still respects the same allowance.
 - `routingMode = "full"`: request every audit without calling the router.
-- `modelsJson = null`: optional per-stage replacement for the model map.
-  The map must include router, independent, script, adversarial, adversarial_claude, concurrency, state,
-  public_contract, tests, dead_code, design, build, archaeologist, verifier,
-  major_verifier and collator.
-  Prices must also be supported by ralph's ledger.
+- `agentsDir = null`: optional directory containing each agent's prompt and
+  model, reasoning, tool and timeout settings. Models must have prices supported
+  by Ralph's ledger. The bundled directory supports `default` and `high` profiles.
 
-Custom main-review model maps must remove `addressed_findings`. Follow-up now
-uses its own prompt and model, configured with `followupPromptFile` and
-`followupModel`. Main-review audit directories no longer require
-`addressed_findings.md`. Change these configurations together with the companion
-package, retaining all existing state and follow-up initialization metadata.
-The package split adds no database migration.
+The main-review CLI accepts `--agents-dir` in place of separate prompt and model
+files. Update custom deployments to `services.ralph.agentsDir` or
+`engineConfig.agents_dir`. Follow-up keeps its separate `followupPromptFile`
+and `followupModel` options.
 
 Cost history adds a request timestamp to each of the three spend databases.
 The service startup hook runs the one-time migration, preserving old rows with
@@ -648,9 +648,10 @@ ralph-evaluate run \
   ./cases/case-123-*.json
 ```
 
-Run supports `--prompt-file`, `--audit-prompt-dir`, `--models-json`,
-`--routing-mode` and `--no-blind-alternatives` for ablation. Blind alternatives
-are on by default after a valid concept candidate. The blind run keeps the
+Run supports `--agents-dir`, `--routing-mode` and `--no-blind-alternatives`
+for ablation. Without an override, replay retains the captured agent settings
+and prompts. Blind alternatives are on by default after a valid concept candidate.
+The blind run keeps the
 existing archaeologist model, gives it only base-side code tools and neutral
 problem, goal and baseline inputs, and sends the result to the final verifier
 rather than discovery. Each run gets a distinct private JSON artifact with

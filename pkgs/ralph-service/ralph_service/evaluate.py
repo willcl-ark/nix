@@ -341,9 +341,7 @@ def run_case(
     output_dir,
     ledger,
     routing_mode=None,
-    prompt_file=None,
-    audit_dir=None,
-    models_json=None,
+    agents_dir=None,
     labels=None,
     blind_alternatives=None,
     engine_name=None,
@@ -413,28 +411,17 @@ def run_case(
         )
         selected_config = dict(selected_config or {})
         current_only = (
-            prompt_file is not None
-            or audit_dir is not None
-            or models_json is not None
+            agents_dir is not None
             or routing_mode is not None
             or blind_alternatives is not None
         )
         if selected_name != "current" and current_only:
             raise ValueError(
-                "prompt, model, routing, and alternatives options apply only to current"
+                "agent, routing, and alternatives options apply only to current"
             )
         if selected_name == "current":
-            selected_config.update(
-                {
-                    key: value
-                    for key, value in {
-                        "prompt_file": prompt_file,
-                        "audit_prompt_dir": audit_dir,
-                        "models_json": models_json,
-                    }.items()
-                    if value is not None
-                }
-            )
+            if agents_dir is not None:
+                selected_config["agents_dir"] = agents_dir
             if routing_mode is not None:
                 selected_config["routing_mode"] = routing_mode
             selected_config.setdefault("routing_mode", "enabled")
@@ -1071,9 +1058,7 @@ def main(argv=None):
     capture.add_argument("--forgejo-token-file", type=Path, required=True)
     capture.add_argument("--engine", default="current")
     capture.add_argument("--engine-config", type=Path)
-    capture.add_argument("--prompt-file", type=Path)
-    capture.add_argument("--audit-prompt-dir", type=Path)
-    capture.add_argument("--models-json", type=Path)
+    capture.add_argument("--agents-dir", type=Path)
     capture.add_argument(
         "--research-cutoff",
         help="ISO timestamp cutoff for captured discussion evidence",
@@ -1091,9 +1076,7 @@ def main(argv=None):
     run.add_argument("--openai-key-file", type=Path, required=True)
     run.add_argument("--engine")
     run.add_argument("--engine-config", type=Path)
-    run.add_argument("--prompt-file", type=Path)
-    run.add_argument("--audit-prompt-dir", type=Path)
-    run.add_argument("--models-json", type=Path)
+    run.add_argument("--agents-dir", type=Path)
     run.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
     run.add_argument(
         "--blind-alternatives",
@@ -1136,26 +1119,12 @@ def main(argv=None):
             args.repository_url,
             args.comment_marker,
         )
-        current_only = (
-            args.prompt_file is not None
-            or args.audit_prompt_dir is not None
-            or args.models_json is not None
-        )
-        if args.engine != "current" and current_only:
-            parser.error("prompt and model options apply only to --engine current")
+        if args.engine != "current" and args.agents_dir is not None:
+            parser.error("agent options apply only to --engine current")
         try:
             engine_config = read_engine_config(args.engine_config)
-            engine_config.update(
-                {
-                    key: value
-                    for key, value in {
-                        "prompt_file": args.prompt_file,
-                        "audit_prompt_dir": args.audit_prompt_dir,
-                        "models_json": args.models_json,
-                    }.items()
-                    if value is not None
-                }
-            )
+            if args.agents_dir is not None:
+                engine_config["agents_dir"] = args.agents_dir
             if args.engine == "current":
                 engine_config.setdefault("archaeology", True)
             review_engine = engine.load(args.engine, engine_config)
@@ -1242,11 +1211,9 @@ def main(argv=None):
             api_key,
             args.output_dir,
             ledger,
-            args.routing_mode,
-            args.prompt_file,
-            args.audit_prompt_dir,
-            args.models_json,
-            labels,
+            routing_mode=args.routing_mode,
+            agents_dir=args.agents_dir,
+            labels=labels,
             blind_alternatives=args.blind_alternatives,
             engine_name=args.engine,
             engine_config=(engine_config if args.engine_config else None),

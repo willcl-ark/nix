@@ -1,6 +1,9 @@
 import unittest
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import Mock
 
-from ralph import current_engine, engine
+from ralph import config, current_engine, engine, pipeline
 
 
 class StageConfigurationTests(unittest.TestCase):
@@ -38,12 +41,49 @@ class StageConfigurationTests(unittest.TestCase):
             ({"verifer": {}}, "Unknown review stage: verifer"),
             ({"verifier": {"effort": "high"}}, "Unknown settings for verifier: effort"),
             ({"verifier": {"timeout": 0}}, "verifier.*timeouts"),
+            ({"collator": {"tool_set": "full"}}, "collator does not support tools"),
         ):
             with (
                 self.subTest(stages=stages),
                 self.assertRaisesRegex(ValueError, message),
             ):
                 current_engine.configure({"stages": stages})
+
+    def test_tool_settings_reach_dispatch_without_backport_reenabling_tools(self):
+        prompts = config.PromptConfig.load()
+        prompts = replace(
+            prompts,
+            profile=prompts.profile.with_stages(
+                {
+                    "independent": {
+                        "tool_set": "none",
+                        "max_tool_calls": dict.fromkeys(
+                            ("routine", "standard", "sensitive"), 1
+                        ),
+                    }
+                }
+            ),
+        )
+        runtime = SimpleNamespace(
+            case=SimpleNamespace(research_evidence=None, backport_evidence={}),
+            discussion_lookup=None,
+            allow_web_search=True,
+            debug={"stages": {}, "stage_outputs": {}},
+            review=Mock(return_value="finished"),
+        )
+        pipeline._run_stage(
+            runtime,
+            prompts,
+            {"tier": "sensitive"},
+            "independent",
+            "input",
+            "prompt",
+            None,
+        )
+        settings = runtime.review.call_args.kwargs
+        self.assertEqual(settings["tools"], [])
+        self.assertEqual(settings["max_tool_calls"], 1)
+        self.assertFalse(settings["first_tool_required"])
 
     def test_comment_templates_change_identity_and_survive_config_reload(self):
         baseline = engine.load()

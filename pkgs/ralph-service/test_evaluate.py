@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -384,16 +385,37 @@ class EvaluateTests(unittest.TestCase):
         )
 
     def test_replay_retains_high_profile_and_scales_only_its_review_allowance(self):
-        self.review_engine = engine.load("current", {"profile": "high"})
+        agents = self.root / "agents"
+        shutil.copytree(
+            core_config.DEFAULT_AGENTS_DIR, agents, copy_function=shutil.copyfile
+        )
+        prompt = agents / "independent" / "prompt.md"
+        prompt.write_text("Captured review instructions.\n")
+        self.review_engine = engine.load(
+            "current", {"profile": "high", "agents_dir": agents}
+        )
         manifest = self.capture()
+        prompt.write_text("Edited review instructions.\n")
+        settings = agents / "verifier" / "config.toml"
+        captured_timeout = self.review_engine.config["profile"]["stages"]["verifier"][
+            "timeout"
+        ]
+        settings.write_text(
+            settings.read_text().split("[profiles.high]", 1)[0]
+            + f"\n[profiles.high]\ntimeout = {captured_timeout + 1}\n"
+        )
         ledger = spend.Ledger(
             self.root / "spend.sqlite3", review_limit_usd=1, monthly_limit_usd=20
         )
+        seen = []
 
         def review(case, runtime, prompts, *args, comment_format):
             self.assertEqual(prompts.profile.name, "high")
             self.assertEqual(runtime.budget.ledger.review_limit_micros, 5_000_000)
             self.assertEqual(runtime.budget.ledger.monthly_limit_micros, 20_000_000)
+            seen.append(
+                (prompts.instructions, prompts.profile.stages["verifier"].timeout)
+            )
             return pipeline.ReviewResult("High review.", [], False)
 
         with patch.object(
@@ -405,8 +427,30 @@ class EvaluateTests(unittest.TestCase):
                 self.root / "runs",
                 ledger,
             )
+            override_path = evaluate.run_case(
+                manifest,
+                "key",
+                self.root / "runs",
+                ledger,
+                agents_dir=agents,
+            )
         result = json.loads(path.read_text())
         self.assertEqual(result["run"]["status"], "completed", result.get("error"))
+        override_result = json.loads(override_path.read_text())
+        self.assertEqual(
+            override_result["run"]["status"], "completed", override_result.get("error")
+        )
+        self.assertEqual(
+            seen,
+            [
+                ("Captured review instructions.", captured_timeout),
+                ("Edited review instructions.", captured_timeout + 1),
+            ],
+        )
+        self.assertNotEqual(
+            result["effective_config_sha256"],
+            override_result["effective_config_sha256"],
+        )
         self.assertEqual(result["effective_config"]["review_budget_usd"], 5)
         self.assertEqual(ledger.review_limit_micros, 1_000_000)
 

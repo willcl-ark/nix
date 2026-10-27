@@ -340,6 +340,13 @@ BASE_TOOLS = [
 ]
 ARCHAEOLOGY_TOOLS = list(TOOLS) + PR_DISCUSSION_TOOLS + [WEB_SEARCH_TOOL]
 VERIFIER_TOOLS = list(TOOLS) + PR_DISCUSSION_TOOLS + [WEB_SEARCH_TOOL]
+TOOL_SETS = {
+    "none": [],
+    "focused": FOCUSED_TOOLS,
+    "full": TOOLS,
+    "base": BASE_TOOLS,
+    "research": VERIFIER_TOOLS,
+}
 LIVE_RESEARCH_TOOL_NAMES = {
     "search_discussions",
     "read_discussion",

@@ -67,14 +67,25 @@ colour indicates approval or a pass/fail verdict. Status comes from the existing
 job store without model or Forgejo API calls. See the module documentation for
 proxy setup.
 
-## Prompts and follow-up
+## Agents, comment formatting and follow-up
 
-Main review prompts resolve inside the core package unless explicitly overridden.
-Custom main-review model maps must remove `addressed_findings`; custom main-review
-audit directories no longer require `addressed_findings.md`. The follow-up command
-loads its bundled `audits/addressed_findings.md` and existing default model
-independently. Use `ralph-followup --prompt-file FILE --model MODEL` to override
-those settings. It never loads the main-review prompt or complete model map.
+To tune a main-review prompt, model or tool limit, edit the corresponding
+directory under [core agents](../ralph/agents/). Each agent keeps its prompt and
+TOML settings together. Comment templates live under
+[final_comment](../ralph/final_comment/). Validate edits from the repository root:
+
+```sh
+python3 pkgs/ralph/review.py check-agents
+```
+
+This check needs no credentials or review target. The service uses the bundled
+agents by default. Use `--agents-dir DIR` or `services.ralph.agentsDir` to select
+a complete alternate agent directory. `ralph-evaluate capture` and `run` accept
+the same option; replay keeps the captured settings unless explicitly overridden.
+
+The follow-up command loads its own `audits/addressed_findings.md` and default
+model. Use `ralph-followup --prompt-file FILE --model MODEL` to override those
+settings. Main-review agent settings do not affect follow-up.
 
 ## State and upgrades
 

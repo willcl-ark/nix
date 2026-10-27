@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -31,6 +32,43 @@ def run(case, runtime, configured):
     return Output('# Test review', data, {'custom': ['native']}, schema_version=17,
                   status='failed' if configured.get('verification_failed') else 'completed')
 """
+
+
+class AgentsCliTest(unittest.TestCase):
+    def test_check_agents_validates_both_profiles_without_credentials_or_repository(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command = [sys.executable, str(PACKAGE / "review.py"), "check-agents"]
+
+            def check(*args):
+                return subprocess.run(
+                    [*command, *map(str, args)],
+                    cwd=root,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+
+            result = check()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(list(root.iterdir()))
+            agents = root / "agents"
+            shutil.copytree(PACKAGE / "agents", agents)
+            result = check("--agents-dir", agents)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            settings = agents / "verifier" / "config.toml"
+            settings.write_text(
+                settings.read_text().split("[profiles.high]", 1)[0]
+                + "\n[profiles.high]\ntimeout = 0\n"
+            )
+            result = check("--agents-dir", agents)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("timeout", result.stderr)
+            self.assertFalse(result.stdout)
 
 
 class CLITest(unittest.TestCase):

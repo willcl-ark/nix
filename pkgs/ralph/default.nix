@@ -33,14 +33,9 @@ stdenvNoCC.mkDerivation {
     for module in ralph/*.py; do
       install -Dm644 "$module" $out/libexec/ralph/"$module"
     done
-    install -Dm644 prompt.md $out/libexec/ralph/prompt.md
-    install -Dm644 prompt.md $out/share/ralph/prompt.md
-    for audit in audits/*.md; do
-      install -Dm644 "$audit" $out/libexec/ralph/"$audit"
-      install -Dm644 "$audit" $out/share/ralph/"$audit"
-    done
-    cp -r final_comment $out/libexec/ralph/
-    cp -r final_comment $out/share/ralph/
+    cp -r agents final_comment $out/libexec/ralph/
+    mkdir -p $out/share/ralph
+    cp -r agents final_comment $out/share/ralph/
     makeWrapper ${python3.interpreter} $out/bin/ralph \
       --add-flags $out/libexec/ralph/review.py \
       --prefix PATH : ${lib.makeBinPath [ git ]}

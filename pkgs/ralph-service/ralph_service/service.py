@@ -936,15 +936,9 @@ def main():
         help="Publish major findings upstream using the GitHub credentials",
     )
     parser.add_argument(
-        "--prompt-file", type=Path, help="Markdown file containing the review prompt"
-    )
-    parser.add_argument(
-        "--audit-prompt-dir",
+        "--agents-dir",
         type=Path,
-        help="Directory containing the focused Luna audit prompts",
-    )
-    parser.add_argument(
-        "--models-json", type=Path, help="JSON model routing for each review stage"
+        help="Directory containing review agent settings and prompts",
     )
     parser.add_argument("--review-budget-usd", type=float, default=5.00)
     parser.add_argument("--monthly-budget-usd", type=float)
@@ -1010,24 +1004,15 @@ def main():
         args.report_base_url,
         args.github_repository,
     )
-    current_only = (
-        args.prompt_file is not None
-        or args.audit_prompt_dir is not None
-        or args.models_json is not None
-        or args.routing_mode is not None
-    )
+    current_only = args.agents_dir is not None or args.routing_mode is not None
     if args.engine != "current" and current_only:
-        parser.error(
-            "prompt, model, and routing options apply only to --engine current"
-        )
+        parser.error("agent and routing options apply only to --engine current")
     engine_config = _read_engine_config(args.engine_config, parser)
     engine_config.update(
         {
             key: value
             for key, value in {
-                "prompt_file": args.prompt_file,
-                "audit_prompt_dir": args.audit_prompt_dir,
-                "models_json": args.models_json,
+                "agents_dir": args.agents_dir,
                 "routing_mode": args.routing_mode,
             }.items()
             if value is not None

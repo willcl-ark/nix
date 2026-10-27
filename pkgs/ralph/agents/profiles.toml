@@ -1,0 +1,5 @@
+[default]
+budget_multiplier = 1
+
+[high]
+budget_multiplier = 5

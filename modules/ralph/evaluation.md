@@ -16,16 +16,23 @@ remotes, or a model.
 Captures pin the selected engine and its resolved configuration as well as the
 repository and prompt inputs. `capture` accepts `--engine` and
 `--engine-config PATH` (a JSON object). `run` uses the captured selection by
-default; pass the same options to override it for a comparison. Current-engine
-prompt, model, routing and blind-alternative switches remain current-only
-overrides. They cannot be combined with another engine. Configuration changes
-produce a distinct effective configuration group. The capture schema has a hard
+default; pass the same options to override it for a comparison. Use
+`--agents-dir DIR` to load another complete directory of agent prompts and TOML
+settings. The current-engine agent, routing and blind-alternative switches
+cannot be combined with another engine. Configuration changes produce a distinct
+effective configuration group. The capture schema has a hard
 cutover: recapture manifests created before engine identity was added. Current
 captures use manifest schema version 4. Recapture pre-split manifests. Core and
 engine hashes are separate from companion presentation code, and captures record
 the resolved archaeology setting. Frozen evidence never falls back to live reads.
-Custom main-review model maps must remove `addressed_findings`; follow-up prompt
-and model overrides are separate companion settings.
+Follow-up prompt and model overrides are separate companion settings.
+
+Agent prompts, models and tool limits live under
+[pkgs/ralph/agents](../../pkgs/ralph/agents/); comment templates live under
+[pkgs/ralph/final_comment](../../pkgs/ralph/final_comment/). Validate contributor
+edits with `python3 pkgs/ralph/review.py check-agents` before paying for a replay.
+Add `--agents-dir DIR` to validate an alternate directory. Frozen replay uses
+its captured prompts and settings until you explicitly select an override.
 
 An engine owns its Markdown and structured data. Reports and other consumers
 use only exports the engine declares; an absent export is unavailable, while an

@@ -61,7 +61,7 @@ placeholders. Failed verification retains earlier titles and statuses without
 republishing their unverified bodies.
 
 For the wording of findings and concept summaries, edit the
-[collator prompt](../audits/collator.md). That prompt edits accepted
+[collator prompt](../agents/collator/prompt.md). That prompt edits accepted
 findings before these templates format them.
 
 ## Renderer changes

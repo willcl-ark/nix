@@ -18,23 +18,15 @@ let
       routing_mode = cfg.routingMode;
       openai_api_base = cfg.openaiApiBase;
     }
-    // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.promptFile != null) {
-      prompt_file = toString cfg.promptFile;
-    }
-    // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.auditPromptDir != null) {
-      audit_prompt_dir = toString cfg.auditPromptDir;
-    }
-    // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.modelsJson != null) {
-      models_json = toString cfg.modelsJson;
+    // lib.optionalAttrs (!(cfg.engineConfig ? prompts) && cfg.agentsDir != null) {
+      agents_dir = toString cfg.agentsDir;
     }
   );
   engineConfigFile = (pkgs.formats.json { }).generate "ralph-engine-config.json" (
     currentEngineConfigDefaults // cfg.engineConfig
   );
-  promptOptionsExplicit =
-    options.services.ralph.promptFile.highestPrio < 1500
-    || options.services.ralph.auditPromptDir.highestPrio < 1500
-    || options.services.ralph.modelsJson.highestPrio < 1500
+  currentOptionsExplicit =
+    options.services.ralph.agentsDir.highestPrio < 1500
     || options.services.ralph.routingMode.highestPrio < 1500;
   defaultMarker = "<!-- ralph:${cfg.repository} -->";
   commentMarker = if cfg.commentMarker == null then defaultMarker else cfg.commentMarker;
@@ -185,22 +177,10 @@ in
       description = "Hidden marker used to find and update ralph's existing comment.";
     };
 
-    promptFile = lib.mkOption {
+    agentsDir = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Optional review prompt override. Unset uses the core package default.";
-    };
-
-    auditPromptDir = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Optional review stage prompt directory override. Unset uses the core package defaults.";
-    };
-
-    modelsJson = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Optional per-stage model map overriding the selected review profile.";
+      description = "Optional directory of review agent settings and prompts. Unset uses the core package defaults.";
     };
 
     workers = lib.mkOption {
@@ -240,7 +220,7 @@ in
     followupModel = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Optional addressed-finding model override. Independent of the main review model map.";
+      description = "Optional addressed-finding model override. Independent of the main review agents.";
     };
 
     monthlyBudgetUsd = lib.mkOption {
@@ -397,8 +377,8 @@ in
         message = "services.ralph.reportDir and reportBaseUrl must be set together.";
       }
       {
-        assertion = currentEngine || !promptOptionsExplicit;
-        message = "services.ralph.promptFile, auditPromptDir, modelsJson and routingMode are current-engine options.";
+        assertion = currentEngine || !currentOptionsExplicit;
+        message = "services.ralph.agentsDir and routingMode are current-engine options.";
       }
       {
         assertion =

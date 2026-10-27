@@ -1,0 +1,11 @@
+prompt = "prompt.md"
+tool_set = "focused"
+model = "gpt-6-luna"
+reasoning_effort = "low"
+max_output_tokens = 4000
+max_tool_calls = { routine = 12, standard = 24, sensitive = 48 }
+max_context_calls = 8
+max_history_calls = 8
+max_web_search_calls_per_response = 2
+timeout = 180
+final_timeout = 180
