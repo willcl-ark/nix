@@ -8,6 +8,7 @@
 
 let
   cfg = config.services.ralph;
+  experimentCgroup = "/sys/fs/cgroup/system.slice/ralph.service";
   defaultPackage = pkgs.callPackage ../../../pkgs/ralph-service {
     ralph = pkgs.callPackage ../../../pkgs/ralph { };
   };
@@ -113,6 +114,18 @@ in
       default = defaultPackage;
       defaultText = lib.literalExpression "pkgs.callPackage ../../../pkgs/ralph-service { ralph = pkgs.callPackage ../../../pkgs/ralph { }; }";
       description = "ralph-service companion package to run.";
+    };
+
+    writeVerifierEnvironment = lib.mkOption {
+      type = lib.types.nullOr lib.types.package;
+      default = null;
+      description = ''
+        Build environment launcher for isolated Major-finding experiments.
+        The flake module defaults to the pinned Bix environment. A replacement
+        must set up its build environment and execute the command arguments.
+        Direct module imports can supply this package or use the service
+        package's environment.
+      '';
     };
 
     origin = lib.mkOption {
@@ -569,6 +582,12 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      environment = {
+        RALPH_WRITE_VERIFIER_CGROUP = experimentCgroup;
+      }
+      // lib.optionalAttrs (cfg.writeVerifierEnvironment != null) {
+        RALPH_WRITE_VERIFIER_SHELL = lib.getExe cfg.writeVerifierEnvironment;
+      };
       preStart = ''
         ${lib.getExe' cfg.package "ralph-service"} --state-dir ${lib.escapeShellArg cfg.stateDir} --migrate-state
       '';
@@ -587,14 +606,38 @@ in
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
-        ReadWritePaths = [ cfg.stateDir ] ++ lib.optional (cfg.reportDir != null) cfg.reportDir;
+        ReadWritePaths = [
+          cfg.stateDir
+          experimentCgroup
+        ]
+        ++ lib.optional (cfg.reportDir != null) cfg.reportDir;
+        ReadOnlyPaths = [ "/sys" ];
         PrivateTmp = true;
         PrivateDevices = true;
-        ProtectKernelTunables = true;
+        # Masking /proc children prevents Bubblewrap from mounting a fresh
+        # /proc inside its unprivileged user namespace.
+        ProtectKernelTunables = false;
         ProtectKernelModules = true;
-        ProtectControlGroups = true;
+        # Only the delegated subtree is writable. Keep the review controller
+        # outside each experiment's memory, process and CPU limits.
+        ProtectControlGroups = false;
+        Delegate = [
+          "cpu"
+          "memory"
+          "pids"
+        ];
+        DelegateSubgroup = "controller";
+        OOMPolicy = "continue";
         RestrictSUIDSGID = true;
-        RestrictNamespaces = true;
+        # Bubblewrap isolates experiments with an unprivileged user namespace.
+        RestrictNamespaces = [
+          "user"
+          "mnt"
+          "pid"
+          "net"
+          "ipc"
+          "uts"
+        ];
         LockPersonality = true;
         MemoryDenyWriteExecute = true;
         RestrictRealtime = true;

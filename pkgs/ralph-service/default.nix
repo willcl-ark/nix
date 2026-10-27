@@ -6,6 +6,9 @@
   systemd,
   makeWrapper,
   ralph,
+  bubblewrap,
+  bash,
+  util-linux,
 }:
 
 let
@@ -45,11 +48,31 @@ stdenvNoCC.mkDerivation {
     makeWrapper ${python.interpreter} $out/bin/ralph-service \
       --add-flags $out/libexec/ralph-service/bot.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
-      --prefix PATH : ${lib.makeBinPath [ git ]}
+      --prefix PATH : ${
+        lib.makeBinPath [
+          git
+          bash
+          util-linux
+        ]
+      } \
+      --set-default RALPH_WRITE_VERIFIER_BWRAP ${lib.getExe bubblewrap} \
+      ${lib.optionalString (
+        ralph.writeVerifierEnvironment != null
+      ) "--set-default RALPH_WRITE_VERIFIER_SHELL ${lib.getExe ralph.writeVerifierEnvironment}"}
     makeWrapper ${python.interpreter} $out/bin/ralph-evaluate \
       --add-flags $out/libexec/ralph-service/evaluate.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
-      --prefix PATH : ${lib.makeBinPath [ git ]}
+      --prefix PATH : ${
+        lib.makeBinPath [
+          git
+          bash
+          util-linux
+        ]
+      } \
+      --set-default RALPH_WRITE_VERIFIER_BWRAP ${lib.getExe bubblewrap} \
+      ${lib.optionalString (
+        ralph.writeVerifierEnvironment != null
+      ) "--set-default RALPH_WRITE_VERIFIER_SHELL ${lib.getExe ralph.writeVerifierEnvironment}"}
     makeWrapper ${python.interpreter} $out/bin/ralph-followup \
       --add-flags $out/libexec/ralph-service/followup.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \

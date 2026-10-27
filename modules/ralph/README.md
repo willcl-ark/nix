@@ -18,8 +18,32 @@ ralph fetches the base branch and PR head into its own state directory,
 reviews the PR title, description, commit messages, and diff, and gives the
 model read-only tools for path discovery, numbered head and merge-base file
 reads, per-file diff reads, and literal code search. Large patches are replaced
-by a changed-file list so the model can read relevant diffs on demand. It never
-builds, runs, or tests pull request code.
+by a changed-file list so the model can read relevant diffs on demand. Near the
+end, a write-verifier can build and test isolated copies to investigate Major
+findings. A failed build or impractical experiment leaves a finding eligible
+for the final source-based Major check.
+
+The flake packages include a build environment taken from the pinned
+[Bix default devShell](https://github.com/bitcoin-dev-tools/bix). Dependencies
+are realized when building the package, with no Nix daemon or network needed
+inside an experiment. The environment includes Bix's compiler, libraries,
+Python test dependencies and shell hooks. Bix follows this flake's nixpkgs.
+Override `services.ralph.writeVerifierEnvironment` with a package whose main
+program sets up the environment and executes its command arguments when
+reviewing projects with different build dependencies.
+
+Experiments use Bubblewrap with private mount, user, PID, network, IPC and UTS
+namespaces. The review service allows these namespaces; hosts must allow
+unprivileged user namespaces. A host that blocks them records experiments as
+inconclusive. The experiment sees the Nix store read-only, its source copy,
+temporary files and private loopback, without Ralph's secrets or state.
+The service delegates CPU, memory and process controllers to the runner.
+Each experiment has an 8 GiB total memory limit, no swap, at most 128 processes
+and a CPU quota of two cores. The review controller runs in a separate subgroup
+so an experiment exceeding its allowance cannot kill the controller through
+that limit. The runner also bounds temporary storage and serializes experiments.
+Without writable cgroup delegation, experiments are unavailable and findings
+continue to the final source-based check.
 
 Three worker threads review different PRs concurrently by default. Set
 `services.ralph.workers` (or `--workers`) to change this limit.

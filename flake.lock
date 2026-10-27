@@ -1,5 +1,26 @@
 {
   "nodes": {
+    "bix": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1789988726,
+        "narHash": "sha256-ByB7jgb0MMw+DpOOqdVak2qVNyZr/3WGRFHbpABAjiE=",
+        "owner": "bitcoin-dev-tools",
+        "repo": "bix",
+        "rev": "eef14aeccfca9af88ab2a60487e71ab5fdcb123e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "bitcoin-dev-tools",
+        "repo": "bix",
+        "rev": "eef14aeccfca9af88ab2a60487e71ab5fdcb123e",
+        "type": "github"
+      }
+    },
     "bun2nix": {
       "inputs": {
         "flake-parts": [
@@ -97,6 +118,7 @@
     },
     "root": {
       "inputs": {
+        "bix": "bix",
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs"
       }
