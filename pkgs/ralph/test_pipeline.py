@@ -4,7 +4,7 @@ from pathlib import Path
 from threading import Barrier
 from unittest.mock import Mock, patch
 
-from ralph import config, engine, model, pipeline, protocol, repository
+from ralph import config, engine, model, pipeline, protocol, repository, runner
 
 COMPLETE = {"status": "complete", "limitations": []}
 
@@ -199,9 +199,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.debug["decisions"][0]["disposition"], "unresolved")
         self.assertIsNone(self.debug["decisions"][0]["finding"])
         self.assertIn("major_verifier", self.result.content)
-        self.assertNotEqual(
-            self.debug["coverage"]["verification"]["status"], "complete"
-        )
+        self.assertTrue(self.result.content.startswith("Review failed"))
+        self.assertEqual(self.debug["coverage"]["verification"]["status"], "failed")
 
     def test_failed_editor_cannot_restore_major_rejected_by_second_verifier(self):
         self.tier, self.audits = "routine", []
@@ -582,6 +581,44 @@ class PipelineTests(unittest.TestCase):
         self.run_review(reviewer)
         self.assertNotIn("feedback", self.debug["stages"])
         self.assertNotIn("review_memory", self.debug)
+
+    def test_failed_verifier_retains_compact_history_and_fails_run(self):
+        self.tier, self.audits = "routine", []
+        packet = {
+            "repository": self.source["repository"],
+            "number": self.source["number"],
+            "revisions": {"new_head": self.snapshot.head_sha},
+            "findings": [{"key": "previous:1", **self.published}],
+            "comments": [],
+        }
+
+        def reviewer(*args, **kwargs):
+            if kwargs["stage_name"] == "independent":
+                return discovery([candidate()])
+            self.assertEqual(kwargs["stage_name"], "verifier")
+            raise TimeoutError("Provider unavailable")
+
+        def audit(*args, **kwargs):
+            self.assertEqual(args[1], "feedback")
+            return json.dumps({"mappings": []}), {"status": "completed"}
+
+        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.assertEqual(self.result.findings, [])
+        self.assertTrue(self.result.content.startswith("Review failed"))
+        self.assertIn(self.published["title"], self.result.content)
+        self.assertNotIn(self.published["body"], self.result.content)
+        self.assertNotIn("##### Findings", self.result.content)
+        self.assertEqual(self.debug["review_memory"][0]["body"], self.published["body"])
+        self.assertEqual(self.debug["review_memory"][0]["status"], "unclear")
+        case = engine.ReviewCase("PR diff", self.snapshot, self.source)
+        runtime = engine.Runtime(case=case, api_key="key", attempt=self.debug)
+        with patch.object(
+            pipeline, "review_with_independent_passes", return_value=self.result
+        ):
+            saved = runner.run_review(case, runtime, engine.load())
+        self.assertEqual(saved["run"]["status"], "failed")
+        self.assertEqual(saved["content"], self.result.content)
+        self.assertEqual(saved["output"]["exports"]["findings"], [])
 
     def test_feedback_and_backport_verifier_schema_compose(self):
         properties = pipeline._verifier_schema({}, {"findings": []})["properties"]

@@ -782,8 +782,13 @@ def render(
     alternatives=(),
     backport=None,
     review_memory=None,
+    verification_failed=False,
 ):
-    sections = []
+    sections = (
+        ["Review failed because required verification did not complete."]
+        if verification_failed
+        else []
+    )
     if backport is not None:
         lines = [f"Backport verdict: **{backport['verdict']}**", backport["summary"]]
         for key, heading in (
@@ -901,7 +906,13 @@ def render(
         if not eligible:
             continue
         entry = representative(eligible)
-        if all(has_response(item) for item in eligible):
+        if verification_failed:
+            history.append(
+                f"- **{entry.get('title', '')}** ({entry.get('path', '')}:"
+                f"{entry.get('line', '')}, {entry.get('side', 'head')}). "
+                f"Status: {entry.get('status', 'unclear')}."
+            )
+        elif all(has_response(item) for item in eligible):
             history.append(memory_text(group, entry))
             if active:
                 unresolved_history.append(entry)
@@ -959,7 +970,12 @@ def render(
                 "Author deferral or disagreement does not resolve a finding."
             )
         sections.append(
-            "##### Previous findings and author responses\n\n" + "\n\n".join(history)
+            (
+                "##### Previous findings retained for follow-up\n\n"
+                if verification_failed
+                else "##### Previous findings and author responses\n\n"
+            )
+            + "\n\n".join(history)
         )
     if not sections:
         sections.append(

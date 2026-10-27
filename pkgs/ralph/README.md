@@ -127,7 +127,8 @@ run(case, runtime, normalized_config_dict) -> engine.Output
 `engine.load(name, config)` calls `configure` and returns an object whose
 `run(case, runtime)` checks and returns an `Output`. The output carries
 `content` (engine-produced Markdown), `data` (private native data), and
-`exports` (supported consumer data); generic validation checks the envelope,
+`exports` (supported consumer data), and `status` (`completed` or `failed`,
+defaulting to `completed`); generic validation checks the envelope,
 not an engine's native schema. Native data stays private by default. The current
 report adapter explicitly selects diagnostics only for the declared `current`
 engine and native schema version 2, through
@@ -383,7 +384,12 @@ Public coverage separates code review, historical context, and verification.
 Missing advisory history does not reduce code coverage. Expected static-review
 scope, such as not running tests, is shown as a scope note rather than missing
 evidence. Actual unread paths and failed stages identify their specific reason.
-Failed verification has its own failed status. Candidate ID bookkeeping errors
+Failed main or Major verification marks the whole run `failed`, while preserving
+independently verified findings and the full historical records in the structured
+result. The review leads with a failure notice and presents historical findings
+as a compact list for follow-up. The CLI prints the review and exits with status
+1. Historical records do not become newly verified findings when a verifier fails.
+Candidate ID bookkeeping errors
 withhold the affected decisions, preserve independently valid findings, and
 leave unaccounted candidates unresolved.
 

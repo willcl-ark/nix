@@ -296,7 +296,7 @@ def _review(args, cancellation):
                     else:
                         with upstream.pin(snapshot.checkout, case.backport_evidence):
                             result = runner.run_review(case, runtime, selected)
-                        code = 0
+                        code = 1 if result["run"]["status"] == "failed" else 0
                 except Exception as error:
                     code = 128 + cancellation["signal"] if cancellation["signal"] else 1
                     result = runner.failure_result(
@@ -329,7 +329,7 @@ def _review(args, cancellation):
                             if cancellation["signal"]
                             else 1
                         )
-                if code in (0, 3):
+                if result["content"]:
                     print(result["content"])
                 return 128 + cancellation["signal"] if cancellation["signal"] else code
     except (

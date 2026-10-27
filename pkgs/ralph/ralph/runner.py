@@ -56,7 +56,7 @@ def run_review(case, runtime, selected_engine):
     runtime.check_current()
     output = selected_engine.run(case, runtime)
     runtime.check_current()
-    result = _result(case, runtime, selected_engine, "completed")
+    result = _result(case, runtime, selected_engine, output.status)
     result["content"] = output.content
     result["output"] = {
         "schema_version": output.schema_version,

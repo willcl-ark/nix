@@ -979,6 +979,7 @@ def review_with_independent_passes(
         verified_alternatives,
         debug.get("backport_assessment"),
         review_memory=debug.get("review_memory"),
+        verification_failed=debug["coverage"]["verification"]["status"] == "failed",
     )
     concept_concern = (
         verified.concept is not None

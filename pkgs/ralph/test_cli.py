@@ -28,7 +28,8 @@ def run(case, runtime, configured):
         runtime.check_current()
     data = {'native': 'arbitrary engine schema', 'source': case.source,
             'backport': case.backport_evidence}
-    return Output('# Test review', data, {'custom': ['native']}, schema_version=17)
+    return Output('# Test review', data, {'custom': ['native']}, schema_version=17,
+                  status='failed' if configured.get('verification_failed') else 'completed')
 """
 
 
@@ -110,6 +111,14 @@ class CLITest(unittest.TestCase):
         self.assertEqual(
             self.git("for-each-ref", "--format=%(refname)", "refs/ralph/local"), ""
         )
+
+    def test_failed_review_preserves_output_and_exits_nonzero(self):
+        self.configure(verification_failed=True)
+        result = self.cli()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, "# Test review\n")
+        self.assertEqual(self.result()["run"]["status"], "failed")
+        self.assertEqual(self.result()["output"]["exports"], {"custom": ["native"]})
 
     def test_local_backport_retains_unresolved_provenance_without_network(self):
         original = self.git("rev-parse", "HEAD")

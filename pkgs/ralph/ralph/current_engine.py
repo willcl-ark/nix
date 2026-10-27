@@ -131,4 +131,13 @@ def run(case, runtime, configured):
         exports["backport_assessment"] = data["backport_assessment"]
     if case.review_feedback is not None:
         exports["review_memory"] = data.get("review_memory", [])
-    return Output(result.content, data, exports, schema_version=2)
+    verification_failed = (
+        data.get("coverage", {}).get("verification", {}).get("status") == "failed"
+    )
+    return Output(
+        result.content,
+        data,
+        exports,
+        schema_version=2,
+        status="failed" if verification_failed else "completed",
+    )

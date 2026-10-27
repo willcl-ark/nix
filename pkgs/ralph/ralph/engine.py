@@ -27,6 +27,7 @@ class Output:
     data: dict
     exports: dict
     schema_version: int = 1
+    status: str = "completed"
 
 
 class Runtime:
@@ -232,6 +233,7 @@ class LoadedEngine:
             or not isinstance(output.exports, dict)
             or type(output.schema_version) is not int
             or output.schema_version < 1
+            or output.status not in {"completed", "failed"}
         ):
             raise TypeError("invalid engine output envelope")
         return output
