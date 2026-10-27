@@ -28,6 +28,10 @@ review workflow; they do not measure whether a new prompt produces better
 reviews. In your PR, explain what behavior you want to improve and give an
 example when you have one. Prompt wording does not need a matching text assertion.
 
+PRs run these checks and save rendered comment previews automatically. A
+maintainer can also approve a [live BASE/HEAD comparison](CI.md) on a Bitcoin PR
+to see how a prompt, model or budget change affects a real review.
+
 ## Settings
 
 The root of `config.toml` defines the default settings. A `[profiles.high]`
