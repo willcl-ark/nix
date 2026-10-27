@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import unittest
 import urllib.error
@@ -81,12 +82,213 @@ class ModelBudgetTests(unittest.TestCase):
             error = urllib.error.HTTPError("url", code, "rejected", {}, None)
             with (
                 patch.object(model.urllib.request, "urlopen", side_effect=error),
+                patch.object(model.time, "sleep"),
                 self.assertRaises(urllib.error.HTTPError),
             ):
                 model.request_response(
                     "secret", {"model": "gpt-6-luna"}, "tests", budget=budget
                 )
             self.assertEqual(budget.events[-1], ("fail", "token", expected_unknown))
+
+    def test_transient_requests_retry_same_conversation_and_account_each_attempt(self):
+        budget = FakeBudget()
+        debug = {}
+        rejected = urllib.error.HTTPError(
+            "url",
+            429,
+            "rejected",
+            {"Retry-After": "3"},
+            io.BytesIO(b'{"error":{"message":"Too many requests"}}'),
+        )
+        unavailable = urllib.error.HTTPError(
+            "url",
+            503,
+            "unavailable",
+            {},
+            io.BytesIO(b'{"detail":"Upstream unavailable"}'),
+        )
+        result = {
+            "id": "finished",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Review complete"}],
+                }
+            ],
+        }
+        with (
+            patch.object(
+                model.urllib.request,
+                "urlopen",
+                side_effect=[rejected, unavailable, Response(result)],
+            ) as send,
+            patch.object(model.time, "sleep") as sleep,
+        ):
+            answer, _ = model.run_audit(
+                "secret",
+                "verifier",
+                "Verify.",
+                "conversation",
+                model_name="gpt-6-luna",
+                max_output_tokens=100,
+                budget=budget,
+                debug=debug,
+            )
+        self.assertEqual(answer, "Review complete")
+        self.assertEqual(len({call.args[0].data for call in send.call_args_list}), 1)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [3, 2])
+        self.assertEqual(
+            budget.events,
+            [
+                ("reserve", "verifier", "gpt-6-luna"),
+                ("fail", "token", False),
+                ("reserve", "verifier", "gpt-6-luna"),
+                ("fail", "token", True),
+                ("reserve", "verifier", "gpt-6-luna"),
+                ("settle", "token", "finished"),
+            ],
+        )
+        self.assertEqual(
+            [turn["http_status"] for turn in debug["turns"][:-1]], [429, 503]
+        )
+        self.assertEqual(debug["turns"][0]["error_message"], "Too many requests")
+        self.assertTrue(debug["turns"][0]["retry"])
+
+    def test_terminal_http_error_preserves_safe_provider_message_without_retry(self):
+        debug = {}
+        error = urllib.error.HTTPError(
+            "url",
+            400,
+            "rejected",
+            {},
+            io.BytesIO(
+                json.dumps(
+                    {
+                        "detail": (
+                            "Unsupported parameter: max_tool_calls; Bearer secret; "
+                            'api_key=hidden; {"token": "oauth credential", '
+                            '"refresh_token": "refresh credential"}'
+                        ),
+                        "request": {"input": "private conversation"},
+                    }
+                ).encode()
+            ),
+        )
+        with (
+            patch.object(model.urllib.request, "urlopen", side_effect=error) as send,
+            patch.object(model.time, "sleep") as sleep,
+            self.assertRaises(urllib.error.HTTPError),
+        ):
+            model.run_audit(
+                "secret",
+                "verifier",
+                "Verify.",
+                "private conversation",
+                model_name="gpt-6-luna",
+                max_output_tokens=100,
+                debug=debug,
+            )
+        send.assert_called_once()
+        sleep.assert_not_called()
+        self.assertIn("Unsupported parameter: max_tool_calls", debug["error_message"])
+        self.assertNotIn("secret", debug["error_message"])
+        self.assertNotIn("hidden", debug["error_message"])
+        self.assertNotIn("oauth credential", debug["error_message"])
+        self.assertNotIn("refresh credential", debug["error_message"])
+        self.assertNotIn("private conversation", json.dumps(debug))
+        self.assertEqual(debug["http_status"], 400)
+
+    def test_transport_retry_is_bounded_and_checks_staleness_before_reserving(self):
+        for stale in (False, True):
+            with self.subTest(stale=stale):
+                budget = FakeBudget()
+                debug = {}
+                states = iter([True, False] if stale else [True] * 3)
+                expected = model.StaleReview if stale else TimeoutError
+                with (
+                    patch.object(
+                        model.urllib.request, "urlopen", side_effect=TimeoutError
+                    ) as send,
+                    patch.object(model.time, "sleep"),
+                    self.assertRaises(expected),
+                ):
+                    model.run_audit(
+                        "secret",
+                        "verifier",
+                        "Verify.",
+                        "conversation",
+                        model_name="gpt-6-luna",
+                        max_output_tokens=100,
+                        budget=budget,
+                        debug=debug,
+                        is_current=lambda states=states: next(states),
+                    )
+                self.assertEqual(send.call_count, 1 if stale else 3)
+                self.assertEqual(len(budget.requests), send.call_count)
+                self.assertEqual(len(debug["turns"]), send.call_count)
+                self.assertTrue(
+                    all(
+                        event[-1] is True
+                        for event in budget.events
+                        if event[0] == "fail"
+                    )
+                )
+
+    def test_callback_failure_never_retries_a_settled_response(self):
+        budget = FakeBudget()
+        callback = Mock(side_effect=TimeoutError("local callback failed"))
+        with (
+            patch.object(
+                model.urllib.request, "urlopen", return_value=Response({"id": "paid"})
+            ) as send,
+            patch.object(model.time, "sleep") as sleep,
+            self.assertRaises(TimeoutError),
+        ):
+            model.request_response(
+                "secret",
+                {"model": "gpt-6-luna"},
+                "verifier",
+                callback,
+                budget,
+            )
+        send.assert_called_once()
+        sleep.assert_not_called()
+        self.assertEqual([event[0] for event in budget.events], ["reserve", "settle"])
+
+    def test_retry_cannot_bypass_budget_and_keeps_the_failed_attempt(self):
+        budget = FakeBudget()
+        reserve = budget.reserve
+
+        def limited_reserve(stage, data):
+            if budget.requests:
+                raise BudgetExceeded("uncertain first request consumed budget")
+            return reserve(stage, data)
+
+        budget.reserve = limited_reserve
+        debug = {}
+        with (
+            patch.object(
+                model.urllib.request, "urlopen", side_effect=TimeoutError
+            ) as send,
+            patch.object(model.time, "sleep"),
+            self.assertRaises(BudgetExceeded),
+        ):
+            model.run_audit(
+                "secret",
+                "verifier",
+                "Verify.",
+                "conversation",
+                model_name="gpt-6-luna",
+                max_output_tokens=100,
+                budget=budget,
+                debug=debug,
+            )
+        send.assert_called_once()
+        self.assertEqual(budget.events[-1], ("fail", "token", True))
+        self.assertEqual(debug["status"], "budget_exhausted")
+        self.assertEqual(len(debug["turns"]), 1)
+        self.assertEqual(debug["turns"][0]["error"], "TimeoutError")
 
     def test_inspection_limit_returns_final_answer_and_records_skipped_calls(self):
         calls = [

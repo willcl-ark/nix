@@ -1,7 +1,9 @@
 """OpenAI response requests and bounded model tool calls."""
 
 import hashlib
+import http.client
 import json
+import re
 import subprocess
 import time
 import urllib.error
@@ -27,6 +29,7 @@ MAX_CONTEXT_CALLS = 8
 MAX_HISTORY_CALLS = 8
 MAX_WEB_SEARCH_CALLS_PER_RESPONSE = 2
 SAFE_NO_CHARGE_HTTP_STATUSES = {400, 401, 403, 404, 429}
+MAX_REQUEST_ATTEMPTS = 3
 WEB_SEARCH_TOOL_TYPES = {"web_search"}
 WEB_SEARCH_TOOL = {"type": "web_search", "search_context_size": "low"}
 BACKPORT_TOOLS = [
@@ -378,6 +381,34 @@ def _request_payload(data):
     return json.dumps({k: v for k, v in data.items() if k != "max_tool_calls"}).encode()
 
 
+def _provider_error_message(error, api_key):
+    # Only retain the provider's diagnostic field, never an arbitrary response
+    # body, which may contain a proxy page or an echoed request.
+    try:
+        with error:
+            body = json.loads(error.read(8192))
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("error", body.get("detail"))
+    if isinstance(detail, dict):
+        detail = detail.get("message")
+    if not isinstance(detail, str):
+        return None
+    if api_key:
+        detail = detail.replace(api_key, "[redacted]")
+    detail = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [redacted]", detail)
+    detail = re.sub(r"\bsk-[A-Za-z0-9_-]+", "[redacted]", detail)
+    detail = re.sub(
+        r"(?i)\b(api[_-]?key|(?:access[_-]|refresh[_-])?token|password|secret)"
+        r"""["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)""",
+        r"\1=[redacted]",
+        detail,
+    )
+    return " ".join(detail.split())[:500]
+
+
 def request_response(
     api_key,
     data,
@@ -387,11 +418,9 @@ def request_response(
     is_current=None,
     api_base="https://api.openai.com/v1",
     timeout=180,
+    on_retry_failure=None,
 ):
-    if is_current is not None and not is_current():
-        raise StaleReview("review head changed before model request")
     payload = _request_payload(data)
-    token = budget.reserve(stage_name, data) if budget is not None else None
     request = urllib.request.Request(
         f"{api_base.rstrip('/')}/responses",
         data=payload,
@@ -401,23 +430,55 @@ def request_response(
         },
         method="POST",
     )
-    started = time.monotonic()
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            result = json.load(response)
-        if not isinstance(result, dict):
-            raise ValueError("OpenAI response was not a JSON object")
-    except urllib.error.HTTPError as exc:
-        if budget is not None:
-            budget.fail(
-                token, charged_unknown=exc.code not in SAFE_NO_CHARGE_HTTP_STATUSES
-            )
-        raise
-    except Exception:
-        if budget is not None:
-            budget.fail(token, charged_unknown=True)
-        raise
-    elapsed = round(time.monotonic() - started, 2)
+    for attempt in range(MAX_REQUEST_ATTEMPTS):
+        if is_current is not None and not is_current():
+            raise StaleReview("review head changed before model request")
+        token = budget.reserve(stage_name, data) if budget is not None else None
+        attempt_started = time.monotonic()
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                result = json.load(response)
+            if not isinstance(result, dict):
+                raise ValueError("OpenAI response was not a JSON object")
+        except Exception as exc:
+            http_error = isinstance(exc, urllib.error.HTTPError)
+            if budget is not None:
+                budget.fail(
+                    token,
+                    charged_unknown=not (
+                        http_error and exc.code in SAFE_NO_CHARGE_HTTP_STATUSES
+                    ),
+                )
+            exc.request_elapsed_seconds = round(time.monotonic() - attempt_started, 2)
+            if http_error:
+                exc.provider_error_message = _provider_error_message(exc, api_key)
+                retryable = exc.code == 429 or 500 <= exc.code < 600
+            else:
+                retryable = isinstance(
+                    exc,
+                    (
+                        urllib.error.URLError,
+                        TimeoutError,
+                        ConnectionError,
+                        http.client.HTTPException,
+                    ),
+                )
+            if not retryable or attempt + 1 == MAX_REQUEST_ATTEMPTS:
+                raise
+            delay = attempt + 1
+            if http_error:
+                try:
+                    delay = max(delay, min(10, int(exc.headers.get("Retry-After"))))
+                except (TypeError, ValueError, AttributeError):
+                    pass
+            failure = request_failure_record(data, exc)
+            failure.update(retry=True, retry_delay_seconds=delay)
+            if on_retry_failure is not None:
+                on_retry_failure(failure)
+            time.sleep(delay)
+        else:
+            break
+    elapsed = round(time.monotonic() - attempt_started, 2)
     if budget is not None:
         budget.settle(token, result)
     if on_response is not None:
@@ -468,7 +529,7 @@ def request_failure_record(data, error):
         "request_bytes": len(payload),
         "request_sha256": hashlib.sha256(payload).hexdigest(),
         "response_output_sha256": None,
-        "elapsed_seconds": None,
+        "elapsed_seconds": getattr(error, "request_elapsed_seconds", None),
         "input_tokens": None,
         "cached_tokens": None,
         "cache_write_tokens": None,
@@ -480,6 +541,9 @@ def request_failure_record(data, error):
     }
     if isinstance(error, urllib.error.HTTPError):
         record["http_status"] = error.code
+        message = getattr(error, "provider_error_message", None)
+        if message:
+            record["error_message"] = message
     return record
 
 
@@ -589,6 +653,13 @@ def run_audit(
             is_current,
             api_base=api_base,
             timeout=timeout,
+            on_retry_failure=(
+                lambda failure: _stage_record(debug, name, model)["turns"].append(
+                    failure
+                )
+            )
+            if debug is not None
+            else None,
         )
     except StaleReview:
         if debug is not None:
@@ -606,6 +677,13 @@ def run_audit(
             stage = _stage_record(debug, name, model)
             stage["status"] = "failed"
             stage["error"] = failure["error"]
+            stage.update(
+                {
+                    key: failure[key]
+                    for key in ("http_status", "error_message")
+                    if key in failure
+                }
+            )
             stage["turns"].append(failure)
         raise
     _record_response_limits(limits, result)
@@ -766,6 +844,9 @@ def openai_review(
                     budget,
                     is_current,
                     timeout=(final_timeout if tool_choice == "none" else timeout),
+                    on_retry_failure=debug["turns"].append
+                    if debug is not None
+                    else None,
                     **request_options,
                 )
             except BudgetExceeded:
@@ -800,6 +881,9 @@ def openai_review(
                     budget,
                     is_current,
                     timeout=final_timeout,
+                    on_retry_failure=debug["turns"].append
+                    if debug is not None
+                    else None,
                     **request_options,
                 )
                 inputs = final_inputs
@@ -821,6 +905,13 @@ def openai_review(
                 debug["turns"].append(failure)
                 stage_debug["status"] = "failed"
                 stage_debug["error"] = failure["error"]
+                stage_debug.update(
+                    {
+                        key: failure[key]
+                        for key in ("http_status", "error_message")
+                        if key in failure
+                    }
+                )
             raise
         if tool_choice == "none" and tools:
             limits["tool_calls"]["hit"] = True

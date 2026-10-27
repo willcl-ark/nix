@@ -64,6 +64,16 @@ searches are accounted for, including those beyond that estimate.
 The proxy/provider enforces subscription limits. Configure only subscription
 credentials in the proxy if paid upstream fallback is unwanted.
 
+Model requests retry HTTP 429, 5xx and transient transport failures up to three
+total attempts, preserving the current conversation. Backoff is one then two
+seconds; a numeric `Retry-After` can extend either wait up to ten seconds.
+Other HTTP errors, including rejected parameters, fail immediately. Every
+attempt checks cancellation and reserves spending separately. Timeouts and
+server errors retain uncertain charges, so retries can exhaust the allowance.
+Failed attempts remain in diagnostics even when a retry succeeds. HTTP failures
+retain the status and a bounded, redacted provider message, without the raw
+error response or request body.
+
 Archaeology defaults off for local changes. `--context FILE` can supply versioned
 review context and optional source metadata, for example:
 
