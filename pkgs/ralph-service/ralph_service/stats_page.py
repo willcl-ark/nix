@@ -742,6 +742,9 @@ def _leaderboard_section(summary):
         for stage in _list(summary.get("stages"))
         if isinstance(stage, dict)
     }
+    max_accepted = max(
+        (_number(item.get("accepted_findings")) or 0 for item in leaders), default=0
+    )
     rows = []
     for leader in leaders:
         stage = stages.get((leader.get("stage"), leader.get("configured_model")))
@@ -751,11 +754,18 @@ def _leaderboard_section(summary):
             if stage
             else _escape(leader.get("stage", "unknown"))
         )
+        accepted = _number(leader.get("accepted_findings"))
+        meter = ""
+        if max_accepted and accepted is not None:
+            meter = (
+                f'<meter min="0" max="{max_accepted}" value="{accepted}" '
+                'aria-label="Accepted findings"></meter>'
+            )
         rows.append(
             _cells(
                 [
                     label,
-                    _fmt_int(leader.get("accepted_findings")),
+                    f'<span class="finding-score">{meter}{_fmt_int(accepted)}</span>',
                     _fmt_int(leader.get("sole_source_findings")),
                     _fmt_int(leader.get("shared_findings")),
                     _fmt_percent(
@@ -1156,82 +1166,175 @@ def _charts_section(summary):
 
 def _style():
     return """
+:root { color-scheme: dark; --bg: #111313; --surface: #191c1c; --raised: #222727; --text: #e8ece8; --muted: #9ca9a3; --border: #303836; --accent: #75dbb1; }
+:root[data-theme="light"] { color-scheme: light; --bg: #f3f5f2; --surface: #ffffff; --raised: #eaf0eb; --text: #23392f; --muted: #596d60; --border: #d6e0d8; --accent: #187454; }
 * { box-sizing: border-box; }
-body { margin: 0; color: #243247; background: #f4f6f9; font: 15px/1.55 system-ui, sans-serif; }
-a { color: #126576; text-underline-offset: .18em; }
-a:hover { color: #084752; }
-header { background: #142536; color: #fff; padding: 1.4rem max(1.2rem, calc((100vw - 90rem) / 2)); }
-header a { color: #c6d5e1; }
-.brand { font-size: 1.35rem; font-weight: 750; text-decoration: none; color: #fff; }
-.header-top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-nav { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: 1.2rem; }
-nav a { text-decoration: none; padding: .55rem .9rem; border-radius: .4rem; }
-nav a:hover, nav a[aria-current] { background: #294155; color: #fff; }
-main { max-width: 90rem; margin: auto; padding: 2rem 1.2rem 3rem; }
+body { margin: 0; color: var(--text); background: var(--bg); font: 14px/1.55 system-ui, sans-serif; }
+a { color: var(--accent); text-underline-offset: .18em; }
+a:hover { color: var(--text); }
+header { position: fixed; inset: 0 auto 0 0; width: 14rem; background: var(--surface); border-right: 1px solid var(--border); padding: 2rem 1.1rem; display: flex; flex-direction: column; z-index: 5; overflow-y: auto; }
+.brand { display: flex; align-items: center; gap: .75rem; font-size: 1.3rem; font-weight: 750; text-decoration: none; color: var(--text); letter-spacing: -.04em; }
+.brand-mark { display: grid; place-items: center; width: 2.3rem; height: 2.3rem; border-radius: .65rem; background: var(--accent); color: var(--bg); font: 700 1.25rem ui-monospace, monospace; }
+.brand small { display: block; color: var(--muted); font-size: .7rem; font-weight: 450; letter-spacing: .03em; }
+.header-top { padding: 0 .5rem 2.5rem; }
+.nav-label { color: var(--muted); text-transform: uppercase; font-size: .65rem; letter-spacing: .15em; padding: 0 .8rem; }
+nav { display: grid; gap: .3rem; margin-top: .7rem; }
+nav a { display: flex; align-items: center; gap: .8rem; text-decoration: none; color: var(--muted); padding: .7rem .8rem; border: 1px solid transparent; border-radius: .5rem; }
+nav svg { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+nav a:hover { background: var(--raised); color: var(--text); }
+nav a[aria-current] { background: var(--raised); color: var(--accent); border-color: var(--border); }
+.sidebar-tools { margin-top: auto; padding: 2rem .5rem 0; display: grid; gap: .8rem; font-size: .8rem; }
+.sidebar-tools a { color: var(--muted); text-decoration: none; }
+main { max-width: 112rem; margin-left: 14rem; padding: 2.5rem clamp(1rem, 3vw, 3.5rem) 3rem; }
 h1 { font-size: 2rem; margin: 0; letter-spacing: -.035em; }
 h2 { font-size: 1.2rem; margin: 0 0 .7rem; }
 h3 { font-size: 1rem; }
 p { margin: .6rem 0 1rem; }
-.subtitle, .note, .subline, .kpi-detail { color: #64748b; }
+.subtitle, .note, .subline, .kpi-detail { color: var(--muted); }
 .subline { display: block; font-size: .8rem; margin-top: .25rem; overflow-wrap: anywhere; }
 .subtitle { margin-bottom: 1.6rem; }
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
 .cards.usage-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
-.card, section { background: #fff; border: 1px solid #dfe6ee; border-radius: .65rem; padding: 1.35rem; }
+.card, section { background: var(--surface); border: 1px solid var(--border); border-radius: .65rem; padding: 1.35rem; }
 section { margin-top: 1.25rem; }
-.card { border-top: 3px solid #207d84; }
-.kpi-label { color: #526170; font-size: .8rem; }
-.kpi-value, .big { font-size: 1.8rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.card { position: relative; overflow: hidden; border-top: 1px solid var(--border); }
+.kpi-label { color: var(--muted); font-size: .8rem; }
+.kpi-value, .big { font-size: 2.4rem; letter-spacing: -.045em; font-weight: 750; font-variant-numeric: tabular-nums; }
 .kpi-detail { font-size: .85rem; }
 .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.25rem; }
 .split > section { min-width: 0; }
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: .9rem; }
-th, td { padding: .85rem .65rem; border-bottom: 1px solid #e8edf2; text-align: left; vertical-align: top; }
-th { font-size: .75rem; font-weight: 650; color: #64748b; background: #f7f9fb; white-space: nowrap; }
+th, td { padding: .7rem .8rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { font-size: .75rem; font-weight: 650; color: var(--muted); background: var(--raised); white-space: nowrap; }
 tbody tr:last-child > td { border-bottom: 0; }
-tbody tr:hover { background: #fbfcfd; }
+tbody tr:hover { background: var(--raised); }
 td { font-variant-numeric: tabular-nums; }
 .numeric { text-align: right; white-space: nowrap; }
 td:first-child { min-width: 5rem; }
 .key-values { display: grid; grid-template-columns: minmax(8rem, 1fr) 1fr; gap: .6rem 1rem; margin: .5rem 0; min-width: 15rem; }
-.key-values dt { color: #64748b; }
+.key-values dt { color: var(--muted); }
 .key-values dd { margin: 0; overflow-wrap: anywhere; }
 details { margin: .2rem 0; }
-summary { cursor: pointer; color: #126576; font-weight: 600; }
+summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 details[open] > summary { margin-bottom: .75rem; }
 .list-controls, .pagination { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; margin: 1rem 0; }
-.list-controls label { display: flex; flex-direction: column; gap: .35rem; font-size: .8rem; color: #526170; }
-input, select, button { font: inherit; padding: .5rem .7rem; border: 1px solid #cbd5e1; background: #fff; color: #243247; border-radius: .35rem; }
+.list-controls label { display: flex; flex-direction: column; gap: .35rem; font-size: .8rem; color: var(--muted); }
+input, select, button { font: inherit; padding: .5rem .7rem; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: .35rem; }
 input { width: min(23rem, 100%); }
 button { cursor: pointer; }
 button:disabled { opacity: .45; cursor: default; }
-a:focus-visible, summary:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #2b9dad; outline-offset: 3px; }
+a:focus-visible, summary:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .pagination { justify-content: flex-end; font-size: .85rem; }
 [hidden] { display: none !important; }
-footer { max-width: 90rem; margin: auto; padding: 0 1.2rem 2rem; color: #64748b; font-size: .8rem; }
+footer { margin-left: 14rem; padding: 0 1.2rem 2rem; color: var(--muted); font-size: .8rem; }
 .preview { background: #fef3c7; color: #624500; padding: .5rem; }
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
-.chart { margin: 0; padding: .75rem; }
+.chart { margin: 0; padding: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: .6rem; }
 .chart figcaption { font-weight: 600; }
 .chart svg { display: block; width: 100%; height: auto; }
-.chart text { fill: #64748b; font-size: 10px; }
-.chart-axis { stroke: #cbd5e1; }
-.chart-line { fill: none; stroke: #167780; stroke-width: 3; }
-.chart circle { fill: #167780; }
+.chart text { fill: var(--muted); font-size: 10px; }
+.chart-axis { stroke: var(--border); }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 3; }
+.chart circle { fill: var(--accent); }
+.card::before { content: ""; position: absolute; top: 1.4rem; left: 0; width: 3px; height: 2rem; background: var(--accent); }
+.card:nth-child(2)::before { background: #b4a2ee; }
+.card:nth-child(3)::before { background: #e7bb7c; }
+.card:nth-child(4)::before { background: #83bce4; }
+.kpi-label { text-transform: uppercase; letter-spacing: .08em; font-size: .67rem; }
+h2 { letter-spacing: -.02em; }
+.note { font-size: .85rem; max-width: 85rem; }
+#leaderboard td:first-child { width: 38%; }
+.finding-score { display: flex; align-items: center; justify-content: flex-end; gap: .8rem; font-variant-numeric: tabular-nums; }
+.finding-score meter { width: 5rem; height: .45rem; }
+meter { appearance: none; border: 0; border-radius: 1rem; background: var(--raised); }
+meter::-webkit-meter-bar { background: var(--raised); border: 0; }
+meter::-webkit-meter-optimum-value { background: var(--accent); border-radius: 1rem; }
+meter::-moz-meter-bar { background: var(--accent); border-radius: 1rem; }
+.quota-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1rem; margin: 1.2rem 0; }
+.quota-card { padding: 1.2rem; border: 1px solid var(--border); background: var(--bg); border-radius: .65rem; }
+.quota-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.quota-heading h3 { margin: 0; text-transform: capitalize; font-size: 1.05rem; }
+.plan { border: 1px solid var(--border); border-radius: 2rem; padding: .15rem .6rem; font-size: .75rem; color: var(--muted); }
+.quota-window { margin: 1rem 0; }
+.quota-label { display: flex; justify-content: space-between; gap: .8rem; font-size: .85rem; }
+.quota-window meter { display: block; width: 100%; height: .4rem; margin: .5rem 0; }
+.quota-window small { color: var(--muted); font: .7rem ui-monospace, monospace; }
+.quota-window.low meter::-webkit-meter-optimum-value { background: #e7bb7c; }
+.quota-window.low meter::-moz-meter-bar { background: #e7bb7c; }
+.sort-button { padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; }
+.sort-button::after { content: " ↕"; opacity: .55; }
+[aria-sort="ascending"] .sort-button::after { content: " ↑"; opacity: 1; }
+[aria-sort="descending"] .sort-button::after { content: " ↓"; opacity: 1; }
+.skip-link { position: fixed; top: -5rem; left: 1rem; z-index: 10; background: var(--surface); padding: .8rem; }
+.skip-link:focus { top: .5rem; }
+@media (min-width: 1800px) { main { margin-right: auto; } }
+@media (max-width: 1000px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 750px) {
-  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main { padding: 1.2rem .8rem; }
+  header { position: static; width: auto; padding: 1rem; border-right: 0; border-bottom: 1px solid var(--border); }
+  .header-top { padding: 0 0 .75rem; }
+  .nav-label { display: none; }
+  nav { display: flex; overflow-x: auto; gap: .2rem; }
+  nav a { padding: .5rem .65rem; flex-shrink: 0; }
+  nav svg { display: none; }
+  .sidebar-tools { padding: .8rem 0 0; display: flex; align-items: center; justify-content: space-between; }
+  main { margin: 0; padding: 1.5rem 1rem; }
+  footer { margin-left: 0; }
   section, .card { padding: 1rem; }
-  nav { gap: 0; }
-  nav a { padding: .5rem .65rem; }
-  .header-top { align-items: start; }
+  .cards { gap: .65rem; }
+  .kpi-value { font-size: 2rem; }
+  .finding-score meter { display: none; }
 }
 """
 
 
 def _script():
     return """
+const themeToggle = document.querySelector('[data-theme-toggle]');
+if (themeToggle) {
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    themeToggle.textContent = theme === 'dark' ? 'Light theme' : 'Dark theme';
+  }
+  let theme = 'dark';
+  try { theme = localStorage.getItem('ralph-theme') === 'light' ? 'light' : 'dark'; } catch {}
+  setTheme(theme);
+  themeToggle.hidden = false;
+  themeToggle.addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    try { localStorage.setItem('ralph-theme', next); } catch {}
+  });
+}
+const leaderboard = document.querySelector('#leaderboard table');
+if (leaderboard) {
+  const headers = [...leaderboard.querySelectorAll('th')];
+  headers.forEach((header, column) => {
+    const button = document.createElement('button');
+    button.className = 'sort-button';
+    button.type = 'button';
+    button.textContent = header.textContent;
+    header.textContent = '';
+    header.append(button);
+    button.addEventListener('click', () => {
+      const ascending = header.getAttribute('aria-sort') === 'descending';
+      headers.forEach(h => h.removeAttribute('aria-sort'));
+      header.setAttribute('aria-sort', ascending ? 'ascending' : 'descending');
+      const rows = [...leaderboard.tBodies[0].rows];
+      rows.sort((a, b) => {
+        const x = a.cells[column].textContent.trim();
+        const y = b.cells[column].textContent.trim();
+        const nx = Number.parseFloat(x.replaceAll(',', ''));
+        const ny = Number.parseFloat(y.replaceAll(',', ''));
+        if (column && (Number.isNaN(nx) || Number.isNaN(ny))) {
+          return Number.isNaN(nx) - Number.isNaN(ny);
+        }
+        return (ascending ? 1 : -1) * (column ? nx - ny : x.localeCompare(y));
+      });
+      leaderboard.tBodies[0].append(...rows);
+    });
+  });
+}
 document.querySelectorAll('.data-list').forEach(list => {
   const rows = [...list.querySelector('tbody').children];
   const search = list.querySelector('[data-search]');
@@ -1282,23 +1385,31 @@ def _header(summary, page_prefix="", active="Overview"):
         ("usage/", "Usage"),
         ("limits/", "Limits"),
     ]
+    icons = {
+        "Overview": "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+        "Agents": "M8 21v-3a4 4 0 0 1 8 0v3 M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M3 18v-2a4 4 0 0 1 3-4 M21 18v-2a4 4 0 0 0-3-4",
+        "Reviews": "M5 3h14v18H5z M8 7h8 M8 11h8 M8 15h5",
+        "Outcomes": "M4 12l5 5L20 6",
+        "Usage": "M3 20h18 M6 16v-5 M12 16V4 M18 16V8",
+        "Limits": "M4 7h16 M4 17h16 M8 4v6 M16 14v6",
+    }
     nav = "".join(
         f'<a href="{page_prefix}{path}"'
         + (' aria-current="page"' if label == active else "")
-        + f">{label}</a>"
+        + f'><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{icons[label]}"/></svg>{label}</a>'
         for path, label in links
     )
     preview = _field(summary, "preview_notice", "")
     return (
         '<header><div class="header-top">'
-        + _internal_link(page_prefix + "index.html", "ralph / stats").replace(
-            "<a ", '<a class="brand" ', 1
-        )
-        + f'<a href="{page_prefix}stats.json" download>Download JSON</a></div>'
+        + f'<a class="brand" href="{page_prefix}index.html"><span class="brand-mark" aria-hidden="true">r.</span>'
+        + "<span>ralph<small>Review statistics</small></span></a></div>"
         + (f'<p class="preview">{_escape(preview)}</p>' if preview else "")
-        + '<nav aria-label="Statistics">'
+        + '<div class="nav-label">Workspace</div><nav aria-label="Statistics">'
         + nav
-        + "</nav></header>"
+        + '</nav><div class="sidebar-tools">'
+        + '<button type="button" data-theme-toggle hidden>Switch theme</button>'
+        + f'<a href="{page_prefix}stats.json" download>Download JSON ↓</a></div></header>'
     )
 
 
@@ -1306,10 +1417,10 @@ def _page(title, summary, body, page_prefix="", active="Overview"):
     return _wrap_tables(f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{_escape(title)} · ralph stats</title><style>{_style()}</style></head>
-<body>{_header(summary, page_prefix, active)}<main>{body}</main>
+<title>{_escape(title)} · ralph stats</title><style>{_style()}</style><script src="{page_prefix}stats.js" defer></script></head>
+<body><a class="skip-link" href="#main">Skip to content</a>{_header(summary, page_prefix, active)}<main id="main">{body}</main>
 <footer>Generated {_escape(_generated_at(summary))}. {_escape(_source_status(summary))}</footer>
-<script src="{page_prefix}stats.js" defer></script></body></html>
+</body></html>
 """)
 
 
@@ -1464,8 +1575,7 @@ def _subscription_time(value):
 
 def _subscriptions_section(summary):
     subscriptions = _mapping(summary.get("subscriptions"))
-    rows = []
-    credit_notes = []
+    cards = []
     for account in _list(subscriptions.get("accounts")):
         if not isinstance(account, dict):
             continue
@@ -1475,6 +1585,7 @@ def _subscriptions_section(summary):
         credits = (
             _mapping(account.get("credits")) if account.get("status") == "ok" else {}
         )
+        credit_note = ""
         if credits:
             if credits.get("unlimited") is True:
                 balance = "Unlimited"
@@ -1483,9 +1594,8 @@ def _subscriptions_section(summary):
             else:
                 balance = credits.get("balance")
                 balance = "Unknown" if balance is None else str(balance)
-            credit_notes.append(f"<p>{provider} credits: {_escape(balance)}.</p>")
-        if not windows:
-            rows.append(_cells([provider, plan, "Unknown", "Unknown", "Unknown"]))
+            credit_note = f'<p class="note">{provider} credits: {_escape(balance)}.</p>'
+        quotas = []
         for window in windows:
             if not isinstance(window, dict):
                 continue
@@ -1495,29 +1605,38 @@ def _subscriptions_section(summary):
                 if used is not None and 0 <= used <= 100
                 else "Unknown"
             )
-            rows.append(
-                _cells(
-                    [
-                        provider,
-                        plan,
-                        _escape(window.get("name", "Unknown")),
-                        remaining,
-                        _escape(_subscription_time(window.get("resets_at"))),
-                    ]
-                )
+            meter = ""
+            if remaining != "Unknown":
+                meter = f'<meter min="0" max="100" value="{100 - used}" aria-label="Remaining quota"></meter>'
+            low = " low" if used is not None and 80 <= used <= 100 else ""
+            quotas.append(
+                f'<div class="quota-window{low}"><div class="quota-label">'
+                f"<span>{_escape(window.get('name', 'Unknown'))}</span><strong>{remaining} remaining</strong></div>"
+                + meter
+                + f"<small>Resets {_escape(_subscription_time(window.get('resets_at')))}</small></div>"
             )
+        cards.append(
+            '<article class="quota-card"><div class="quota-heading">'
+            f'<h3>{provider}</h3><span class="plan">{plan}</span></div>'
+            + (
+                "".join(quotas)
+                if quotas
+                else '<p class="note">Quota unavailable. Remaining capacity is unknown.</p>'
+            )
+            + credit_note
+            + "</article>"
+        )
     status = subscriptions.get("status", "not_configured")
     freshness = _subscription_time(subscriptions.get("checked_at"))
     body = (
-        _data_table(["Provider", "Plan", "Window", "Remaining", "Resets"], rows)
-        if rows
+        '<div class="quota-grid">' + "".join(cards) + "</div>"
+        if cards
         else "<p>Subscription quota is unknown.</p>"
     )
     return (
         '<section id="subscriptions"><h2>Subscription capacity</h2>'
         + f"<p>Status: {_escape(status.replace('_', ' '))}. Checked: {_escape(freshness)}.</p>"
         + body
-        + "".join(credit_notes)
         + _section_note(
             "Provider quota is a snapshot and includes all clients using the account. "
             "Unknown capacity is not unused capacity. Token totals below measure Ralph usage, not subscription capacity."

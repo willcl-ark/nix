@@ -146,10 +146,9 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("2026-11-01 10:00 UTC", html)
         self.assertIn("Pro &lt;script&gt;", html)
         self.assertNotIn("Pro <script>", html)
-        self.assertIn(
-            "<td>claude</td><td>Unknown plan</td><td>Unknown</td><td>Unknown</td><td>Unknown</td>",
-            html,
-        )
+        self.assertIn("Unknown plan", html)
+        self.assertIn("Remaining capacity is unknown", html)
+        self.assertEqual(html.count('aria-label="Remaining quota"'), 1)
 
     def test_dashboard_renders_collected_stats_and_escapes_untrusted_findings(self):
         with tempfile.TemporaryDirectory() as directory:
