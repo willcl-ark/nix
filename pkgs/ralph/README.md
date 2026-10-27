@@ -333,7 +333,7 @@ does not receive concept research output or current PR discussion.
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
-| verifier, all tiers | gpt-6-luna | xhigh | 128,000 | Original input, candidates, concept candidate, code and research tools |
+| verifier, all tiers | claude-opus-5-5 | medium | 64,000 | Original input, candidates, concept candidate, code and research tools |
 | major_verifier, only when Majors survive | gpt-6.1-sol | medium | 25,000 | Original input and final Major wording; code and base history tools |
 | archaeologist | gpt-6-luna | low | 4,000 | Original input, base/head code tools, current discussion and research tools |
 | alternatives | Same as archaeologist | low | 4,000 | Neutral problem, goal and baseline; base-only code tools |
@@ -624,14 +624,15 @@ The default profile preserves the stage settings listed above. Select the high
 profile with `ralph review ... --profile high`, or set `"profile": "high"` in
 an engine configuration. The CLI option overrides the configuration file.
 
-High uses gpt-6.1-sol for independent review, concurrency, state, dead code,
-design and verification. Core analysis and verification stages use at least
+High uses gpt-6.1-sol for independent review, concurrency, state, dead code
+and design. Core analysis stages use at least
 high reasoning effort, retaining xhigh where already configured, and at least
 16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
-and the Claude reviewer retain their default settings. Claude stays at Opus
-5.5, `xhigh` and 64,000 output tokens. Tool limits are unchanged.
+the verifier and the Claude adversarial reviewer retain their default settings.
+The verifier uses Opus 5.5 at `medium`; Claude adversarial review uses `xhigh`.
+Both have a 64,000-token output ceiling. Tool limits are unchanged.
 
-High multiplies the configured shared review allowance by five. Its 128,000-token
+High multiplies the configured shared review allowance by five. Its 64,000-token
 verifier reserves at least $2.56 for its initial and finishing requests alone;
 the larger allowance leaves room for discovery. Claude consumes the same
 allowance.
@@ -644,7 +645,8 @@ and limits, including alternatives and feedback. A high-profile table overrides
 that agent's defaults; explicit stage overrides apply last.
 
 An engine configuration can override individual settings on any existing stage
-through `stages`. These partial overrides apply after the selected agent profile. For example, to select Claude for verification:
+through `stages`. These partial overrides apply after the selected agent profile.
+For example, to use extra-high reasoning for verification:
 
 ```json
 {

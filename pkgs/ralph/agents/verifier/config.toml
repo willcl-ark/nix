@@ -1,14 +1,11 @@
 prompt = "prompt.md"
 tool_set = "research"
-model = "gpt-6-luna"
-reasoning_effort = "xhigh"
-max_output_tokens = 128000
+model = "claude-opus-5-5"
+reasoning_effort = "medium"
+max_output_tokens = 64000
 max_tool_calls = { routine = 72, standard = 72, sensitive = 72 }
 max_context_calls = 8
 max_history_calls = 8
 max_web_search_calls_per_response = 2
 timeout = 1800
 final_timeout = 1800
-
-[profiles.high]
-model = "gpt-6.1-sol"

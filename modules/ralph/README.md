@@ -505,7 +505,8 @@ for both. Credentials belong only in `openaiKeyFile`, never in the URL.
 Use `engineConfig.stages` to override individual settings on any existing
 review stage. Overrides apply after the agent's settings for the selected
 `default` or `high` profile. Unspecified settings keep their resolved defaults.
-For example, to use Claude for verification as well as adversarial review:
+The verifier uses Claude Opus 5.5 with medium reasoning in both profiles.
+For example, to use extra-high reasoning for verification:
 
 ```nix
 services.ralph.engineConfig.stages.verifier = {
