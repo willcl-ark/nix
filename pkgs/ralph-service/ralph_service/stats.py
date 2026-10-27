@@ -322,8 +322,8 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         "time_series": time_series,
         "time_series_undated": time_series_undated,
         "time_series_notes": [
-            "Review months come from private trace filenames and are present only when trace files can be unambiguously matched to saved result rows by PR and head.",
-            "Addressed months come from the new_head commit committer timestamp in the follow-up checkout; assessed_at is not used for trend bucketing.",
+            "Review days use UTC timestamps from private trace filenames and are present only when trace files can be unambiguously matched to saved result rows by PR and head.",
+            "Addressed days use the UTC new_head commit committer timestamp in the follow-up checkout; assessed_at is not used for trend bucketing.",
         ],
         "addressed_findings": addressed_summary,
         "recent_reviews": sorted(
@@ -640,11 +640,11 @@ def _time_series_summary(state_dir, review_records, addressed_findings):
             "findings_unknown": False,
         }
     )
-    review_months, review_undated = _review_months(
+    review_days, review_undated = _review_days(
         state_dir / "review-traces", review_records
     )
     for record in review_records:
-        period = review_months.get((record["job_id"], record["generation"]))
+        period = review_days.get((record["job_id"], record["generation"]))
         if period is None:
             continue
         series[period]["reviews"] += 1
@@ -657,7 +657,7 @@ def _time_series_summary(state_dir, review_records, addressed_findings):
         else:
             series[period]["findings"] += record["published_findings"]
 
-    addressed_counts, addressed_undated = _addressed_month_counts(
+    addressed_counts, addressed_undated = _addressed_day_counts(
         state_dir, addressed_findings
     )
     for period, count in addressed_counts.items():
@@ -676,29 +676,23 @@ def _time_series_summary(state_dir, review_records, addressed_findings):
             ),
             **({"findings": None} if series[period]["findings_unknown"] else {}),
         }
-        for period in _month_range(series)
+        for period in _day_range(series)
     ], {**review_undated, **addressed_undated}
 
 
-def _month_range(series):
+def _day_range(series):
     if not series:
         return []
-    start = min(series)
-    end = max(series)
-    year, month = (int(part) for part in start.split("-"))
-    end_year, end_month = (int(part) for part in end.split("-"))
-    periods = []
-    while (year, month) <= (end_year, end_month):
-        periods.append(f"{year:04d}-{month:02d}")
-        month += 1
-        if month == 13:
-            year += 1
-            month = 1
-    return periods
+    start = datetime.fromisoformat(min(series)).date()
+    end = datetime.fromisoformat(max(series)).date()
+    return [
+        (start + timedelta(days=offset)).isoformat()
+        for offset in range((end - start).days + 1)
+    ]
 
 
-def _review_months(trace_dir, records):
-    traces, malformed_traces = _trace_months(trace_dir)
+def _review_days(trace_dir, records):
+    traces, malformed_traces = _trace_days(trace_dir)
     grouped = defaultdict(list)
     invalid_heads = 0
     for record in records:
@@ -708,7 +702,7 @@ def _review_months(trace_dir, records):
             continue
         grouped[(record["number"], head.lower())].append(record)
 
-    months = {}
+    days = {}
     undated = invalid_heads
     missing_groups = 0
     ambiguous_groups = 0
@@ -716,7 +710,7 @@ def _review_months(trace_dir, records):
         trace_times = sorted(traces.get(key, []))
         if len(rows) == 1 and len(trace_times) == 1:
             row = rows[0]
-            months[(row["job_id"], row["generation"])] = trace_times[0][1]
+            days[(row["job_id"], row["generation"])] = trace_times[0][1]
             continue
         undated += len(rows)
         if trace_times:
@@ -724,7 +718,7 @@ def _review_months(trace_dir, records):
         else:
             missing_groups += 1
 
-    return months, {
+    return days, {
         "reviews": undated,
         "review_missing_trace_groups": missing_groups,
         "review_ambiguous_trace_groups": ambiguous_groups,
@@ -734,7 +728,7 @@ def _review_months(trace_dir, records):
     }
 
 
-def _trace_months(trace_dir):
+def _trace_days(trace_dir):
     traces = defaultdict(list)
     malformed = 0
     if not trace_dir.exists():
@@ -763,26 +757,26 @@ def _trace_months(trace_dir):
 
 def _time_ns_period(value):
     try:
-        seconds = int(value) / 1_000_000_000
-        return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m")
+        seconds = int(value) // 1_000_000_000
+        return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%d")
     except (OverflowError, OSError, ValueError):
         return None
 
 
-def _addressed_month_counts(state_dir, findings):
+def _addressed_day_counts(state_dir, findings):
     eligible = [
         item
         for item in findings
         if item["status"] in {"addressed", "partially_addressed"}
     ]
-    months = _commit_months(
+    days = _commit_days(
         state_dir / "followup" / "checkout" / ".git",
         {item.get("new_head") for item in eligible},
     )
     counts = Counter()
     undated = 0
     for item in eligible:
-        period = months.get(item.get("new_head"))
+        period = days.get(item.get("new_head"))
         if period is None:
             undated += 1
         else:
@@ -790,7 +784,7 @@ def _addressed_month_counts(state_dir, findings):
     return counts, {"addressed": undated, "addressed_missing_commit": undated}
 
 
-def _commit_months(git_dir, heads):
+def _commit_days(git_dir, heads):
     heads = sorted(
         {
             head.lower()
@@ -815,7 +809,7 @@ def _commit_months(git_dir, heads):
     except (OSError, subprocess.SubprocessError):
         return {}
 
-    months = {}
+    days = {}
     offset = 0
     output = completed.stdout
     for head in heads:
@@ -838,10 +832,10 @@ def _commit_months(git_dir, heads):
             offset += 1
         timestamp = _committer_timestamp(content)
         if timestamp is not None:
-            months[head] = datetime.fromtimestamp(timestamp, timezone.utc).strftime(
-                "%Y-%m"
+            days[head] = datetime.fromtimestamp(timestamp, timezone.utc).strftime(
+                "%Y-%m-%d"
             )
-    return months
+    return days
 
 
 def _committer_timestamp(commit):

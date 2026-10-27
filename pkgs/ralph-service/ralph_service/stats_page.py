@@ -994,13 +994,12 @@ def _reviews_table(reviews, repository_url, report_base_url):
 
 
 def _valid_period(value):
-    return (
-        isinstance(value, str)
-        and len(value) == 7
-        and value[4] == "-"
-        and value[:4].isdigit()
-        and value[5:].isdigit()
-    )
+    if not isinstance(value, str) or len(value) != 10:
+        return False
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d") == value
+    except ValueError:
+        return False
 
 
 def _time_series(summary):
@@ -1031,7 +1030,7 @@ def _time_series(summary):
     return sorted(records, key=lambda item: item["period"])
 
 
-def _chart_svg(chart_id, title, description, records, field):
+def _chart_svg(chart_id, title, description, records, field, *, bars=False):
     width = 280
     height = 132
     right = 12
@@ -1067,17 +1066,25 @@ def _chart_svg(chart_id, title, description, records, field):
         f'<polyline class="chart-line" points="{segment}"></polyline>'
         for segment in segments
     )
-    circles = []
+    marks = []
+    bar_width = min(12, x_span / max(len(records), 1) * 0.7)
     for index, point in enumerate(points):
         if point is None:
             continue
         record = records[index]
         tooltip = f"{record['period']}: {formatter(record.get(field))}"
         x, y = point
-        circles.append(
-            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3">'
-            f"<title>{_escape(tooltip)}</title></circle>"
-        )
+        if bars:
+            marks.append(
+                f'<rect class="chart-bar" x="{x - bar_width / 2:.1f}" y="{y:.1f}" '
+                f'width="{bar_width:.1f}" height="{top + y_span - y:.1f}">'
+                f"<title>{_escape(tooltip)}</title></rect>"
+            )
+        else:
+            marks.append(
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{2 if len(records) > 30 else 3}">'
+                f"<title>{_escape(tooltip)}</title></circle>"
+            )
     first = records[0]["period"]
     last = records[-1]["period"]
     title_id = f"{chart_id}-title"
@@ -1090,8 +1097,8 @@ def _chart_svg(chart_id, title, description, records, field):
         f'<desc id="{desc_id}">{_escape(description)}</desc>'
         f'<line class="chart-axis" x1="{left}" y1="{top + y_span}" x2="{width - right}" y2="{top + y_span}"></line>'
         f'<line class="chart-axis" x1="{left}" y1="{top}" x2="{left}" y2="{top + y_span}"></line>'
-        + lines
-        + "".join(circles)
+        + ("" if bars else lines)
+        + "".join(marks)
         + f'<text x="{left}" y="{height - 10}">{_escape(first)}</text>'
         + f'<text x="{width - right}" y="{height - 10}" text-anchor="end">{_escape(last)}</text>'
         + f'<text x="{left - 6}" y="{top + 4}" text-anchor="end">{formatter(max_value)}</text>'
@@ -1118,49 +1125,94 @@ def _time_series_notes(summary):
     return "".join(f'<p class="note">{_escape(note)}</p>' for note in notes)
 
 
+def _cumulative_series(records):
+    totals = dict.fromkeys(("reviews", "verified_reviews", "findings", "addressed"), 0)
+    cumulative = []
+    for record in records:
+        for field in totals:
+            value = record[field]
+            totals[field] = (
+                totals[field] + value
+                if totals[field] is not None and value is not None
+                else None
+            )
+        cumulative.append({"period": record["period"], **totals})
+    return cumulative
+
+
 def _charts_section(summary):
     records = _time_series(summary)
     if not records:
         return (
             '<section id="trends"><h2>Production trends</h2>'
-            "<p>No review timestamp history is available yet. Older summaries do not include "
-            "enough event timestamps to chart production over time.</p>"
+            "<p>No daily review history is available yet.</p>"
             + _time_series_notes(summary)
             + "</section>"
         )
     charts = [
-        ("reviews", "Reviews", "Saved reviews by month.", "reviews"),
+        ("reviews", "Reviews", "Saved reviews", "reviews"),
         (
             "verified-reviews",
             "Current-engine verified reviews",
-            "Current-engine reviews whose verifier pass completed by month.",
+            "Current-engine reviews whose verifier pass completed",
             "verified_reviews",
         ),
         (
             "findings",
             "Exported findings",
-            "Findings from supported engine exports by month.",
+            "Findings from supported engine exports",
             "findings",
         ),
         (
             "addressed",
-            "Addressed findings by PR head commit date",
-            "Addressed findings by month, based on the assessed PR head commit date.",
+            "Addressed findings",
+            "Addressed findings, dated by the assessed PR head commit",
             "addressed",
         ),
     ]
-    body = "".join(
-        _chart_svg(f"chart-{chart_id}", title, description, records, field)
-        for chart_id, title, description, field in charts
-    )
+    panels = []
+    for mode, values in (
+        ("daily", records),
+        ("cumulative", _cumulative_series(records)),
+    ):
+        description_suffix = (
+            " per UTC day." if mode == "daily" else " accumulated through each UTC day."
+        )
+        body = "".join(
+            _chart_svg(
+                f"chart-{mode}-{chart_id}",
+                title,
+                description + description_suffix,
+                values,
+                field,
+                bars=mode == "daily",
+            )
+            for chart_id, title, description, field in charts
+        )
+        note = (
+            "Daily counts, UTC. Days without recorded activity are zero."
+            if mode == "daily"
+            else "Running totals of dated records through each day, starting at the beginning of the displayed history."
+        )
+        panels.append(
+            f'<div id="trends-{mode}" data-trend-panel="{mode}"'
+            + (" hidden" if mode == "cumulative" else "")
+            + f'>{_section_note(note)}<div class="charts">{body}</div></div>'
+        )
     return (
-        '<section id="trends"><h2>Production trends</h2>'
+        '<section id="trends"><div class="section-heading"><h2>Production trends</h2>'
+        '<div class="chart-controls" role="group" aria-label="Production trend view" hidden>'
+        '<button type="button" data-trend-mode="daily" aria-controls="trends-daily" aria-pressed="true">Daily</button>'
+        '<button type="button" data-trend-mode="cumulative" aria-controls="trends-cumulative" aria-pressed="false">Cumulative</button>'
+        "</div></div>"
+        + "".join(panels)
+        + '<details class="trend-notes"><summary>Dates and missing data</summary>'
         + _section_note(
-            "Addressed findings follow the commit date of the PR head used for assessment; "
-            "undated records are excluded."
+            "Undated records are excluded. Addressed findings use the PR head commit date. "
+            "Missing daily counts leave gaps and prevent subsequent cumulative totals for that metric."
         )
         + _time_series_notes(summary)
-        + f'<div class="charts">{body}</div></section>'
+        + "</details></section>"
     )
 
 
@@ -1236,7 +1288,14 @@ footer { margin-left: 14rem; padding: 0 1.2rem 2rem; color: var(--muted); font-s
 .chart text { fill: var(--muted); font-size: 10px; }
 .chart-axis { stroke: var(--border); }
 .chart-line { fill: none; stroke: var(--accent); stroke-width: 3; }
-.chart circle { fill: var(--accent); }
+.chart circle, .chart-bar { fill: var(--accent); }
+.section-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.section-heading h2 { margin: 0; }
+.chart-controls { display: flex; gap: .2rem; padding: .2rem; background: var(--bg); border: 1px solid var(--border); border-radius: .5rem; }
+.chart-controls button { border-color: transparent; background: transparent; padding: .3rem .7rem; font-size: .8rem; color: var(--muted); }
+.chart-controls button[aria-pressed="true"] { background: var(--raised); color: var(--accent); }
+.trend-notes { margin-top: 1rem; font-size: .8rem; }
+#trends figcaption { min-height: 3.1em; }
 .card::before { content: ""; position: absolute; top: 1.4rem; left: 0; width: 3px; height: 2rem; background: var(--accent); }
 .card:nth-child(2)::before { background: #b4a2ee; }
 .card:nth-child(3)::before { background: #e7bb7c; }
@@ -1290,6 +1349,20 @@ meter::-moz-meter-bar { background: var(--accent); border-radius: 1rem; }
 
 def _script():
     return """
+const trendControls = document.querySelector('.chart-controls');
+if (trendControls) {
+  trendControls.hidden = false;
+  trendControls.querySelectorAll('[data-trend-mode]').forEach(button => {
+    button.addEventListener('click', () => {
+      trendControls.querySelectorAll('button').forEach(other => {
+        other.setAttribute('aria-pressed', String(other === button));
+      });
+      document.querySelectorAll('[data-trend-panel]').forEach(panel => {
+        panel.hidden = panel.dataset.trendPanel !== button.dataset.trendMode;
+      });
+    });
+  });
+}
 const themeToggle = document.querySelector('[data-theme-toggle]');
 if (themeToggle) {
   function setTheme(theme) {

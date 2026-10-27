@@ -9,6 +9,51 @@ from ralph_service import jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
+    def test_daily_trends_accumulate_without_treating_missing_counts_as_zero(self):
+        summary = {
+            "time_series": [
+                {
+                    "period": "2026-10-25",
+                    "reviews": 2,
+                    "verified_reviews": 1,
+                    "findings": 3,
+                    "addressed": 0,
+                },
+                {
+                    "period": "2026-10-26",
+                    "reviews": 0,
+                    "verified_reviews": 0,
+                    "findings": 0,
+                    "addressed": 0,
+                },
+                {
+                    "period": "2026-10-27",
+                    "reviews": 4,
+                    "verified_reviews": None,
+                    "findings": 5,
+                    "addressed": 1,
+                },
+                {
+                    "period": "2026-10-28",
+                    "reviews": 1,
+                    "verified_reviews": 1,
+                    "findings": 0,
+                    "addressed": 0,
+                },
+            ]
+        }
+        records = stats_page._time_series(summary)
+        cumulative = stats_page._cumulative_series(records)
+        self.assertEqual([row["reviews"] for row in cumulative], [2, 2, 6, 7])
+        self.assertEqual([row["findings"] for row in cumulative], [3, 3, 8, 8])
+        self.assertEqual(
+            [row["verified_reviews"] for row in cumulative], [1, 1, None, None]
+        )
+        html = stats_page._charts_section(summary)
+        self.assertIn("2026-10-27: 4", html)
+        self.assertIn("2026-10-27: 6", html)
+        self.assertIn('aria-controls="trends-cumulative"', html)
+
     def test_failed_review_status_is_separate_from_completed_delivery(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
