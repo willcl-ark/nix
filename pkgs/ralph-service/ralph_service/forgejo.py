@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -567,11 +568,29 @@ def review_body(
     head_sha,
     content,
     *,
+    source_base_sha,
     report_url=None,
     engine_identity=None,
     review_fingerprint=None,
 ):
-    report_link = f"\n[Full review report](<{report_url}>)\n" if report_url else ""
+    repository_url = bot_config.repository_url.rstrip("/")
+
+    def location_link(match):
+        path, line, side = match.groups()
+        revision = source_base_sha if side == "base" else head_sha
+        url = (
+            f"{repository_url}/src/commit/{revision}/"
+            f"{urllib.parse.quote(path, safe='/')}#L{line}"
+        )
+        return f"Location: [`{path}:{line}`](<{url}>) ({side})."
+
+    content = re.sub(
+        r"^Location: `?([^`\n]+):(\d+)`? \((base|head)\)\.$",
+        location_link,
+        content.strip(),
+        flags=re.MULTILINE,
+    )
+    report_link = f" · [Full review report](<{report_url}>)" if report_url else ""
     marker = engine_marker(engine_identity)
     identity_marker = f"{marker}\n" if marker else ""
     case_marker = (
@@ -579,16 +598,20 @@ def review_body(
     )
     return (
         f"{bot_config.comment_marker}\n"
-        f"{identity_marker}Base: `{base_sha}`  \nHead: `{head_sha}`\n\n"
-        f"{case_marker}{content.strip()}\n"
-        f"{report_link}"
+        f"{identity_marker}<!-- ralph-base:{base_sha} -->\n"
+        f"<!-- ralph-head:{head_sha} -->\n"
+        f"{case_marker}\n{content}\n\n---\n\n"
+        f"Base: [`{base_sha[:12]}`](<{repository_url}/commit/{base_sha}>) · "
+        f"Head: [`{head_sha[:12]}`](<{repository_url}/commit/{head_sha}>)"
+        f"{report_link}\n"
     )
 
 
 def comment_matches_head(comment, head_sha):
     return (
         comment is not None
-        and f"Head: `{head_sha}`" in comment.get("body", "").splitlines()[:5]
+        and f"<!-- ralph-head:{head_sha} -->"
+        in comment.get("body", "").splitlines()[:5]
     )
 
 
@@ -601,8 +624,8 @@ def comment_matches_engine(
     lines = [line.strip() for line in comment.get("body", "").splitlines()[:5]]
     return (
         expected in lines
-        and f"Base: `{base_sha}`" in lines
-        and f"Head: `{head_sha}`" in lines
+        and f"<!-- ralph-base:{base_sha} -->" in lines
+        and f"<!-- ralph-head:{head_sha} -->" in lines
         and (
             review_fingerprint is None
             or f"<!-- ralph-case:{review_fingerprint} -->"
@@ -620,6 +643,7 @@ def publish_review(
     head_sha,
     content,
     *,
+    source_base_sha,
     engine_identity=None,
     report_url=None,
     review_fingerprint=None,
@@ -630,6 +654,7 @@ def publish_review(
         base_sha,
         head_sha,
         content,
+        source_base_sha=source_base_sha,
         report_url=report_url,
         engine_identity=engine_identity,
         review_fingerprint=review_fingerprint,

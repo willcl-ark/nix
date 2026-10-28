@@ -31,7 +31,7 @@ python3 pkgs/ralph/final_comment/preview.py --github > /tmp/ralph-github-comment
 
 | File | Controls | Placeholders |
 | --- | --- | --- |
-| `comment.md` | Section order and any text shared by every comment | `verification_failed`, `backport`, `findings`, `design`, `alternatives`, `history`, `empty`, `limitations` |
+| `comment.md` | Section order and any text shared by every comment | `verification_failed`, `overview`, `backport`, `findings`, `design`, `alternatives`, `history`, `empty`, `limitations` |
 | `finding.md` | Each finding's visible summary and expandable explanation | `severity`, `title`, `summary`, `location`, `side`, `body` |
 | `retained.md` | A compact earlier finding, including its explanation and provenance | `label`, `summary`, `location`, `side`, `body`, `provenance` |
 | `provenance.md` | Earlier report references for a materially changed finding | `provenance` |
@@ -40,7 +40,7 @@ python3 pkgs/ralph/final_comment/preview.py --github > /tmp/ralph-github-comment
 | `design.md` | The design and concept section | `design` |
 | `alternatives.md` | The alternatives section | `alternatives` |
 | `backport.md` | The backport verdict and supporting details | `verdict`, `summary`, `details` |
-| `history.md` | Earlier findings, author replies and resolved history | `unresolved_notice`, `history` |
+| `history.md` | Earlier findings, author replies and resolved history | `label`, `history` |
 | `history_failed.md` | Earlier finding references after failed verification | `history` |
 | `limitations.md` | The coverage notice and limitations | `coverage_notice`, `limitations` |
 | `github.md` | The GitHub comment's section order and report link | `new_findings_notice`, `retained_notice`, `findings`, `report_url` |
@@ -56,8 +56,10 @@ empty sections and their blank paragraphs. The other files control headings
 and the Markdown around their content.
 
 New and materially changed findings show their severity, title and a one-sentence
-summary. The explanation and source location are inside a collapsed section.
-Unchanged findings use a single collapsed heading with severity and status,
+summary. Source locations are visible; explanations are collapsed. Severity symbols
+accompany text labels, and design findings share the same severity ordering.
+Previous findings are grouped under one collapsed section. Each uses a collapsed
+heading with severity and status,
 even when the author has not replied. Their full text, original review link,
 revision history and any author replies remain in the comment. Repeated
 verification reasoning stays in the full trace. Fixed and invalid findings
@@ -67,9 +69,10 @@ Ralph still decides which findings were verified and which earlier reports refer
 to the same concern. The verifier's `unchanged_since_report` assessment controls
 compact presentation, including regressions introduced by the PR. Editing the
 wording alone does not count as a changed finding.
-Dynamic HTML summary labels are escaped. New findings require a summary; older
+Dynamic HTML summary labels are escaped, with backtick code spans rendered
+as HTML code tags. New findings require a summary; older
 review records without one retain their stored explanation.
-The failure, incomplete-coverage and unresolved-history notices come from
+The failure, incomplete-coverage and overview notices come from
 Python and must stay in the templates. Editing the layout cannot remove their
 placeholders. Failed verification retains earlier titles and statuses without
 republishing their unverified bodies.
@@ -87,11 +90,11 @@ comment_format=snapshot)` uses that snapshot without rereading files. Saved
 engine configurations include the snapshot so template edits change run
 identity and replay keeps the original format.
 
-Both renderers accept `review_tier` to append the final selected routing tier
+Both renderers accept `review_tier` to retain the final selected routing tier in hidden HTML metadata
 after the template content. When no tier is available, they omit the footer.
 
 `render_github(findings, *, head_sha, report_url, has_retained=False,
-comment_format=None, review_tier=None)` formats the shorter upstream comment.
+comment_format=None, review_tier=None, repository_url=None, base_sha=None)` formats the shorter upstream comment.
 The service selects publishable findings and retains ownership of comment
 markers, revision checks and publication. `--github` previews only its visible text.
 

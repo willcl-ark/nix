@@ -1,3 +1,8 @@
-${unresolved_notice}##### Previous findings
+---
+
+<details>
+<summary>${label}</summary>
 
 ${history}
+
+</details>

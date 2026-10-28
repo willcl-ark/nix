@@ -472,6 +472,7 @@ def process_job(
                 base_sha,
                 head_sha,
                 content,
+                source_base_sha=result_record["merge_base"],
                 engine_identity=engine_identity,
                 report_url=result_record["run"].get("report_url"),
                 review_fingerprint=review_fingerprint,

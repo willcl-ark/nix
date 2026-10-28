@@ -22,7 +22,8 @@ stay beside the default settings.
 The [final_comment/](final_comment/README.md) directory contains Markdown
 templates for comment structure, an offline preview and example reviews. The
 [collator prompt](agents/collator/prompt.md) controls the wording of accepted
-findings. Each new finding shows its severity, title and one-sentence summary;
+findings. Each new finding shows a severity symbol and label, title, source
+location and one-sentence summary;
 the explanation and suggested change are expandable. The runtime validates
 findings and enforces tool and spending limits.
 

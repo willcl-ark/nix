@@ -611,7 +611,6 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(entry["severity"], self.published["severity"])
         self.assertEqual(entry["status"], "unclear")
         self.assertFalse(entry["collapsed"])
-        self.assertIn("##### Previous findings", self.result.content)
         self.assertIn(self.published["title"], self.result.content)
         self.assertNotIn("Previous findings and author responses", self.result.content)
 
@@ -731,7 +730,6 @@ class PipelineTests(unittest.TestCase):
         self.run_review(reviewer, editor=audit, review_feedback=packet)
         self.assertTrue(all(not e["collapsed"] for e in self.debug["review_memory"]))
         self.assertEqual(self.debug["review_memory"][1]["duplicate_of"], "previous:1")
-        self.assertIn("##### Previous findings", self.result.content)
         self.assertTrue(
             all(e["unchanged_since_report"] for e in self.debug["review_memory"])
         )
@@ -1094,7 +1092,6 @@ class PipelineTests(unittest.TestCase):
 
         content = self.run_review(review, edit)
         self.assertIn(design["body"], content)
-        self.assertIn("Design and approach", content)
         self.assertTrue(self.debug["stages"]["collator"]["used_verified_wording"])
         self.assertIsNone(self.debug["finding_attribution"][0]["edited_by"])
         finding = self.result.findings[0]

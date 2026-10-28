@@ -107,11 +107,20 @@ class CommentTests(unittest.TestCase):
         rendered = final_comment.render(**example)
         finding = example["findings"][0]
         before, details = rendered.split("<details>", 1)
-        self.assertIn("[Major] " + finding["title"], before)
+        self.assertIn(finding["title"], before)
         self.assertIn(finding["summary"], before)
         self.assertNotIn(finding["body"], before)
         self.assertIn(finding["body"], details)
-        self.assertIn("src/index.cpp:42", details)
+        self.assertIn("src/index.cpp:42", before)
+        minor = next(
+            item for item in example["findings"] if item["severity"] == "minor"
+        )
+        suggestion = next(
+            item for item in example["findings"] if item["severity"] == "suggestion"
+        )
+        self.assertLess(
+            rendered.index(minor["title"]), rendered.index(suggestion["title"])
+        )
 
     def test_github_uses_collated_summary_with_collated_body(self):
         example = json.loads((COMMENT_DIR / "examples" / "github.json").read_text())
@@ -120,9 +129,15 @@ class CommentTests(unittest.TestCase):
             presented_summary="Edited summary.",
             presented_body="Edited explanation.",
         )
+        example.update(
+            repository_url="https://github.com/example/project",
+            base_sha="base-revision",
+        )
+        example["findings"][0].update(side="base", path="src/file name.cpp", line=17)
         rendered = final_comment.render_github(**example)
         before, details = rendered.split("<details>", 1)
         self.assertIn("Edited summary.", before)
+        self.assertIn("/blob/base-revision/src/file%20name.cpp#L17", before)
         self.assertIn("Edited explanation.", details)
         self.assertNotIn(example["findings"][0]["summary"], rendered)
 

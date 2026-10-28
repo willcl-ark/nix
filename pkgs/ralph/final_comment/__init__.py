@@ -1,13 +1,16 @@
 """Render verified review results with contributor-editable Markdown templates."""
 
+import re
+from collections import Counter
 from html import escape
 from pathlib import Path
 from string import Template
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 _PLACEHOLDERS = {
     "comment": (
         "verification_failed",
+        "overview",
         "backport",
         "findings",
         "design",
@@ -24,11 +27,34 @@ _PLACEHOLDERS = {
     "resolved": ("history",),
     "design": ("design",),
     "alternatives": ("alternatives",),
-    "history": ("unresolved_notice", "history"),
+    "history": ("label", "history"),
     "history_failed": ("history",),
     "limitations": ("coverage_notice", "limitations"),
     "github": ("new_findings_notice", "retained_notice", "findings", "report_url"),
 }
+
+
+def severity_label(severity):
+    symbol = {"critical": "⛔", "major": "🔴", "minor": "🟠", "suggestion": "🔵"}[
+        severity
+    ]
+    return f"{symbol} {severity.capitalize()}"
+
+
+def summary_label(text):
+    # HTML summaries do not parse Markdown. Escape text before adding code tags.
+    return re.sub(r"(`+)(.+?)\1", r"<code>\2</code>", escape(text))
+
+
+def source_location(finding, repository_url=None, base_sha=None, head_sha=None):
+    path = finding.get("path", "")
+    line = finding.get("line", "")
+    label = f"{path}:{line}"
+    revision = base_sha if finding.get("side", "head") == "base" else head_sha
+    if repository_url and revision and path:
+        url = f"{repository_url}/blob/{quote(revision, safe='')}/{quote(path, safe='/')}#L{line}"
+        return f"[{label}](<{url}>)"
+    return label
 
 
 def validate_format(comment_format):
@@ -131,12 +157,12 @@ def render(
         ]
 
     finding_groups = {}
-    design_findings = []
+    current_counts = Counter()
 
     def finding_text(finding):
         return fill(
             "finding",
-            severity=finding["severity"].capitalize(),
+            severity=severity_label(finding["severity"]),
             title=finding.get("title", ""),
             summary=finding["summary"],
             location=f"{finding.get('path', '')}:{finding.get('line', '')}",
@@ -219,7 +245,7 @@ def render(
         )
         return fill(
             "retained",
-            label=escape(
+            label=summary_label(
                 f"[{finding['severity'].capitalize()} · {status}] {finding['title']}"
             ),
             summary=finding.get("summary", ""),
@@ -258,10 +284,8 @@ def render(
                 "provenance",
                 provenance="\n\n".join(provenance(group) for group in linked.values()),
             )
-        if finding["kind"] == "design":
-            design_findings.append(text)
-        else:
-            finding_groups.setdefault(finding["severity"], []).append(text)
+        current_counts[finding["severity"]] += 1
+        finding_groups.setdefault(finding["severity"], []).append(text)
     for key, group in memory_groups.items():
         if key in matched_groups:
             continue
@@ -288,8 +312,6 @@ def render(
     if rendered_findings:
         sections["findings"] = fill("findings", findings="\n\n".join(rendered_findings))
     rendered_design = []
-    if design_findings:
-        rendered_design.append("\n\n".join(design_findings))
     if concept_summary:
         rendered_design.append(f"**Concept and approach.** {concept_summary}")
     if rendered_design:
@@ -314,18 +336,15 @@ def render(
             "alternatives", alternatives="\n\n".join(rendered_alternatives)
         )
     if history or resolved_history:
-        unresolved_notice = ""
-        if unresolved_history:
-            severities = {}
-            for entry in unresolved_history:
-                severity = entry.get("severity", "unknown")
-                severities[severity] = severities.get(severity, 0) + 1
-            counts = ", ".join(
-                f"{count} {severity}" for severity, count in severities.items()
-            )
-            unresolved_notice = (
-                f"Previously reported concerns remain unresolved: {counts}.\n\n"
-            )
+        previous_kind = (
+            "suggestions"
+            if unresolved_history
+            and all(item.get("severity") == "suggestion" for item in unresolved_history)
+            else "findings"
+        )
+        history_label = f"Previous {previous_kind} ({len(unresolved_history)})"
+        if not unresolved_history:
+            history_label = "Previous findings"
         if resolved_history:
             history.append(fill("resolved", history="\n\n".join(resolved_history)))
         if verification_failed:
@@ -333,7 +352,7 @@ def render(
         else:
             sections["history"] = fill(
                 "history",
-                unresolved_notice=unresolved_notice,
+                label=history_label,
                 history="\n\n".join(history),
             )
     if not any(sections.values()):
@@ -350,9 +369,22 @@ def render(
                 f"- {limitation}" for limitation in dict.fromkeys(limitations)
             ),
         )
+    counts = [
+        f"{current_counts[severity]} {severity}{' finding' if severity != 'suggestion' else ''}{'s' if current_counts[severity] != 1 else ''}"
+        for severity in severity_order
+        if current_counts[severity]
+    ]
+    if unresolved_history:
+        previous_noun = (
+            previous_kind.removesuffix("s")
+            if len(unresolved_history) == 1
+            else previous_kind
+        )
+        counts.append(f"{len(unresolved_history)} previous {previous_noun}")
+    sections["overview"] = " · ".join(counts)
     content = _render_sections(comment_format["comment"], sections)
     if review_tier:
-        content += f"\n\nReview tier: {review_tier}"
+        content += f"\n\n<!-- Review tier: {escape(review_tier)} -->"
     return content
 
 
@@ -362,6 +394,8 @@ def render_github(
     head_sha,
     report_url,
     has_retained=False,
+    repository_url=None,
+    base_sha=None,
     comment_format=None,
     review_tier=None,
 ):
@@ -371,13 +405,11 @@ def render_github(
     )
     rendered = []
     for finding in findings:
-        location = finding.get("path") or ""
-        if finding.get("line") is not None:
-            location += f":{finding['line']}"
+        location = source_location(finding, repository_url, base_sha, head_sha)
         rendered.append(
             Template(comment_format["finding"]).substitute(
                 title=finding.get("presented_title") or finding["title"],
-                severity=finding["severity"].capitalize(),
+                severity=severity_label(finding["severity"]),
                 summary=finding.get("presented_summary") or finding["summary"],
                 body=finding.get("presented_body") or finding["body"],
                 location=location,
@@ -388,7 +420,9 @@ def render_github(
         comment_format["github"],
         {
             "new_findings_notice": (
-                f"Ralph found major issues at {head_sha}." if findings else ""
+                f"{len(findings)} major finding{'s' if len(findings) != 1 else ''}."
+                if findings
+                else ""
             ),
             "retained_notice": (
                 "Previously discussed major concerns remain unresolved. "
@@ -400,6 +434,10 @@ def render_github(
             "report_url": report_url,
         },
     )
+    revision = f"`{head_sha[:12]}`"
+    if repository_url:
+        revision = f"[{revision}](<{repository_url}/commit/{quote(head_sha, safe='')}>)"
+    content += f"\n\nReviewed head: {revision}"
     if review_tier:
-        content += f"\n\nReview tier: {review_tier}"
+        content += f"\n\n<!-- Review tier: {escape(review_tier)} -->"
     return content

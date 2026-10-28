@@ -256,6 +256,7 @@ class ServiceTests(unittest.TestCase):
         ):
             self.assertEqual(self.process(retry_job), "unchanged")
             self.assertEqual(publish.call_count, 1)
+            self.assertEqual(publish.call_args.kwargs["source_base_sha"], "c" * 40)
         self.assertIsNone(restarted.claim())
 
     def test_saved_review_with_changed_labels_is_not_published_or_rerun(self):
@@ -661,6 +662,7 @@ class WebhookTests(unittest.TestCase):
                 "b" * 40,
                 "a" * 40,
                 "Old review.",
+                source_base_sha="c" * 40,
                 engine_identity=self.review_engine.identity,
             )
         }
@@ -706,6 +708,41 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(review_model.call_args.args[0].review, "review input")
         publish.assert_called_once()
 
+    def test_comment_links_and_full_revision_deduplication(self):
+        base, head = "b" * 40, "a" * 40
+        body = forgejo.review_body(
+            self.bot_config,
+            base,
+            head,
+            "Finding\n\nLocation: `src/a b.cpp:12` (head).\n\n"
+            "Location: src/removed.cpp:8 (base).",
+            source_base_sha="c" * 40,
+            engine_identity=self.review_engine.identity,
+            review_fingerprint="case",
+        )
+        self.assertIn(f"/src/commit/{head}/src/a%20b.cpp#L12", body)
+        self.assertIn(f"/src/commit/{'c' * 40}/src/removed.cpp#L8", body)
+        self.assertIn(f"Head: [`{head[:12]}`]", body)
+        self.assertLess(body.index("Finding"), body.index("Base:"))
+        comment = {"body": body}
+        self.assertTrue(forgejo.comment_matches_head(comment, head))
+        self.assertTrue(
+            forgejo.comment_matches_engine(
+                comment, base, head, self.review_engine.identity, "case"
+            )
+        )
+        changed_head = head[:12] + "c" * 28
+        self.assertFalse(forgejo.comment_matches_head(comment, changed_head))
+        self.assertFalse(
+            forgejo.comment_matches_engine(
+                comment,
+                base[:12] + "c" * 28,
+                head,
+                self.review_engine.identity,
+                "case",
+            )
+        )
+
     def test_case_marker_distinguishes_changed_metadata_and_evidence(self):
         metadata = {"title": "Backports", "body": "Backport #1", "labels": ["Backport"]}
         fingerprint = service.review_case_fingerprint(metadata, {"complete": False})
@@ -715,6 +752,7 @@ class WebhookTests(unittest.TestCase):
                 "b" * 40,
                 "a" * 40,
                 "Review",
+                source_base_sha="c" * 40,
                 engine_identity=self.review_engine.identity,
                 review_fingerprint=fingerprint,
             )
@@ -741,6 +779,7 @@ class WebhookTests(unittest.TestCase):
                 "b" * 40,
                 "a" * 40,
                 "Reviewed.",
+                source_base_sha="c" * 40,
                 engine_identity=self.review_engine.identity,
                 review_fingerprint=service.review_case_fingerprint(
                     {

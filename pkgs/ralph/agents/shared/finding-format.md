@@ -2,7 +2,8 @@
 
 Write each finding for the author using these fields:
 
-- `title`: a short, actionable description of the finding.
+- `title`: a short description of the defect or limitation. Describe what goes
+  wrong, rather than starting with an instruction to fix it.
 - `summary`: one short sentence explaining why it matters. Include any
   qualification needed to avoid overstating the impact.
 - `body`: a self-contained explanation of the trigger, mechanism, consequence,

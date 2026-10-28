@@ -361,7 +361,6 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         # A PR-introduced regression can still repeat the previous report.
         memory = self.memory()
         rendered = final_comment.render([finding], review_memory=[memory])
-        self.assertNotIn("##### Findings", rendered)
         self.assertIn(
             "<summary>[Major · still present] Existing index problem</summary>",
             rendered,
@@ -375,7 +374,6 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         memory["unchanged_since_report"] = False
         memory["unchanged"] = True
         rendered = final_comment.render([finding], review_memory=[memory])
-        self.assertIn("##### Findings", rendered)
         self.assertIn(finding["summary"], rendered.split("<details>", 1)[0])
 
     def test_uncertain_and_resolved_findings_keep_their_records(self):
@@ -434,12 +432,13 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         rendered = final_comment.render([current], review_memory=memory)
         self.assertEqual(rendered.count(current["body"]), 1)
         self.assertNotIn(duplicate["body"], rendered)
-        self.assertNotIn("##### Findings", rendered)
 
     def test_retained_html_labels_are_escaped(self):
-        memory = self.memory(title="Check <script> & bounds", current_finding_ids=[])
+        memory = self.memory(title="Check `<script>` & bounds", current_finding_ids=[])
         rendered = final_comment.render([], review_memory=[memory])
-        self.assertIn("Check &lt;script&gt; &amp; bounds</summary>", rendered)
+        self.assertIn(
+            "Check <code>&lt;script&gt;</code> &amp; bounds</summary>", rendered
+        )
         self.assertNotIn("<script>", rendered)
 
     def test_each_current_finding_checks_all_linked_prior_groups(self):
@@ -449,7 +448,6 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         )
         shared = self.memory(current_finding_ids=["finding:1", "finding:2"])
         rendered = final_comment.render([first, second], review_memory=[shared])
-        self.assertNotIn("##### Findings", rendered)
         self.assertEqual(rendered.count(shared["source_head"]), 2)
         for finding in (first, second):
             self.assertEqual(rendered.count(finding["body"]), 1)
@@ -463,7 +461,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         rendered = final_comment.render(
             [first, second], review_memory=[shared, changed]
         )
-        main, history = rendered.split("##### Previous findings", 1)
+        main, history = rendered.split("<summary>Previous findings", 1)
         self.assertIn(first["body"], main)
         self.assertIn(second["body"], history)
         for entry in (shared, changed):

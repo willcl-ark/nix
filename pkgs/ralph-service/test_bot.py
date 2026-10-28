@@ -260,15 +260,21 @@ class BotTests(unittest.TestCase):
         ):
             args = ("token", 42, "ralph", "b" * 40, "a" * 40)
             self.assertEqual(
-                forgejo.publish_review(self.bot_config, *args, "First review."),
+                forgejo.publish_review(
+                    self.bot_config, *args, "First review.", source_base_sha="c" * 40
+                ),
                 "created",
             )
             self.assertEqual(
-                forgejo.publish_review(self.bot_config, *args, "First review."),
+                forgejo.publish_review(
+                    self.bot_config, *args, "First review.", source_base_sha="c" * 40
+                ),
                 "unchanged",
             )
             self.assertEqual(
-                forgejo.publish_review(self.bot_config, *args, "Updated review."),
+                forgejo.publish_review(
+                    self.bot_config, *args, "Updated review.", source_base_sha="c" * 40
+                ),
                 "updated",
             )
         self.assertEqual(

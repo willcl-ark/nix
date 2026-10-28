@@ -11,6 +11,8 @@ class GitHubTests(unittest.TestCase):
     def result(self, severity="major"):
         return {
             "schema_version": 1,
+            "base_sha": "b" * 40,
+            "merge_base": "c" * 40,
             "head_sha": "a" * 40,
             "run": {"report_url": "https://review.example/report.html"},
             "output": {
@@ -73,11 +75,30 @@ class GitHubTests(unittest.TestCase):
             "Edited body",
             "src/test.cpp:5",
             "https://review.example/report.html",
+            f"https://github.com/owner/repo/blob/{result['head_sha']}/src/test.cpp#L5",
         ):
             self.assertIn(included, body)
         for excluded in ("Original", "Minor"):
             self.assertNotIn(excluded, body)
         self.assertLess(body.index("Edited body"), body.index("Edited title"))
+
+    def test_base_location_uses_reviewed_merge_base(self):
+        result = self.result()
+        result["output"]["exports"]["findings"][0]["side"] = "base"
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[
+                {"id": 7},
+                [],
+                {"state": "open", "head": {"sha": result["head_sha"]}},
+                {},
+            ],
+        ) as request:
+            self.assertEqual(self.publish(result), "created")
+        body = request.call_args.args[3]["body"]
+        self.assertIn(f"/blob/{result['merge_base']}/src/test.cpp#L5", body)
+        self.assertNotIn(f"/blob/{result['base_sha']}/", body)
 
     def test_comment_uses_final_selected_tier_or_omits_missing_route(self):
         for routing in (

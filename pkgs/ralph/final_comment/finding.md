@@ -1,12 +1,14 @@
-**[${severity}] ${title}**
+**${severity}**
+
+**${title}**
+
+Location: ${location} (${side}).
 
 ${summary}
 
 <details>
-<summary>Explanation and suggested change</summary>
+<summary>Details and suggested fix</summary>
 
 ${body}
-
-Location: `${location}` (${side}).
 
 </details>

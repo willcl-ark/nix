@@ -15,7 +15,7 @@ class ReportTests(unittest.TestCase):
 See [`divide()`](https://example.org/fix).
 
 <details>
-<summary>Explanation and suggested change</summary>
+<summary>Details for <code>divide()</code></summary>
 
 Reject `zero` before dividing.
 
@@ -42,7 +42,7 @@ if (value < 1) return;
         self.assertIn("<strong>[Major] Handle a zero divisor</strong>", rendered)
         self.assertIn('<a href="https://example.org/fix"', rendered)
         self.assertIn("<details>", rendered)
-        self.assertIn("<summary>Explanation and suggested change</summary>", rendered)
+        self.assertIn("<summary>Details for <code>divide()</code></summary>", rendered)
         self.assertIn("Reject <code>zero</code> before dividing.", rendered)
         self.assertIn("<li>Validate input</li>", rendered)
         self.assertIn("if (value &lt; 1) return;", rendered)

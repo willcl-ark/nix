@@ -30,6 +30,7 @@ and alternative. Do not replace it with "consider simplifying" or generic
 hedging. Keep criticism about the proposal, not the author's motives or ability.
 
 Edit each accepted title, summary, and body into concise, clear review prose.
+Make titles describe the defect or limitation; put the proposed fix in the body.
 Do not add repository facts, preconditions, locations, or fixes unless the verifier
 supplied them. Keep verified facts distinct from uncertainty. For judgment calls
 about documentation, design, or scope, state the reason plainly. State proven
