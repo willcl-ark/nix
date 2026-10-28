@@ -290,7 +290,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Sol + Claude<br/>in parallel when selected"]
+    overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Astra + Claude<br/>in parallel when selected"]
     adversarial --> focused["Selected focused audits<br/>run sequentially"]
     focused --> pool["Candidate pool"]
     classDef optional stroke-dasharray: 5 4
@@ -376,14 +376,14 @@ does not receive concept research output or current PR discussion.
 | router | gpt-6.1-sol | high | 8,000 | Up to 8 code inspections |
 | independent | gpt-6-luna | low | 4,000 | Full tool set |
 | script | gpt-6.1-sol | high | 25,000 | Original input; code and base history, no discussion or web tools |
-| adversarial | gpt-6.1-sol | high | 25,000 | Full tool set and selected domain profiles |
+| adversarial | gpt-6-astra | high | 25,000 | Full tool set and selected domain profiles |
 | adversarial_claude | claude-opus-5-5 | xhigh | 64,000 | Same tools and profiles, via the configured proxy |
 | concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
 | dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
-| verifier, all tiers | claude-opus-5-5 | medium | 64,000 | Original input, candidates, concept candidate, code and research tools |
+| verifier, all tiers | claude-opus-5-5 | xhigh | 64,000 | Original input, candidates, concept candidate, code and research tools |
 | write_verifier, only when Majors survive | gpt-6.1-sol | high | 12,000 | Final Major wording, immutable source tools and isolated experiment commands |
 | major_verifier, only when Majors survive | gpt-6.1-sol | medium | 25,000 | Original input and final Major wording; code and base history tools |
 | archaeologist | gpt-6-luna | low | 4,000 | Original input, base/head code tools, current discussion and research tools |
@@ -683,7 +683,7 @@ and design. Core analysis stages use at least
 high reasoning effort, retaining xhigh where already configured, and at least
 16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
 the verifier and the Claude adversarial reviewer retain their default settings.
-The verifier uses Opus 5.5 at `medium`; Claude adversarial review uses `xhigh`.
+The verifier uses Opus 5.5 at `xhigh`; Claude adversarial review uses `xhigh`.
 Both have a 64,000-token output ceiling. Tool limits are unchanged.
 
 High multiplies the configured shared review allowance by five. Its 64,000-token
@@ -700,7 +700,7 @@ that agent's defaults; explicit stage overrides apply last.
 
 An engine configuration can override individual settings on any existing stage
 through `stages`. These partial overrides apply after the selected agent profile.
-For example, to use extra-high reasoning for verification:
+For example, to reduce verification reasoning to high:
 
 ```json
 {
@@ -708,7 +708,7 @@ For example, to use extra-high reasoning for verification:
   "stages": {
     "verifier": {
       "model": "claude-opus-5-5",
-      "reasoning_effort": "xhigh",
+      "reasoning_effort": "high",
       "max_output_tokens": 64000
     }
   }

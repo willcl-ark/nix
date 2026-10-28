@@ -89,7 +89,7 @@ concept research, shares the existing OpenAI allowance, and protects verifier
 headroom. Partial coverage reaches the verifier as named inspection gaps and
 remains visible in reports and stats. See the [specialist design](../../pkgs/ralph/README.md#script-and-transaction-policy-specialist).
 
-Sensitive changes receive parallel independent Sol 6.1 and Claude Opus 5.5
+Sensitive changes receive parallel independent GPT-6 Astra and Claude Opus 5.5
 adversarial reviews. Claude uses `claude-opus-5-5` at `xhigh` through the same
 configured OpenAI-compatible proxy, with a 64,000-token response allowance.
 Selected consensus, wallet, and P2P profiles add the same domain instructions
@@ -526,13 +526,13 @@ for both. Credentials belong only in `openaiKeyFile`, never in the URL.
 Use `engineConfig.stages` to override individual settings on any existing
 review stage. Overrides apply after the agent's settings for the selected
 `default` or `high` profile. Unspecified settings keep their resolved defaults.
-The verifier uses Claude Opus 5.5 with medium reasoning in both profiles.
-For example, to use extra-high reasoning for verification:
+The verifier uses Claude Opus 5.5 with extra-high reasoning in both profiles.
+For example, to reduce verification reasoning to high:
 
 ```nix
 services.ralph.engineConfig.stages.verifier = {
   model = "claude-opus-5-5";
-  reasoning_effort = "xhigh";
+  reasoning_effort = "high";
   max_output_tokens = 64000;
 };
 ```

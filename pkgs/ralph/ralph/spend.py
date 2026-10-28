@@ -32,6 +32,7 @@ RATES = {
         Decimal("5"),
     ),
     "glm-5.3": (Decimal("1.477"), Decimal("1.477"), Decimal("1.477"), Decimal("4.642")),
+    "gpt-6-astra": (Decimal("10"), Decimal("1"), Decimal("12.5"), Decimal("50")),
     "gpt-6-luna": (Decimal("0.1"), Decimal("0.01"), Decimal("0.125"), Decimal("0.5")),
     "gpt-6.1-sol": (Decimal("2"), Decimal("0.1"), Decimal("2.5"), Decimal("10")),
 }

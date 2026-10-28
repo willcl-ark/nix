@@ -1,7 +1,7 @@
 prompt = "prompt.md"
 tool_set = "research"
 model = "claude-opus-5-5"
-reasoning_effort = "medium"
+reasoning_effort = "xhigh"
 max_output_tokens = 64000
 max_tool_calls = { routine = 72, standard = 72, sensitive = 72 }
 max_context_calls = 8
