@@ -870,7 +870,7 @@ def _stage_html(name, stage, stage_output):
         if isinstance(stage.get("coverage"), dict)
         else ""
     )
-    error = _paragraphs(stage, (("error_message", "Provider error"),))
+    error = _paragraphs(stage, (("error_message", "Error"),))
     if "http_status" in stage:
         error = f"<p>HTTP status: {_escape(stage['http_status'])}</p>" + error
     experiments = ""

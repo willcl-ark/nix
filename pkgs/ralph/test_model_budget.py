@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import subprocess
 import unittest
 import urllib.error
 from types import SimpleNamespace
@@ -182,6 +183,67 @@ class ModelBudgetTests(unittest.TestCase):
             model.request_response("secret", {"model": "gpt-6-luna"}, "tests")
         self.assertEqual(send.call_count, 3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [300, 300])
+
+    def test_freshness_failure_preserves_safe_subprocess_diagnostic(self):
+        for tool_loop in (False, True):
+            with self.subTest(tool_loop=tool_loop):
+                debug = {}
+                budget = FakeBudget()
+                error = subprocess.CalledProcessError(
+                    128,
+                    ["git", "ls-remote", "https://user:password@example.org/repo"],
+                    stderr=(
+                        b"fatal: unable to access https://user:password@example.org/repo: "
+                        b"HTTP 503; ssh://transport-user:transport-pass@example.org/repo; "
+                        b"Bearer credential; token=hidden; " + b"x" * 1000
+                    ),
+                )
+                with (
+                    patch.object(model.transport, "request") as send,
+                    patch.object(model.time, "sleep") as sleep,
+                    self.assertRaises(subprocess.CalledProcessError),
+                ):
+                    if tool_loop:
+                        model.openai_review(
+                            "secret",
+                            "input",
+                            self.snapshot,
+                            prompt="Review.",
+                            model="gpt-6-luna",
+                            max_output_tokens=100,
+                            debug=debug,
+                            budget=budget,
+                            is_current=Mock(side_effect=error),
+                        )
+                    else:
+                        model.run_audit(
+                            "secret",
+                            "design",
+                            "Review.",
+                            "input",
+                            model_name="gpt-6-luna",
+                            max_output_tokens=100,
+                            debug=debug,
+                            budget=budget,
+                            is_current=Mock(side_effect=error),
+                        )
+                send.assert_not_called()
+                sleep.assert_not_called()
+                self.assertEqual(budget.events, [])
+                self.assertEqual(debug["status"], "failed")
+                message = debug["error_message"]
+                self.assertIn("exit status 128", message)
+                self.assertIn("fatal: unable to access", message)
+                self.assertIn("HTTP 503", message)
+                self.assertLessEqual(len(message), 500)
+                self.assertEqual(debug["turns"][-1]["error_message"], message)
+                for private in (
+                    "user:password",
+                    "transport-user:transport-pass",
+                    "credential",
+                    "hidden",
+                ):
+                    self.assertNotIn(private, json.dumps(debug))
 
     def test_terminal_http_error_preserves_safe_provider_message_without_retry(self):
         debug = {}

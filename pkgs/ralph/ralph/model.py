@@ -408,8 +408,13 @@ def _provider_error_detail(body, api_key):
         detail = detail.get("message")
     if not isinstance(detail, str):
         return None
+    return _safe_error_message(detail, api_key)
+
+
+def _safe_error_message(detail, api_key=None):
     if api_key:
         detail = detail.replace(api_key, "[redacted]")
+    detail = re.sub(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@", r"\1[redacted]@", detail)
     detail = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [redacted]", detail)
     detail = re.sub(r"\bsk-[A-Za-z0-9_-]+", "[redacted]", detail)
     detail = re.sub(
@@ -559,6 +564,13 @@ def request_failure_record(data, error):
     if isinstance(error, urllib.error.HTTPError):
         record["http_status"] = error.code
     message = getattr(error, "provider_error_message", None)
+    if isinstance(error, subprocess.CalledProcessError):
+        stderr = error.stderr or "No stderr captured."
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        message = _safe_error_message(
+            f"Subprocess failed with exit status {error.returncode}: {stderr}"
+        )
     if message:
         record["error_message"] = message
     return record
