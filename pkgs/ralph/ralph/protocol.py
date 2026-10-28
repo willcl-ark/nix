@@ -287,8 +287,17 @@ COLLATOR_SCHEMA = object_schema(
 
 
 def _object(value, keys):
-    if not isinstance(value, dict) or set(value) != set(keys):
-        raise InvalidReview("Unexpected review fields")
+    if not isinstance(value, dict):
+        raise InvalidReview("Expected a review object")
+    missing = set(keys) - set(value)
+    unexpected = set(value) - set(keys)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(sorted(missing)))
+        if unexpected:
+            details.append("unexpected: " + ", ".join(sorted(unexpected)))
+        raise InvalidReview("Invalid review fields (" + "; ".join(details) + ")")
 
 
 def _strings(value):
@@ -585,6 +594,13 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     unsafe_indexes = set()
     validation_errors = []
     for index, decision in enumerate(result["decisions"]):
+        # Non-publishing decisions cannot contain a finding, so an omitted null
+        # is unambiguous. Keep all other fields subject to strict validation.
+        if isinstance(decision, dict) and decision.get("disposition") in (
+            "drop",
+            "unresolved",
+        ):
+            decision.setdefault("finding", None)
         _object(
             decision, VERIFIER_SCHEMA["properties"]["decisions"]["items"]["properties"]
         )

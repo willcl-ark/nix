@@ -197,6 +197,50 @@ class ProtocolTests(unittest.TestCase):
             final_comment.render(edited, ["A selected audit was unavailable."]),
         )
 
+    def test_omitted_null_finding_preserves_verified_findings(self):
+        decisions = [
+            {
+                "candidate_ids": ["tests:1"],
+                "disposition": "publish",
+                "reason": "Verified",
+                "finding": self.finding,
+            },
+            {
+                "candidate_ids": ["tests:2"],
+                "disposition": "drop",
+                "reason": "Duplicate suggestion",
+            },
+            {
+                "candidate_ids": ["tests:3"],
+                "disposition": "unresolved",
+                "reason": "Insufficient evidence",
+            },
+        ]
+        candidates = [{"id": f"tests:{index}"} for index in range(1, 4)]
+        result, accepted = protocol.verification(
+            self.verification(decisions), candidates, self.snapshot
+        )
+        self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
+        self.assertEqual(
+            [decision["disposition"] for decision in result["decisions"]],
+            ["publish", "drop", "unresolved"],
+        )
+        self.assertIsNone(result["decisions"][1]["finding"])
+        self.assertIsNone(result["decisions"][2]["finding"])
+
+        decisions[1]["disposition"] = "publish"
+        with self.assertRaisesRegex(protocol.InvalidReview, "missing.*finding"):
+            protocol.verification(
+                self.verification(decisions), candidates, self.snapshot
+            )
+
+        decisions[1]["disposition"] = "drop"
+        decisions[1]["findings"] = []
+        with self.assertRaisesRegex(protocol.InvalidReview, "unexpected.*findings"):
+            protocol.verification(
+                self.verification(decisions), candidates, self.snapshot
+            )
+
     def test_public_findings_require_explicit_nonempty_summary(self):
         decision = {
             "candidate_ids": ["tests:1"],
