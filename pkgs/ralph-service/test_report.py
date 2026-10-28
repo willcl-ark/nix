@@ -7,6 +7,51 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    def test_review_markdown_is_rendered_and_sanitized(self):
+        review = """##### Findings
+
+**[Major] Handle a zero divisor**
+
+See [`divide()`](https://example.org/fix).
+
+<details>
+<summary>Explanation and suggested change</summary>
+
+Reject `zero` before dividing.
+
+- Validate input
+- Return an error
+
+```cpp
+if (value < 1) return;
+```
+
+</details>
+
+<script>alert('review')</script>
+
+<a href="javascript:alert(1)" onclick="alert(2)">unsafe link</a>
+<img src="x" onerror="alert(3)">
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, {"content": review}, "markdown-review")
+            rendered = (root / name).read_text()
+            public = json.loads((root / "markdown-review.json").read_text())
+        self.assertIn("<h5>Findings</h5>", rendered)
+        self.assertIn("<strong>[Major] Handle a zero divisor</strong>", rendered)
+        self.assertIn('<a href="https://example.org/fix"', rendered)
+        self.assertIn("<details>", rendered)
+        self.assertIn("<summary>Explanation and suggested change</summary>", rendered)
+        self.assertIn("Reject <code>zero</code> before dividing.", rendered)
+        self.assertIn("<li>Validate input</li>", rendered)
+        self.assertIn("if (value &lt; 1) return;", rendered)
+        self.assertNotIn("<script", rendered)
+        self.assertNotIn("javascript:", rendered)
+        self.assertNotIn("onclick", rendered)
+        self.assertNotIn("onerror", rendered)
+        self.assertEqual(public["review"], review)
+
     def test_finding_summary_and_explanation_survive_public_report(self):
         finding = {
             "id": "finding:1",

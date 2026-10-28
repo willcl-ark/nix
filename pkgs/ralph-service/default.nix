@@ -12,7 +12,11 @@
 }:
 
 let
-  python = python3.withPackages (ps: [ ps.aiohttp ]);
+  python = python3.withPackages (ps: [
+    ps.aiohttp
+    ps.markdown-it-py
+    ps.nh3
+  ]);
 in
 stdenvNoCC.mkDerivation {
   pname = "ralph-service";

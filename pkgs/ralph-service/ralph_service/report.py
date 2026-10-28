@@ -8,6 +8,9 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import nh3
+from markdown_it import MarkdownIt
+
 from ralph import trace as core_trace
 
 
@@ -970,7 +973,13 @@ summary {{ cursor: pointer; font-weight: 600; }}
 <p class="notice">{_escape(record["notice"])}</p>
 <section>
 <h2>Review</h2>
-<pre>{_escape(record["review"])}</pre>
+{
+        nh3.clean(
+            MarkdownIt("commonmark")
+            .enable(["table", "strikethrough"])
+            .render(record["review"])
+        )
+    }
 </section>
 {engine_sections}
 <section>
