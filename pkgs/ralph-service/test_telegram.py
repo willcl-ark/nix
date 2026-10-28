@@ -73,7 +73,7 @@ class TelegramTests(unittest.TestCase):
         self.assertIn("Check height < limit", text)
         self.assertIn("Guard `block->nStatus`.", text)
         self.assertIn("old-head", text)
-        self.assertIn("Verifier unavailable", text)
+        self.assertIn("Review coverage was incomplete.", text)
         self.assertNotIn("<h6>", text)
         self.assertNotIn("<details>", text)
         self.assertNotIn("<summary>", text)

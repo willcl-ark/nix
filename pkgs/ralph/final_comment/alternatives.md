@@ -1,3 +1,1 @@
-##### Alternatives
-
 ${alternatives}

@@ -366,7 +366,12 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([f["severity"] for f in self.result.findings], ["minor"])
         self.assertEqual(self.debug["decisions"][0]["disposition"], "unresolved")
         self.assertIsNone(self.debug["decisions"][0]["finding"])
-        self.assertIn("major_verifier", self.result.content)
+        self.assertTrue(
+            any(
+                "major_verifier" in item
+                for item in self.debug["coverage"]["limitations"]
+            )
+        )
         self.assertTrue(self.result.content.startswith("Review failed"))
         self.assertEqual(self.debug["coverage"]["verification"]["status"], "failed")
 

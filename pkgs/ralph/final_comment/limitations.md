@@ -1,5 +1,1 @@
-${coverage_notice}
-
-##### Review limitations
-
-${limitations}
+${coverage_notice}${limitations}

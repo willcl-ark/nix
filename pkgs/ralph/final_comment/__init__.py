@@ -331,7 +331,13 @@ def render(
                     f"[Source {index}]({citation})"
                     for index, citation in enumerate(alternative["citations"], 1)
                 )
-            rendered_alternatives.append(text)
+            rendered_alternatives.append(
+                "<details>\n<summary>Alternative approach: "
+                + summary_label(alternative["name"])
+                + "</summary>\n\n"
+                + text
+                + "\n\n</details>"
+            )
         sections["alternatives"] = fill(
             "alternatives", alternatives="\n\n".join(rendered_alternatives)
         )
@@ -367,9 +373,7 @@ def render(
         sections["limitations"] = fill(
             "limitations",
             coverage_notice="Review coverage was incomplete.",
-            limitations="\n".join(
-                f"- {limitation}" for limitation in dict.fromkeys(limitations)
-            ),
+            limitations="",
         )
     counts = [
         f"{current_counts[severity]} {severity}{' finding' if severity != 'suggestion' else ''}{'s' if current_counts[severity] != 1 else ''}"
@@ -384,6 +388,9 @@ def render(
         )
         counts.append(f"{len(unresolved_history)} previous {previous_noun}")
     sections["overview"] = " · ".join(counts)
+    if unresolved_history and not current_counts and not verification_failed:
+        verb = "remains" if len(unresolved_history) == 1 else "remain"
+        sections["overview"] = f"No new findings. {sections['overview']} {verb}."
     content = _render_sections(comment_format["comment"], sections)
     if review_tier:
         content += f"\n\n<!-- Review tier: {escape(review_tier)} -->"

@@ -601,8 +601,7 @@ def review_body(
         f"{identity_marker}<!-- ralph-base:{base_sha} -->\n"
         f"<!-- ralph-head:{head_sha} -->\n"
         f"{case_marker}\n{content}\n\n---\n\n"
-        f"Base: [`{base_sha[:12]}`](<{repository_url}/commit/{base_sha}>) · "
-        f"Head: [`{head_sha[:12]}`](<{repository_url}/commit/{head_sha}>)"
+        f"Reviewed: [`{head_sha[:12]}`](<{repository_url}/commit/{head_sha}>)"
         f"{report_link}\n"
     )
 

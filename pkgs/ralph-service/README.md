@@ -87,7 +87,10 @@ New findings show an actionable title and one sentence explaining the impact,
 with the detailed explanation in an expandable section. Unchanged retained
 findings use compact expandable entries. Resolved findings stay in collapsed
 history as the service updates the same comment each round. Saved review reports
-preserve both the summary and detailed explanation.
+preserve both the summary and detailed explanation. Alternatives are collapsed
+under their titles. Comments show a short incomplete-review notice; diagnostic
+limitations and the base revision stay in the full report. The comment footer
+links the reviewed revision and report.
 
 The follow-up command loads its own `audits/addressed_findings.md` and default
 model. Use `ralph-followup --prompt-file FILE --model MODEL` to override those

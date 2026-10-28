@@ -488,6 +488,7 @@ def _public_record(number, result, report_id):
         "report_id": report_id,
         "status": (result.get("run") or {}).get("status", "unknown"),
         "pr": number,
+        "base": result.get("base_sha"),
         "head": result.get("head_sha"),
         "review": result.get("content", ""),
         "engine": {
@@ -959,7 +960,8 @@ summary {{ cursor: pointer; font-weight: 600; }}
 <header>
 <h1>Forgejo Review Report</h1>
 {outcome}
-<p>PR #{_escape(record["pr"])} at <code>{_escape(record["head"])}</code></p>
+<p>PR #{_escape(record["pr"])} at <code>{_escape(record["head"])}</code><br>
+Base: <code>{_escape(record["base"])}</code></p>
 {profile}
 <p><a href="{_escape(json_name)}" download>Download JSON report</a></p>
 <p><a href="stats/">Review statistics</a></p>

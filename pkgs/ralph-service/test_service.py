@@ -722,8 +722,8 @@ class WebhookTests(unittest.TestCase):
         )
         self.assertIn(f"/src/commit/{head}/src/a%20b.cpp#L12", body)
         self.assertIn(f"/src/commit/{'c' * 40}/src/removed.cpp#L8", body)
-        self.assertIn(f"Head: [`{head[:12]}`]", body)
-        self.assertLess(body.index("Finding"), body.index("Base:"))
+        self.assertIn(f"Reviewed: [`{head[:12]}`]", body)
+        self.assertLess(body.index("Finding"), body.index("Reviewed:"))
         comment = {"body": body}
         self.assertTrue(forgejo.comment_matches_head(comment, head))
         self.assertTrue(

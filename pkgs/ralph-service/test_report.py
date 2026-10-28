@@ -208,7 +208,11 @@ if (value < 1) return;
             "instructions": secret,
             "review_input": secret,
             "private_state": {"token": secret},
-            "coverage": {"status": "partial", "private": secret},
+            "coverage": {
+                "status": "partial",
+                "limitations": ["tests: Output failed validation"],
+                "private": secret,
+            },
             "decisions": [{"disposition": "reject", "private": secret}],
             "finding_attribution": [{"finding_id": "finding:1", "private": secret}],
             "concept_assessment": {"status": "verified", "private": secret},
@@ -227,6 +231,7 @@ if (value < 1) return;
         result = {
             "schema_version": 1,
             "head_sha": "a" * 40,
+            "base_sha": "b" * 40,
             "content": hostile,
             "engine": {"name": "current"},
             "output": {
@@ -252,6 +257,11 @@ if (value < 1) return;
             name = report.save_report(root, 123, result, "123-abcdef")
             html = (root / name).read_text()
             public = (root / "123-abcdef.json").read_text()
+        self.assertEqual(json.loads(public)["base"], result["base_sha"])
+        self.assertIn(result["base_sha"], html)
+        for limitation in debug["coverage"]["limitations"]:
+            self.assertIn(limitation, html)
+            self.assertIn(limitation, json.loads(public)["coverage"]["limitations"])
         self.assertNotIn(secret, html + public)
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;script&gt;alert", html)

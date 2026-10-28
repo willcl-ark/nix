@@ -71,7 +71,8 @@ class CommentTests(unittest.TestCase):
         finding = example["findings"][0]
         self.assertIn(finding["body"] + "\n\n" + finding["title"] + ": ", rendered)
         self.assertLess(
-            rendered.index(example["limitations"][0]), rendered.index(finding["body"])
+            rendered.index("Review coverage was incomplete."),
+            rendered.index(finding["body"]),
         )
 
     def test_template_validation_rejects_omitted_notices_and_invalid_placeholders(self):
@@ -100,11 +101,21 @@ class CommentTests(unittest.TestCase):
             self.assertIn(previous["status"], rendered)
             self.assertNotIn(previous["body"], rendered)
         for limitation in example["limitations"]:
-            self.assertIn(limitation, rendered)
+            self.assertNotIn(limitation, rendered)
 
     def test_findings_show_summary_before_collapsed_explanation(self):
         example = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())
         rendered = final_comment.render(**example)
+        for limitation in example["limitations"]:
+            self.assertNotIn(limitation, rendered)
+        for alternative in example["alternatives"]:
+            self.assertIn(alternative["concept"], rendered)
+            self.assertIn(
+                "<summary>Alternative approach: "
+                + final_comment.summary_label(alternative["name"])
+                + "</summary>",
+                rendered,
+            )
         finding = example["findings"][0]
         before, details = rendered.split("<details>", 1)
         self.assertIn(finding["title"], before)

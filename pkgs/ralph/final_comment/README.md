@@ -42,7 +42,7 @@ python3 pkgs/ralph/final_comment/preview.py --github > /tmp/ralph-github-comment
 | `backport.md` | The backport verdict and supporting details | `verdict`, `summary`, `details` |
 | `history.md` | Earlier findings, author replies and resolved history | `label`, `history` |
 | `history_failed.md` | Earlier finding references after failed verification | `history` |
-| `limitations.md` | The coverage notice and limitations | `coverage_notice`, `limitations` |
+| `limitations.md` | The coverage notice (`limitations` is empty; diagnostics are in the report) | `coverage_notice`, `limitations` |
 | `github.md` | The GitHub comment's section order and report link | `new_findings_notice`, `retained_notice`, `findings`, `report_url` |
 
 Placeholders use `${name}` or `$name`. Keep each listed placeholder exactly
