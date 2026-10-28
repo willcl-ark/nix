@@ -112,7 +112,7 @@ class ModelBudgetTests(unittest.TestCase):
             "url",
             429,
             "rejected",
-            {"Retry-After": "3"},
+            {"Retry-After": "60"},
             io.BytesIO(b'{"error":{"message":"Too many requests"}}'),
         )
         unavailable = urllib.error.HTTPError(
@@ -152,7 +152,7 @@ class ModelBudgetTests(unittest.TestCase):
             )
         self.assertEqual(answer, "Review complete")
         self.assertEqual(len({call.args[1] for call in send.call_args_list}), 1)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [3, 2])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 2])
         self.assertEqual(
             budget.events,
             [
@@ -169,6 +169,19 @@ class ModelBudgetTests(unittest.TestCase):
         )
         self.assertEqual(debug["turns"][0]["error_message"], "Too many requests")
         self.assertTrue(debug["turns"][0]["retry"])
+
+    def test_retry_after_delay_is_bounded(self):
+        error = urllib.error.HTTPError(
+            "url", 429, "rejected", {"Retry-After": "3600"}, None
+        )
+        with (
+            patch.object(model.transport, "request", side_effect=error) as send,
+            patch.object(model.time, "sleep") as sleep,
+            self.assertRaises(urllib.error.HTTPError),
+        ):
+            model.request_response("secret", {"model": "gpt-6-luna"}, "tests")
+        self.assertEqual(send.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [300, 300])
 
     def test_terminal_http_error_preserves_safe_provider_message_without_retry(self):
         debug = {}

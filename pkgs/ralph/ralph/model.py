@@ -483,7 +483,7 @@ def request_response(
             delay = attempt + 1
             if http_error:
                 try:
-                    delay = max(delay, min(10, int(exc.headers.get("Retry-After"))))
+                    delay = max(delay, min(300, int(exc.headers.get("Retry-After"))))
                 except (TypeError, ValueError, AttributeError):
                     pass
             failure = request_failure_record(data, exc)
