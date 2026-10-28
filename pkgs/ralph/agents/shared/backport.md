@@ -16,4 +16,6 @@ The verifier must return backport_assessment with a verdict, summary, concrete
 commit/PR evidence, required_fixes, and limitations. Use Faithful only when fidelity,
 completeness and target-branch correctness are established. Missing source evidence
 requires Needs clarification unless a concrete defect is independently established.
-This is a static review; do not claim builds or tests were executed.
+Source inspection does not establish that builds or tests were executed. Only
+the write-verifier can run experiments; other stages may assess supplied runner
+records. Attribute execution claims to those records and their pinned revisions.
