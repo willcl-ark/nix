@@ -10,8 +10,8 @@ ${design}
 
 ${alternatives}
 
-${history}
-
 ${empty}
+
+${history}
 
 ${limitations}

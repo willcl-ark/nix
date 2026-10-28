@@ -381,6 +381,8 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             status="unclear", unchanged_since_report=False, current_finding_ids=[]
         )
         rendered = final_comment.render([], review_memory=[memory])
+        clean_result = final_comment.render([])
+        self.assertNotIn(clean_result, rendered)
         self.assertIn("[Major · not confirmed]", rendered)
         self.assertIn("Not confirmed against this revision", rendered)
         self.assertIn(memory["body"], rendered)
@@ -388,6 +390,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             with self.subTest(status=status):
                 memory["status"] = status
                 rendered = final_comment.render([], review_memory=[memory])
+                self.assertTrue(rendered.startswith(clean_result))
                 self.assertIn("<summary>Resolved findings</summary>", rendered)
                 self.assertIn(memory["body"], rendered)
                 self.assertIn(

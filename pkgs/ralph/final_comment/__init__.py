@@ -355,7 +355,9 @@ def render(
                 label=history_label,
                 history="\n\n".join(history),
             )
-    if not any(sections.values()):
+    if not unresolved_history and not any(
+        value for name, value in sections.items() if name != "history"
+    ):
         sections["empty"] = (
             "I found no actionable issues in this static review."
             if not limitations
