@@ -25,7 +25,7 @@ templates for comment structure, an offline preview and example reviews. The
 findings. Each new finding shows a severity symbol and label, title, source
 location and one-sentence summary;
 the explanation and suggested change are expandable. The runtime validates
-findings and enforces tool and spending limits.
+findings and enforces tool and timeout limits.
 
 From the repository root, using Python with `aiohttp` installed:
 
@@ -64,8 +64,7 @@ calls a forge. Missing objects or history fail before model requests.
 Stdout contains review Markdown. Progress and errors go to stderr. `--output`
 writes a private versioned JSON artifact containing engine identity, base/head,
 merge base, actual diff base, native data, supported exports, usage and status.
-All stages share a default estimated review allowance of USD 5.00. Use `--help`
-for budget and trusted local engine options.
+Use `--help` for tool limits and trusted local engine options.
 
 The current engine sends Codex and Claude requests through the same
 OpenAI-compatible endpoint and access key. Configure CLIProxyAPI with both
@@ -82,22 +81,21 @@ credentials out of it. Review stages and audits use this URL without falling
 back to the OpenAI endpoint on failure. Claude strict JSON schemas become
 prompt guidance at the proxy; Ralph parses and validates returned results.
 
-With subscription authentication, dollar totals are API-equivalent usage
-estimates, not subscription charges or quota measurements. CLIProxyAPI removes
-`max_output_tokens` before forwarding Codex requests, so a response can exceed
-Ralph's requested output allowance and its reservation before usage is settled.
-Ralph omits `max_tool_calls` from outgoing requests because Codex rejects it.
-The configured web-search count remains a reservation estimate; all returned
-searches are accounted for, including those beyond that estimate.
-The proxy/provider enforces subscription limits. Configure only subscription
-credentials in the proxy if paid upstream fallback is unwanted.
+Ralph records request attempts and provider-reported token usage without pricing
+it or using monetary admission limits. Missing usage remains unknown.
+CLIProxyAPI removes `max_output_tokens` before forwarding Codex requests, so the
+requested output allowance is not an enforced cap on that path. Ralph omits
+`max_tool_calls` from outgoing requests because Codex rejects it, and enforces
+its own tool limits. Hosted search counts are recorded even when a response
+exceeds the configured allowance. The proxy/provider enforces subscription
+limits.
 
 Model requests retry HTTP 429, 5xx and transient transport failures up to three
 total attempts, preserving the current conversation. Backoff is one then two
 seconds; a numeric `Retry-After` can extend either wait up to ten seconds.
 Other HTTP errors, including rejected parameters, fail immediately. Every
-attempt checks cancellation and reserves spending separately. Timeouts and
-server errors retain uncertain charges, so retries can exhaust the allowance.
+attempt checks cancellation and records a separate usage attempt. Missing
+usage after a timeout or server error is not estimated.
 Failed attempts remain in diagnostics even when a retry succeeds. HTTP failures
 retain the status and a bounded, redacted provider message, without the raw
 error response or request body.
@@ -201,7 +199,7 @@ flowchart LR
 | Enabled routing | Use the semantic tier and profiles; add mandatory specialist audits from paths. |
 | Explicit full mode | Select every audit and profile, including script. |
 | Shadow mode | Record the routing proposal, then select every audit and profile, including script. This also applies after routing fallback. |
-| Invalid or failed routing, material missing context, or oversized patch | Use the sensitive general plan with all profiles, excluding script. Full and shadow modes still include script. Budget exhaustion stops the attempt. |
+| Invalid or failed routing, material missing context, or oversized patch | Use the sensitive general plan with all profiles, excluding script. Full and shadow modes still include script. Provider or stage failures remain explicit. |
 | Overview requests sensitive review from a lower tier | Add all general audits and profiles, excluding script. |
 | A focused audit requests sensitive review from a lower tier | Add adversarial, state and concurrency; keep selected profiles, or use all profiles if none were selected. |
 
@@ -260,13 +258,11 @@ not other findings or review discussion. Code tools inspect base/head, diffs,
 callers and tests; history tools settle specific contracts. It must inspect code
 before finishing and prioritize material functions over reporting them unread.
 
-When selected it runs before any enabled concept research and other discovery, sharing the
-existing OpenAI budget and protecting verifier headroom and its own final turn.
-It has no additional spending allowance; inadequate review or monthly budget
-still produces an explicit incomplete stage. Candidates go through the existing
+When selected it runs before any enabled concept research and other discovery.
+Incomplete stages remain explicit. Candidates go through the existing
 verifier, and named discovery gaps are passed to the verifier for targeted
 inspection. Remaining gaps stay visible in coverage. Stage stats include
-selection, execution, coverage, costs and sole/shared accepted findings.
+selection, execution, coverage, usage and sole/shared accepted findings.
 Custom agent directories must include the `script` agent.
 
 ## Stages, models and evidence
@@ -417,13 +413,9 @@ Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensit
 The script and dead-code specialists allow 48; both adversarial passes and both
 verifiers allow 72. History and discussion sublimits are eight each per
 tool-enabled stage. Archaeology has twelve total
-inspections. Hosted web actions count toward the stage limit. Reservations
-estimate two per response; this is not a provider-enforced cap, so one response
-can exceed the estimate or remaining stage allowance.
-Search fees and evidence-token headroom are reserved in the
-existing OpenAI allowance; opening or finding text within a page is not a paid
-search action. The early concept stage spends from the same capped review
-allowance, does not estimate savings and never stops later code stages.
+inspections. Hosted web actions count toward the stage limit. The allowance of
+two per response is advisory, so a provider response can exceed it. The early
+concept stage never stops later code stages.
 Script, dead_code, independent, both adversarial passes and both verifier stages
 require a first inspection. Claude uses automatic tool selection because Opus
 5.5 rejects forced tool calls; Ralph checks that inspection occurred. At limits,
@@ -437,24 +429,17 @@ files. Literal base/head searches and caller inspection must account for
 indirect uses, supported configurations, external contracts and side effects
 before recommending deletion. Findings use the normal suggestion and verifier
 flow; no runtime failure is required for a proven safe removal. Its 48-call
-limit allows reference tracing even on routine PRs and shares the existing
-spending ceiling. These settings have not been tuned against live reviews.
+limit allows reference tracing even on routine PRs. These settings have not
+been tuned against live reviews.
 Custom agent directories must include the `dead_code` agent.
 
-The default estimated review allowance is USD 5.00, shared by Codex and Claude.
-Routing and discovery protect verifier headroom, refreshed as candidates
-accumulate. Admission checks also protect a final model
-response after inspection. Budget limits can still prevent completion, including
-through competing workers' monthly spending. Failed discovery becomes a coverage
-limitation; failed verification publishes no unverified findings. Failed editing
-falls back to verified wording.
-The Major pass uses the remaining shared allowance, reserving its own final
-response. The optional write-verifier protects the final Major pass before
-spending on experiments. Neither stage receives an extra review allowance. A
-budget or API failure, invalid response, or missing decision withholds all
-pending Majors. Explicit `drop` and `unresolved` verdicts withhold those findings;
-non-Majors and concept results remain available. Medium effort and the 25,000
-token limit are initial settings, not a measured accuracy guarantee.
+Failed discovery becomes a coverage limitation; failed verification publishes
+no unverified findings. Failed editing falls back to verified wording.
+The Major pass checks findings after any optional write-verifier experiments.
+An API failure, invalid response, or missing decision withholds all pending
+Majors. Explicit `drop` and `unresolved` verdicts withhold those findings;
+non-Majors and concept results remain available. Reasoning effort and token
+limits are initial settings, not a measured accuracy guarantee.
 Custom agent directories must include the `write_verifier` and `major_verifier`
 agents. Saved profiles without the new stage must be recaptured.
 The companion GitHub publisher also requires second-verifier provenance for
@@ -475,7 +460,7 @@ withhold the affected decisions, preserve independently valid findings, and
 leave unaccounted candidates unresolved.
 
 Sources: [pipeline.py](ralph/pipeline.py),
-[model.py](ralph/model.py), [spend.py](ralph/spend.py),
+[model.py](ralph/model.py), [usage.py](ralph/usage.py),
 [config.py](ralph/config.py).
 
 ## How findings survive or get rejected
@@ -501,7 +486,7 @@ flowchart LR
 | Claim is disproved or unsupported | Drop the claim. |
 | Decisive evidence is missing, or a finding fails validation | Withhold that finding and record a limitation; retain valid findings. |
 | Concept objection is unsupported or invalid | Withhold the objection; retain verified code findings. |
-| Editing fails, exceeds its budget, or changes the accepted ID set | Keep all accepted findings with their original verified wording and metadata. |
+| Editing fails or changes the accepted ID set | Keep all accepted findings with their original verified wording and metadata. |
 | Second verification rejects or cannot verify a Major | Withhold it from public findings and exports; retain the decisions in the trace. |
 | Second verification fails or has invalid ID accounting | Withhold every pending Major; preserve other severities and concept results. |
 
@@ -592,16 +577,16 @@ statistics distinguish
 sole and shared accepted findings across five views: Overview, Agents, Reviews,
 Outcomes, and Usage. Overview shows the leaderboard and matched adversarial
 comparison; Agents links to a separate page for each stage and configured model.
-Each agent page shows its execution and coverage counts, spend, and a full-width
-candidate list with search, disposition filters, and pagination. Candidate rows
+Each agent page shows its execution and coverage counts, reported usage, and
+a full-width candidate list with search, disposition filters, and pagination. Candidate rows
 include PRs, verifier decisions, accepted attribution, and review report links.
 Multiple candidates can merge into one accepted finding. Verifier acceptance
 is not human validation or a measurement of recall. Reviews lists saved reviews;
-Usage contains spend and routing diagnostics. Outcomes summarizes best-effort
-automated checks of whether follow-up PR updates addressed earlier findings, keyed
+Usage contains recorded requests, tokens and subscription quota snapshots.
+Outcomes summarizes best-effort automated checks of whether follow-up PR updates addressed earlier findings, keyed
 by the original finding ID and head-to-head comparison. Those follow-up checks
-are read from their own assessment database and spend ledger, so their budget is
-reported separately from review cost. These checks are not a causal claim.
+are read from their own assessment database and usage ledger, with usage
+reported separately from reviews. These checks are not a causal claim.
 Profiles within one adversarial call get no separate causal credit.
 
 Sources: [protocol.py](ralph/protocol.py),
@@ -664,7 +649,7 @@ Reports and statistics count published concept assessments separately from
 findings and distinguish them from completed research. They also expose
 candidate and verifier review recommendations so a human can score false
 proposed stops and useful code findings that appeared after a `would_stop`
-recommendation. Archaeology usage and costs remain visible, but the stage does
+recommendation. Archaeology usage remains visible, but the stage does
 not compete in the finding leaderboard. These counts measure output, not
 recommendation quality.
 For a before/after comparison, use the same PR head and inspect whether the new
@@ -686,11 +671,7 @@ the verifier and the Claude adversarial reviewer retain their default settings.
 The verifier uses Opus 5.5 at `xhigh`; Claude adversarial review uses `xhigh`.
 Both have a 64,000-token output ceiling. Tool limits are unchanged.
 
-High multiplies the configured shared review allowance by five. Its 64,000-token
-verifier reserves at least $2.56 for its initial and finishing requests alone;
-the larger allowance leaves room for discovery. Claude consumes the same
-allowance.
-The default multiplier is one. An allowance is a spend cap, not a target.
+Profiles change agent settings without a shared monetary allowance.
 
 A resolved profile records every stage's model, reasoning effort, output ceiling,
 and tool limits in the engine configuration snapshot and hash. Profiles keep
@@ -720,10 +701,10 @@ resolved defaults. Supported settings also include `timeout`, `final_timeout`,
 `max_tool_calls`, `max_context_calls`, `max_history_calls`,
 `max_web_search_calls_per_response` and `tool_set`. `max_tool_calls` names all three tiers,
 `routine`, `standard` and `sensitive`. Unknown stages and fields are rejected;
-models must have known accounting rates. Ralph records the resolved settings in
+model IDs must be nonempty. Ralph records the resolved settings in
 the profile snapshot and hash, including timeouts, for retries and evaluation.
 Explicit timeout overrides and saved jobs retain their configured values.
-All stages continue to use the same endpoint, key and review allowance.
+All stages use the same endpoint and key, with their own recorded usage.
 
 ## Backport reviews
 

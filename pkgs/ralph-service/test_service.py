@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from ralph import config as core_config
-from ralph import engine, model, pipeline, spend
+from ralph import engine, model, pipeline, usage
 from ralph import repository as local_repository
 from ralph_service import config, forgejo, repository, service
 from ralph_service.jobs import JobStore
@@ -44,7 +44,7 @@ class ServiceTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.state_dir = Path(self.directory.name)
         self.jobs = JobStore(self.state_dir / "jobs.sqlite3", retry_base_seconds=0)
-        self.ledger = spend.Ledger(self.state_dir / "spend.sqlite3")
+        self.ledger = usage.Ledger(self.state_dir / "usage.sqlite3")
         self.bot_config = config.BotConfig(
             "https://git.example.org/owner/repo.git",
             "owner/repo",
@@ -119,7 +119,7 @@ class ServiceTests(unittest.TestCase):
                 "status": "completed",
                 "metrics": {},
                 "skipped": bool(debug.get("skip")),
-                "budget": {},
+                "usage": {},
                 "attempt": debug,
             },
         }
@@ -229,7 +229,7 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(self.evidence.call_args.args[-1], "read-token")
             self.assertEqual(review.call_count, 1)
             self.assertEqual(
-                review.call_args.args[1].budget.review_id,
+                review.call_args.args[1].usage.review_id,
                 f"pr:42:{job['id']}:{job['generation']}",
             )
 
@@ -571,7 +571,7 @@ class WebhookTests(unittest.TestCase):
             force,
             engine_identity=self.review_engine.identity,
         )
-        ledger = spend.Ledger(state_dir / "spend.sqlite3")
+        ledger = usage.Ledger(state_dir / "usage.sqlite3")
         return jobs.claim(), jobs, state_dir, ledger
 
     def test_badge_keeps_unresolved_previous_finding_visible(self):

@@ -403,7 +403,7 @@ def assess_completed_review(
     prior_assessments,
     prompt,
     stage_model,
-    budget,
+    usage,
     is_current=None,
     *,
     api_base="https://api.openai.com/v1",
@@ -483,7 +483,7 @@ def assess_completed_review(
             api_key,
             data,
             "addressed_findings",
-            budget=budget,
+            usage=usage,
             is_current=is_current,
             api_base=api_base,
         )

@@ -19,7 +19,8 @@ from pathlib import Path
 from ralph import trace as core_trace
 from . import badge, config, forgejo, github, report, repository, trace, monitor
 from ralph import repository as local_repository
-from ralph import engine, model, spend, runner, profiles
+from ralph import engine, model, runner
+from ralph import usage as usage_tracking
 from .research import discussion_lookup
 from .review_feedback import collect_review_feedback
 from .jobs import JobStore
@@ -107,11 +108,11 @@ def short_sha(sha):
     return sha[:12]
 
 
-def _budget_summary(budget, attempt, name):
-    if budget is None:
+def _usage_summary(usage, attempt, name):
+    if usage is None:
         return None
     try:
-        return budget.summary()
+        return usage.summary()
     except sqlite3.Error:
         return attempt.get(name)
 
@@ -150,7 +151,7 @@ def log_review_outcome(
     message = (
         "review outcome pr=%d action=%s head=%s outcome=%s "
         "review_status=%s elapsed_seconds=%.2f model_turns=%s tool_calls=%s "
-        "input_tokens=%s output_tokens=%s estimated_usd=%s"
+        "input_tokens=%s output_tokens=%s"
     )
     values = [
         number,
@@ -163,7 +164,6 @@ def log_review_outcome(
         metric_value(metrics.get("tool_calls")),
         metric_value(metrics.get("total_input_tokens")),
         metric_value(metrics.get("total_output_tokens")),
-        metric_value(metrics.get("estimated_cost_usd")),
     ]
     if stage is not None:
         message += " stage=%s error_type=%s http_status=%s http_host=%s"
@@ -237,10 +237,7 @@ def process_job(
     expected_context = None
     review_fingerprint = None
     backport_evidence = None
-    profile = (engine_identity.get("config") or {}).get("profile")
-    if engine_identity["name"] == "current" and profile is not None:
-        ledger = profiles.ReviewProfile.from_dict(profile).apply_budget(ledger)
-    budget = spend.RequestBudget(
+    usage = usage_tracking.RequestUsage(
         ledger,
         review_id=f"pr:{number}:{job['id']}:{job['generation']}",
     )
@@ -376,7 +373,7 @@ def process_job(
                     runtime = engine.Runtime(
                         case=case,
                         api_key=api_key,
-                        budget=budget,
+                        usage=usage,
                         is_current=is_current,
                         discussion_lookup=(
                             discussion_lookup(bot_config, number)
@@ -404,11 +401,11 @@ def process_job(
                             "exports": output.exports,
                         },
                         "run": {
-                            "review_id": budget.review_id,
+                            "review_id": usage.review_id,
                             "status": "completed",
                             "metrics": {},
                             "skipped": True,
-                            "budget": budget.summary(),
+                            "usage": usage.summary(),
                             "attempt": debug,
                         },
                     }
@@ -568,11 +565,11 @@ def process_job(
                             }
                         ),
                         "run": {
-                            "review_id": budget.review_id,
+                            "review_id": usage.review_id,
                             "status": run_status,
                             "metrics": runtime.metrics() if runtime else {},
                             "skipped": False,
-                            "budget": _budget_summary(budget, debug, "budget"),
+                            "usage": _usage_summary(usage, debug, "usage"),
                             "attempt": debug,
                         },
                     }
@@ -609,17 +606,16 @@ def process_job(
         try:
             summary = ledger.summary()
             logging.info(
-                "monthly spend month=%s estimated_usd=%.6f reserved_usd=%.6f "
+                "monthly usage month=%s requests=%d "
                 "unknown_requests=%d usage_complete=%s",
                 summary["month"],
-                summary["estimated_total_usd"],
-                summary["reserved_total_usd"],
+                summary["request_count"],
                 summary["unknown_request_count"],
                 summary["usage_complete"],
             )
         except sqlite3.Error as exc:
             logging.error(
-                "Could not read monthly spend summary: %s", type(exc).__name__
+                "Could not read monthly usage summary: %s", type(exc).__name__
             )
 
 
@@ -941,8 +937,6 @@ def main():
         type=Path,
         help="Directory containing review agent settings and prompts",
     )
-    parser.add_argument("--review-budget-usd", type=float, default=5.00)
-    parser.add_argument("--monthly-budget-usd", type=float)
     parser.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
     args = parser.parse_args()
     if args.migrate_state:
@@ -953,13 +947,6 @@ def main():
         try:
             jobs_path = args.state_dir / "jobs.sqlite3"
             migrated = jobs_path.exists() and migrate_state(jobs_path)
-            for filename in (
-                "spend.sqlite3",
-                "ppq-spend.sqlite3",
-                "followup/spend.sqlite3",
-            ):
-                if spend.migrate_state(args.state_dir / filename):
-                    migrated = True
         except (OSError, sqlite3.Error, ValueError) as exc:
             parser.error(f"could not migrate state databases: {exc}")
         print(
@@ -1048,11 +1035,7 @@ def main():
         parser.error(str(exc))
     recovered = jobs.recover()
     command_store = monitor.NotificationStore(args.state_dir / "telegram.sqlite3")
-    ledger = spend.Ledger(
-        args.state_dir / "spend.sqlite3",
-        review_limit_usd=args.review_budget_usd,
-        monthly_limit_usd=args.monthly_budget_usd,
-    )
+    ledger = usage_tracking.Ledger(args.state_dir / "usage.sqlite3")
     logging.info("review queue recovered_claims=%d workers=%d", recovered, args.workers)
     threading.Thread(
         target=command_worker,

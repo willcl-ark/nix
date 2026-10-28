@@ -30,7 +30,7 @@ stable named flake output.
 | `packages.<system>.dnsseedrs` | Bitcoin DNS seeder built from `willcl-ark/dnsseedrs`. |
 | `packages.<system>.ralph-write-verifier-env` | Pinned Bix development environment for isolated Ralph build and test experiments. |
 | `packages.<system>.ralph-service` | Forgejo webhook reviewer, frozen evaluation, reports, statistics, follow-up and a separate Telegram monitor, importing the Ralph core. [Usage](pkgs/ralph-service/README.md). |
-| `packages.<system>.ralph` | Local committed-change review CLI with selectable engines, default/high review profiles, budgeted audits and backport fidelity reviews. [Usage and review flow](pkgs/ralph/README.md). [Contribute](pkgs/ralph/CONTRIBUTING.md) or [comment templates](pkgs/ralph/final_comment/README.md). |
+| `packages.<system>.ralph` | Local committed-change review CLI with selectable engines, default/high review profiles, bounded audits and backport fidelity reviews. [Usage and review flow](pkgs/ralph/README.md). [Contribute](pkgs/ralph/CONTRIBUTING.md) or [comment templates](pkgs/ralph/final_comment/README.md). |
 
 ## Usage
 

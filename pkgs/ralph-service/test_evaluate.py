@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ralph import config as core_config
-from ralph import engine, pipeline, spend
+from ralph import engine, pipeline, usage
 from ralph import research as frozen_research
 from ralph_service import config, evaluate, forgejo
 
@@ -216,7 +216,7 @@ class EvaluateTests(unittest.TestCase):
             original,
         )
         self.origin.rename(self.root / "unavailable-origin.git")
-        ledger = spend.Ledger(self.root / "spend.sqlite3")
+        ledger = usage.Ledger(self.root / "usage.sqlite3")
 
         def review(review_case, runtime, *args, comment_format):
             self.assertEqual(review_case.backport_evidence, packet)
@@ -297,7 +297,7 @@ class EvaluateTests(unittest.TestCase):
         )
         original = json.loads(manifest.read_text())
         self.origin.rename(self.root / "unavailable-origin.git")
-        ledger = spend.Ledger(self.root / "spend.sqlite3")
+        ledger = usage.Ledger(self.root / "usage.sqlite3")
 
         def review(case, runtime, *args, comment_format):
             self.assertEqual(case.review_feedback, packet)
@@ -378,7 +378,7 @@ class EvaluateTests(unittest.TestCase):
         captured = json.loads(manifest.read_text())
         self.assertEqual(captured["backport_pins"], {})
         self.git(self.checkout, "fetch", "origin", original)
-        ledger = spend.Ledger(self.root / "spend.sqlite3")
+        ledger = usage.Ledger(self.root / "usage.sqlite3")
         with patch.object(pipeline, "review_with_independent_passes") as review:
             result = json.loads(
                 evaluate.run_case(
@@ -411,15 +411,11 @@ class EvaluateTests(unittest.TestCase):
             settings.read_text().split("[profiles.high]", 1)[0]
             + f"\n[profiles.high]\ntimeout = {captured_timeout + 1}\n"
         )
-        ledger = spend.Ledger(
-            self.root / "spend.sqlite3", review_limit_usd=1, monthly_limit_usd=20
-        )
+        ledger = usage.Ledger(self.root / "usage.sqlite3")
         seen = []
 
         def review(case, runtime, prompts, *args, comment_format):
             self.assertEqual(prompts.profile.name, "high")
-            self.assertEqual(runtime.budget.ledger.review_limit_micros, 5_000_000)
-            self.assertEqual(runtime.budget.ledger.monthly_limit_micros, 20_000_000)
             seen.append(
                 (prompts.instructions, prompts.profile.stages["verifier"].timeout)
             )
@@ -458,8 +454,6 @@ class EvaluateTests(unittest.TestCase):
             result["effective_config_sha256"],
             override_result["effective_config_sha256"],
         )
-        self.assertEqual(result["effective_config"]["review_budget_usd"], 5)
-        self.assertEqual(ledger.review_limit_micros, 1_000_000)
 
     def test_merged_pr_replay_keeps_diff_offline_and_labels_separate(self):
         self.bot_config = replace(
@@ -494,7 +488,7 @@ class EvaluateTests(unittest.TestCase):
         )
         self.origin.rename(self.root / "unavailable-origin.git")
         seen = []
-        ledger = spend.Ledger(self.root / "state" / "spend.sqlite3")
+        ledger = usage.Ledger(self.root / "state" / "usage.sqlite3")
 
         def review(
             review_case,

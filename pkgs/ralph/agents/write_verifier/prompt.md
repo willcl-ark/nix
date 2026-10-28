@@ -25,7 +25,7 @@ Return exactly one result for each supplied finding ID. Set outcome to:
 - reproduced when execution demonstrates the claimed behavior on reviewed code;
 - refuted when evidence contradicts a material premise of the exact finding;
 - inconclusive when neither conclusion is established, including impractical
-  security-risk experiments, environment failures, timeouts, or budget limits.
+  security-risk experiments, environment failures, timeouts, or resource limits.
 
 Reference the runner's command IDs in command_ids. Reproduced requires a
 completed command at head; refuted requires a completed command at either

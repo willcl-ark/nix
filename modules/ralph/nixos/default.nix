@@ -57,8 +57,6 @@ let
     cfg.engine
     "--engine-config"
     engineConfigFile
-    "--review-budget-usd"
-    (toString cfg.reviewBudgetUsd)
     "--openai-key-file"
     cfg.openaiKeyFile
     "--webhook-secret-file"
@@ -84,10 +82,6 @@ let
     cfg.reportDir
     "--report-base-url"
     cfg.reportBaseUrl
-  ]
-  ++ lib.optionals (cfg.monthlyBudgetUsd != null) [
-    "--monthly-budget-usd"
-    (toString cfg.monthlyBudgetUsd)
   ];
 in
 {
@@ -202,28 +196,6 @@ in
       description = "Maximum concurrent PR reviews. Reviews of the same PR run serially.";
     };
 
-    reviewBudgetUsd = lib.mkOption {
-      type = lib.types.addCheck lib.types.number (value: value > 0);
-      default = 5.00;
-      description = ''
-        Base per-review spending ceiling in USD. The high profile uses five
-        times this allowance. Each API request reserves a
-        conservative estimate before starting. Reviews that exhaust their
-        allowance report incomplete coverage.
-        Reservations are estimates, not an invoice cap.
-      '';
-    };
-
-    followupBudgetUsd = lib.mkOption {
-      type = lib.types.addCheck lib.types.number (value: value > 0);
-      default = 0.10;
-      description = ''
-        Separate per-update spending ceiling in USD for background assessments
-        of previously published findings. Uses its own ledger and never consumes
-        the main review's per-review or monthly allowance.
-      '';
-    };
-
     followupPromptFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -234,12 +206,6 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = "Optional addressed-finding model override. Independent of the main review agents.";
-    };
-
-    monthlyBudgetUsd = lib.mkOption {
-      type = lib.types.nullOr (lib.types.addCheck lib.types.number (value: value > 0));
-      default = null;
-      description = "Optional monthly API allowance in USD, shared by reviews in this state directory.";
     };
 
     subscriptionUsage = {
@@ -291,7 +257,7 @@ in
     stateDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/ralph";
-      description = "Private directory containing Git objects, durable jobs, review traces and the spend ledger.";
+      description = "Private directory containing Git objects, durable jobs, review traces and the usage ledger.";
     };
 
     reportDir = lib.mkOption {
@@ -493,8 +459,6 @@ in
               cfg.openaiKeyFile
               "--openai-api-base"
               openaiApiBase
-              "--budget-usd"
-              (toString cfg.followupBudgetUsd)
             ]
             ++ lib.optionals (cfg.followupPromptFile != null) [
               "--prompt-file"
@@ -568,8 +532,7 @@ in
         ];
         ReadOnlyPaths = [
           "-${cfg.stateDir}/jobs.sqlite3"
-          "-${cfg.stateDir}/spend.sqlite3"
-          "-${cfg.stateDir}/ppq-spend.sqlite3"
+          "-${cfg.stateDir}/usage.sqlite3"
           "-${cfg.stateDir}/followup"
         ];
         NoNewPrivileges = true;

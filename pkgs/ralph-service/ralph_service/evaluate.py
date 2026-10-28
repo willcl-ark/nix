@@ -26,7 +26,8 @@ from . import (
     stats_page,
 )
 from ralph import repository as local_repository
-from ralph import engine, profiles, spend, runner, upstream
+from ralph import engine, runner, upstream
+from ralph import usage as usage_tracking
 from ralph import research as frozen_research
 
 
@@ -369,7 +370,7 @@ def run_case(
         "config": None,
     }
     case_id = "unknown"
-    budget = None
+    usage = None
     attempt = {}
     runtime = None
     review_id = None
@@ -447,22 +448,10 @@ def run_case(
             selected_name, selected_config, configured=use_captured_config
         )
         engine_identity = loaded_engine.identity
-        if selected_name == "current":
-            ledger = profiles.ReviewProfile.from_dict(
-                loaded_engine.config["profile"]
-            ).apply_budget(ledger)
         code_hash = source_code_sha256()
-        review_limit = getattr(ledger, "review_limit_micros", None)
-        monthly_limit = getattr(ledger, "monthly_limit_micros", None)
         effective_config = {
             "bot": asdict(bot_config),
             "engine": engine_identity,
-            "review_budget_usd": None
-            if review_limit is None
-            else review_limit / 1_000_000,
-            "monthly_budget_usd": None
-            if monthly_limit is None
-            else monthly_limit / 1_000_000,
             "review_feedback_sha256": manifest["review_feedback_sha256"],
             "research_evidence_sha256": manifest["research_evidence_sha256"],
             "backport_evidence_sha256": manifest["backport_evidence_sha256"],
@@ -514,7 +503,7 @@ def run_case(
             if snapshot.merge_base != manifest["merge_base"]:
                 raise ValueError("Frozen merge base mismatch")
             review_id = f"eval:{case_id}:{uuid.uuid4().hex}"
-            budget = spend.RequestBudget(ledger, review_id)
+            usage = usage_tracking.RequestUsage(ledger, review_id)
             artifact["review_id"] = review_id
             case = engine.ReviewCase(
                 review,
@@ -532,7 +521,7 @@ def run_case(
             runtime = engine.Runtime(
                 case=case,
                 api_key=api_key,
-                budget=budget,
+                usage=usage,
                 allow_web_search=False,
                 attempt=attempt,
             )
@@ -566,17 +555,17 @@ def run_case(
                         "review_id": review_id,
                         "status": "failed",
                         "metrics": runtime.metrics() if runtime else {},
-                        "budget": None,
+                        "usage": None,
                         "attempt": attempt,
                     },
                 }
             )
-        if budget is not None:
+        if usage is not None:
             try:
-                artifact["run"]["budget"] = budget.summary()
+                artifact["run"]["usage"] = usage.summary()
             except Exception as exc:
-                artifact["run"]["budget"] = attempt.get("budget")
-                artifact["budget_error"] = type(exc).__name__
+                artifact["run"]["usage"] = attempt.get("usage")
+                artifact["usage_error"] = type(exc).__name__
         if isinstance(labels, dict) and case_id in labels:
             artifact["expected_findings"] = labels[case_id]
         config_hash = artifact.get("effective_config_sha256", "unknown")
@@ -639,19 +628,6 @@ def _research_requests(path):
     return requests
 
 
-def _run_has_budget_exhaustion(artifact):
-    error = artifact.get("error") or {}
-    if error.get("type") == "BudgetExceeded":
-        return True
-    debug = core_trace.current_diagnostics(artifact)
-    stages = debug.get("stages") or {}
-    return any(
-        stage.get("status") == "budget_exhausted"
-        for stage in stages.values()
-        if isinstance(stage, dict)
-    )
-
-
 def _run_has_partial_coverage(artifact):
     debug = core_trace.current_diagnostics(artifact)
     coverage = debug.get("coverage") or {}
@@ -674,7 +650,6 @@ def _new_summary_group():
         "completed": 0,
         "failed": 0,
         "partial_coverage": 0,
-        "budget_exhausted": 0,
         "labels_present": 0,
         "decision_counts": Counter(),
         "accepted_findings": 0,
@@ -688,19 +663,15 @@ def _new_summary_group():
                 "counts": Counter(),
                 "would_stop_runs": 0,
                 "downstream_accepted_findings": 0,
-                "downstream_known_cost_usd": 0.0,
-                "downstream_stage_cost_usd": Counter(),
             },
             "verified": {
                 "counts": Counter(),
                 "would_stop_runs": 0,
                 "downstream_accepted_findings": 0,
-                "downstream_known_cost_usd": 0.0,
-                "downstream_stage_cost_usd": Counter(),
             },
         },
-        "known_costs": [],
         "wall_seconds": [],
+        "usage": defaultdict(list),
         "unknown_usage_runs": 0,
         "unknown_usage_turns": 0,
         "incomplete_usage_runs": 0,
@@ -714,7 +685,6 @@ def _new_summary_group():
                 "concept_stage": False,
                 "conceptual_concerns": 0,
                 "tool_calls": 0,
-                "known_cost_usd": 0.0,
                 "unknown_usage_turns": 0,
                 "incomplete_usage_turns": 0,
                 "max_output_token_incomplete_turns": 0,
@@ -755,25 +725,6 @@ def _concept_would_stop(label):
     }
 
 
-def _downstream_summary(debug):
-    metrics = core_trace.stage_metrics(debug)
-    accepted = sum(
-        1
-        for decision in debug.get("decisions", [])
-        if isinstance(decision, dict) and decision.get("disposition") == "publish"
-    )
-    known_cost = 0.0
-    stage_costs = Counter()
-    for name, record in metrics.items():
-        if name == "archaeologist":
-            continue
-        cost = record.get("known_estimated_cost_usd", 0.0)
-        known_cost += cost
-        if cost:
-            stage_costs[name] += cost
-    return accepted, known_cost, stage_costs
-
-
 def _add_would_stop_metrics(group, debug):
     concept = core_trace.concept_assessment(debug)
     records = {
@@ -793,7 +744,11 @@ def _add_would_stop_metrics(group, debug):
             }
         else:
             records["verified"] = verification
-    accepted, known_cost, stage_costs = _downstream_summary(debug)
+    accepted = sum(
+        1
+        for decision in debug.get("decisions", [])
+        if isinstance(decision, dict) and decision.get("disposition") == "publish"
+    )
     for stage, record in records.items():
         label = _concept_label(record)
         if label is None:
@@ -803,8 +758,6 @@ def _add_would_stop_metrics(group, debug):
         if _concept_would_stop(label):
             bucket["would_stop_runs"] += 1
             bucket["downstream_accepted_findings"] += accepted
-            bucket["downstream_known_cost_usd"] += known_cost
-            bucket["downstream_stage_cost_usd"].update(stage_costs)
 
 
 def _add_stage_metrics(group, debug):
@@ -818,7 +771,6 @@ def _add_stage_metrics(group, debug):
         metrics["conceptual_concerns"] += record.get("conceptual_concerns", 0)
         metrics["turns"] += record["calls"]
         metrics["tool_calls"] += record["tool_calls"]
-        metrics["known_cost_usd"] += record["known_estimated_cost_usd"]
         metrics["unknown_usage_turns"] += record["unknown_usage_count"]
         metrics["incomplete_usage_turns"] += record["incomplete_usage_count"]
         candidate_counts = record.get("candidate_counts") or {}
@@ -868,7 +820,6 @@ def _finalize_group(group):
             "mean_turns_per_run": _rounded(
                 metrics["turns"] / stage_runs if stage_runs else None
             ),
-            "known_cost_usd": _rounded(metrics["known_cost_usd"]),
             "unknown_usage_turns": metrics["unknown_usage_turns"],
             "incomplete_usage_turns": metrics["incomplete_usage_turns"],
             "max_output_token_incomplete_turns": metrics[
@@ -890,11 +841,6 @@ def _finalize_group(group):
             "counts": dict(sorted(record["counts"].items())),
             "would_stop_runs": record["would_stop_runs"],
             "downstream_accepted_findings": record["downstream_accepted_findings"],
-            "downstream_known_cost_usd": _rounded(record["downstream_known_cost_usd"]),
-            "downstream_stage_cost_usd": {
-                stage: _rounded(cost)
-                for stage, cost in sorted(record["downstream_stage_cost_usd"].items())
-            },
         }
     return {
         "runs": runs,
@@ -905,7 +851,6 @@ def _finalize_group(group):
             if group["current_diagnostics_status_counts"]["supported"]
             else None
         ),
-        "budget_exhausted": group["budget_exhausted"],
         "labels_present": group["labels_present"],
         "unknown_usage_runs": group["unknown_usage_runs"],
         "unknown_usage_turns": group["unknown_usage_turns"],
@@ -950,13 +895,8 @@ def _finalize_group(group):
             if group["current_diagnostics_status_counts"]["supported"]
             else None
         ),
-        "cost_usd": {
-            **_series(group["known_costs"]),
-            "known_per_accepted_finding": _rounded(
-                sum(group["known_costs"]) / accepted_findings
-                if accepted_findings
-                else None
-            ),
+        "usage": {
+            name: _series(values) for name, values in sorted(group["usage"].items())
         },
         "wall_seconds": _series(group["wall_seconds"]),
         "stage_metrics": stage_metrics,
@@ -979,8 +919,6 @@ def summarize_runs(paths):
             group["failed"] += 1
         if _run_has_partial_coverage(artifact):
             group["partial_coverage"] += 1
-        if _run_has_budget_exhaustion(artifact):
-            group["budget_exhausted"] += 1
         if "expected_findings" in artifact:
             group["labels_present"] += 1
         debug = core_trace.current_diagnostics(artifact)
@@ -988,8 +926,19 @@ def summarize_runs(paths):
             "supported" if debug else "unsupported"
         ] += 1
         metrics = core_trace.result_metrics(artifact) or {}
-        run_cost = metrics.get("estimated_cost_usd", 0.0)
-        group["known_costs"].append(run_cost)
+        for name in (
+            "model_turns",
+            "tool_calls",
+            "total_input_tokens",
+            "total_output_tokens",
+            "total_cached_tokens",
+            "total_cache_write_tokens",
+            "total_reasoning_tokens",
+            "total_model_seconds",
+        ):
+            value = metrics.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                group["usage"][name].append(value)
         if metrics.get("unknown_usage_count", 0):
             group["unknown_usage_runs"] += 1
         group["unknown_usage_turns"] += metrics.get("unknown_usage_count", 0)
@@ -1036,11 +985,6 @@ def summarize_runs(paths):
         "groups": {
             key: _finalize_group(group) for key, group in sorted(groups.items())
         },
-        "pricing_note": (
-            "Known costs are estimated from saved token usage and "
-            "configured rates. Unknown usage is excluded from "
-            "known cost totals and counted separately."
-        ),
         "labels_note": (
             "Expected labels are counted only as present. This "
             "summary does not match labels to findings or establish "
@@ -1093,8 +1037,6 @@ def main(argv=None):
         default=None,
         help="Run the eval-only blind alternatives experiment",
     )
-    run.add_argument("--review-budget-usd", type=float, default=5.00)
-    run.add_argument("--monthly-budget-usd", type=float)
     run.add_argument(
         "--labels-json",
         type=Path,
@@ -1102,7 +1044,7 @@ def main(argv=None):
     )
     run.add_argument("manifests", type=Path, nargs="+")
 
-    summary = commands.add_parser("spend", help="show current month spend")
+    summary = commands.add_parser("usage", help="show current month usage")
     summary.add_argument("--state-dir", type=Path, required=True)
 
     summarize = commands.add_parser(
@@ -1167,11 +1109,11 @@ def main(argv=None):
                 )
             )
         return 0
-    if args.command == "spend":
-        path = args.state_dir / "spend.sqlite3"
+    if args.command == "usage":
+        path = args.state_dir / "usage.sqlite3"
         if not path.exists():
-            parser.error(f"No spend ledger at {path}")
-        print(json.dumps(spend.Ledger(path).summary(), sort_keys=True))
+            parser.error(f"No usage ledger at {path}")
+        print(json.dumps(usage_tracking.Ledger(path).summary(), sort_keys=True))
         return 0
     if args.command == "summarize":
         print(json.dumps(summarize_runs(args.runs), sort_keys=True))
@@ -1203,11 +1145,7 @@ def main(argv=None):
         return 0
 
     api_key = read_secret(args.openai_key_file, "OpenAI key")
-    ledger = spend.Ledger(
-        args.state_dir / "spend.sqlite3",
-        review_limit_usd=args.review_budget_usd,
-        monthly_limit_usd=args.monthly_budget_usd,
-    )
+    ledger = usage_tracking.Ledger(args.state_dir / "usage.sqlite3")
     labels = (
         json.loads(args.labels_json.read_text(encoding="utf-8"))
         if args.labels_json

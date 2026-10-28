@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ralph.spend import Ledger
+from ralph.usage import Ledger
 from ralph_service import jobs, report, stats, stats_page
 
 
@@ -98,7 +98,7 @@ class StatsPageTests(unittest.TestCase):
                     {"finding_id": secondary, "raised_by": [secondary]}
                 ],
             }
-            stats._add_adversarial_comparison(paired, debug, [])
+            stats._add_adversarial_comparison(paired, debug)
         self.assertEqual(paired["completed_reviews"], 2)
         self.assertEqual(paired["sole_accepted"]["adversarial_claude"], 1)
         self.assertEqual(paired["sole_accepted"]["adversarial_gemini"], 1)
@@ -106,8 +106,8 @@ class StatsPageTests(unittest.TestCase):
     def test_usage_keeps_missing_fields_and_model_providers_explicit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            Ledger(root / "spend.sqlite3")
-            with sqlite3.connect(root / "spend.sqlite3") as db:
+            Ledger(root / "usage.sqlite3")
+            with sqlite3.connect(root / "usage.sqlite3") as db:
                 for token, model, usage in (
                     (
                         "claude",
@@ -122,24 +122,58 @@ class StatsPageTests(unittest.TestCase):
                             "output_tokens": 30,
                             "cached_tokens": 100,
                             "cache_write_tokens": 0,
-                            "complete": True,
+                            "reasoning_tokens": 10,
+                            "web_search_calls": 0,
                         },
                     ),
                     ("unknown", "gpt-6.1-sol", None),
+                    ("timeout", "gpt-6.1-sol", None),
                 ):
                     db.execute(
                         "INSERT INTO requests (token, review_id, stage, model, month, "
-                        "status, usage_json, cost_micros, reserved_micros) "
-                        "VALUES (?, 'pr:42:1:1', 'independent', ?, '2026-10', 'settled', ?, 1000000, 0)",
+                        "status, usage_json, requested_at) "
+                        "VALUES (?, 'pr:42:1:1', 'independent', ?, '2026-10', 'completed', ?, 1790812800)",
                         (token, model, json.dumps(usage)),
                     )
+                db.execute(
+                    "INSERT INTO requests (token, review_id, stage, model, month, "
+                    "status, usage_json, requested_at) "
+                    "SELECT 'duplicate', review_id, stage, model, month, 'duplicate', "
+                    "usage_json, requested_at FROM requests WHERE token = 'openai'"
+                )
+                db.execute(
+                    "UPDATE requests SET status = 'failed', http_status = 429 "
+                    "WHERE token = 'unknown'"
+                )
+                db.execute(
+                    "UPDATE requests SET status = 'uncertain' WHERE token = 'timeout'"
+                )
+            # Retired ledgers must not contribute to subscription telemetry.
+            (root / "spend.sqlite3").write_text("retired")
+            (root / "ppq-spend.sqlite3").write_text("retired")
             summary = stats.collect_stats(root, root / "reports")
-            totals = summary["spend"]["lifetime"]
+            totals = summary["usage"]["lifetime"]
+            self.assertEqual(totals["request_count"], 5)
+            self.assertEqual(
+                totals["status_counts"],
+                {"completed": 2, "duplicate": 1, "failed": 1, "uncertain": 1},
+            )
+            self.assertEqual(totals["rate_limit_count"], 1)
+            self.assertEqual(totals["http_status_counts"], {"429": 1})
+            self.assertEqual(totals["tokens"]["reasoning"], 10)
+            self.assertEqual(totals["tokens"]["output"], 50)
+            self.assertEqual(stats_page._failed_requests(totals), 2)
+            for rendered in (
+                stats_page._usage_rows(totals["providers"]),
+                stats_page._model_section(summary),
+            ):
+                self.assertRegex(rendered, r"<td[^>]*>2</td><td[^>]*>1</td>")
+            self.assertIsNone(totals["providers"]["claude"]["tokens"]["cached"])
             self.assertEqual(totals["tokens"]["input"], 300)
-            self.assertEqual(totals["unknown_token_counts"]["cached"], 2)
+            self.assertEqual(totals["unknown_token_counts"]["cached"], 3)
             self.assertEqual(totals["providers"]["claude"]["request_count"], 1)
-            self.assertEqual(totals["providers"]["openai"]["request_count"], 2)
-            self.assertFalse(summary["inventory"]["missing_sources"]["openai_ledger"])
+            self.assertEqual(totals["providers"]["openai"]["request_count"], 4)
+            self.assertFalse(summary["inventory"]["missing_sources"]["review_ledger"])
             self.assertEqual(stats_page._fmt_tokens(totals, "input"), "300 (partial)")
             self.assertEqual(stats_page._cache_rate(totals), "N/A")
             self.assertEqual(
@@ -154,6 +188,21 @@ class StatsPageTests(unittest.TestCase):
             )
             html = "".join(path.read_text() for path in public.rglob("*.html"))
             self.assertNotIn("$", html)
+            self.assertIn("Rate limits (429)", html)
+            public_json = json.dumps(summary)
+            for obsolete in (
+                "cost_micros",
+                "reserved_micros",
+                "budget_limited",
+                '"spend"',
+            ):
+                self.assertNotIn(obsolete, public_json)
+            self.assertEqual(
+                stats.collect_stats(root / "empty", root / "reports")["usage"][
+                    "lifetime"
+                ]["tokens"]["input"],
+                None,
+            )
 
     def test_subscription_quota_does_not_present_unavailable_accounts_as_unused(self):
         summary = {
@@ -235,7 +284,6 @@ class StatsPageTests(unittest.TestCase):
                                     "hit": None,
                                 },
                             },
-                            "budget_limited": hit,
                         }
                     )
                 result = {
@@ -272,7 +320,6 @@ class StatsPageTests(unittest.TestCase):
                 if group["name"] == "web_search_calls_per_response"
             ]
             self.assertTrue(all(g["hit_known_runs"] == 0 for g in web))
-            self.assertEqual(sum(g["limited_runs"] for g in limits["budgets"]), 1)
             public_report = json.loads(next(reports.glob("42-*.json")).read_text())
             self.assertTrue(
                 public_report["stages"]["independent"]["limits"]["tool_calls"]["hit"]

@@ -31,7 +31,7 @@ example when you have one. Prompt wording does not need a matching text assertio
 
 PRs run these checks and save rendered comment previews automatically. A
 maintainer can also approve a [live BASE/HEAD comparison](CI.md) on a Bitcoin PR
-to see how a prompt, model or budget change affects a real review.
+to see how a prompt, model or tool-limit change affects a real review.
 
 ## Settings
 
@@ -56,8 +56,8 @@ max_output_tokens = 16000
 The existing files also spell out discussion, history and web-search allowances
 and request timeouts. `max_tool_calls` must name all three review tiers. Profile
 overrides replace a whole setting, including that table. Output tokens are per
-response; timeouts are in seconds. The web-search allowance is a reservation
-estimate because the provider may return more searches than requested.
+response; timeouts are in seconds. The web-search allowance is advisory because
+the provider may return more searches than requested.
 
 The supported tool sets are:
 
@@ -72,13 +72,11 @@ The supported tool sets are:
 The runtime still applies evidence availability, operator web permission and
 stage restrictions. Blind alternatives can only inspect the comparison base.
 Source tools read immutable repository snapshots. Only `write_verifier` receives
-experiment commands for an isolated disposable copy; it shares the review
-spending ceiling and preserves final-verifier headroom. A new
-tool implementation or a new pipeline stage requires Python changes. Model IDs
-must have accounting rates in [spend.py](ralph/spend.py).
+experiment commands for an isolated disposable copy. A new tool implementation
+or a new pipeline stage requires Python changes. Model IDs must be nonempty;
+model availability and supported parameters are checked by the provider.
 
-[profiles.toml](agents/profiles.toml) sets the shared review budget multiplier for each
-profile. Per-run `engineConfig.stages` overrides apply after agent settings.
+Per-run `engineConfig.stages` overrides apply after agent settings.
 Resolved prompts, settings and comment templates are saved with each review.
 Frozen evaluations keep those saved values until explicitly given new settings.
 

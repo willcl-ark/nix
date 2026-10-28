@@ -60,12 +60,9 @@ Check existing grants too: Tailscale grants add access, so a broader grant can
 also permit connections. Use an inference client key, not the proxy's management
 key or provider credentials. The action logs the runner out when the job ends.
 
-The optional repository variable `RALPH_CI_REVIEW_BUDGET_USD` sets the ordinary
-per-review allowance, defaulting to 30. Each side applies its own default profile's
-budget multiplier, just as the deployed service does. These are Ralph's existing
-API-equivalent accounting limits, not a hard subscription-quota cap. Inspect
-budget and model changes before starting a run. Re-running a job buys a fresh pair
-of reviews; there is no shared monthly CI spending ledger.
+Inspect model, reasoning, tool and timeout changes before starting a run. Each
+rerun starts a fresh pair of reviews and records their reported usage. Subscription
+quotas are enforced by the proxy and provider.
 
 The credentialed workflow uses `workflow_dispatch` and runs only from the default
 branch. The automatic checks use `pull_request`. Candidate files are read as data

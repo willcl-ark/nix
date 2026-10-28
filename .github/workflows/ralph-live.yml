@@ -74,7 +74,6 @@ jobs:
       - name: Review the frozen case with BASE and HEAD settings
         env:
           CLI_PROXY_API_KEY: ${{ secrets.CLI_PROXY_API_KEY }}
-          REVIEW_BUDGET_USD: ${{ vars.RALPH_CI_REVIEW_BUDGET_USD || '30' }}
         run: |
           umask 077
           key_file="$RUNNER_TEMP/ralph-proxy-key"
@@ -83,8 +82,7 @@ jobs:
           unset CLI_PROXY_API_KEY
           python3 -m ralph_service.ci_compare run \
             --work-dir "$RUNNER_TEMP/ralph-comparison" \
-            --openai-key-file "$key_file" \
-            --review-budget-usd "$REVIEW_BUDGET_USD"
+            --openai-key-file "$key_file"
       - name: Summarize the comparison
         if: always()
         run: |

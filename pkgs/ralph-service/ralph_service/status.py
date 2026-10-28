@@ -165,14 +165,13 @@ def recorded_usage(state_dir, now, *, include_month=True):
     """Summarize persisted requests for the preceding day and optional UTC month."""
     rows, missing = stats._ledger_rows(state_dir)
     followups, followup_missing = stats._provider_ledger_rows(
-        "followup", state_dir / "followup/spend.sqlite3"
+        "followup", state_dir / "followup/usage.sqlite3"
     )
     missing["followup"] = followup_missing
     unavailable = [
         label
         for key, label in (
             ("openai", "review proxy"),
-            ("ppq", "PPQ"),
             ("followup", "follow-up"),
         )
         if missing.get(key)
@@ -200,14 +199,25 @@ def recorded_usage(state_dir, now, *, include_month=True):
     for label, requests in periods:
         tokens = Counter()
         unknown = partial = 0
+        known_fields = set()
         for row in requests:
-            tokens.update(row["tokens"])
+            if row["status"] == "duplicate":
+                continue
+            reported = {
+                key: value for key, value in row["tokens"].items() if value is not None
+            }
+            tokens.update(reported)
+            known_fields.update(reported)
             unknown += row["usage_unknown"]
             partial += row["usage_incomplete"] and not row["usage_unknown"]
+        token_summary = " · ".join(
+            f"{name} {tokens[name]:,}" if name in known_fields else f"{name} unknown"
+            for name in ("input", "output", "cached")
+        )
         lines.extend(
             [
                 f"{label}: {len(requests):,} requests",
-                f"Reported tokens: input {tokens['input']:,} · output {tokens['output']:,} · cached {tokens['cached']:,}",
+                f"Reported tokens: {token_summary}",
                 f"Missing usage: {unknown:,} requests · Partial: {partial:,}",
             ]
         )

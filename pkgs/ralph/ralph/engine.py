@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .repository import RepositorySnapshot
 
-_DEFAULT_BUDGET = object()
+_DEFAULT_USAGE = object()
 
 
 @dataclass(frozen=True)
@@ -31,14 +31,14 @@ class Output:
 
 
 class Runtime:
-    """Per-run access to model requests, spend, cancellation, and diagnostics."""
+    """Per-run access to model requests, usage, cancellation, and diagnostics."""
 
     def __init__(
         self,
         *,
         case,
         api_key,
-        budget=None,
+        usage=None,
         is_current=None,
         discussion_lookup=None,
         allow_web_search=False,
@@ -51,7 +51,7 @@ class Runtime:
         self.case = case
         self.api_key = api_key
         self.openai_api_base = "https://api.openai.com/v1"
-        self.budget = budget
+        self.usage = usage
         self.is_current = is_current
         self.discussion_lookup = discussion_lookup
         self.allow_web_search = allow_web_search
@@ -86,7 +86,7 @@ class Runtime:
         record=None,
         first_tool_required=False,
         research_evidence=None,
-        budget=_DEFAULT_BUDGET,
+        usage=_DEFAULT_USAGE,
         api_base=None,
         timeout=1800,
         final_timeout=1800,
@@ -96,7 +96,7 @@ class Runtime:
 
         record = record if record is not None else {}
         self._records.append(record)
-        selected_budget = self.budget if budget is _DEFAULT_BUDGET else budget
+        selected_usage = self.usage if usage is _DEFAULT_USAGE else usage
         selected_api_base = api_base or self.openai_api_base
         return openai_review(
             self.api_key,
@@ -114,7 +114,7 @@ class Runtime:
             reasoning_effort=reasoning_effort,
             first_tool_required=first_tool_required,
             stage_name=stage_name,
-            budget=selected_budget,
+            usage=selected_usage,
             response_schema=response_schema,
             discussion_lookup=self.discussion_lookup,
             allow_web_search=self.allow_web_search,
@@ -161,7 +161,7 @@ class Runtime:
             stage_name,
             prompt,
             input_text,
-            budget=self.budget,
+            usage=self.usage,
             response_schema=response_schema,
             reasoning_effort=reasoning_effort,
             is_current=self.is_current,

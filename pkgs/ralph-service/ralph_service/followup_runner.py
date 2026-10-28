@@ -11,8 +11,7 @@ from urllib.parse import quote
 
 from . import followup
 from ralph.config import load_prompt_file
-from ralph.spend import supports_model
-from ralph import spend
+from ralph import usage as usage_tracking
 
 
 DEFAULT_PROMPT_FILE = (
@@ -22,7 +21,7 @@ DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_BATCH_SIZE = 5
 FOLLOWUP_DIR = "followup"
 ASSESSMENTS_DB = "assessments.sqlite3"
-SPEND_DB = "spend.sqlite3"
+USAGE_DB = "usage.sqlite3"
 CHECKOUT_DIR = "checkout"
 
 
@@ -231,7 +230,7 @@ def assess_job(
         prior_assessments,
         prompt,
         stage_model,
-        spend.RequestBudget(ledger, _review_id(job)),
+        usage_tracking.RequestUsage(ledger, _review_id(job)),
         api_base=api_base,
     )
 
@@ -246,7 +245,6 @@ def run_once(
     api_key,
     prompt,
     stage_model,
-    budget_usd,
     batch_size=DEFAULT_BATCH_SIZE,
     *,
     api_base="https://api.openai.com/v1",
@@ -265,7 +263,7 @@ def run_once(
         return 0
 
     prior_assessments = assessment_results(assessments_path)
-    ledger = spend.Ledger(followup_dir / SPEND_DB, review_limit_usd=budget_usd)
+    ledger = usage_tracking.Ledger(followup_dir / USAGE_DB)
     processed = 0
     assessed = 0
     for job in pending:
@@ -317,7 +315,6 @@ def main(argv=None):
     parser.add_argument("--openai-api-base", default="https://api.openai.com/v1")
     parser.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT_FILE)
     parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--budget-usd", type=float, default=0.10)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     args = parser.parse_args(argv)
     if args.batch_size < 1:
@@ -336,7 +333,6 @@ def main(argv=None):
         api_key,
         prompt,
         stage_model,
-        args.budget_usd,
         batch_size=args.batch_size,
         api_base=args.openai_api_base,
     )
@@ -347,6 +343,6 @@ def load_settings(prompt_file=DEFAULT_PROMPT_FILE, stage_model=DEFAULT_MODEL):
     prompt = load_prompt_file(prompt_file)
     if not prompt.strip():
         raise ValueError("follow-up prompt must not be empty")
-    if not supports_model(stage_model):
-        raise ValueError("unsupported follow-up model")
+    if not isinstance(stage_model, str) or not stage_model.strip():
+        raise ValueError("follow-up model must not be empty")
     return prompt, stage_model

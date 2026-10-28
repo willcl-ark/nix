@@ -7,7 +7,6 @@ from .config import ADVERSARIAL_PROFILES, AUDIT_NAMES
 from .model import TOOL_SETS, StaleReview
 from .protocol import STRINGS, InvalidReview, object_schema
 from .repository import MAX_REVIEW_BYTES, is_test_path
-from .spend import BudgetExceeded
 
 ROUTER_SCHEMA = object_schema(
     {
@@ -169,9 +168,6 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
             debug.setdefault("stage_outputs", {})["router"] = answer
             proposed = validate_plan(answer, paths)
         except StaleReview:
-            raise
-        except BudgetExceeded as exc:
-            record.update(status="budget_exhausted", error_type=type(exc).__name__)
             raise
         except Exception as exc:
             record.update(status="failed", error_type=type(exc).__name__)

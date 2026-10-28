@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from final_comment import load_format
-from ralph import engine, spend, trace
+from ralph import engine, usage as usage_tracking, trace
 from ralph.repository import git_command, git_environment
 
 from . import config, evaluate
@@ -355,15 +355,12 @@ def run(args):
     # Refuse a second invocation rather than accidentally buying duplicate reviews.
     results.mkdir(mode=0o700)
     api_key = evaluate.read_secret(args.openai_key_file, "OpenAI key")
-    ledger = spend.Ledger(
-        work / "state" / "spend.sqlite3", review_limit_usd=args.review_budget_usd
-    )
+    ledger = usage_tracking.Ledger(work / "state" / "usage.sqlite3")
     summary = {
         key: value
         for key, value in prepared.items()
         if key not in {"engines", "case", "proxy_url"}
     }
-    summary["review_budget_usd"] = args.review_budget_usd
     summary["sides"] = {}
     artifacts = {}
     for side in ("base", "head"):
@@ -400,8 +397,6 @@ def run(args):
             },
             "artifact": str(artifact_path.relative_to(results)),
             "markdown": f"{side}/review.md",
-            "effective_review_budget_usd": args.review_budget_usd
-            * selected[side].config["profile"]["budget_multiplier"],
             "evaluation": evaluate.summarize_runs([artifact_path]),
         }
     evaluate.write_private_json(results / "summary.json", summary)
@@ -428,7 +423,6 @@ def main(argv=None):
         "run", help="Run both prepared sides with trusted code"
     )
     replay.add_argument("--openai-key-file", type=Path, required=True)
-    replay.add_argument("--review-budget-usd", type=float, default=5.00)
     for command in (capture, replay):
         command.add_argument("--work-dir", type=Path, required=True)
     args = parser.parse_args(argv)

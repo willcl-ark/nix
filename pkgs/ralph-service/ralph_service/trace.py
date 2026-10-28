@@ -64,7 +64,7 @@ def review_trace(result):
             "instructions": debug.get("instructions"),
             "input": "PR text, patch, and commits omitted from public debug output",
             "stages": _public_value(debug.get("stages", {})),
-            "budget": run.get("budget") if isinstance(run, dict) else None,
+            "usage": run.get("usage") if isinstance(run, dict) else None,
         }
     )
     attribution = finding_attribution(debug)
@@ -75,8 +75,6 @@ def review_trace(result):
         "routing",
         "coverage",
         "candidate_sources",
-        "verification_budget",
-        "ppq_budget",
         "concept_assessment",
     ):
         if key in debug:
@@ -106,12 +104,6 @@ def review_trace(result):
     if "decisions" in debug:
         trace["decisions"] = debug["decisions"]
     trace.update(review_metrics(debug))
-    trace["pricing_note"] = (
-        "Estimated from token usage and hosted web searches at configured rates. "
-        "Unknown usage is excluded from this subtotal; the budget "
-        "includes uncertain reservations. Missing cache-write "
-        "counts use the conservative cache-write rate."
-    )
     return trace
 
 

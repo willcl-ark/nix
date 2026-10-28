@@ -22,7 +22,7 @@ settings. The current-engine agent, routing and blind-alternative switches
 cannot be combined with another engine. Configuration changes produce a distinct
 effective configuration group. The capture schema has a hard
 cutover: recapture manifests created before engine identity was added. Current
-captures use manifest schema version 4. Recapture pre-split manifests. Core and
+captures use manifest schema version 7. Recapture pre-split manifests. Core and
 engine hashes are separate from companion presentation code, and captures record
 the resolved archaeology setting. Frozen evidence never falls back to live reads.
 Follow-up prompt and model overrides are separate companion settings.
@@ -30,7 +30,7 @@ Follow-up prompt and model overrides are separate companion settings.
 Agent prompts, models and tool limits live under
 [pkgs/ralph/agents](../../pkgs/ralph/agents/); comment templates live under
 [pkgs/ralph/final_comment](../../pkgs/ralph/final_comment/). Validate contributor
-edits with `python3 pkgs/ralph/review.py check-agents` before paying for a replay.
+edits with `python3 pkgs/ralph/review.py check-agents` before running a replay.
 Add `--agents-dir DIR` to validate an alternate directory. Frozen replay uses
 its captured prompts and settings until you explicitly select an override.
 
@@ -43,18 +43,15 @@ review text. Other engines need not provide current-engine stage diagnostics.
 ralph-evaluate summarize ./results
 ```
 
-The summary groups runs by `effective_config_sha256`. For each group it counts
-runs, failures, partial coverage, budget exhaustion, labels present, verifier
-decisions, accepted findings, archaeology completion, published conceptual
-concerns, candidate and verified review recommendations, known estimated model
-spend, unknown usage indicators, elapsed time, and per-stage source attribution.
+The summary groups runs by `effective_config_sha256`. Compare completion and
+failures, partial coverage, verifier decisions, accepted findings, archaeology
+completion, published conceptual concerns, request attempts, reported token
+usage, missing usage, elapsed time and per-stage source attribution.
 
-The cost fields intentionally separate attempt totals from per-run averages.
-`cost_usd.total` is the sum of priced token usage saved in the run artifacts.
-Unknown usage is excluded from that subtotal and counted separately. Accepted
-finding counts mean verifier-published findings. Conceptual concern counts mean
-the verifier published a concept assessment. Neither count is a human accuracy
-or recall measurement.
+Accepted finding counts mean verifier-published findings. Conceptual concern
+counts mean the verifier published a concept assessment. Neither count is a
+human accuracy or recall measurement. Old frozen configurations containing
+budget settings must be recaptured before replay.
 
 ## Case selection
 
@@ -112,17 +109,16 @@ effort changes, and the `--no-blind-alternatives` ablation by their
 `effective_config_sha256` groups. Blind alternatives are on by default after a
 valid concept candidate. The blind run uses the existing archaeologist model,
 base-only code tools, and neutral problem, goal and baseline inputs; its result
-goes to the final verifier, not to discovery. Use the summary for cost, latency,
+goes to the final verifier, not to discovery. Use the summary for reported tokens, latency,
 coverage, failure, review recommendation and verifier disposition counts. Use
 the human scoring sheet for recall, false positives, missed labels, false drops
 and false proposed stops.
 
 Useful comparison fields are unique valid findings, known-defect recall by
 consequence, false positives per PR, verifier false drops, unresolved claims,
-dollars per PR, dollars per unique useful finding, p95 cost, p95 wall time,
-budget exhaustion, failed attempts, candidates lost when a stage cannot finish,
+reported tokens and requests per PR, p95 wall time, tool-limit hits, failed attempts, candidates lost when a stage cannot finish,
 and useful downstream findings after proposed stops.
 
 Repeat promising configurations on a smaller set to check variation before
 running held-out cases. Add a specialist only when it finds useful issues that
-the existing stages miss often enough to justify the extra spend.
+the existing stages miss often enough to justify the extra requests and runtime.

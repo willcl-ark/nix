@@ -564,8 +564,7 @@ def migrate_state(path):
                         "status": "completed",
                         "skipped": bool(debug.get("skip")),
                         "metrics": review_metrics(debug),
-                        "budget": debug.get("budget"),
-                        "ppq_budget": debug.get("ppq_budget"),
+                        "usage": debug.get("usage"),
                         "attempt": debug,
                     },
                 }

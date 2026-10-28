@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from ralph.usage import Ledger
+
 from ralph_service import monitor
 
 
@@ -98,14 +100,10 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(send.call_count, 3)
 
     def test_digest_counts_recorded_usage_between_utc_21_hour_boundaries(self):
-        path = self.root / "followup/spend.sqlite3"
+        path = self.root / "followup/usage.sqlite3"
         path.parent.mkdir()
+        Ledger(path)
         with closing(sqlite3.connect(path)) as db, db:
-            db.execute(
-                "CREATE TABLE requests (review_id TEXT, stage TEXT, model TEXT, "
-                "month TEXT, status TEXT, usage_json TEXT, cost_micros INTEGER, "
-                "reserved_micros INTEGER, requested_at INTEGER)"
-            )
             for started in (
                 "2026-10-26T20:59:59",
                 "2026-10-26T21:00:00",
@@ -113,13 +111,15 @@ class MonitorTests(unittest.TestCase):
                 "2026-10-27T21:00:00",
             ):
                 db.execute(
-                    "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO requests (token, review_id, stage, model, month, status, usage_json, requested_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
+                        started,
                         "pr:1:1",
                         "followup",
                         "gpt-6-luna",
                         "2026-10",
-                        "settled",
+                        "completed",
                         json.dumps(
                             {
                                 "input_tokens": 1,
@@ -129,8 +129,6 @@ class MonitorTests(unittest.TestCase):
                                 "complete": True,
                             }
                         ),
-                        99,
-                        0,
                         timestamp(started),
                     ),
                 )

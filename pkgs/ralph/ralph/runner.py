@@ -10,11 +10,11 @@ def validate_json(value):
     return value
 
 
-def _budget_summary(budget, attempt, name, *, failure=False):
-    if budget is None:
+def _usage_summary(usage, attempt, name, *, failure=False):
+    if usage is None:
         return None
     try:
-        return budget.summary()
+        return usage.summary()
     except Exception:
         if not failure:
             raise
@@ -24,9 +24,7 @@ def _budget_summary(budget, attempt, name, *, failure=False):
 def _result(case, runtime, selected_engine, status, *, skipped=False, failure=False):
     if not hasattr(runtime, "_review_id"):
         runtime._review_id = (
-            runtime.budget.review_id
-            if runtime.budget is not None
-            else str(uuid.uuid4())
+            runtime.usage.review_id if runtime.usage is not None else str(uuid.uuid4())
         )
     snapshot = case.snapshot
     return {
@@ -43,8 +41,8 @@ def _result(case, runtime, selected_engine, status, *, skipped=False, failure=Fa
             "status": status,
             "metrics": runtime.metrics(),
             "skipped": skipped,
-            "budget": _budget_summary(
-                runtime.budget, runtime.attempt, "budget", failure=failure
+            "usage": _usage_summary(
+                runtime.usage, runtime.attempt, "usage", failure=failure
             ),
             "attempt": runtime.attempt,
         },

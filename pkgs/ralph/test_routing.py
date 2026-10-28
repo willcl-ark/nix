@@ -6,7 +6,6 @@ from unittest.mock import patch
 from ralph import engine, profiles, routing
 from ralph.protocol import InvalidReview
 from ralph.repository import MAX_REVIEW_BYTES
-from ralph.spend import BudgetExceeded
 
 
 def route(
@@ -105,27 +104,6 @@ class RoutingTests(unittest.TestCase):
             route(missing_context=("caller omitted",)), {"src/example.cpp"}
         )
         self.assertEqual(plan, routing.full_plan("Router reported missing context"))
-
-    def test_router_budget_exhaustion_propagates_instead_of_full_fallback(self):
-        debug = {}
-        with (
-            patch(
-                "ralph.model.openai_review",
-                side_effect=BudgetExceeded("review spend limit would be exceeded"),
-            ) as run,
-            self.assertRaises(BudgetExceeded),
-        ):
-            routing.plan_review(
-                self.runtime(),
-                "Patch:\n+change",
-                self.snapshot("src/example.cpp"),
-                self.prompt_config(),
-                debug,
-            )
-        self.assertEqual(run.call_count, 1)
-        self.assertEqual(debug["stages"]["router"]["status"], "budget_exhausted")
-        self.assertEqual(debug["stages"]["router"]["error_type"], "BudgetExceeded")
-        self.assertNotIn("routing", debug)
 
     def test_router_can_inspect_pinned_code_without_a_path_floor(self):
         debug = {}

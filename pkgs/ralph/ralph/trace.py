@@ -1,37 +1,24 @@
 """Review metrics and pure result accessors."""
 
-from .spend import price_usd
 from .config import AUDIT_NAMES
 
 
-def _turn_usage(turn, fallback_model):
-    usage = {
-        "input_tokens": turn.get("input_tokens"),
-        "output_tokens": turn.get("output_tokens"),
-        "cached_tokens": turn.get("cached_tokens", 0),
-        "cache_write_tokens": turn.get("cache_write_tokens"),
-        "web_search_calls": turn.get("web_search_calls", 0),
-    }
-    return usage, price_usd(turn.get("model") or fallback_model, usage)
-
-
-def _stage_turn_metrics(stage):
-    priced = []
-    unknown_usage = 0
-    incomplete_usage = 0
-    for turn in stage.get("turns", []):
-        usage, cost = _turn_usage(turn, stage.get("model"))
-        if cost is None:
-            unknown_usage += 1
-        else:
-            priced.append(cost)
-            if turn.get("cache_write_tokens") is None:
-                incomplete_usage += 1
-    return {
-        "known_estimated_cost_usd": float(sum(priced)) if priced else 0,
-        "unknown_usage_count": unknown_usage,
-        "incomplete_usage_count": incomplete_usage,
-    }
+RUN_METRIC_FIELDS = {
+    "model_turns",
+    "tool_calls",
+    "known_usage_count",
+    "unknown_usage_count",
+    "incomplete_usage_count",
+    "usage_complete",
+    "total_input_tokens",
+    "total_output_tokens",
+    "total_cached_tokens",
+    "total_cache_write_tokens",
+    "total_reasoning_tokens",
+    "total_model_seconds",
+    "model_responses",
+    "audit_calls",
+}
 
 
 def finding_attribution(debug):
@@ -126,7 +113,9 @@ def unresolved_memory(result):
 def result_metrics(result):
     run = result.get("run") if isinstance(result, dict) else None
     metrics = run.get("metrics") if isinstance(run, dict) else None
-    return metrics if isinstance(metrics, dict) else None
+    if not isinstance(metrics, dict):
+        return None
+    return {key: value for key, value in metrics.items() if key in RUN_METRIC_FIELDS}
 
 
 def result_engine(result):
@@ -174,7 +163,7 @@ def _new_stage_metrics(name, stage):
     }
     if "profiles" in stage:
         record["profiles"] = stage["profiles"]
-    record.update(_stage_turn_metrics(stage))
+    record.update(request_metrics([stage]))
     return record
 
 
@@ -254,7 +243,7 @@ def request_metrics(records):
         records = records.values()
     records = list(records or [])
     turns = [
-        (turn, record.get("model"))
+        turn
         for record in records
         if isinstance(record, dict)
         for turn in record.get("turns", [])
@@ -265,36 +254,42 @@ def request_metrics(records):
         if isinstance(record, dict)
         for tool in record.get("tools", [])
     ]
-    priced = []
-    unknown_usage = 0
-    incomplete_usage = 0
-    input_tokens = output_tokens = 0
+    token_fields = {
+        "total_input_tokens": "input_tokens",
+        "total_output_tokens": "output_tokens",
+        "total_cached_tokens": "cached_tokens",
+        "total_cache_write_tokens": "cache_write_tokens",
+        "total_reasoning_tokens": "reasoning_tokens",
+    }
+    totals = dict.fromkeys(token_fields, 0)
+    known_usage = unknown_usage = incomplete_usage = 0
     total_seconds = 0.0
-    for turn, fallback_model in turns:
-        usage, cost = _turn_usage(turn, fallback_model)
-        if cost is None:
-            unknown_usage += 1
-        else:
-            priced.append(cost)
-            input_tokens += usage["input_tokens"]
-            output_tokens += usage["output_tokens"]
-            if turn.get("cache_write_tokens") is None:
+    for turn in turns:
+        known = all(
+            turn.get(field) is not None for field in ("input_tokens", "output_tokens")
+        )
+        if known:
+            known_usage += 1
+            if any(turn.get(field) is None for field in token_fields.values()):
                 incomplete_usage += 1
+        else:
+            unknown_usage += 1
+        for total, field in token_fields.items():
+            value = turn.get(field)
+            if isinstance(value, int):
+                totals[total] += value
         if isinstance(turn.get("elapsed_seconds"), (int, float)):
             total_seconds += turn["elapsed_seconds"]
-    model_turns = [turn for turn, _ in turns if "request_bytes" in turn]
     return {
         "model_turns": len(turns),
         "tool_calls": len(tools),
-        "estimated_cost_usd": (float(sum(priced)) if priced else 0),
-        "known_usage_count": len(priced),
+        "known_usage_count": known_usage,
         "unknown_usage_count": unknown_usage,
         "incomplete_usage_count": incomplete_usage,
         "usage_complete": not (unknown_usage or incomplete_usage),
-        "total_input_tokens": input_tokens,
-        "total_output_tokens": output_tokens,
+        **totals,
         "total_model_seconds": round(total_seconds, 2),
-        "model_responses": len(model_turns),
+        "model_responses": sum("request_bytes" in turn for turn in turns),
     }
 
 

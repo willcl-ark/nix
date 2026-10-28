@@ -233,7 +233,7 @@ class ProxyUsageTests(unittest.TestCase):
                                 "kind": "weekly_scoped",
                                 "percent": 100,
                                 "is_active": True,
-                                "scope": {"model": {"id": "claude-opus-4-1"}},
+                                "scope": {"model": {"id": "claude-fable-5-1"}},
                             },
                         ]
                     }
@@ -246,7 +246,7 @@ class ProxyUsageTests(unittest.TestCase):
             [
                 {"name": "5-hour", "used_percent": 9, "resets_at": None},
                 {"name": "Weekly", "used_percent": 68, "resets_at": None},
-                {"name": "Opus: Weekly", "used_percent": 100, "resets_at": None},
+                {"name": "Fable: Weekly", "used_percent": 100, "resets_at": None},
             ],
         )
 

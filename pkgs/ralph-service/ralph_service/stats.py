@@ -8,37 +8,33 @@ import sqlite3
 import subprocess
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
 
 from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
-from ralph.spend import SNAPSHOT_MODEL
-
 from .report import public_limits
 
 
-MICRODOLLARS = Decimal("1000000")
-LEDGERS = (("openai", "spend.sqlite3"), ("ppq", "ppq-spend.sqlite3"))
+SNAPSHOT_MODEL = re.compile(r"(.+)-\d{4}-\d{2}-\d{2}")
 # Include the retired Gemini stage when aggregating historical reviews.
 ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude", "adversarial_gemini")
 PUBLIC_LIMITATION_NOTES = [
-    "Monthly trend uses ledger request accounting month.",
+    "Monthly trend uses request month.",
     "Model seconds are summed model turn elapsed_seconds, not wall time.",
     "Bot verification is not human validation.",
     "Shared attribution is noncausal.",
     "Token totals include reported usage only; missing token fields are marked partial.",
     "Subscription quota includes other clients sharing the same account.",
 ]
-RESERVED_STATUSES = {"reserved", "uncertain", "unknown"}
-UNKNOWN_COST_STATUSES = RESERVED_STATUSES
 REVIEW_ID_PREFIX = "pr:"
 SHA = re.compile(r"[0-9a-fA-F]{40}")
 TRACE_FILENAME = re.compile(r"(\d+)-([0-9a-fA-F]{40})-(\d+)\.json")
 ADDRESSED_STATUSES = ("addressed", "partially_addressed", "still_present", "unclear")
 COVERAGE_STATUSES = ("complete", "partial", "failed", "unknown")
+TOKEN_FIELDS = ("input", "output", "cached", "cache_write", "reasoning")
 
 
 def collect_stats(state_dir: Path, report_dir: Path) -> dict:
@@ -54,9 +50,9 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
     )
     requests, ledger_missing = _ledger_rows(state_dir)
     followup_requests, followup_ledger_missing = _provider_ledger_rows(
-        "followup", followup_dir / "spend.sqlite3"
+        "followup", followup_dir / "usage.sqlite3"
     )
-    spend = _spend_summary(requests, current_month)
+    usage = _usage_summary(requests, current_month)
 
     report_dir_missing = not report_dir.exists()
     inventory = {
@@ -75,8 +71,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "jobs_db": jobs_missing,
             "followup_assessments": followups_missing,
             "followup_ledger": followup_ledger_missing,
-            "openai_ledger": ledger_missing["openai"],
-            "ppq_ledger": ledger_missing["ppq"],
+            "review_ledger": ledger_missing["openai"],
             "report_dir": report_dir_missing,
         },
     }
@@ -109,9 +104,6 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
     review_time_records = []
     completed_reviews = {}
     completed_reviews_by_job = {}
-    cost_values = []
-    reserved_values = []
-    cost_missing_ledger = 0
     tool_values = []
     second_values = []
     concept_citation_values = []
@@ -191,12 +183,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             if routing.get("selected_tier"):
                 routing_tiers[routing["selected_tier"]] += 1
             if debug:
-                _add_adversarial_comparison(paired, debug, review_requests)
-            if review_requests:
-                cost_values.append(ledger_totals["known_cost_micros"])
-                reserved_values.append(ledger_totals["reserved_micros"])
-            else:
-                cost_missing_ledger += 1
+                _add_adversarial_comparison(paired, debug)
             if metrics["tool_calls"] is not None:
                 tool_values.append(metrics["tool_calls"])
             if metrics["model_seconds"] is not None:
@@ -236,9 +223,6 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "runtime_metrics": core_trace.result_metrics(result) or {},
             "tool_calls": metrics["tool_calls"],
             "model_seconds": metrics["model_seconds"],
-            "saved_trace_known_estimated_cost_micros": (
-                metrics["saved_trace_known_estimated_cost_micros"]
-            ),
         }
         if report_name is not None:
             record["report_name"] = report_name
@@ -299,16 +283,13 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         },
         "inventory": inventory,
         "overview": overview,
-        "spend": spend,
-        "cost_trends": _cost_trends(requests + followup_requests, now),
+        "usage": usage,
+        "usage_trends": _usage_trends(requests + followup_requests, now),
         "stage_model_leaderboard": _stage_leaderboard(stages),
         "stages": _stage_records(stages),
         "limits": _limit_summary(limit_runs),
         "routing_tiers": dict(sorted(routing_tiers.items())),
         "distributions": {
-            "saved_review_known_cost_micros": _distribution(cost_values),
-            "saved_review_reserved_micros": _distribution(reserved_values),
-            "saved_review_cost_missing_ledger_count": cost_missing_ledger,
             "saved_review_tools": _distribution(tool_values),
             "saved_review_model_seconds": _distribution(second_values),
             "saved_review_conceptual_concern_citations": _distribution(
@@ -347,11 +328,6 @@ def _collect_limit_runs(runs, debug, result, row, report_name):
                 "stage": name,
                 "model": stage.get("model") or "unknown",
                 "limits": public_limits(stage),
-                "budget_limited": (
-                    stage["budget_limited"]
-                    if type(stage.get("budget_limited")) is bool
-                    else None
-                ),
                 "job_id": row["id"],
                 "number": row["number"],
                 "report_name": report_name,
@@ -361,24 +337,9 @@ def _collect_limit_runs(runs, debug, result, row, report_name):
 
 def _limit_summary(runs):
     groups = {}
-    budget = {}
     for run in runs:
         identity = tuple(run[key] for key in ("profile", "stage", "model"))
         group_identity = {key: run[key] for key in ("profile", "stage", "model")}
-        spending = budget.setdefault(
-            identity,
-            {
-                **group_identity,
-                "monitored_runs": 0,
-                "limited_runs": 0,
-                "unknown_runs": 0,
-            },
-        )
-        if type(run["budget_limited"]) is bool:
-            spending["monitored_runs"] += 1
-            spending["limited_runs"] += run["budget_limited"]
-        else:
-            spending["unknown_runs"] += 1
         for name, limit in run["limits"].items():
             group = groups.setdefault(
                 (*identity, name, limit["limit"]),
@@ -405,8 +366,7 @@ def _limit_summary(runs):
     affected = [
         run
         for run in runs
-        if run["budget_limited"] is True
-        or any(
+        if any(
             value["hit"] is True
             or (value["used"] is not None and value["used"] >= value["limit"])
             for value in run["limits"].values()
@@ -416,7 +376,6 @@ def _limit_summary(runs):
         "uninstrumented_stage_runs": sum(not run["limits"] for run in runs),
         "stage_runs": len(runs),
         "groups": [groups[key] for key in sorted(groups)],
-        "budgets": [budget[key] for key in sorted(budget)],
         "recent_affected": sorted(
             affected, key=lambda run: run["job_id"], reverse=True
         )[:20],
@@ -475,14 +434,8 @@ def _followup_rows(path):
 
 
 def _ledger_rows(state_dir):
-    rows = []
-    missing = {}
-    for provider, filename in LEDGERS:
-        path = state_dir / filename
-        provider_rows, provider_missing = _provider_ledger_rows(provider, path)
-        rows.extend(provider_rows)
-        missing[provider] = provider_missing
-    return rows, missing
+    rows, missing = _provider_ledger_rows("openai", state_dir / "usage.sqlite3")
+    return rows, {"openai": missing}
 
 
 def _provider_ledger_rows(provider, path):
@@ -492,7 +445,7 @@ def _provider_ledger_rows(provider, path):
         with _connect_readonly(path) as db:
             rows = db.execute(
                 "SELECT review_id, stage, model, month, status, usage_json, "
-                "cost_micros, reserved_micros, requested_at FROM requests ORDER BY rowid"
+                "requested_at, completed_at, http_status FROM requests ORDER BY rowid"
             )
             return [_ledger_record(provider, row) for row in rows], False
     except sqlite3.Error:
@@ -501,9 +454,7 @@ def _provider_ledger_rows(provider, path):
 
 def _ledger_record(provider, row):
     usage = _parse_json(row["usage_json"])
-    tokens, usage_unknown, usage_incomplete, missing = _usage_metrics(
-        usage, row["status"]
-    )
+    tokens, usage_unknown, usage_incomplete, missing = _usage_metrics(usage)
     parsed = _parse_review_id(row["review_id"])
     model = _normalize_model(row["model"] or "unknown")
     if provider == "openai" and model.startswith("claude-"):
@@ -519,8 +470,11 @@ def _ledger_record(provider, row):
         "month": row["month"] or "unknown",
         "requested_at": row["requested_at"],
         "status": row["status"] or "unknown",
-        "cost_micros": _nonnegative_int(row["cost_micros"]),
-        "reserved_micros": _nonnegative_int(row["reserved_micros"]),
+        "completed_at": row["completed_at"],
+        "http_status": row["http_status"],
+        "web_search_calls": (
+            usage.get("web_search_calls") if isinstance(usage, dict) else None
+        ),
         "tokens": tokens,
         "usage_unknown": usage_unknown,
         "usage_incomplete": usage_incomplete,
@@ -538,29 +492,18 @@ def _parse_json(text):
     return value if isinstance(value, dict) else None
 
 
-def _usage_metrics(usage, status):
-    tokens = {"input": 0, "output": 0, "cached": 0, "cache_write": 0}
-    if status == "duplicate":
-        return tokens, False, False, []
-    if not isinstance(usage, dict):
-        return tokens, True, False, list(tokens)
+def _usage_metrics(usage):
     fields = {
-        "input": usage.get("input_tokens"),
-        "output": usage.get("output_tokens"),
-        "cached": usage.get("cached_tokens"),
-        "cache_write": usage.get("cache_write_tokens"),
+        name: usage.get(name + "_tokens") if isinstance(usage, dict) else None
+        for name in TOKEN_FIELDS
     }
-    known_core = _is_nonnegative_int(fields["input"]) and _is_nonnegative_int(
-        fields["output"]
-    )
-    for key, value in fields.items():
-        if _is_nonnegative_int(value):
-            tokens[key] = int(value)
-    incomplete = usage.get("complete") is not True or any(
-        not _is_nonnegative_int(fields[key]) for key in ("cached", "cache_write")
-    )
-    missing = [name for name, value in fields.items() if not _is_nonnegative_int(value)]
-    return tokens, not known_core, incomplete, missing
+    tokens = {
+        name: value if _is_nonnegative_int(value) else None
+        for name, value in fields.items()
+    }
+    missing = [name for name, value in tokens.items() if value is None]
+    unknown = tokens["input"] is None or tokens["output"] is None
+    return tokens, unknown, bool(missing), missing
 
 
 def _parse_review_id(review_id):
@@ -993,7 +936,7 @@ def _addressed_summary(
             }
         ),
         "unsupported_exports": unsupported_exports,
-        "spend": _request_totals(followup_requests),
+        "usage": _request_totals(followup_requests),
         "status_counts": {
             status: status_counts.get(status, 0) for status in ADDRESSED_STATUSES
         },
@@ -1176,20 +1119,14 @@ def _saved_review_metrics(debug, result):
             return {
                 "tool_calls": None,
                 "model_seconds": None,
-                "saved_trace_known_estimated_cost_micros": None,
             }
-        cost = common.get("estimated_cost_usd")
         return {
             "tool_calls": common.get("tool_calls"),
             "model_seconds": common.get("total_model_seconds"),
-            "saved_trace_known_estimated_cost_micros": (
-                _usd_to_micros(cost) if isinstance(cost, (int, float)) else None
-            ),
         }
     model_turns = 0
     tool_calls = 0
     model_seconds = Decimal("0")
-    saved_cost = 0
     for stage in (debug.get("stages") or {}).values():
         if not isinstance(stage, dict):
             continue
@@ -1202,20 +1139,11 @@ def _saved_review_metrics(debug, result):
                 turn.get("elapsed_seconds"), (int, float)
             ):
                 model_seconds += Decimal(str(turn["elapsed_seconds"]))
-    for metric in core_trace.stage_metrics(debug).values():
-        saved_cost += _usd_to_micros(metric.get("known_estimated_cost_usd", 0))
     return {
         "model_turns": model_turns,
         "tool_calls": tool_calls,
         "model_seconds": float(model_seconds),
-        "saved_trace_known_estimated_cost_micros": saved_cost,
     }
-
-
-def _usd_to_micros(value):
-    return int(
-        (Decimal(str(value)) * MICRODOLLARS).to_integral_value(rounding=ROUND_HALF_UP)
-    )
 
 
 def _report_name(report_dir, row, result):
@@ -1239,75 +1167,62 @@ def _request_totals(requests):
 
 
 def _new_request_totals():
-    return {
-        "request_count": 0,
-        "known_cost_micros": 0,
-        "reserved_micros": 0,
-        "unknown_cost_request_count": 0,
-        "unknown_usage_count": 0,
-        "incomplete_usage_count": 0,
-        "status_counts": Counter(),
-        "tokens": {"input": 0, "output": 0, "cached": 0, "cache_write": 0},
-        "unknown_token_counts": {
-            "input": 0,
-            "output": 0,
-            "cached": 0,
-            "cache_write": 0,
-        },
-        "providers": defaultdict(_new_provider_totals),
-    }
+    return {**_new_provider_totals(), "providers": defaultdict(_new_provider_totals)}
 
 
 def _new_provider_totals():
     return {
         "request_count": 0,
-        "known_cost_micros": 0,
-        "reserved_micros": 0,
-        "unknown_cost_request_count": 0,
         "unknown_usage_count": 0,
         "incomplete_usage_count": 0,
         "status_counts": Counter(),
-        "tokens": {"input": 0, "output": 0, "cached": 0, "cache_write": 0},
-        "unknown_token_counts": {
-            "input": 0,
-            "output": 0,
-            "cached": 0,
-            "cache_write": 0,
-        },
+        "http_status_counts": Counter(),
+        "rate_limit_count": 0,
+        "web_search_calls": None,
+        "unknown_web_search_count": 0,
+        "tokens": dict.fromkeys(TOKEN_FIELDS),
+        "unknown_token_counts": dict.fromkeys(TOKEN_FIELDS, 0),
     }
 
 
 def _add_request(record, request):
     record["request_count"] += 1
-    record["known_cost_micros"] += request["cost_micros"]
-    if request["status"] in RESERVED_STATUSES:
-        record["reserved_micros"] += request["reserved_micros"]
-    if request["status"] in UNKNOWN_COST_STATUSES:
-        record["unknown_cost_request_count"] += 1
-    if request["usage_unknown"]:
-        record["unknown_usage_count"] += 1
-    if request["usage_incomplete"]:
-        record["incomplete_usage_count"] += 1
     record["status_counts"][request["status"]] += 1
-    for key, value in request["tokens"].items():
-        record["tokens"][key] += value
-    for key in request.get("missing_token_fields", []):
-        record["unknown_token_counts"][key] += 1
     if "providers" in record and request.get("provider") is not None:
         _add_request(
             record["providers"][request["provider"]], {**request, "provider": None}
         )
+    if request["status"] == "duplicate":
+        return
+    if request["usage_unknown"]:
+        record["unknown_usage_count"] += 1
+    if request["usage_incomplete"]:
+        record["incomplete_usage_count"] += 1
+    if request.get("http_status") is not None:
+        record["http_status_counts"][str(request["http_status"])] += 1
+    record["rate_limit_count"] += request.get("http_status") == 429
+    searches = request.get("web_search_calls")
+    if _is_nonnegative_int(searches):
+        record["web_search_calls"] = (record["web_search_calls"] or 0) + searches
+    else:
+        record["unknown_web_search_count"] += 1
+    for key, value in request["tokens"].items():
+        if value is not None:
+            record["tokens"][key] = (record["tokens"][key] or 0) + value
+    for key in request.get("missing_token_fields", []):
+        record["unknown_token_counts"][key] += 1
 
 
 def _final_request_totals(record):
     return {
         "request_count": record["request_count"],
-        "known_cost_micros": record["known_cost_micros"],
-        "reserved_micros": record["reserved_micros"],
-        "unknown_cost_request_count": record["unknown_cost_request_count"],
         "unknown_usage_count": record["unknown_usage_count"],
         "incomplete_usage_count": record["incomplete_usage_count"],
         "status_counts": dict(sorted(record["status_counts"].items())),
+        "http_status_counts": dict(sorted(record["http_status_counts"].items())),
+        "rate_limit_count": record["rate_limit_count"],
+        "web_search_calls": record["web_search_calls"],
+        "unknown_web_search_count": record["unknown_web_search_count"],
         "tokens": dict(record["tokens"]),
         "unknown_token_counts": dict(record["unknown_token_counts"]),
     }
@@ -1315,17 +1230,15 @@ def _final_request_totals(record):
 
 def _observed_review_totals(totals, observed):
     if observed:
-        return {"cost_observed": True, **totals}
+        return {"usage_observed": True, **totals}
     return {
-        "cost_observed": False,
+        "usage_observed": False,
         **totals,
-        "known_cost_micros": None,
-        "reserved_micros": None,
         "tokens": dict.fromkeys(totals["tokens"]),
     }
 
 
-def _spend_summary(requests, current_month):
+def _usage_summary(requests, current_month):
     lifetime = _request_totals(requests)
     current = _request_totals(
         [request for request in requests if request["month"] == current_month]
@@ -1342,10 +1255,10 @@ def _spend_summary(requests, current_month):
     lifetime_totals = _final_request_totals(lifetime)
     lifetime_totals["providers"] = lifetime["providers"]
     return {
-        "accounting_note": (
-            "request_count is every ledger request row, including retries, "
-            "duplicates, released reservations, and failed attempts. Known "
-            "cost and reserved micros are the observed accounting amounts."
+        "usage_note": (
+            "Requests include retries, failed attempts and duplicate responses. "
+            "Duplicate response usage is counted once. "
+            "Token totals include only reported usage."
         ),
         "current_month": {"month": current_month, **current_totals},
         "lifetime": lifetime_totals,
@@ -1364,31 +1277,29 @@ def _spend_summary(requests, current_month):
     }
 
 
-def _cost_totals(record):
+def _activity_totals(record):
     record = record or _new_provider_totals()
     return {
         key: record[key]
         for key in (
             "request_count",
-            "known_cost_micros",
-            "reserved_micros",
-            "unknown_cost_request_count",
+            "unknown_usage_count",
         )
     }
 
 
-def _cost_periods(records, periods):
+def _activity_periods(records, periods):
     if not records:
         return []
     first = min(records)
     return [
-        {"period": period, **_cost_totals(records.get(period))}
+        {"period": period, **_activity_totals(records.get(period))}
         for period in periods
         if period >= first
     ]
 
 
-def _cost_trends(requests, now):
+def _usage_trends(requests, now):
     by_day = defaultdict(_new_provider_totals)
     by_week = defaultdict(_new_provider_totals)
     by_month = defaultdict(_new_provider_totals)
@@ -1406,11 +1317,11 @@ def _cost_trends(requests, now):
 
     today = now.date()
     monday = today - timedelta(days=today.weekday())
-    days = _cost_periods(
+    days = _activity_periods(
         by_day,
         [(today - timedelta(days=offset)).isoformat() for offset in range(29, -1, -1)],
     )
-    weeks = _cost_periods(
+    weeks = _activity_periods(
         by_week,
         [
             (monday - timedelta(weeks=offset)).isoformat()
@@ -1429,12 +1340,12 @@ def _cost_trends(requests, now):
         "current_week": weeks[-1] if weeks else None,
         "current_month": {
             "period": current_month,
-            **_cost_totals(by_month.get(current_month)),
+            **_activity_totals(by_month.get(current_month)),
         },
         "days": days,
         "weeks": weeks,
-        "months": _cost_periods(by_month, month_periods),
-        "undated": _cost_totals(undated),
+        "months": _activity_periods(by_month, month_periods),
+        "undated": _activity_totals(undated),
     }
 
 
@@ -1460,7 +1371,6 @@ def _new_stage():
         "tool_calls": 0,
         "model_turns": 0,
         "model_seconds": 0.0,
-        "saved_trace_known_estimated_cost_micros": 0,
         "ledger": _new_request_totals(),
     }
 
@@ -1590,9 +1500,6 @@ def _add_stage_results(stages, debug, row, report_name):
                 turn.get("elapsed_seconds"), (int, float)
             ):
                 record["model_seconds"] += float(turn["elapsed_seconds"])
-        record["saved_trace_known_estimated_cost_micros"] += _usd_to_micros(
-            stage_metrics.get("known_estimated_cost_usd", 0)
-        )
         if has_publish and not attribution_known:
             record["attribution_unknown_reviews"] += 1
 
@@ -1638,11 +1545,6 @@ def _stage_records(stages):
             "selected_candidate_findings": (record["candidate_counts"]["publish"]),
             "sole_source_findings": record["sole_source_findings"],
             "shared_findings": record["shared_findings"],
-            "known_cost_per_accepted_finding_micros": (
-                round(record["ledger"]["known_cost_micros"] / accepted, 2)
-                if accepted
-                else None
-            ),
             "attribution_unknown_reviews": record["attribution_unknown_reviews"],
             "acceptance_denominator_runs": executed,
             "accepted_per_executed_run": (
@@ -1651,9 +1553,6 @@ def _stage_records(stages):
             "tool_calls": record["tool_calls"],
             "model_turns": record["model_turns"],
             "model_seconds": round(record["model_seconds"], 2),
-            "saved_trace_known_estimated_cost_micros": (
-                record["saved_trace_known_estimated_cost_micros"]
-            ),
             "ledger": _final_request_totals(record["ledger"]),
         }
         records.append(stage_record)
@@ -1667,7 +1566,6 @@ def _stage_leaderboard(stages):
             continue
         accepted = record["accepted_findings"]
         selected_candidates = record["candidate_counts"]["publish"]
-        cost = record["ledger"]["known_cost_micros"]
         records.append(
             {
                 "stage": record["stage"],
@@ -1677,12 +1575,7 @@ def _stage_leaderboard(stages):
                 "sole_source_findings": record["sole_source_findings"],
                 "shared_findings": record["shared_findings"],
                 "executed_runs": record["executed_runs"],
-                "known_cost_micros": cost,
-                "reserved_micros": record["ledger"]["reserved_micros"],
                 "request_count": record["ledger"]["request_count"],
-                "known_cost_per_accepted_finding_micros": (
-                    round(cost / accepted, 2) if accepted else None
-                ),
                 "note": "Shared findings overlap across stages and do not sum to total unique findings.",
             }
         )
@@ -1703,13 +1596,11 @@ def _new_adversarial_comparison():
         "completed_reviews": 0,
         "sole_accepted": dict.fromkeys(ADVERSARIAL_STAGES, 0),
         "shared_accepted": dict.fromkeys(ADVERSARIAL_STAGES, 0),
-        "known_cost_micros": dict.fromkeys(ADVERSARIAL_STAGES, 0),
-        "reserved_micros": dict.fromkeys(ADVERSARIAL_STAGES, 0),
         "note": "Observed reviews with completed Codex and Claude (historically Gemini) adversarial stages only; this is not causal recall.",
     }
 
 
-def _add_adversarial_comparison(paired, debug, requests):
+def _add_adversarial_comparison(paired, debug):
     stages = debug.get("stages") or {}
     completed = {
         name
@@ -1728,13 +1619,6 @@ def _add_adversarial_comparison(paired, debug, requests):
         paired["shared_accepted"][name] += metrics.get(name, {}).get(
             "shared_findings", 0
         )
-    for request in requests:
-        if request["stage"] in completed:
-            paired["known_cost_micros"][request["stage"]] += request["cost_micros"]
-            if request["status"] in RESERVED_STATUSES:
-                paired["reserved_micros"][request["stage"]] += request[
-                    "reserved_micros"
-                ]
 
 
 def _distribution(values):

@@ -67,6 +67,8 @@ def _fmt_percent(numerator, denominator):
 def _fmt_tokens(record, name):
     tokens = _mapping(record.get("tokens"))
     value = tokens.get(name)
+    if value is None:
+        return "N/A"
     missing = _number(_mapping(record.get("unknown_token_counts")).get(name)) or 0
     if missing:
         if missing >= (_number(record.get("request_count")) or 0):
@@ -206,9 +208,9 @@ def _candidate_denominator(counts):
 def _analysis(summary):
     inventory = _mapping(summary.get("inventory"))
     overview = _mapping(summary.get("overview"))
-    spend = _mapping(summary.get("spend"))
-    month = _mapping(spend.get("current_month"))
-    lifetime = _mapping(spend.get("lifetime"))
+    usage = _mapping(summary.get("usage"))
+    month = _mapping(usage.get("current_month"))
+    lifetime = _mapping(usage.get("lifetime"))
     saved_reviews = _field(overview, "saved_reviews")
     archaeology = _mapping(overview.get("archaeology"))
     unique_prs = _field(inventory, "unique_prs")
@@ -225,7 +227,7 @@ def _analysis(summary):
         sentence = "No saved reviews are in this summary yet."
     if _number(attempts) is not None and _number(jobs) is not None:
         sentence += (
-            f" Lifetime ledger accounting has {_fmt_int(attempts)} request records for "
+            f" Lifetime tracking has {_fmt_int(attempts)} request records for "
             f"{_fmt_int(jobs)} review jobs, including {_fmt_int(failed)} recorded failed attempts or retries."
         )
     return sentence
@@ -244,7 +246,7 @@ def _kpi(label, value, detail=""):
 def _top_kpis(summary):
     overview = _mapping(summary.get("overview"))
     inventory = _mapping(summary.get("inventory"))
-    month = _mapping(_mapping(summary.get("spend")).get("current_month"))
+    month = _mapping(_mapping(summary.get("usage")).get("current_month"))
     counts = _mapping(_mapping(summary.get("addressed_findings")).get("status_counts"))
     return "".join(
         [
@@ -401,7 +403,7 @@ def _addressed_table(findings, repository_url, report_base_url):
 def _addressed_section(summary):
     addressed = _mapping(summary.get("addressed_findings"))
     counts = _mapping(addressed.get("status_counts"))
-    spend = _mapping(addressed.get("spend"))
+    usage = _mapping(addressed.get("usage"))
     count_rows = "".join(
         f"<tr><td>{_escape(status)}</td><td>{_fmt_int(counts.get(status))}</td></tr>"
         for status in ("addressed", "partially_addressed", "still_present", "unclear")
@@ -435,12 +437,17 @@ def _addressed_section(summary):
         + f"<tbody>{count_rows}</tbody></table></div>"
         + "<div>"
         + f"<p>Assessment jobs: {_fmt_int(_field(addressed, 'assessment_jobs'))}</p>"
-        + f"<p>Assessment usage: {_fmt_int(_field(spend, 'request_count'))} request records; "
-        + f"{_fmt_tokens(spend, 'input')} input tokens; "
-        + f"{_fmt_tokens(spend, 'output')} output tokens.</p>"
+        + f"<p>Assessment usage: {_fmt_int(_field(usage, 'request_count'))} request records; "
+        + f"{_fmt_tokens(usage, 'input')} input tokens; "
+        + f"{_fmt_tokens(usage, 'output')} output tokens.</p>"
         + "</div></div>"
         + "</section>"
     )
+
+
+def _failed_requests(record):
+    statuses = _mapping(record.get("status_counts"))
+    return sum(statuses.get(status, 0) for status in ("failed", "uncertain"))
 
 
 def _usage_rows(records):
@@ -455,6 +462,9 @@ def _usage_rows(records):
                     _fmt_tokens(record, "input"),
                     _fmt_tokens(record, "cached"),
                     _fmt_tokens(record, "output"),
+                    _fmt_tokens(record, "reasoning"),
+                    _fmt_int(_failed_requests(record)),
+                    _fmt_int(record.get("rate_limit_count")),
                     _fmt_int(record.get("unknown_usage_count")),
                 ]
             )
@@ -468,6 +478,9 @@ def _usage_rows(records):
             "Input tokens",
             "Cached tokens",
             "Output tokens",
+            "Reasoning tokens",
+            "Failed requests",
+            "Rate limits (429)",
             "Unknown usage records",
         ],
         rows,
@@ -475,7 +488,7 @@ def _usage_rows(records):
 
 
 def _usage_trends_section(summary):
-    trends = _mapping(summary.get("cost_trends"))
+    trends = _mapping(summary.get("usage_trends"))
     cards = []
     for key, label in (
         ("current_day", "Today"),
@@ -497,7 +510,7 @@ def _usage_trends_section(summary):
         (
             "months",
             "Monthly request records · 12 months",
-            "Request records per accounting month, including undated requests.",
+            "Request records per UTC month, including undated requests.",
         ),
     ):
         records = _list(trends.get(key))
@@ -514,7 +527,7 @@ def _usage_trends_section(summary):
     return (
         '<section id="usage-trends"><h2>Request activity</h2>'
         + _section_note(
-            "Ralph request records include review and follow-up retries, duplicates and released reservations. All periods use UTC."
+            "Ralph request records include review and follow-up retries and failed requests; duplicate response usage is counted once. All periods use UTC."
         )
         + '<div class="cards usage-cards">'
         + "".join(cards)
@@ -527,15 +540,17 @@ def _usage_trends_section(summary):
 
 
 def _usage_section(summary):
-    usage = _mapping(summary.get("spend"))
+    usage = _mapping(summary.get("usage"))
     current = _mapping(usage.get("current_month"))
     lifetime = _mapping(usage.get("lifetime"))
     return (
         '<section id="requests"><h2>Review usage</h2>'
         + _section_note(
-            "Durable Ralph ledgers include retries, failed requests, duplicates and released reservations. "
+            "Durable Ralph ledgers include retries and failed requests; duplicate response usage is counted once. "
             "Follow-up assessments appear separately. "
             "Token totals sum reported fields; partial means some requests omitted that field. "
+            "Reasoning tokens are part of output tokens, not an additional total. "
+            "Failed requests include timeouts and other uncertain outcomes; 429 rate limits are a subset. "
             "Model family identifies the provider, not the account or authentication method."
         )
         + '<div class="split"><div><h3>Current month</h3>'
@@ -845,7 +860,7 @@ def _paired_section(summary):
 
 
 def _model_section(summary):
-    models = _list(_mapping(summary.get("spend")).get("models"))
+    models = _list(_mapping(summary.get("usage")).get("models"))
     if not models:
         body = "<p>No model usage was recorded.</p>"
     else:
@@ -860,12 +875,16 @@ def _model_section(summary):
                 f"<td>{_fmt_tokens(model, 'cached')}</td>"
                 f"<td>{_cache_rate(model)}</td>"
                 f"<td>{_fmt_tokens(model, 'output')}</td>"
+                f"<td>{_fmt_tokens(model, 'reasoning')}</td>"
+                f"<td>{_fmt_int(_failed_requests(model))}</td>"
+                f"<td>{_fmt_int(model.get('rate_limit_count'))}</td>"
                 "</tr>"
             )
         body = (
             "<table><thead><tr><th>Provider</th><th>Model</th><th>Attempts</th>"
             "<th>Input tokens</th><th>Cached tokens</th>"
-            "<th>Cache rate</th><th>Output tokens</th></tr></thead>"
+            "<th>Cache rate</th><th>Output tokens</th><th>Reasoning tokens</th>"
+            "<th>Failed requests</th><th>Rate limits (429)</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>"
         )
     return '<section id="models"><h2>Model usage</h2>' + body + "</section>"
@@ -1725,7 +1744,7 @@ def _usage_html(summary):
     )
     overview = _mapping(summary.get("overview"))
     body = (
-        '<h1>Usage</h1><p class="subtitle">Subscription capacity, request accounting and operational diagnostics.</p>'
+        '<h1>Usage</h1><p class="subtitle">Subscription capacity, request usage and operational diagnostics.</p>'
         + _subscriptions_section(summary)
         + _usage_trends_section(summary)
         + _usage_section(summary)
@@ -1786,19 +1805,6 @@ def _limits_html(summary, repository_url, report_base_url):
                 ]
             )
         )
-    budget_rows = [
-        _cells(
-            [
-                _escape(group["profile"]),
-                _escape(group["stage"]),
-                _escape(group["model"]),
-                f"{group['limited_runs']} / {group['monitored_runs']}",
-                _fmt_int(group["unknown_runs"]),
-            ]
-        )
-        for group in limits.get("budgets", [])
-        if group["monitored_runs"]
-    ]
     affected_rows = []
     for run in limits.get("recent_affected", []):
         reasons = []
@@ -1808,8 +1814,6 @@ def _limits_html(summary, repository_url, report_base_url):
                 reasons.append(label + ": work limited")
             elif value["used"] is not None and value["used"] >= value["limit"]:
                 reasons.append(label + ": reached cap")
-        if run["budget_limited"] is True:
-            reasons.append("spending reservation refused")
         affected_rows.append(
             _cells(
                 [
@@ -1831,7 +1835,7 @@ def _limits_html(summary, repository_url, report_base_url):
         + f"<p>{_fmt_int(limits.get('uninstrumented_stage_runs'))} historical stage runs "
         + "without limit telemetry excluded.</p>"
     )
-    if not rows and not budget_rows:
+    if not rows:
         body += (
             "<section><h2>Awaiting first instrumented review</h2>"
             "<p>Measurements will appear after a new review saves its results "
@@ -1862,21 +1866,6 @@ def _limits_html(summary, repository_url, report_base_url):
             ],
             rows,
             "limits",
-        )
-        + "</section><section><h2>Spending constraints</h2>"
-        + _section_note(
-            "A refused reservation can stop work before the dollar allowance is spent, including when funds are protected for verification. "
-            "These counts are separate from token and tool caps."
-        )
-        + _data_table(
-            [
-                "Profile",
-                "Stage",
-                "Model",
-                "Reservation refused / monitored",
-                "Unknown runs",
-            ],
-            budget_rows,
         )
         + "</section><section><h2>Recent affected stage runs</h2>"
         + _section_note(

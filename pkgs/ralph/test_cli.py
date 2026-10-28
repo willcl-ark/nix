@@ -141,8 +141,7 @@ class CLITest(unittest.TestCase):
         self.assertEqual(data["output"]["schema_version"], 17)
         self.assertEqual(data["output"]["exports"], {"custom": ["native"]})
         self.assertIsNone(data["output"]["data"]["source"])
-        self.assertEqual(data["run"]["allowances"], {"openai_usd": 5.0})
-        self.assertEqual(data["run"]["budget"]["estimated_total_usd"], 0)
+        self.assertEqual(data["run"]["usage"]["request_count"], 0)
         self.assertEqual(data["target"]["requested"], "HEAD^..HEAD")
         self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o600)
         self.assertNotIn("test credential", self.output.read_text())
@@ -170,14 +169,13 @@ class CLITest(unittest.TestCase):
         self.assertTrue(evidence["limitations"])
         self.assertEqual(self.git("for-each-ref", "refs/ralph/upstream"), "")
 
-    def test_high_profile_scales_shared_allowance(self):
+    def test_high_profile_reaches_engine(self):
         from unittest.mock import patch
 
         from ralph import cli, current_engine, engine
 
         def run(case, runtime, configured):
             self.assertEqual(configured["profile"]["name"], "high")
-            self.assertEqual(runtime.budget.ledger.review_limit_micros, 10_000_000)
             return engine.Output("Review", {}, {})
 
         with patch.object(current_engine, "run", side_effect=run), patch("sys.stdout"):
@@ -188,8 +186,6 @@ class CLITest(unittest.TestCase):
                     str(self.repo),
                     "--openai-key-file",
                     str(self.key),
-                    "--review-budget-usd",
-                    "2",
                     "--profile",
                     "high",
                     "--output",
@@ -197,7 +193,6 @@ class CLITest(unittest.TestCase):
                 ]
             )
         self.assertEqual(code, 0)
-        self.assertEqual(self.result()["run"]["allowances"], {"openai_usd": 10.0})
 
     def test_proxy_routes_both_providers_and_audits(self):
         from types import SimpleNamespace

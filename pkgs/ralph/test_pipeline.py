@@ -5,7 +5,6 @@ from threading import Barrier
 from unittest.mock import Mock, patch
 
 from ralph import config, engine, model, pipeline, protocol, repository, runner
-from ralph.spend import BudgetExceeded
 
 COMPLETE = {"status": "complete", "limitations": []}
 
@@ -204,20 +203,11 @@ class PipelineTests(unittest.TestCase):
                 finding["body"] = "Final public wording"
             return json.dumps(result), response
 
-        budget = Mock()
-        self.run_review(review, edit, budget=budget, writer=review)
+        usage = Mock()
+        self.run_review(review, edit, usage=usage, writer=review)
         self.assertEqual(
             order,
             ["independent", "verifier", "collator", "write_verifier", "major_verifier"],
-        )
-        self.assertIn(
-            "major_verifier", budget.protect.call_args.kwargs["exempt_stages"]
-        )
-        self.assertNotIn(
-            "write_verifier", budget.protect.call_args.kwargs["exempt_stages"]
-        )
-        self.assertEqual(
-            budget.protect.call_args.args[0]["text"]["format"]["name"], "major_verifier"
         )
         self.assertEqual(self.debug["coverage"]["verification"]["status"], "complete")
         self.assertEqual(self.debug["coverage"]["experiments"]["status"], "partial")
@@ -276,7 +266,6 @@ class PipelineTests(unittest.TestCase):
         self.tier, self.audits = "routine", []
         for failure in (
             RuntimeError("Sandbox unavailable"),
-            BudgetExceeded("Protected final budget"),
             protocol.InvalidReview("Invalid writer output"),
         ):
             with self.subTest(failure=type(failure).__name__):
@@ -505,7 +494,7 @@ class PipelineTests(unittest.TestCase):
         self,
         reviewer,
         editor=None,
-        budget=None,
+        usage=None,
         api_base=None,
         archaeology_enabled=False,
         backport_evidence=None,
@@ -553,7 +542,7 @@ class PipelineTests(unittest.TestCase):
             runtime = engine.Runtime(
                 case=case,
                 api_key="key",
-                budget=budget,
+                usage=usage,
                 discussion_lookup=lambda name, args: "Discussion",
                 attempt=self.debug,
             )
@@ -966,8 +955,8 @@ class PipelineTests(unittest.TestCase):
             self.prompts.profile.stages["adversarial_claude"],
         )
         self.prompts = high_prompts
-        budget = Mock()
-        budget.summary.return_value = {"limit_usd": "1"}
+        usage = Mock()
+        usage.summary.return_value = {"request_count": 3}
         rendezvous = Barrier(2)
         inputs = {}
         candidate_ids = [f"{stage}:1" for stage in pipeline.ADVERSARIAL_STAGES]
@@ -980,7 +969,7 @@ class PipelineTests(unittest.TestCase):
                     kwargs["prompt"],
                     kwargs["tools"],
                 )
-                self.assertIs(kwargs["budget"], budget)
+                self.assertIs(kwargs["usage"], usage)
                 self.assertEqual(args[0], "key")
                 self.assertEqual(kwargs["api_base"], "http://proxy/v1")
                 self.assertEqual(kwargs["model"], self.prompts.models[stage])
@@ -1010,11 +999,8 @@ class PipelineTests(unittest.TestCase):
                 )
             return discovery()
 
-        self.run_review(review, budget=budget, api_base="http://proxy/v1")
-        budget.protect.assert_called()
-        for call in budget.protect.call_args_list:
-            self.assertNotIn("adversarial_claude", call.kwargs["exempt_stages"])
-        self.assertEqual(self.debug["budget"], budget.summary.return_value)
+        self.run_review(review, usage=usage, api_base="http://proxy/v1")
+        self.assertEqual(self.debug["usage"], usage.summary.return_value)
         self.assertEqual(inputs["adversarial"], inputs["adversarial_claude"])
         self.assertEqual(
             self.debug["stages"]["adversarial_claude"]["status"], "completed"

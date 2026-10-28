@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ralph import model, repository, spend
+from ralph import model, repository, usage
 from ralph_service import followup_runner, stats
 from ralph_service.jobs import JobStore
 
@@ -108,7 +108,7 @@ class FollowupIntegrationTests(unittest.TestCase):
             state = root / "state"
             state.mkdir()
             jobs = JobStore(state / "jobs.sqlite3")
-            spend.Ledger(state / "spend.sqlite3", review_limit_usd=0.01)
+            usage.Ledger(state / "usage.sqlite3")
             prompts = followup_runner.load_settings()
             finding = {
                 "title": "Handle a zero divisor",
@@ -184,7 +184,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                     "decisions": [{"disposition": "publish", "finding": finding}],
                 },
             )
-            followup_runner.run_once(state, str(origin), "key", *prompts, 0.10)
+            followup_runner.run_once(state, str(origin), "key", *prompts)
             source.write_text(
                 "if (divisor == 0) return error;\nreturn value / divisor;\n"
             )
@@ -200,7 +200,7 @@ class FollowupIntegrationTests(unittest.TestCase):
             )
             new_head = git("rev-parse", "HEAD")
             complete(new_head, {})
-            protected = [state / "jobs.sqlite3", state / "spend.sqlite3"]
+            protected = [state / "jobs.sqlite3", state / "usage.sqlite3"]
             before = [hashlib.sha256(path.read_bytes()).digest() for path in protected]
             answer = {
                 "findings": [
@@ -243,7 +243,6 @@ class FollowupIntegrationTests(unittest.TestCase):
                         str(origin),
                         "proxy-key",
                         *prompts,
-                        0.10,
                         api_base="http://127.0.0.1:8317/v1",
                     ),
                     1,
@@ -258,7 +257,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                 before,
                 [hashlib.sha256(path.read_bytes()).digest() for path in protected],
             )
-            with sqlite3.connect(state / "followup" / "spend.sqlite3") as db:
+            with sqlite3.connect(state / "followup" / "usage.sqlite3") as db:
                 self.assertEqual(
                     db.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 1
                 )
@@ -269,7 +268,7 @@ class FollowupIntegrationTests(unittest.TestCase):
             self.assertEqual(addressed["findings"][0]["new_head"], new_head)
             with patch.object(model.transport, "request") as send:
                 self.assertEqual(
-                    followup_runner.run_once(state, str(origin), "key", *prompts, 0.10),
+                    followup_runner.run_once(state, str(origin), "key", *prompts),
                     0,
                 )
                 send.assert_not_called()

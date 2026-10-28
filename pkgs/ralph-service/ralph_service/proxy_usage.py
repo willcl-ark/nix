@@ -141,7 +141,7 @@ def _claude(account, payload):
                 if isinstance(model, dict):
                     model_id = model.get("id")
                     if isinstance(model_id, str):
-                        for family in ("sonnet", "opus"):
+                        for family in ("sonnet", "opus", "fable"):
                             if family in model_id.lower():
                                 name = f"{family.title()}: Weekly"
                                 break

@@ -17,7 +17,7 @@ from .repository import (
     blame_base,
     read_commit,
 )
-from .spend import BudgetExceeded, web_search_calls
+from .usage import web_search_calls
 
 MAX_TOOL_CALLS = 48
 MAX_OUTPUT_TOKENS = 6_000
@@ -27,7 +27,7 @@ MAX_COLLATOR_OUTPUT_BYTES = 10_000
 MAX_CONTEXT_CALLS = 8
 MAX_HISTORY_CALLS = 8
 MAX_WEB_SEARCH_CALLS_PER_RESPONSE = 2
-SAFE_NO_CHARGE_HTTP_STATUSES = {400, 401, 403, 404, 429}
+REJECTED_HTTP_STATUSES = {400, 401, 403, 404, 429}
 MAX_REQUEST_ATTEMPTS = 3
 WEB_SEARCH_TOOL_TYPES = {"web_search"}
 WEB_SEARCH_TOOL = {"type": "web_search", "search_context_size": "low"}
@@ -352,11 +352,6 @@ LIVE_RESEARCH_TOOL_NAMES = {
     "read_current_pr_discussion",
     "read_github_discussion",
 }
-FINISH_WITH_AVAILABLE_EVIDENCE = (
-    "Budget is near the review limit. Do not call tools. Finish now with the "
-    "evidence already available, and preserve uncertainty for any claim that "
-    "still lacks decisive support."
-)
 
 
 def available_tools(
@@ -383,7 +378,7 @@ class StaleReview(Exception):
 
 
 def _request_payload(data):
-    # Codex rejects this field. Retain it only for search cost reservations.
+    # Codex rejects this field; keep it out of provider requests.
     payload = {k: v for k, v in data.items() if k != "max_tool_calls"}
     payload["stream"] = True
     return json.dumps(payload).encode()
@@ -431,7 +426,7 @@ def request_response(
     data,
     stage_name,
     on_response=None,
-    budget=None,
+    usage=None,
     is_current=None,
     api_base="https://api.openai.com/v1",
     timeout=1800,
@@ -449,7 +444,7 @@ def request_response(
             if remaining <= 0:
                 raise TimeoutError("write-verifier stage deadline expired")
             request_timeout = min(timeout, remaining)
-        token = budget.reserve(stage_name, data) if budget is not None else None
+        token = usage.start(stage_name, data) if usage is not None else None
         attempt_started = time.monotonic()
         try:
             result = transport.request(url, payload, api_key, request_timeout)
@@ -457,12 +452,13 @@ def request_response(
                 raise ValueError("OpenAI response was not a JSON object")
         except Exception as exc:
             http_error = isinstance(exc, urllib.error.HTTPError)
-            if budget is not None:
-                budget.fail(
+            if usage is not None:
+                usage.fail(
                     token,
-                    charged_unknown=not (
-                        http_error and exc.code in SAFE_NO_CHARGE_HTTP_STATUSES
+                    usage_unknown=not (
+                        http_error and exc.code in REJECTED_HTTP_STATUSES
                     ),
+                    http_status=exc.code if http_error else None,
                 )
             exc.request_elapsed_seconds = round(time.monotonic() - attempt_started, 2)
             if http_error:
@@ -501,8 +497,8 @@ def request_response(
         else:
             break
     elapsed = round(time.monotonic() - attempt_started, 2)
-    if budget is not None:
-        budget.settle(token, result)
+    if usage is not None:
+        usage.complete(token, result)
     if on_response is not None:
         on_response(stage_name, payload, result)
     return result, payload, elapsed
@@ -526,7 +522,7 @@ def response_record(result, payload, elapsed):
         ).hexdigest(),
         "elapsed_seconds": elapsed,
         "input_tokens": input_tokens,
-        "cached_tokens": details.get("cached_tokens", 0),
+        "cached_tokens": details.get("cached_tokens"),
         "cache_write_tokens": cache_write_tokens,
         "output_tokens": output_tokens,
         "usage_known": input_tokens is not None and output_tokens is not None,
@@ -534,6 +530,9 @@ def response_record(result, payload, elapsed):
             input_tokens is not None
             and output_tokens is not None
             and cache_write_tokens is not None
+            and details.get("cached_tokens") is not None
+            and (usage.get("output_tokens_details") or {}).get("reasoning_tokens")
+            is not None
         ),
         "web_search_calls": web_search_calls(result),
         "reasoning_tokens": (usage.get("output_tokens_details") or {}).get(
@@ -643,7 +642,7 @@ def run_audit(
     model_name,
     max_output_tokens,
     on_response=None,
-    budget=None,
+    usage=None,
     response_schema=None,
     reasoning_effort="low",
     is_current=None,
@@ -654,7 +653,7 @@ def run_audit(
     model = model_name
     limits = _limit_metrics(output_tokens=max_output_tokens)
     if debug is not None:
-        debug.update(limits=limits, budget_limited=False)
+        debug.update(limits=limits)
     data = {
         "model": model,
         "store": False,
@@ -678,7 +677,7 @@ def run_audit(
             data,
             name,
             on_response,
-            budget,
+            usage,
             is_current,
             api_base=api_base,
             timeout=timeout,
@@ -693,12 +692,6 @@ def run_audit(
     except StaleReview:
         if debug is not None:
             debug.update(status="stale", error="StaleReview")
-        raise
-    except BudgetExceeded:
-        if debug is not None:
-            debug.update(
-                status="budget_exhausted", error="BudgetExceeded", budget_limited=True
-            )
         raise
     except Exception as exc:
         failure = request_failure_record(data, exc)
@@ -727,7 +720,6 @@ def run_audit(
         "raw_output": answer,
         "output_truncated": False,
         "limits": limits,
-        "budget_limited": False,
     }
     if debug is not None:
         stage = _stage_record(debug, name, model)
@@ -766,7 +758,7 @@ def openai_review(
     first_tool_required=True,
     stage_name="independent",
     on_response=None,
-    budget=None,
+    usage=None,
     response_schema=None,
     reasoning_effort="low",
     discussion_lookup=None,
@@ -807,7 +799,6 @@ def openai_review(
         debug.update(
             {
                 "limits": limits,
-                "budget_limited": False,
                 "instructions": prompt,
                 "review_input_bytes": len(review_bytes),
                 "review_input_sha256": hashlib.sha256(review_bytes).hexdigest(),
@@ -866,72 +857,21 @@ def openai_review(
                     "schema": response_schema,
                 }
             }
-        sent_tool_choice = tool_choice
-        budget_forced_final = False
         try:
-            try:
-                result, payload, elapsed = request_response(
-                    api_key,
-                    data,
-                    stage_name,
-                    on_response,
-                    budget,
-                    is_current,
-                    timeout=(final_timeout if tool_choice == "none" else timeout),
-                    on_retry_failure=debug["turns"].append
-                    if debug is not None
-                    else None,
-                    **request_options,
-                )
-            except BudgetExceeded:
-                if stage_debug is not None:
-                    stage_debug["budget_limited"] = True
-                if tool_choice == "none" or (first_tool_required and calls_used == 0):
-                    raise
-                final_inputs = inputs + [
-                    {"role": "user", "content": FINISH_WITH_AVAILABLE_EVIDENCE}
-                ]
-                final_tools = [
-                    tool
-                    for tool in tools
-                    if tool.get("type") not in WEB_SEARCH_TOOL_TYPES
-                ]
-                data = {
-                    **data,
-                    "input": final_inputs,
-                    "tool_choice": "none",
-                    "tools": final_tools,
-                }
-                data.pop("max_tool_calls", None)
-                data.pop("include", None)
-                input_data = json.dumps(final_inputs).encode()
-                sent_tool_choice = "none"
-                budget_forced_final = True
-                result, payload, elapsed = request_response(
-                    api_key,
-                    data,
-                    stage_name,
-                    on_response,
-                    budget,
-                    is_current,
-                    timeout=final_timeout,
-                    on_retry_failure=debug["turns"].append
-                    if debug is not None
-                    else None,
-                    **request_options,
-                )
-                inputs = final_inputs
+            result, payload, elapsed = request_response(
+                api_key,
+                data,
+                stage_name,
+                on_response,
+                usage,
+                is_current,
+                timeout=(final_timeout if tool_choice == "none" else timeout),
+                on_retry_failure=debug["turns"].append if debug is not None else None,
+                **request_options,
+            )
         except StaleReview:
             if stage_debug is not None:
                 stage_debug.update(status="stale", error="StaleReview")
-            raise
-        except BudgetExceeded:
-            if stage_debug is not None:
-                stage_debug.update(
-                    status="budget_exhausted",
-                    error="BudgetExceeded",
-                    budget_limited=True,
-                )
             raise
         except Exception as exc:
             failure = request_failure_record(data, exc)
@@ -955,13 +895,11 @@ def openai_review(
                 **response_record(result, payload, elapsed),
                 "input_bytes": len(input_data),
                 "input_sha256": hashlib.sha256(input_data).hexdigest(),
-                "tool_choice": sent_tool_choice,
+                "tool_choice": tool_choice,
                 "incomplete_reason": (result.get("incomplete_details") or {}).get(
                     "reason"
                 ),
             }
-            if budget_forced_final:
-                turn_record["budget_forced_final"] = True
             debug["turns"].append(turn_record)
             stage_debug["status"] = result.get("status")
         if result.get("status") != "completed":

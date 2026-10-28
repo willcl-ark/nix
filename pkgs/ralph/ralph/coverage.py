@@ -17,13 +17,11 @@ _SCOPE_NOTE = re.compile(
 )
 
 CONTEXT_STAGES = {"archaeologist", "alternatives", "feedback"}
-FAILURES = {"failed", "invalid", "budget_exhausted"}
+FAILURES = {"failed", "invalid"}
 
 
 def _failure(stage):
     status = stage.get("status")
-    if status == "budget_exhausted":
-        return "Stage budget exhausted before the review completed."
     if status == "invalid":
         return "Output failed validation: " + stage.get(
             "validation_error", "invalid review output"

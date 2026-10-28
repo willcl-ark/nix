@@ -274,8 +274,6 @@ def _public_stages(debug):
             record["used_verified_wording"] = stage["used_verified_wording"]
         if "limits" in stage:
             record["limits"] = public_limits(stage)
-        if isinstance(stage.get("budget_limited"), bool):
-            record["budget_limited"] = stage["budget_limited"]
         profiles = _strings(stage.get("profiles"))
         if profiles:
             record["profiles"] = profiles
@@ -506,18 +504,14 @@ def _public_record(number, result, report_id):
             else None
         ),
         "metrics": metrics,
-        "budget": (
-            result.get("run", {}).get("budget")
+        "usage": (
+            result.get("run", {}).get("usage")
             if isinstance(result.get("run"), dict)
             else None
         ),
         "notice": (
             "The review text is the engine's published assessment. Diagnostic "
             "records describe model activity and do not establish correctness."
-        ),
-        "pricing_note": (
-            "Usage counts come from the saved run record. Cost and budget details "
-            "are shown separately when available."
         ),
     }
     exports = (result.get("output") or {}).get("exports") or {}
@@ -989,11 +983,10 @@ summary {{ cursor: pointer; font-weight: 600; }}
             {
                 "metrics": record["metrics"],
                 "stage_metrics": record.get("stage_metrics"),
-                "budget": record.get("budget"),
+                "usage": record.get("usage"),
             }
         )
     }
-<p>{_escape(record["pricing_note"])}</p>
 </section>
 </body>
 </html>

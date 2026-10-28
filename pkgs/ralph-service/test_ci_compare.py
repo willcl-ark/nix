@@ -149,9 +149,7 @@ class ComparisonTests(unittest.TestCase):
             )
             return path
 
-        run_args = argparse.Namespace(
-            work_dir=self.args.work_dir, openai_key_file=key, review_budget_usd=5
-        )
+        run_args = argparse.Namespace(work_dir=self.args.work_dir, openai_key_file=key)
         with patch.object(evaluate, "run_case", side_effect=replay):
             self.assertEqual(
                 ci_compare.run(run_args),

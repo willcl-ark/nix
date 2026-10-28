@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from ralph.usage import Ledger
+
 from ralph_service import commands, jobs, monitor, status
 
 
@@ -150,7 +152,7 @@ class CommandTests(unittest.TestCase):
         store.complete(job)
         for filename, usage in (
             (
-                "spend.sqlite3",
+                "usage.sqlite3",
                 {
                     "input_tokens": 1234,
                     "output_tokens": 345,
@@ -159,27 +161,23 @@ class CommandTests(unittest.TestCase):
                     "complete": True,
                 },
             ),
-            ("followup/spend.sqlite3", None),
+            ("followup/usage.sqlite3", None),
         ):
             path = self.root / filename
             path.parent.mkdir(parents=True, exist_ok=True)
+            Ledger(path)
             with closing(sqlite3.connect(path)) as db, db:
                 db.execute(
-                    "CREATE TABLE requests (review_id TEXT, stage TEXT, model TEXT, "
-                    "month TEXT, status TEXT, usage_json TEXT, cost_micros INTEGER, "
-                    "reserved_micros INTEGER, requested_at INTEGER)"
-                )
-                db.execute(
-                    "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO requests (token, review_id, stage, model, month, status, usage_json, requested_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
+                        filename,
                         "pr:42:1",
                         "verifier",
                         "claude-opus-5-5",
                         now.strftime("%Y-%m"),
-                        "settled" if usage else "uncertain",
+                        "completed" if usage else "uncertain",
                         json.dumps(usage) if usage else None,
-                        10,
-                        20,
                         int(now.timestamp()) - 1,
                     ),
                 )

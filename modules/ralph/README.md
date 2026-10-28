@@ -51,8 +51,7 @@ Reviews of the same PR run serially; newer heads wait for the active attempt to
 finish. Fetches and snapshot creation share a lock in one Git object store.
 Each active review pins its own base and head refs until it finishes, and tools
 read immutable blobs without a checked-out worktree. Model calls run outside
-the Git lock. Spending reservations remain atomic across all workers, including
-the shared monthly allowance.
+the Git lock. Each model request has its own durable usage record.
 
 The model can also search and read other public issues and pull requests in the
 same repository, including a small sample of ordinary comments. The current PR
@@ -85,9 +84,8 @@ and unrelated validation/policy work skip it. Generic fallback and overview
 escalation also skip it; explicit full and shadow modes request it.
 It uses Sol 6.1, high reasoning, 25,000 tokens per response and 48 code/history
 inspections, with no discussion or web tools. Selected script review runs before
-concept research, shares the existing OpenAI allowance, and protects verifier
-headroom. Partial coverage reaches the verifier as named inspection gaps and
-remains visible in reports and stats. See the [specialist design](../../pkgs/ralph/README.md#script-and-transaction-policy-specialist).
+concept research. Partial coverage reaches the verifier as named inspection
+gaps and remains visible in reports and stats. See the [specialist design](../../pkgs/ralph/README.md#script-and-transaction-policy-specialist).
 
 Sensitive changes receive parallel independent GPT-6 Astra and Claude Opus 5.5
 adversarial reviews. Claude uses `claude-opus-5-5` at `xhigh` through the same
@@ -111,7 +109,7 @@ including deletions and refactors. It finds new unused code and existing code
 whose last use the PR removes, including definitions in unchanged files.
 Ordinary docs-only changes skip it unless routing requests it. It uses medium
 reasoning, 8,000 tokens per response and up to 48 base/head code and history
-inspections under the existing review budget. It checks indirect uses, supported
+inspections under the configured tool limit. It checks indirect uses, supported
 configurations and side effects before proposing removal. Candidates pass
 through the normal verifier.
 
@@ -150,7 +148,7 @@ The [core stage table](../../pkgs/ralph/README.md#stages-models-and-evidence)
 lists the default models, reasoning effort, response token ceilings and evidence
 access for every stage. Token ceilings cover reasoning and visible output
 combined. Debug output records the settings and actual usage. All review stages,
-including Claude, share their per-review spending ceiling and ledger.
+including Claude, record request attempts and reported usage.
 
 The public review presents findings first, then accepted design and concept
 concerns under "Design and approach", then optional "Alternatives". Empty
@@ -169,17 +167,14 @@ the wording after this pass.
 
 Routine discovery stages get up to 12 tool inspections, standard stages 24,
 and sensitive stages 48. The adversarial passes and verifier each get
-48. Archaeology gets twelve total inspections, including hosted web actions,
-with at most two hosted actions per response. Search charges are included in
-the OpenAI spending allowance. The concept stage spends from the same capped
-review allowance as the OpenAI code stages, does not estimate savings and never
-stops later code stages. With an allowance of N inspections, the model can make
-up to N tool calls across at most N + 1 responses, leaving a final response
-without tools. The router has up to eight code inspections; the writing pass has no tools. The final response and
-all inspections remain subject to the spending ceiling. At the inspection limit,
+72. Archaeology gets twelve total inspections, including hosted web actions.
+The configured two hosted actions per response is advisory; a provider may
+return more. The concept stage never stops later code stages. With an allowance
+of N inspections, the model can make up to N tool calls across at most N + 1
+responses, leaving a final response without tools. The router has up to eight
+code inspections; the writing pass has no tools. At the inspection limit,
 further reads are refused. The model returns supported findings and names
-material unanswered evidence. Debug output records the limit and which requests
-were skipped.
+material unanswered evidence. Debug output records limit hits.
 
 Discovery stages return structured candidates. The verifier accounts for each
 candidate as published, dropped or unresolved, and the writing pass receives
@@ -200,29 +195,13 @@ structured results and report diagnostics. `potential_vulnerability`,
 the finding deserves publication. This uses the existing verifier call and
 does not select additional audits or change publication behavior.
 
-The default per-review spending ceiling is USD 5.00. It is an allowance for
-complex reviews, not a target spend. Lightweight routing still skips both
-adversarial passes and irrelevant specialist stages. Before each API request
-ralph reserves a conservative input/output cost estimate, holding some allowance
-for verification based on its actual model, input, response limit and bounded
-evidence headroom.
-The pipeline refreshes that protection as candidates accumulate or risk changes.
-Tool-enabled requests also preserve room for a final response. When another
-inspection cannot fit, the model is asked to finish from available evidence if
-that final request fits. This is bounded headroom, not a guarantee of complete
-verification: evidence growth and shared monthly spending can still exhaust it.
-Editing uses remaining allowance and can fall back to the verifier's wording.
-The second verifier also uses remaining allowance and reserves its own final
-response. It has no separate allowance or protected share during discovery;
-insufficient budget withholds the pending Majors. Medium effort is an initial
-setting and has not been measured against a review-quality evaluation set.
-Reported usage settles the reservation;
-missing usage or an ambiguous transport failure retains conservative estimated
-charges. These estimates depend on configured model prices and API token
-accounting, so they are not an invoice guarantee. Unknown model prices prevent
-requests.
-The optional monthly allowance is unset by default. The ledger retains monthly
-totals and includes failed requests whose charges are uncertain.
+Ralph records request attempts and provider-reported input, output, reasoning
+and cached tokens when available. Missing usage stays unknown, including after
+transport failures. It does not calculate prices, reserve funds or block work
+against per-review or monthly monetary allowances. Tool limits, request
+timeouts, worker concurrency and upstream subscription limits still apply.
+Failed verification withholds unverified findings; failed editing falls back
+to verified wording.
 
 Jobs are persisted before the webhook receives a 202 response. Pending PR
 updates are coalesced, stale work stops between model requests, and completed
@@ -240,7 +219,7 @@ and their models, verifier and editor. Merged candidates retain all their
 source agents. Surviving Majors name the second verifier and its model; all
 findings must originate in discovery. Editing never earns discovery credit. Per-stage summaries record
 candidate dispositions, accepted findings found solely or jointly, concept
-recommendations, cost estimates and incomplete usage. Joint credit is not
+recommendations, reported tokens and incomplete usage. Joint credit is not
 evidence that each agent was necessary, and verifier acceptance is not a human
 quality label.
 Adversarial records include selected profiles without attributing findings to
@@ -264,15 +243,15 @@ report link. Existing comments and private traces are not backfilled.
 
 When reports are configured, a timer also refreshes `reportDir/stats/index.html`
 and its public JSON download every five minutes. The dashboard reads durable
-review jobs and the review and follow-up spend ledgers without model calls or credentials. It
+review jobs and the review and follow-up usage ledgers without model calls or credentials. It
 ranks agents and models by verifier-accepted findings, separates sole and shared
 contributions, and shows execution opportunities, candidate dispositions,
-coverage, routing, token usage, costs, and review details. Shared findings earn
+coverage, routing, token usage, and review details. Shared findings earn
 credit for each contributing agent, so leaderboard counts overlap. Concept
 assessments have separate saved/published counts and do not inflate finding
 counts. Candidate and verifier `would_stop` counts are shown with downstream
-findings and costs so a human can judge false proposed stops and useful findings
-that appeared after a proposed stop. Archaeology costs and execution remain
+findings and usage so a human can judge false proposed stops and useful findings
+that appeared after a proposed stop. Archaeology usage and execution remain
 visible outside the finding leaderboard.
 
 The Limits page at `stats/limits/` shows recorded limits by agent, model,
@@ -283,18 +262,16 @@ limits record refused work or forced final answers. Web-search usage can reach
 its cap without a provider reporting that more searches were wanted, so those
 rows do not claim confirmed blocking.
 
-Spending blocks are separate: request reservations and protected verifier
-headroom can stop work before the review spends its full allowance. Data comes
-from saved stage records, not live reviews or every intermediate retry. Older
-runs without telemetry are counted as uninstrumented. Use the page to choose
-limits for controlled same-head comparisons; reaching a limit alone does not
-prove the review would improve with more allowance.
+Limits data comes from saved stage records. Older runs without telemetry are
+counted as uninstrumented. Use the page to choose limits for controlled
+same-head comparisons; reaching a limit alone does not prove the review would
+improve with more allowance.
 
-The Usage page shows recorded requests and input, output and cached tokens.
+The Usage page shows recorded attempts and provider-reported token counts.
 Unknown usage remains explicit. These totals describe Ralph's own activity;
-subscription quotas also include other tools using the same accounts. Historical
-PPQ requests and follow-up assessments remain included. UTC accounting months
-retain older requests without inventing missing request timestamps.
+subscription quotas also include other tools using the same accounts. New
+attempts are recorded in `usage.sqlite3` and `followup/usage.sqlite3`. Old
+spend databases are left untouched and are not read or converted.
 
 To add Codex and Claude subscription quotas from CLIProxyAPI v8:
 
@@ -322,20 +299,18 @@ as unused capacity. Snapshot time is visible. Provider credit balances are not
 converted into dollars, and subscription fees are not supplied by these endpoints.
 
 Addressed-finding checks run outside the main review service. When reports are
-configured, `ralph-followup.timer` runs every five minutes with its own budget,
-checkout and ledgers under `stateDir/followup/`. It stores Git data in
+configured, `ralph-followup.timer` runs every five minutes with its own checkout
+and records under `stateDir/followup/`. It stores Git data in
 `stateDir/followup/checkout`, assessment rows in
-`stateDir/followup/assessments.sqlite3`, and model spend in
-`stateDir/followup/spend.sqlite3`. The first run seeds the local history needed
+`stateDir/followup/assessments.sqlite3`, and request attempts in
+`stateDir/followup/usage.sqlite3`. The first run seeds the local history needed
 for future synchronize events; it does not automatically backfill old PR
-updates. `services.ralph.followupBudgetUsd` defaults to `0.10`. Follow-up
-assessment request and token usage is shown in the addressed section.
+updates. Follow-up request and token usage is shown separately.
 
 Distinct review jobs and request attempts are counted separately. Retries
-increase request counts; they do not duplicate the final findings. Existing
-API-equivalent reservation controls remain workload safeguards, not measures of
-subscription charges or remaining quota. Verifier acceptance is not human validation or a recall
-measurement, and summed model time is not elapsed review time.
+increase request counts; they do not duplicate final findings. Verifier
+acceptance is not human validation or a recall measurement, and summed model
+time is not elapsed review time.
 
 The page is reachable under the report URL's `stats/` subdirectory. Hosts may
 also serve `reportDir/stats` at a shorter URL such as `/stats/`. To refresh it
@@ -353,8 +328,7 @@ PRs use their recorded base SHA. Only forced requests honor this field. Open
 PRs omit it so the worker fetches the current target branch. Every review uses
 `merge-base(base, head)..head` for its patch and file tools. Historical reviews
 remain retrospective: discussion and web research are not time-filtered.
-A forced review receives a new allowance. Changing prompts does not
-automatically rerun previously reviewed heads.
+Changing prompts does not automatically rerun previously reviewed heads.
 
 ## Review status images
 
@@ -446,13 +420,9 @@ and `claude-opus-5-5`, then run one local review with the proxy URL in `--engine
 its result before resuming the service queue. The local command does not publish
 review comments.
 
-The existing dollar allowances and reports become API-equivalent usage
-estimates for subscription-backed calls. They do not measure subscription quota
-or charges. CLIProxyAPI strips Codex's `max_output_tokens`, so the requested
-output cap no longer bounds each response or its reservation. A response can
-exceed the local allowance before returned usage is settled. Subscription limits
-are enforced upstream. The old PPQ ledger remains readable for historical
-statistics; new reviews do not use PPQ.
+CLIProxyAPI strips Codex's `max_output_tokens`, so the requested output cap
+is not enforced on that path. Subscription limits are enforced upstream.
+Ralph records returned usage without estimating charges or remaining quota.
 
 ## Options
 
@@ -580,66 +550,50 @@ claimed. If the backup path already exists,
 the conversion stops rather than overwrite it. A Nix version rollback alone
 does not restore the old database format. This backup covers the jobs database
 at conversion time; after new reviews run, restoring it also requires
-reconciling later jobs, spend and followup records, and published outputs.
+reconciling later jobs, usage and followup records, and published outputs.
 
 On the profile cutover, unfinished jobs with recorded model maps are converted
 once to resolved `default` profiles with those models. Saved results retain
-their original identity. Frozen evaluation uses schema version 5; recapture
+their original identity. Frozen evaluation uses schema version 7; recapture
 older cases before replaying them.
 
-## Cost and routing options
+## Routing and usage options
 
-- `reviewBudgetUsd = 5.00`: base per-review spending ceiling. The `high` profile
-  uses five times this shared allowance. It spans retries and is not a target
-  spend. Claude uses the same allowance; the monthly ceiling is unchanged.
-- `monthlyBudgetUsd = null`: optional ceiling on the month's API-equivalent usage
-  and outstanding reservations.
 - `routingMode = "enabled"`: apply conservative routing.
-- `routingMode = "shadow"`: record the proposed route while requesting every
-  audit. This costs more and still respects the same allowance.
+- `routingMode = "shadow"`: record the proposed route while requesting every audit.
 - `routingMode = "full"`: request every audit without calling the router.
 - `agentsDir = null`: optional directory containing each agent's prompt and
-  model, reasoning, tool and timeout settings. Models must have prices supported
-  by Ralph's ledger. The bundled directory supports `default` and `high` profiles.
+  model, reasoning, tool and timeout settings. Model IDs must be nonempty;
+  the provider checks model availability. The bundled directory supports
+  `default` and `high` profiles.
 
 The main-review CLI accepts `--agents-dir` in place of separate prompt and model
 files. Update custom deployments to `services.ralph.agentsDir` or
 `engineConfig.agents_dir`. Follow-up keeps its separate `followupPromptFile`
 and `followupModel` options.
 
-Cost history adds a request timestamp to each of the three spend databases.
-The service startup hook runs the one-time migration, preserving old rows with
-unknown timestamps and taking SQLite backups named `*.pre-timestamps.bak`.
-For manual upgrades, run `ralph-service --state-dir /var/lib/ralph --migrate-state`
-before generating stats with the new package. Missing databases are skipped.
+The budget cutover creates fresh usage databases. Old spend databases remain
+untouched and are not read. Remove monetary budget options from host
+configuration and recapture frozen configurations containing the old schema.
+No old accounting data is automatically converted. Building the package does
+not deploy it to a live host.
 
-Custom prompt directories must include `major_verifier.md`, `dead_code.md`, `consensus.md`, `wallet.md`, `p2p.md`,
-`concurrency.md`, `build.md` and `archaeologist.md`. Custom model maps must
-include `major_verifier`, `dead_code` and `archaeologist`; old complete maps are rejected.
-Update custom prompt/model configurations together. Unsupported model names
-are rejected when configuration loads. The existing verifier model override
-can be used for controlled Sol comparisons while the default stays on Luna.
+Enabled routing avoids unnecessary stages. Routing rules and contracts are
+covered by local tests; model quality and recall still need evaluation on
+representative frozen PRs.
 
-Enabled routing is the default to control spend. Routing rules and contracts
-are covered by local tests; model quality and recall still need evaluation on
-representative frozen PRs. No production-quality claim follows from those
-unit tests.
-
-The service writes a monthly spend summary to its journal after each job.
-Read the ledger directly without an API key:
+Read recorded usage directly without an API key:
 
 ```sh
-ralph-evaluate spend --state-dir /var/lib/ralph
+ralph-evaluate usage --state-dir /var/lib/ralph
 ```
 
 Use the service account or another account permitted to read its private state.
-The summary includes outstanding reservations in estimated_total_usd;
-reserved_total_usd is the portion whose charge has not been settled.
-usage_complete is false when any reported count or response is missing.
+The summary reports requests and tokens, with missing usage kept explicit.
 
 ## Frozen prompt and routing experiments
 
-The companion package installs `ralph-evaluate` for capture, replay, spend
+The companion package installs `ralph-evaluate` for capture, replay, usage
 inspection and offline summaries.
 Capture performs Forgejo/Git reads but makes no model calls:
 
@@ -671,7 +625,6 @@ evidence and the model continues from code and the frozen input:
 ralph-evaluate run \
   --state-dir ./evaluation-state --output-dir ./results \
   --openai-key-file /run/secrets/openai-key \
-  --review-budget-usd 5.00 \
   ./cases/case-123-*.json
 ```
 
@@ -687,19 +640,18 @@ final comment and any failure. Optional `--labels-json` maps case IDs to
 expected findings; these labels are saved for comparison and never sent to
 reviewers.
 
-Compare useful findings and missed known findings alongside cost, incomplete
+Compare useful findings and missed known findings alongside reported usage, incomplete
 coverage and wall time. An empty review is not proof of a good route. Shadow
 routing is useful for a bounded comparison before changing sensitive path
 rules or removing a specialist.
 
 See [the evaluation guide](evaluation.md) for offline summaries and a human
-scorecard for comparing coverage and cost. Summaries use recorded attribution;
+scorecard for comparing coverage and usage. Summaries use recorded attribution;
 they do not automatically decide whether a finding is correct or useful.
 
 Compare `adversarial` and `adversarial_claude` in debug stage metrics for
 sole/shared accepted findings and published, dropped or unresolved candidates.
-All review stages share the default USD 5.00 estimated allowance. Incomplete
-passes are not evidence of model quality.
+Incomplete passes are not evidence of model quality.
 
 ### GitHub major findings
 
@@ -796,7 +748,7 @@ The monitor checks for completed reviews and terminal job failures every 30
 seconds. Each check groups new terminal failures into one alert. The daily
 digest runs at 21:00 UTC and reports the preceding 24 hours' observed review
 completions and failures, current queue depth, and recorded usage by request
-date across the current review, historical PPQ and follow-up ledgers. Missing
+date across the review and follow-up usage ledgers. Missing
 ledgers and unknown usage are identified. The reporting window runs from 21:00 to 21:00 UTC.
 Counts use observation time because the job queue does
 not record completion timestamps.

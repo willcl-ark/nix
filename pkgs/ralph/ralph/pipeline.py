@@ -9,11 +9,10 @@ from final_comment import render
 from . import coverage, experiments, feedback, model, protocol, routing
 from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
 from .repository import audit_developer_notes, focused_review_input
-from .spend import BudgetExceeded
 
-# Domain stages spend the review budget in a predictable order; the two
+# Domain stages run in a predictable order; the two
 # adversarial models review the same evidence concurrently.
-# Domain correctness precedes design; verification retains protected headroom.
+# Domain correctness precedes design.
 DISCOVERY_ORDER = (
     "script",
     "adversarial",
@@ -147,9 +146,7 @@ def _run_stage(
         record["status"] = "stale"
         raise
     except Exception as exc:
-        record["status"] = (
-            "budget_exhausted" if isinstance(exc, BudgetExceeded) else "failed"
-        )
+        record["status"] = "failed"
         record["error_type"] = type(exc).__name__
         if record.get("raw_output"):
             outputs[name] = record["raw_output"]
@@ -407,38 +404,6 @@ def _write_majors(run_stage, runtime, prompt_config, review, snapshot, findings)
         return
     session = None
     try:
-        if runtime.budget is not None:
-            settings = prompt_config.profile.stages["major_verifier"]
-            prompt = prompt_config.audit_prompts["major_verifier"]
-            # Backslashes reserve the JSON escaping overhead of the excerpt too.
-            input_text = _major_input(
-                review, majors, "\\" * (EXPERIMENT_EVIDENCE_CHARS + 100)
-            )
-            if runtime.case.backport_evidence is not None:
-                input_text = _backport_input(input_text, runtime.case.backport_evidence)
-                prompt += "\n\n" + prompt_config.audit_prompts["backport"]
-            runtime.debug["major_verification_budget"] = runtime.budget.protect(
-                {
-                    "model": settings.model,
-                    "store": False,
-                    "reasoning": {"effort": settings.reasoning_effort},
-                    "instructions": prompt,
-                    "input": [{"role": "user", "content": input_text}],
-                    "tools": _stage_tools("major_verifier", runtime, settings),
-                    "tool_choice": "required",
-                    "max_tool_calls": settings.max_web_search_calls_per_response,
-                    "max_output_tokens": settings.max_output_tokens,
-                    "text": {
-                        "format": {
-                            "type": "json_schema",
-                            "name": "major_verifier",
-                            "strict": True,
-                            "schema": protocol.MAJOR_VERIFIER_SCHEMA,
-                        }
-                    },
-                },
-                exempt_stages={"major_verifier"},
-            )
         session = experiments.ExperimentSession(
             snapshot,
             [finding["id"] for finding in majors],
@@ -591,7 +556,7 @@ def review_with_independent_passes(
     review = case.review
     snapshot = case.snapshot
     debug = runtime.debug
-    budget = runtime.budget
+    usage = runtime.usage
     is_current = runtime.is_current
     research_evidence = case.research_evidence
     backport_evidence = case.backport_evidence
@@ -662,61 +627,6 @@ def review_with_independent_passes(
             )
         )
 
-    def protect_verification():
-        if budget is not None:
-            settings = prompt_config.profile.stages["verifier"]
-            effort, output_tokens = (
-                settings.reasoning_effort,
-                settings.max_output_tokens,
-            )
-            tools = _stage_tools("verifier", runtime, settings)
-            debug["verification_budget"] = budget.protect(
-                {
-                    "model": prompt_config.models["verifier"],
-                    "store": False,
-                    "reasoning": {"effort": effort},
-                    "instructions": prompt_config.audit_prompts["verifier"]
-                    + (
-                        "\n\n" + prompt_config.audit_prompts["reconciliation"]
-                        if feedback_packet is not None
-                        else ""
-                    )
-                    + (
-                        "\n\n" + prompt_config.audit_prompts["backport"]
-                        if backport_evidence is not None
-                        else ""
-                    ),
-                    "input": [
-                        {
-                            "role": "user",
-                            "content": _backport_input(
-                                verifier_input(), backport_evidence
-                            ),
-                        }
-                    ],
-                    "tools": tools,
-                    "tool_choice": "required",
-                    "max_tool_calls": settings.max_web_search_calls_per_response,
-                    "max_output_tokens": output_tokens,
-                    "text": {
-                        "format": {
-                            "type": "json_schema",
-                            "name": "verifier",
-                            "strict": True,
-                            "schema": _verifier_schema(
-                                backport_evidence, feedback_packet
-                            ),
-                        }
-                    },
-                },
-                exempt_stages={
-                    "verifier",
-                    "major_verifier",
-                    "collator",
-                },
-            )
-
-    protect_verification()
     debug["pipeline_stage"] = "routing"
     plan = routing.plan_review(
         runtime, review, snapshot, prompt_config, debug, routing_mode
@@ -820,7 +730,6 @@ def review_with_independent_passes(
     completed = set()
     script_sensitive = False
     if "script" in plan["audits"]:
-        protect_verification()
         script_sensitive = collect("script", discover("script"))
         completed.add("script")
 
@@ -846,7 +755,6 @@ def review_with_independent_passes(
             "tools": [],
         }
     elif blind_alternatives and concept_candidate is not None:
-        protect_verification()
         # Only the goal and baseline cross this boundary, never the PR solution
         # or discussion. The tools expose only the pinned comparison-base tree.
         alternative_input = json.dumps(
@@ -876,7 +784,6 @@ def review_with_independent_passes(
             "turns": [],
             "tools": [],
         }
-    protect_verification()
     sensitive = collect("independent", discover("independent")) or script_sensitive
     selected = set(plan["audits"])
     if sensitive and plan["tier"] != "sensitive":
@@ -893,7 +800,6 @@ def review_with_independent_passes(
         selected.add("adversarial")
     while pending := [name for name in DISCOVERY_ORDER if name in selected - completed]:
         name = pending[0]
-        protect_verification()
         if name == "adversarial":
             debug["pipeline_stage"] = "adversarial"
             with ThreadPoolExecutor(max_workers=len(ADVERSARIAL_STAGES)) as executor:
@@ -928,8 +834,6 @@ def review_with_independent_passes(
                 "turns": [],
                 "tools": [],
             }
-
-    protect_verification()
 
     if feedback_packet is not None:
         settings = prompt_config.profile.stages["feedback"]
@@ -971,12 +875,9 @@ def review_with_independent_passes(
             raise
         except Exception as exc:
             record.update(
-                status="budget_exhausted"
-                if isinstance(exc, BudgetExceeded)
-                else "failed",
+                status="failed",
                 error_type=type(exc).__name__,
             )
-        protect_verification()
 
     if is_current is not None and not is_current():
         raise model.StaleReview()
@@ -1106,8 +1007,8 @@ def review_with_independent_passes(
         }
         for finding in findings
     ]
-    if budget is not None:
-        debug["budget"] = budget.summary()
+    if usage is not None:
+        debug["usage"] = usage.summary()
     debug.pop("pipeline_stage", None)
     content = render(
         findings,

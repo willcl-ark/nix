@@ -8,27 +8,28 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from ralph import model
-from ralph.spend import BudgetExceeded
 
 
-class FakeBudget:
+class FakeUsage:
     def __init__(self):
         self.events = []
         self.requests = []
+        self.http_statuses = []
 
-    def reserve(self, stage, data):
-        self.events.append(("reserve", stage, data["model"]))
+    def start(self, stage, data):
+        self.events.append(("start", stage, data["model"]))
         self.requests.append(data)
         return "token"
 
-    def settle(self, token, response):
-        self.events.append(("settle", token, response.get("id")))
+    def complete(self, token, response):
+        self.events.append(("complete", token, response.get("id")))
 
-    def fail(self, token, charged_unknown=True):
-        self.events.append(("fail", token, charged_unknown))
+    def fail(self, token, usage_unknown=True, http_status=None):
+        self.events.append(("fail", token, usage_unknown))
+        self.http_statuses.append(http_status)
 
 
-class ModelBudgetTests(unittest.TestCase):
+class ModelUsageTests(unittest.TestCase):
     def setUp(self):
         self.snapshot = SimpleNamespace(
             checkout=".",
@@ -40,9 +41,9 @@ class ModelBudgetTests(unittest.TestCase):
             head_sha="head",
         )
 
-    def test_settles_before_callback_and_refunds_only_definite_http_rejections(self):
-        budget = FakeBudget()
-        events = budget.events
+    def test_records_usage_before_callback_and_distinguishes_http_rejections(self):
+        usage = FakeUsage()
+        events = usage.events
         result = {
             "id": "response-1",
             "model": "gpt-6-luna",
@@ -60,15 +61,15 @@ class ModelBudgetTests(unittest.TestCase):
                 {"model": "gpt-6-luna", "stream": False},
                 "tests",
                 callback,
-                budget,
+                usage,
             )
         self.assertIs(json.loads(send.call_args.args[1])["stream"], True)
         self.assertEqual(
-            [event[0] for event in events], ["reserve", "settle", "callback"]
+            [event[0] for event in events], ["start", "complete", "callback"]
         )
 
         for code, expected_unknown in ((400, False), (429, False), (500, True)):
-            budget.events.clear()
+            usage.events.clear()
             error = urllib.error.HTTPError("url", code, "rejected", {}, None)
             with (
                 patch.object(model.transport, "request", side_effect=error),
@@ -76,12 +77,13 @@ class ModelBudgetTests(unittest.TestCase):
                 self.assertRaises(urllib.error.HTTPError),
             ):
                 model.request_response(
-                    "secret", {"model": "gpt-6-luna"}, "tests", budget=budget
+                    "secret", {"model": "gpt-6-luna"}, "tests", usage=usage
                 )
-            self.assertEqual(budget.events[-1], ("fail", "token", expected_unknown))
+            self.assertEqual(usage.events[-1], ("fail", "token", expected_unknown))
+            self.assertEqual(usage.http_statuses[-1], code)
 
-    def test_stage_deadline_bounds_request_retries_without_new_reservations(self):
-        budget = FakeBudget()
+    def test_stage_deadline_bounds_request_retries_without_new_attempts(self):
+        usage = FakeUsage()
         clock = [100.0]
 
         def request(_url, _payload, _key, timeout):
@@ -99,15 +101,15 @@ class ModelBudgetTests(unittest.TestCase):
                 "secret",
                 {"model": "gpt-6.1-sol"},
                 "write_verifier",
-                budget=budget,
+                usage=usage,
                 timeout=1800,
                 deadline=102.0,
             )
         self.assertEqual(send.call_count, 1)
-        self.assertEqual([event[0] for event in budget.events], ["reserve", "fail"])
+        self.assertEqual([event[0] for event in usage.events], ["start", "fail"])
 
     def test_transient_requests_retry_same_conversation_and_account_each_attempt(self):
-        budget = FakeBudget()
+        usage = FakeUsage()
         debug = {}
         rejected = urllib.error.HTTPError(
             "url",
@@ -148,21 +150,21 @@ class ModelBudgetTests(unittest.TestCase):
                 "conversation",
                 model_name="gpt-6-luna",
                 max_output_tokens=100,
-                budget=budget,
+                usage=usage,
                 debug=debug,
             )
         self.assertEqual(answer, "Review complete")
         self.assertEqual(len({call.args[1] for call in send.call_args_list}), 1)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 2])
         self.assertEqual(
-            budget.events,
+            usage.events,
             [
-                ("reserve", "verifier", "gpt-6-luna"),
+                ("start", "verifier", "gpt-6-luna"),
                 ("fail", "token", False),
-                ("reserve", "verifier", "gpt-6-luna"),
+                ("start", "verifier", "gpt-6-luna"),
                 ("fail", "token", True),
-                ("reserve", "verifier", "gpt-6-luna"),
-                ("settle", "token", "finished"),
+                ("start", "verifier", "gpt-6-luna"),
+                ("complete", "token", "finished"),
             ],
         )
         self.assertEqual(
@@ -188,7 +190,7 @@ class ModelBudgetTests(unittest.TestCase):
         for tool_loop in (False, True):
             with self.subTest(tool_loop=tool_loop):
                 debug = {}
-                budget = FakeBudget()
+                usage = FakeUsage()
                 error = subprocess.CalledProcessError(
                     128,
                     ["git", "ls-remote", "https://user:password@example.org/repo"],
@@ -212,7 +214,7 @@ class ModelBudgetTests(unittest.TestCase):
                             model="gpt-6-luna",
                             max_output_tokens=100,
                             debug=debug,
-                            budget=budget,
+                            usage=usage,
                             is_current=Mock(side_effect=error),
                         )
                     else:
@@ -224,12 +226,12 @@ class ModelBudgetTests(unittest.TestCase):
                             model_name="gpt-6-luna",
                             max_output_tokens=100,
                             debug=debug,
-                            budget=budget,
+                            usage=usage,
                             is_current=Mock(side_effect=error),
                         )
                 send.assert_not_called()
                 sleep.assert_not_called()
-                self.assertEqual(budget.events, [])
+                self.assertEqual(usage.events, [])
                 self.assertEqual(debug["status"], "failed")
                 message = debug["error_message"]
                 self.assertIn("exit status 128", message)
@@ -295,7 +297,7 @@ class ModelBudgetTests(unittest.TestCase):
             ("invalid_request_error", False),
         ):
             with self.subTest(code=code):
-                budget = FakeBudget()
+                usage = FakeUsage()
                 failures = []
                 callback = Mock()
                 error = model.transport.StreamError(
@@ -314,7 +316,7 @@ class ModelBudgetTests(unittest.TestCase):
                             {"model": "gpt-6-luna"},
                             "verifier",
                             callback,
-                            budget,
+                            usage,
                             on_retry_failure=failures.append,
                         )
                         self.assertEqual(response, result)
@@ -325,13 +327,13 @@ class ModelBudgetTests(unittest.TestCase):
                                 {"model": "gpt-6-luna"},
                                 "verifier",
                                 callback,
-                                budget,
+                                usage,
                                 on_retry_failure=failures.append,
                             )
                 self.assertEqual(send.call_count, 2 if retryable else 1)
                 self.assertEqual(callback.call_count, 1 if retryable else 0)
                 self.assertEqual(sleep.call_count, 1 if retryable else 0)
-                self.assertEqual(budget.events[1], ("fail", "token", True))
+                self.assertEqual(usage.events[1], ("fail", "token", True))
                 message = model.request_failure_record({}, error)["error_message"]
                 self.assertIn("Provider failed", message)
                 self.assertNotIn("secret", message)
@@ -340,12 +342,14 @@ class ModelBudgetTests(unittest.TestCase):
                         len({call.args[1] for call in send.call_args_list}), 1
                     )
                     self.assertEqual(failures[0]["error_message"], message)
-                    self.assertEqual(budget.events[-1], ("settle", "token", "finished"))
+                    self.assertEqual(
+                        usage.events[-1], ("complete", "token", "finished")
+                    )
 
     def test_transport_retry_is_bounded_and_checks_staleness_before_reserving(self):
         for stale in (False, True):
             with self.subTest(stale=stale):
-                budget = FakeBudget()
+                usage = FakeUsage()
                 debug = {}
                 states = iter([True, False] if stale else [True] * 3)
                 expected = model.StaleReview if stale else TimeoutError
@@ -363,23 +367,23 @@ class ModelBudgetTests(unittest.TestCase):
                         "conversation",
                         model_name="gpt-6-luna",
                         max_output_tokens=100,
-                        budget=budget,
+                        usage=usage,
                         debug=debug,
                         is_current=lambda states=states: next(states),
                     )
                 self.assertEqual(send.call_count, 1 if stale else 3)
-                self.assertEqual(len(budget.requests), send.call_count)
+                self.assertEqual(len(usage.requests), send.call_count)
                 self.assertEqual(len(debug["turns"]), send.call_count)
                 self.assertTrue(
                     all(
                         event[-1] is True
-                        for event in budget.events
+                        for event in usage.events
                         if event[0] == "fail"
                     )
                 )
 
-    def test_callback_failure_never_retries_a_settled_response(self):
-        budget = FakeBudget()
+    def test_callback_failure_never_retries_a_completed_response(self):
+        usage = FakeUsage()
         callback = Mock(side_effect=TimeoutError("local callback failed"))
         with (
             patch.object(
@@ -393,43 +397,11 @@ class ModelBudgetTests(unittest.TestCase):
                 {"model": "gpt-6-luna"},
                 "verifier",
                 callback,
-                budget,
+                usage,
             )
         send.assert_called_once()
         sleep.assert_not_called()
-        self.assertEqual([event[0] for event in budget.events], ["reserve", "settle"])
-
-    def test_retry_cannot_bypass_budget_and_keeps_the_failed_attempt(self):
-        budget = FakeBudget()
-        reserve = budget.reserve
-
-        def limited_reserve(stage, data):
-            if budget.requests:
-                raise BudgetExceeded("uncertain first request consumed budget")
-            return reserve(stage, data)
-
-        budget.reserve = limited_reserve
-        debug = {}
-        with (
-            patch.object(model.transport, "request", side_effect=TimeoutError) as send,
-            patch.object(model.time, "sleep"),
-            self.assertRaises(BudgetExceeded),
-        ):
-            model.run_audit(
-                "secret",
-                "verifier",
-                "Verify.",
-                "conversation",
-                model_name="gpt-6-luna",
-                max_output_tokens=100,
-                budget=budget,
-                debug=debug,
-            )
-        send.assert_called_once()
-        self.assertEqual(budget.events[-1], ("fail", "token", True))
-        self.assertEqual(debug["status"], "budget_exhausted")
-        self.assertEqual(len(debug["turns"]), 1)
-        self.assertEqual(debug["turns"][0]["error"], "TimeoutError")
+        self.assertEqual([event[0] for event in usage.events], ["start", "complete"])
 
     def test_inspection_limit_returns_final_answer_and_records_skipped_calls(self):
         calls = [
@@ -472,7 +444,7 @@ class ModelBudgetTests(unittest.TestCase):
             },
         ]
         debug = {}
-        budget = FakeBudget()
+        usage = FakeUsage()
         discussion = Mock(return_value="Discussion")
         with (
             patch.object(
@@ -499,14 +471,14 @@ class ModelBudgetTests(unittest.TestCase):
                 tools=model.ARCHAEOLOGY_TOOLS,
                 allow_web_search=True,
                 discussion_lookup=discussion,
-                budget=budget,
+                usage=usage,
                 reasoning_effort="xhigh",
                 max_output_tokens=25_000,
             )
         self.assertEqual(answer, raw)
         for call in send.call_args_list:
             self.assertNotIn("max_tool_calls", json.loads(call.args[1]))
-        self.assertEqual(budget.requests[0]["max_tool_calls"], 1)
+        self.assertEqual(usage.requests[0]["max_tool_calls"], 1)
         read.assert_called_once()
         history.assert_called_once()
         discussion.assert_called_once()
@@ -530,10 +502,9 @@ class ModelBudgetTests(unittest.TestCase):
                 "web_search_calls_per_response": {"limit": 1, "used": 1, "hit": None},
             },
         )
-        self.assertFalse(debug["budget_limited"])
         self.assertEqual(
-            [event[0] for event in budget.events],
-            ["reserve", "settle", "reserve", "settle"],
+            [event[0] for event in usage.events],
+            ["start", "complete", "start", "complete"],
         )
 
     def test_failed_search_request_records_transmitted_payload(self):
@@ -561,7 +532,7 @@ class ModelBudgetTests(unittest.TestCase):
             debug["turns"][0]["request_sha256"], hashlib.sha256(payload).hexdigest()
         )
 
-    def test_stale_review_between_turns_does_not_reserve_again(self):
+    def test_stale_review_between_turns_does_not_start_again(self):
         call = {
             "type": "function_call",
             "call_id": "call-1",
@@ -576,7 +547,7 @@ class ModelBudgetTests(unittest.TestCase):
             "usage": {"input_tokens": 10, "output_tokens": 2},
         }
         debug = {}
-        budget = FakeBudget()
+        usage = FakeUsage()
         states = iter([True, False])
         with (
             patch.object(model.transport, "request", return_value=first) as send,
@@ -591,149 +562,15 @@ class ModelBudgetTests(unittest.TestCase):
                 prompt="Review.",
                 model="gpt-6-luna",
                 max_output_tokens=model.MAX_OUTPUT_TOKENS,
-                budget=budget,
+                usage=usage,
                 max_tool_calls=1,
                 is_current=lambda: next(states),
             )
         send.assert_called_once()
-        self.assertEqual([event[0] for event in budget.events], ["reserve", "settle"])
+        self.assertEqual([event[0] for event in usage.events], ["start", "complete"])
         self.assertEqual(debug["limits"]["tool_calls"]["used"], 1)
         self.assertEqual(debug["limits"]["output_tokens"]["used"], 2)
-        self.assertFalse(debug["budget_limited"])
         self.assertFalse(debug["limits"]["tool_calls"]["hit"])
-
-    def test_budget_rejection_has_no_request_turn(self):
-        class RejectedBudget:
-            def __init__(self):
-                self.choices = []
-
-            def reserve(self, _stage, _data):
-                self.choices.append(_data["tool_choice"])
-                raise BudgetExceeded("limit")
-
-        budget = RejectedBudget()
-        stage = {"model": "gpt-6-luna", "status": "running", "turns": [], "tools": []}
-        with (
-            patch.object(model.transport, "request") as send,
-            self.assertRaises(BudgetExceeded),
-        ):
-            model.openai_review(
-                "secret",
-                "patch",
-                self.snapshot,
-                stage,
-                prompt="Review.",
-                model="gpt-6-luna",
-                max_output_tokens=model.MAX_OUTPUT_TOKENS,
-                budget=budget,
-            )
-        send.assert_not_called()
-        self.assertEqual(budget.choices, ["required"])
-        self.assertEqual(stage["turns"], [])
-        self.assertEqual(stage["status"], "budget_exhausted")
-        self.assertTrue(stage["budget_limited"])
-        self.assertIsNone(stage["limits"]["output_tokens"]["used"])
-
-    def test_budget_rejection_after_inspection_finishes_without_tools(self):
-        class OneInspectionBudget:
-            def __init__(self):
-                self.events = []
-
-            def reserve(self, stage, data):
-                self.events.append(("reserve", stage, data["tool_choice"]))
-                if data["tool_choice"] == "auto":
-                    raise BudgetExceeded("limit")
-                return "token"
-
-            def settle(self, token, response):
-                self.events.append(("settle", token, response.get("id")))
-
-            def fail(self, token, charged_unknown=True):
-                self.events.append(("fail", token, charged_unknown))
-
-        raw = json.dumps(
-            {
-                "coverage": {
-                    "status": "partial",
-                    "limitations": ["Budget prevented more inspection"],
-                },
-                "findings": [],
-                "requires_sensitive_review": False,
-            }
-        )
-        first = {
-            "id": "first-tool",
-            "model": "gpt-6-luna",
-            "status": "completed",
-            "output": [
-                {
-                    "type": "function_call",
-                    "call_id": "call-1",
-                    "name": "read_file",
-                    "arguments": '{"path":"src/a.cpp","start_line":1}',
-                }
-            ],
-        }
-        final = {
-            "id": "forced-final",
-            "model": "gpt-6-luna",
-            "status": "completed",
-            "output": [
-                {"type": "message", "content": [{"type": "output_text", "text": raw}]}
-            ],
-        }
-        schema = {"type": "object", "properties": {}, "additionalProperties": True}
-        debug = {}
-        budget = OneInspectionBudget()
-        with (
-            patch.object(
-                model.transport,
-                "request",
-                side_effect=[first, final],
-            ) as send,
-            patch.object(model, "read_file", return_value="1: evidence") as read,
-        ):
-            answer = model.openai_review(
-                "secret",
-                "patch",
-                self.snapshot,
-                debug,
-                prompt="Review.",
-                model="gpt-6-luna",
-                max_output_tokens=model.MAX_OUTPUT_TOKENS,
-                budget=budget,
-                response_schema=schema,
-                api_base="https://api.ppq.ai/v1",
-            )
-        self.assertEqual(answer, raw)
-        self.assertEqual(read.call_count, 1)
-        self.assertEqual(send.call_count, 2)
-        self.assertEqual(
-            [call.args[0] for call in send.call_args_list],
-            ["https://api.ppq.ai/v1/responses"] * 2,
-        )
-        sent = json.loads(send.call_args_list[-1].args[1])
-        self.assertEqual(sent["tool_choice"], "none")
-        self.assertEqual(sent["input"][0]["role"], "user")
-        self.assertEqual(sent["input"][1]["type"], "function_call")
-        self.assertEqual(sent["input"][2]["type"], "function_call_output")
-        self.assertIn("Budget is near", sent["input"][-1]["content"])
-        self.assertEqual(
-            [turn["tool_choice"] for turn in debug["turns"]], ["required", "none"]
-        )
-        self.assertTrue(debug["turns"][1]["budget_forced_final"])
-        self.assertTrue(debug["budget_limited"])
-        self.assertFalse(debug["limits"]["tool_calls"]["hit"])
-        self.assertEqual(
-            budget.events,
-            [
-                ("reserve", "independent", "required"),
-                ("settle", "token", "first-tool"),
-                ("reserve", "independent", "auto"),
-                ("reserve", "independent", "none"),
-                ("settle", "token", "forced-final"),
-            ],
-        )
 
     def test_claude_uses_auto_tools_preserves_thinking_and_requires_inspection(self):
         thinking = {
@@ -826,9 +663,8 @@ class ModelBudgetTests(unittest.TestCase):
             },
         )
         self.assertEqual(record["limits"], debug["limits"])
-        self.assertFalse(debug["budget_limited"])
 
-        budget = FakeBudget()
+        usage = FakeUsage()
         debug = {}
         with (
             patch.object(model.transport, "request", return_value=result) as send,
@@ -842,10 +678,10 @@ class ModelBudgetTests(unittest.TestCase):
                 prompt="Review.",
                 model="gpt-6-luna",
                 max_output_tokens=100,
-                budget=budget,
+                usage=usage,
             )
         send.assert_called_once()
-        self.assertEqual([event[0] for event in budget.events], ["reserve", "settle"])
+        self.assertEqual([event[0] for event in usage.events], ["start", "complete"])
         self.assertEqual(debug["status"], "incomplete")
         self.assertEqual(debug["raw_output"], "Partial review")
         self.assertEqual(debug["turns"][0]["output_tokens"], 100)

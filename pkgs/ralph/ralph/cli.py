@@ -12,7 +12,7 @@ import tempfile
 from urllib.parse import urlsplit
 import uuid
 
-from . import backports, engine, profiles, repository, research, runner, spend, upstream
+from . import backports, engine, profiles, repository, research, runner, usage, upstream
 
 
 def _read_json(path):
@@ -159,7 +159,6 @@ def parser():
     review.add_argument("--engine-config", type=Path)
     review.add_argument("--archaeology", choices=("auto", "on", "off"))
     review.add_argument("--openai-key-file", type=Path, required=True)
-    review.add_argument("--review-budget-usd", type=float, default=5.00)
     review.add_argument("--agents-dir", type=Path)
     review.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
     review.add_argument("--output", type=Path)
@@ -231,19 +230,11 @@ def _review(args, cancellation):
             selected = engine.load(args.engine, settings)
         except Exception as error:
             raise ValueError(f"Could not configure review engine: {error}") from error
-        multiplier = (
-            selected.config["profile"]["budget_multiplier"]
-            if args.engine == "current"
-            else 1
-        )
-        args.review_budget_usd *= multiplier
         api_key = _key(args.openai_key_file)
         with tempfile.TemporaryDirectory(prefix="ralph-review-") as ledger_dir:
             review_id = str(uuid.uuid4())
-            budget = spend.RequestBudget(
-                spend.Ledger(
-                    Path(ledger_dir) / "spend.sqlite3", args.review_budget_usd
-                ),
+            request_usage = usage.RequestUsage(
+                usage.Ledger(Path(ledger_dir) / "usage.sqlite3"),
                 review_id,
             )
             with repository.local_snapshot(
@@ -268,7 +259,7 @@ def _review(args, cancellation):
                 runtime = engine.Runtime(
                     case=case,
                     api_key=api_key,
-                    budget=budget,
+                    usage=request_usage,
                     is_current=lambda: cancellation["signal"] is None,
                 )
                 if archaeology is not None:
@@ -322,9 +313,6 @@ def _review(args, cancellation):
                         file=sys.stderr,
                     )
                 result["target"] = target
-                result["run"]["allowances"] = {
-                    "openai_usd": args.review_budget_usd,
-                }
                 if cancellation["signal"]:
                     code = 128 + cancellation["signal"]
                 if artifact is not None:

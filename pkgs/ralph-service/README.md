@@ -7,7 +7,7 @@ the exact core package and imports its `run_review` function directly.
 The package installs:
 
 - `ralph-service`, the webhook receiver, queue workers and explicit state converter.
-- `ralph-evaluate`, frozen capture/replay, spending inspection and offline summaries.
+- `ralph-evaluate`, frozen capture/replay, usage inspection and offline summaries.
 - `ralph-followup`, background assessment of previously published findings.
 - `ralph-telegram`, independent Telegram publication, monitoring and channel commands.
 
@@ -37,21 +37,21 @@ flowchart TD
     saved --> report["Optional public HTML and JSON report"]
     report --> publish["Create or update one bot comment per PR"]
     pipeline --> trace["Private trace: outputs, tools, usage and attribution"]
-    saved --> stats["Static statistics from jobs and spend ledgers"]
+    saved --> stats["Static statistics from jobs and usage ledgers"]
     workers --> stale["Changed head: supersede and enqueue latest head"]
 ```
 
 Only one attempt runs per PR. Fetch and snapshot preparation share a Git lock;
 model calls run outside it. Each attempt pins its Git objects with separate refs.
 Head checks prevent stale reviews from being published. Publication retries reuse
-saved results rather than paying for another review. Transient transport failures
+saved results without another model run. Transient transport failures
 have bounded job retries. Oversized inputs use a changed-file manifest and diff
 tools; if the PR prelude and manifest still exceed 200,000 bytes, review is skipped.
 
 Review outcome and delivery status are separate. A failed verifier marks the
 review as failed in its saved result, public report, logs and statistics. The
 service still delivers verified findings and review history, then completes the
-queue job so publication retries do not pay for another review. A failed review
+queue job so publication retries do not run the models again. A failed review
 cannot create, update or delete the upstream GitHub major-findings comment.
 Public stage diagnostics include the bounded, redacted provider error message
 and HTTP status, without response bodies or headers.
@@ -95,29 +95,20 @@ settings. Main-review agent settings do not affect follow-up.
 
 ## State and upgrades
 
-Keep `jobs.sqlite3`, the review spend database, private traces, the shared Git
-object store and retained refs, public reports, and all of `followup/`.
-In particular, preserve follow-up initialization metadata, `assessments.sqlite3`,
-its spend database and checkout. The package split adds no state migration or
-second queue. The existing explicit pre-engine converter remains available.
+Keep `jobs.sqlite3`, private traces, the shared Git object store and retained
+refs, public reports, and all of `followup/`. Preserve follow-up initialization
+metadata, `assessments.sqlite3`, its checkout and its usage ledger.
 
-Codex and Claude requests share the proxy client key and `spend.sqlite3` review
-and monthly allowances. The default review allowance is $5, including Claude
-thinking and final-output reservations. No PPQ key or separate PPQ allowance
-is used for new reviews. Preserve any historical `ppq-spend.sqlite3`: statistics and status
-continue reading its recorded request and token usage.
+New requests are recorded in fresh `usage.sqlite3` and `followup/usage.sqlite3`
+databases. Ralph does not read, convert or delete the old spend databases.
+There is no price table, monetary admission limit or reservation accounting.
+Each request attempt records its outcome and reported usage; missing token or
+cache counts remain unknown. The stats page separates these incomplete counts
+from reported totals.
 
-Request timestamps require the migration in
-`ralph-service --state-dir DIR --migrate-state`. The NixOS module runs it before
-starting the service. It backs up and upgrades both review ledgers and
-`followup/spend.sqlite3`, skipping missing or already upgraded databases.
-Backups use the `.pre-timestamps.bak` suffix. Historical requests retain their
-accounting month and an unknown timestamp. Stats reads never modify private state.
-
-Public stats emphasize request counts and recorded tokens rather than dollar
-estimates. Missing usage and cache counts remain explicit. The ledger's existing
-API-equivalent reservations continue to bound workload; they do not measure
-subscription fees or remaining quota.
+Queued and frozen configurations that contain the old budget schema need to be
+recreated. No automatic conversion of old usage data or live host deployment
+is performed by building these packages.
 
 The stats command can also take `--proxy-management-url` and
 `--proxy-management-key-file` together to collect passive Codex and Claude quota
@@ -129,8 +120,8 @@ are unavailable, never zero. No inference requests or usage-queue reads are made
 The bundled proxy UI does not need a separate frontend deployment.
 
 The `stats/limits/` page groups saved stage observations by agent, model,
-profile and configured cap. It shows usage at the cap, confirmed interruptions,
-spending blocks and affected review links. Older results without telemetry
+profile and configured cap. It shows usage at the cap, confirmed interruptions
+and affected review links. Older results without telemetry
 remain uninstrumented. Output-token usage is measured per response; web-search
 cap usage is observable but provider-side blocking is not. These counts help
 choose limits to investigate, rather than measure review quality.
@@ -148,7 +139,7 @@ services and take SQLite-consistent backups, retaining refs and reports too.
 Hydrate the shared Git store before starting local-only snapshot reads. Start
 one companion against the existing state and resume timers after startup succeeds.
 No deployment is performed by building these packages. A package rollback does
-not undo published comments or recorded model spending.
+not undo published comments or recorded model requests.
 
 Optional `--github-repository owner/repo` and `--github-token-file /run/secrets/token`
 authenticate upstream metadata and author-feedback reads independently of posting.
@@ -176,8 +167,7 @@ severity exactly `major` adds `🚨 Major finding` in either form.
 Post `/status` in the configured channel to see service states, queue and
 result totals, recorded token usage and the latest subscription quota snapshot. `/high <PR number>` requests a fresh review
 of an open PR in the configured repository using the high profile. It increases
-the harder core review stages and multiplies the shared review allowance by
-five; the monthly cap stays unchanged. `/help` lists the
+the reasoning effort and models of the harder core review stages. `/help` lists the
 commands. Commands are channel-only. All channel administrators may issue commands.
 Anonymous posts rely on Telegram's administrator posting permissions;
 identified senders must be current administrators. The monitor verifies bot
@@ -223,7 +213,7 @@ source-line location. See [core behavior](../ralph/README.md#backport-reviews).
 Label/body edits alone do not enqueue reviews. Use the existing explicit review
 request to re-review an unchanged head after editing its backport scope.
 
-Frozen cases use schema 6 and retain the backport evidence and available upstream
+Frozen cases use schema 7 and retain the backport evidence and available upstream
 objects for offline replay. Recreate older case manifests before evaluating with
 this version; replay rejects changed evidence or missing source pins before any
 model request.
@@ -249,9 +239,9 @@ the code, and unresolved history remains in reports and status badges even when
 there are no new findings. A collapsed entry is still unresolved.
 
 Same-head reuse checks revision and review metadata before feedback acquisition,
-so new replies cannot trigger duplicate paid reviews. The packet fingerprint is
+so new replies cannot trigger duplicate model runs. The packet fingerprint is
 saved separately with the result. Publication retries use the
-saved result and frozen packet instead of paying for another review. Frozen
+saved result and frozen packet without another model run. Frozen
 captures retain the same evidence. Historical captures exclude older results
 without a trustworthy completion timestamp; ordinary captures retain legacy
 history. Feedback acquisition failures retain prior findings for reconciliation
