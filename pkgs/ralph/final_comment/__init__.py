@@ -116,6 +116,57 @@ def _comment_findings(findings):
     )[:COMMENT_FINDING_LIMIT]
 
 
+def _current_findings(findings, memory, head_sha):
+    current = list(findings)
+    groups = {}
+    for entry in memory:
+        groups.setdefault(entry.get("duplicate_of") or entry["key"], []).append(entry)
+    included = set()
+    for key, group in groups.items():
+        # A current candidate may have been withheld by a later verifier. Do not
+        # resurrect it from memory just because no published finding survived.
+        if any(
+            entry.get("current_candidate_ids") or entry.get("current_finding_ids")
+            for entry in group
+        ):
+            continue
+        confirmed = [
+            entry
+            for entry in group
+            if head_sha
+            and entry.get("checked_head") == head_sha
+            and entry.get("status") == "still_present"
+            and entry.get("reason")
+            and any(
+                source.get("side") == "head"
+                for source in entry.get("source_evidence", [])
+            )
+        ]
+        if not confirmed:
+            continue
+        entry = next(
+            (entry for entry in confirmed if entry["key"] == key), confirmed[0]
+        )
+        source = next(
+            source for source in entry["source_evidence"] if source["side"] == "head"
+        )
+        current.append(
+            {
+                "id": entry["key"],
+                "severity": entry["severity"],
+                "title": entry.get("presented_title") or entry["title"],
+                # Reconciliation describes the claim at this head; old wording and
+                # old line numbers need not still be accurate.
+                "summary": entry["reason"],
+                "path": source["path"],
+                "line": source["line"],
+                "side": "head",
+            }
+        )
+        included.update(entry["key"] for entry in group)
+    return current, included
+
+
 def _brief_finding(finding, comment_format, location=None):
     return Template(comment_format["brief_finding"]).substitute(
         severity=severity_label(finding["severity"]),
@@ -138,12 +189,16 @@ def render(
     comment_format=None,
     review_tier=None,
     report_url=None,
+    head_sha=None,
 ):
     """Render a bounded current review; history and explanations live in the report."""
     comment_format = (
         load_format() if comment_format is None else validate_format(comment_format)
     )
     sections = dict.fromkeys(_PLACEHOLDERS["comment"], "")
+    findings, included_history = _current_findings(
+        findings, review_memory or [], head_sha
+    )
     selected = [] if verification_failed else _comment_findings(findings)
     if verification_failed:
         sections["verification_failed"] = (
@@ -174,6 +229,7 @@ def render(
         for entry in review_memory or []
         if entry.get("status") not in {"fixed", "invalid"}
         and not entry.get("current_finding_ids")
+        and (verification_failed or entry["key"] not in included_history)
     ]
     if unlinked:
         notices.append(

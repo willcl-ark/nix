@@ -747,8 +747,11 @@ feedback pass then maps explicit author replies to earlier findings and current
 candidates. The verifier checks the technical claims against source code.
 
 An author saying “addressing elsewhere” or “won't fix” does not resolve a finding.
-Current verified findings are eligible for the concise comment. Earlier unresolved
-concerns without a current finding receive one short notice. In the full
+Current verified findings and historical concerns confirmed as still present at
+the reviewed head compete for the same six comment slots. Historical concerns
+use the current assessment and evidence location. Unverified history receives
+one short notice. A historical group linked to a rejected current candidate
+cannot restore that finding. In the full
 report, verified unchanged findings appear as compact expandable entries with
 their severity, title and status, even when discovery does not find them again.
 Their full text, original revision, last checked revision and available

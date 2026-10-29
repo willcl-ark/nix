@@ -479,6 +479,7 @@ def process_job(
                     .get("selected", {})
                     .get("tier"),
                     report_url=saved["run"].get("report_url"),
+                    head_sha=head_sha,
                 )
             stage = "publish"
             result = forgejo.publish_review(

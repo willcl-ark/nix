@@ -363,8 +363,13 @@ class ServiceTests(unittest.TestCase):
                 "key": "previous:1",
                 "title": "Old claim",
                 "body": "Old explanation",
-                "severity": "minor",
-                "status": "unclear",
+                "severity": "major",
+                "status": "still_present",
+                "checked_head": "a" * 40,
+                "reason": "The earlier failure remains reachable.",
+                "source_evidence": [
+                    {"path": "current.cpp", "line": 17, "side": "head"}
+                ],
             }
         ]
         job["review_result"] = result
@@ -378,10 +383,13 @@ class ServiceTests(unittest.TestCase):
         ):
             self.assertEqual(self.process(job), "updated")
         comment = publish.call_args.args[6]
-        self.assertIn("Summary 5.", comment)
+        self.assertIn("Summary 4.", comment)
+        self.assertNotIn("Summary 5.", comment)
         self.assertNotIn("Summary 6.", comment)
-        self.assertNotIn("Old claim", comment)
-        self.assertIn("2 additional verified findings", comment)
+        self.assertIn("Old claim", comment)
+        self.assertIn("current.cpp:17", comment)
+        self.assertNotIn("Old explanation", comment)
+        self.assertIn("3 additional verified findings", comment)
         self.assertIn("https://review.example.org/traces/", comment)
         reports = list(self.bot_config.report_dir.glob("*.json"))
         self.assertEqual(len(reports), 1)

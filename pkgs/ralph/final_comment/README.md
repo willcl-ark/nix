@@ -63,9 +63,10 @@ empty sections and their blank paragraphs. The other files control headings
 and the Markdown around their content.
 
 Comments show severity, title, a one-sentence summary and source location for at
-most six current verified findings. They sort by severity, preserving the
-verifier's impact and evidence order within each severity. Additional findings
-link to the full report. Earlier unresolved concerns receive one short notice;
+most six confirmed findings, including historical issues checked as still present
+at the reviewed head. They sort by severity; new assessments retain the verifier's
+impact order, followed by unrediscovered historical issues on ties. Additional
+findings link to the full report. Unverified historical concerns receive one short notice;
 their entries, resolved history, finding bodies and alternatives stay in the
 report. Concept feedback and a brief backport assessment can still appear.
 
@@ -102,7 +103,11 @@ identity and replay keeps the original format.
 `render()` produces the concise comment. `render_report()` preserves the full
 review and is used for saved pipeline content. Both use the template snapshot;
 the display limit does not truncate structured exports. `render()` also accepts
-`report_url` for links to findings beyond the comment limit.
+`report_url` for links to findings beyond the comment limit and `head_sha` to
+include historical concerns verified at that head. Historical entries use the
+current reconciliation reason and source evidence, never stale line numbers.
+A history group linked to a current candidate cannot resurrect a finding that
+failed current verification. This does not change upstream GitHub eligibility.
 
 All renderers accept `review_tier` to retain the final selected routing tier in hidden HTML metadata
 after the template content. When no tier is available, they omit the footer.

@@ -84,7 +84,8 @@ a complete alternate agent directory. `ralph-evaluate capture` and `run` accept
 the same option; replay keeps the captured settings unless explicitly overridden.
 
 For the current engine, mirror comments show at most six current verified
-findings, ordered by severity and then the verifier's impact and evidence order.
+findings, including historical issues confirmed as still present at this head.
+They sort by severity, with current findings first on ties.
 Each shows its title, impact summary and source location. Additional findings
 link to the full report. Earlier unresolved concerns and incomplete coverage
 receive short notices. Finding explanations, alternatives and full review
