@@ -24,13 +24,22 @@ class TelegramTests(unittest.TestCase):
 
     def test_unicode_limit_and_oversized_title_keep_links(self):
         self.assertEqual(telegram.message_length("🚨"), 2)
-        result = self.result("🚨" * 2048)
+        result = self.result(
+            "🚨" * 2048,
+            findings=[
+                {"severity": severity}
+                for severity in ("major", "minor", "minor", "suggestion")
+            ],
+        )
         self.assertNotIn("🚨" * 2048, self.render(result))
+        summary = "Current findings: Major: 1 · Minor: 2 · Suggestions: 1"
+        self.assertIn(summary, self.render(result))
         result["run"]["pr_title"] = "🚨" * 5000
         text = self.render(result)
         self.assertLessEqual(telegram.message_length(text), 4096)
         self.assertIn("https://forge.example/owner/repo/pulls/42", text)
         self.assertIn("https://reports.example/42.html", text)
+        self.assertIn(summary, text)
 
     def test_retained_major_avoids_new_alarm_without_forgetting_the_concern(self):
         result = self.result(findings=[{"id": "new:1", "severity": "major"}])
@@ -45,6 +54,11 @@ class TelegramTests(unittest.TestCase):
         ]
         self.assertIn("Previously reported major concern", self.render(result))
         self.assertNotIn("🚨 Major finding", self.render(result))
+        result["content"] = "x" * 4096
+        self.assertIn(
+            "Current findings: Major: 0 · Minor: 0 · Suggestions: 0",
+            self.render(result),
+        )
         result["output"]["exports"]["findings"].append(
             {"id": "new:2", "severity": "major"}
         )

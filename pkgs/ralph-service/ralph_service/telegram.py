@@ -5,6 +5,7 @@ import json
 import re
 import urllib.error
 import urllib.request
+from collections import Counter
 from http.client import HTTPException
 from urllib.parse import quote
 
@@ -30,7 +31,8 @@ def truncate_message(text, limit=MESSAGE_LIMIT):
 
 def review_message(repository_url, number, result):
     run = result["run"]
-    findings = trace.findings_export(result) or []
+    findings_export = trace.findings_export(result)
+    findings = findings_export or []
     memory = trace.unresolved_memory(result)
     collapsed = {
         finding_id
@@ -64,8 +66,20 @@ def review_message(repository_url, number, result):
     full = f"{heading}{links}\n\n{content}"
     if message_length(full) <= MESSAGE_LIMIT:
         return full
-    # Keep both links even if a PR has an unusually long title.
-    return truncate_message(heading, MESSAGE_LIMIT - message_length(links)) + links
+    counts = Counter(
+        finding.get("severity")
+        for finding in findings
+        if finding.get("id") not in collapsed
+    )
+    labels = [("major", "Major"), ("minor", "Minor"), ("suggestion", "Suggestions")]
+    if counts["critical"]:
+        labels.insert(0, ("critical", "Critical"))
+    summary = " · ".join(f"{label}: {counts[severity]}" for severity, label in labels)
+    if findings_export is None:
+        summary = "unavailable"
+    footer = f"\nCurrent findings: {summary}{links}"
+    # Keep the counts and both links even if a PR has an unusually long title.
+    return truncate_message(heading, MESSAGE_LIMIT - message_length(footer)) + footer
 
 
 class TelegramError(Exception):
