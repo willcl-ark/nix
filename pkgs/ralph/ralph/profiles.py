@@ -24,6 +24,7 @@ STAGE_NAMES = (
     "build",
     "archaeologist",
     "alternatives",
+    "challenger",
     "feedback",
     "verifier",
     "write_verifier",

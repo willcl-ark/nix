@@ -1,9 +1,10 @@
 # ralph local review
 
 Ralph loads a selected local review engine. The default `current` engine performs
-static reviews of committed Bitcoin Core changes, discovers candidate findings in independent
-passes, checks them against repository evidence, and returns verified findings
-and a separately verified conceptual assessment. Surviving Major findings can
+static reviews of committed Bitcoin Core changes, discovers candidate findings
+in independent passes followed by a challenger, checks them against repository
+evidence, and returns verified findings and a separately verified conceptual
+assessment. Surviving Major findings can
 receive an optional build/test experiment in an isolated disposable workspace. The engine owns its Markdown and structured result; other engines need
 not use the stages, diagnostics or exports described below. Operators can load
 only trusted engine modules included in the package. Engines own their output
@@ -203,6 +204,7 @@ flowchart LR
 | Invalid or failed routing, material missing context, or oversized patch | Use the sensitive general plan with all profiles, excluding script. Full and shadow modes still include script. Provider or stage failures remain explicit. |
 | Overview requests sensitive review from a lower tier | Add all general audits and profiles, excluding script. |
 | A focused audit requests sensitive review from a lower tier | Add adversarial, state and concurrency; keep selected profiles, or use all profiles if none were selected. |
+| Challenger requests sensitive review from a lower tier | Run missing sensitive audits before verification, without repeating the challenger. |
 
 Paths do not impose a tier or add adversarial profiles. Comments in a consensus
 header can be routine; wallet logging and demonstrably mechanical refactors can
@@ -283,13 +285,14 @@ flowchart LR
     class script,history,alternatives optional
 ```
 
-**2. Discover independent candidates**
+**2. Discover candidates and challenge the proposal**
 
 ```mermaid
 flowchart LR
     overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Astra + Claude<br/>in parallel when selected"]
     adversarial --> focused["Selected focused audits<br/>run sequentially"]
-    focused --> pool["Candidate pool"]
+    focused --> challenger["Challenger<br/>prior candidates + context"]
+    challenger --> pool["Candidate pool"]
     classDef optional stroke-dasharray: 5 4
     class adversarial,focused optional
 ```
@@ -298,6 +301,14 @@ Focused audit order: concurrency, state, public_contract, build, tests,
 dead_code, design. Discovery can escalate coverage and add pending audits.
 Claude adversarial review requires `claude-opus-5-5` on the configured proxy.
 A failed Claude pass is reported as incomplete coverage.
+
+The [challenger](agents/challenger/prompt.md) runs once after selected discovery
+at every tier, even when earlier stages found nothing. It investigates
+overlooked bugs, unsupported benefits, accepted assumptions and cleaner
+alternatives. It can return no findings. Whole-approach objections use design
+findings anchored to changed code; the existing concept assessment and public
+sections remain unchanged. Any missing sensitive audits it requests run before
+verification, without repeating the challenger.
 
 **3. Verify, edit, double-check Majors and render**
 
@@ -363,10 +374,12 @@ Skipped audits do not make model calls. All review stages use the configured
 OpenAI-compatible endpoint and key. Concept research is advisory. Negative,
 failed or incomplete research never skips an independent, adversarial or focused code stage selected
 for the review.
-Reviewers do not see other discovery passes' candidates. The verifier sees the
-pooled candidates, original review input, any archaeology and blind-alternative
-candidates, and named inspection gaps from incomplete discovery. Code discovery
-does not receive concept research output or current PR discussion.
+The initial discovery passes do not see each other's candidates or concept
+research output. The challenger receives their candidates, stage status and
+coverage, original review input, and any concept assessment or blind alternatives.
+The verifier sees the pooled candidates and this context, including named
+inspection gaps. Discovery has no access to current PR discussion tools;
+the challenger may receive summaries through the supplied research results.
 
 | Stage | Default model | Reasoning effort | Per-response output token ceiling | Evidence access |
 | --- | --- | --- | --- | --- |
@@ -380,6 +393,7 @@ does not receive concept research output or current PR discussion.
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
+| challenger, all tiers | gpt-6-luna | xhigh | 25,000 | Original input, prior candidates, coverage, optional concept and alternatives; full tool set |
 | verifier, all tiers | claude-opus-5-5 | xhigh | 64,000 | Original input, candidates, concept candidate, code and research tools |
 | write_verifier, only when Majors survive | gpt-6.1-sol | high | 12,000 | Final Major wording, immutable source tools and isolated experiment commands |
 | major_verifier, only when Majors survive | gpt-6.1-sol | medium | 25,000 | Original input and final Major wording; code and base history tools |
@@ -417,9 +431,9 @@ tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit. The allowance of
 two per response is advisory, so a provider response can exceed it. The early
 concept stage never stops later code stages.
-Script, dead_code, independent, both adversarial passes and both verifier stages
-require a first inspection. Claude uses automatic tool selection because Opus
-5.5 rejects forced tool calls; Ralph checks that inspection occurred. At limits,
+Script, dead_code, independent, challenger, both adversarial passes and both
+verifier stages require a first inspection. Claude uses automatic tool selection
+because Opus 5.5 rejects forced tool calls; Ralph checks that inspection occurred. At limits,
 a final turn uses collected evidence and must preserve uncertainty.
 
 The [dead-code audit](agents/dead_code/prompt.md) runs on production, test, script and
@@ -441,8 +455,9 @@ An API failure, invalid response, or missing decision withholds all pending
 Majors. Explicit `drop` and `unresolved` verdicts withhold those findings;
 non-Majors and concept results remain available. Reasoning effort and token
 limits are initial settings, not a measured accuracy guarantee.
-Custom agent directories must include the `write_verifier` and `major_verifier`
-agents. Saved profiles without the new stage must be recaptured.
+Custom agent directories must include the `challenger`, `write_verifier` and
+`major_verifier` agents. Frozen configurations and evaluations predating the
+challenger need fresh configuration and recapture; no migration is provided.
 The companion GitHub publisher also requires second-verifier provenance for
 every Major, including saved publication retries. An unchecked batch is skipped
 without posting or deleting a comment.
@@ -507,8 +522,10 @@ Candidate findings are leads, not votes. Agreement between Sol, Claude and focus
 reviewers gives a claim no extra weight. A defect needs a reachable trigger and
 consequence, checked against the strongest code-based reason it might be false.
 Static proof can suffice; running a reproduction is not required. Defect
-discovery remains independent of the concept assessment, PR discussion and
-upstream review threads.
+discovery before the challenger remains independent of the concept assessment,
+PR discussion and upstream review threads. The challenger receives earlier
+candidates and research results so it can question their assumptions; its
+agreement or disagreement adds no evidence by itself.
 
 Review includes tests, CI, build tooling, contrib utilities, and non-security
 defects. Security guidance draws on the
@@ -629,8 +646,9 @@ ACK/NACK labels.
 
 After a valid concept candidate, blind alternatives are enabled by default. This
 uses the existing archaeologist model with base-only code tools and neutral
-problem, goal and baseline inputs. Its result goes to the verifier, not to
-discovery. The pipeline still runs every selected code stage.
+problem, goal and baseline inputs. Its result goes to the challenger and
+verifier. Earlier discovery passes do not receive it. The pipeline still runs
+every selected code stage.
 
 The verifier checks the premises before accepting public conceptual feedback.
 It records both the archaeologist's proposed review recommendation and its own
@@ -669,8 +687,8 @@ The default profile preserves the stage settings listed above. Select the high
 profile with `ralph review ... --profile high`, or set `"profile": "high"` in
 an engine configuration. The CLI option overrides the configuration file.
 
-High uses gpt-6.1-sol for independent review, concurrency, state, dead code
-and design. Core analysis stages use at least
+High uses gpt-6.1-sol for independent review, concurrency, state, dead code,
+design and challenger. Core analysis stages use at least
 high reasoning effort, retaining xhigh where already configured, and at least
 16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
 the verifier and the Claude adversarial reviewer retain their default settings.

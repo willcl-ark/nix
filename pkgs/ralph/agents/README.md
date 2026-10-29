@@ -1,7 +1,8 @@
 # Agent flow
 
-Ralph gathers candidate findings in independent passes, verifies them against
-source, then edits and formats the accepted findings. An optional write-verifier
+Ralph gathers candidate findings in independent passes, runs a challenger with
+their results, verifies the candidates against source, then edits and formats
+the accepted findings. An optional write-verifier
 can build and test surviving Major findings in an isolated disposable workspace.
 
 ```mermaid
@@ -10,7 +11,8 @@ flowchart TD
     script --> history[Archaeologist and blind alternatives, when enabled]
     history --> independent[Independent overview]
     independent --> audits[Selected specialist audits]
-    audits --> feedback[Author-feedback mapping, when supplied]
+    audits --> challenger[Challenger]
+    challenger --> feedback[Author-feedback mapping, when supplied]
     feedback --> verifier[Verifier]
     verifier --> collator[Collator]
     collator --> write[Write-verifier, when Majors survive]
@@ -37,6 +39,15 @@ Archaeology runs only when enabled with PR context and discussion evidence.
 Its blind-alternatives agent sees the problem, goal and baseline, and can inspect
 only the comparison-base code. It does not see the proposed solution. Backport
 reviews skip blind alternatives.
+
+The [challenger](challenger/prompt.md) runs after the selected discovery passes
+at every tier, including reviews with no candidates. It receives the original
+input, prior candidates, stage status and coverage, and any concept assessment
+or blind alternatives. It investigates the strongest defensible objections to
+merging as written, including overlooked bugs, unsupported benefits and cleaner
+approaches. Its findings use the ordinary discovery schema and verification.
+It can return no findings. If it requests sensitive coverage, missing sensitive
+audits run before verification; the challenger does not run again.
 
 An unusable routing result selects the sensitive general audits. Full mode
 runs every audit. Shadow mode records the router's proposal and runs every audit.

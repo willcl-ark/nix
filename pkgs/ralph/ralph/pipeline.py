@@ -1,4 +1,4 @@
-"""Run selected independent reviews, verify their evidence, then edit findings."""
+"""Discover and challenge review findings, verify evidence, then edit findings."""
 
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +12,7 @@ from .repository import audit_developer_notes, focused_review_input
 
 # Domain stages run in a predictable order; the two
 # adversarial models review the same evidence concurrently.
-# Domain correctness precedes design.
+# Domain correctness precedes design, then the challenger examines their reports.
 DISCOVERY_ORDER = (
     "script",
     "adversarial",
@@ -23,12 +23,14 @@ DISCOVERY_ORDER = (
     "tests",
     "dead_code",
     "design",
+    "challenger",
 )
 ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude")
 FULL_CONTEXT_STAGES = {
     "script",
     "dead_code",
     "independent",
+    "challenger",
     *ADVERSARIAL_STAGES,
     "verifier",
     "write_verifier",
@@ -678,6 +680,23 @@ def review_with_independent_passes(
             if notes is None:
                 notes = audit_developer_notes(snapshot)
             input_text += "\n\nComparison-base developer notes:\n" + notes
+        if name == "challenger":
+            input_text += "\n\nChallenge input:\n" + json.dumps(
+                {
+                    "candidate_findings": candidates,
+                    "discovery_reviews": {
+                        stage: {
+                            "status": record["status"],
+                            "coverage": record.get("coverage"),
+                        }
+                        for stage, record in stages.items()
+                        if stage
+                        in {"independent", *DISCOVERY_ORDER, *ADVERSARIAL_STAGES}
+                    },
+                    "concept_candidate": concept_candidate,
+                    "blind_alternatives": alternatives_candidate,
+                }
+            )
         try:
             answer = run_stage(name, input_text, prompt, protocol.DISCOVERY_SCHEMA)
             result = protocol.discovery(answer, name, snapshot)
@@ -803,6 +822,7 @@ def review_with_independent_passes(
         debug["routing"]["selected"] = plan
     if plan["tier"] == "sensitive":
         selected.add("adversarial")
+    selected.add("challenger")
     while pending := [name for name in DISCOVERY_ORDER if name in selected - completed]:
         name = pending[0]
         if name == "adversarial":

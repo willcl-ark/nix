@@ -123,6 +123,8 @@ class PipelineTests(unittest.TestCase):
             order.append(stage)
             if stage == "independent":
                 return discovery([candidate() for _ in findings])
+            if stage == "challenger":
+                return discovery()
             if stage == "verifier":
                 return verification(
                     [
@@ -207,7 +209,14 @@ class PipelineTests(unittest.TestCase):
         self.run_review(review, edit, usage=usage, writer=review)
         self.assertEqual(
             order,
-            ["independent", "verifier", "collator", "write_verifier", "major_verifier"],
+            [
+                "independent",
+                "challenger",
+                "verifier",
+                "collator",
+                "write_verifier",
+                "major_verifier",
+            ],
         )
         self.assertEqual(self.debug["coverage"]["verification"]["status"], "complete")
         self.assertEqual(self.debug["coverage"]["experiments"]["status"], "partial")
@@ -232,6 +241,8 @@ class PipelineTests(unittest.TestCase):
         stage = kwargs["stage_name"]
         if stage == "independent":
             return discovery([candidate()])
+        if stage == "challenger":
+            return discovery()
         if stage == "verifier":
             return verification(
                 [
@@ -347,6 +358,8 @@ class PipelineTests(unittest.TestCase):
             stage = kwargs["stage_name"]
             if stage == "independent":
                 return discovery([candidate(), candidate()])
+            if stage == "challenger":
+                return discovery()
             if stage == "verifier":
                 return verification(
                     [
@@ -382,6 +395,8 @@ class PipelineTests(unittest.TestCase):
             stage = kwargs["stage_name"]
             if stage == "independent":
                 return discovery([candidate()])
+            if stage == "challenger":
+                return discovery()
             if stage == "verifier":
                 return verification(
                     [
@@ -579,7 +594,7 @@ class PipelineTests(unittest.TestCase):
 
         def reviewer(*args, **kwargs):
             stage = kwargs["stage_name"]
-            if stage == "independent":
+            if stage in {"independent", "challenger"}:
                 self.assertNotIn("SECRET_AUTHOR_REPLY", args[1])
                 self.assertNotIn("previous:1", args[1])
                 return discovery()
@@ -626,6 +641,8 @@ class PipelineTests(unittest.TestCase):
             order.append(stage)
             if stage == "independent":
                 return discovery([candidate()])
+            if stage == "challenger":
+                return discovery()
             result = json.loads(
                 verification(
                     [
@@ -683,7 +700,9 @@ class PipelineTests(unittest.TestCase):
             ), {"status": "completed"}
 
         self.run_review(reviewer, editor=audit, review_feedback=packet)
-        self.assertEqual(order[:3], ["independent", "feedback", "verifier"])
+        self.assertEqual(
+            order[:4], ["independent", "challenger", "feedback", "verifier"]
+        )
         self.assertEqual(len(self.result.findings), 1)
         self.assertEqual(self.result.findings[0]["severity"], "suggestion")
         entry = self.debug["review_memory"][0]
@@ -742,6 +761,8 @@ class PipelineTests(unittest.TestCase):
         def reviewer(*args, **kwargs):
             if kwargs["stage_name"] == "independent":
                 return discovery([candidate()])
+            if kwargs["stage_name"] == "challenger":
+                return discovery()
             result = json.loads(
                 verification(
                     [
@@ -833,9 +854,12 @@ class PipelineTests(unittest.TestCase):
 
     def test_first_review_does_not_call_feedback(self):
         self.tier, self.audits = "routine", []
+        seen = {}
 
         def reviewer(*args, **kwargs):
-            if kwargs["stage_name"] == "independent":
+            stage = kwargs["stage_name"]
+            seen[stage] = (args[1], kwargs)
+            if stage in {"independent", "challenger"}:
                 return discovery()
             self.assertNotIn(
                 "review_reconciliation", kwargs["response_schema"]["properties"]
@@ -843,8 +867,83 @@ class PipelineTests(unittest.TestCase):
             return verification()
 
         self.run_review(reviewer)
+        self.assertEqual(list(seen), ["independent", "challenger", "verifier"])
+        challenge_input, settings = seen["challenger"]
+        challenge = json.loads(challenge_input.split("Challenge input:\n")[1])
+        self.assertEqual(challenge["candidate_findings"], [])
+        self.assertEqual(
+            challenge["discovery_reviews"]["independent"],
+            {"status": "completed", "coverage": COMPLETE},
+        )
+        self.assertIsNone(challenge["concept_candidate"])
+        self.assertIsNone(challenge["blind_alternatives"])
+        self.assertTrue(settings["first_tool_required"])
+        self.assertEqual(settings["tools"], seen["independent"][1]["tools"])
+        self.assertEqual(self.debug["coverage"]["status"], "complete")
         self.assertNotIn("feedback", self.debug["stages"])
         self.assertNotIn("review_memory", self.debug)
+
+    def test_challenger_failure_preserves_verified_findings(self):
+        self.tier, self.audits = "routine", []
+        for failure in (TimeoutError("Provider unavailable"), "{}"):
+            with self.subTest(failure=failure):
+                self.debug = {}
+
+                def reviewer(*args, **kwargs):
+                    if kwargs["stage_name"] == "challenger":
+                        if isinstance(failure, Exception):
+                            raise failure
+                        return failure
+                    return self.major_review(*args, **kwargs)
+
+                content = self.run_review(reviewer)
+                self.assertEqual(len(self.result.findings), 1)
+                self.assertIn(self.published["body"], content)
+                self.assertEqual(self.debug["coverage"]["status"], "partial")
+                self.assertEqual(
+                    self.debug["coverage"]["verification"]["status"], "complete"
+                )
+                self.assertTrue(
+                    any(
+                        issue["stage"] == "challenger"
+                        and issue["category"] == "inspection"
+                        for issue in self.debug["coverage"]["issues"]
+                    )
+                )
+
+    def test_challenger_escalation_runs_only_missing_sensitive_reviews(self):
+        self.tier, self.audits = "routine", ["state"]
+        order = []
+
+        def reviewer(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            order.append(stage)
+            if stage == "verifier":
+                return verification()
+            return discovery(sensitive=stage == "challenger")
+
+        with patch.object(
+            pipeline, "focused_review_input", return_value="Focused diff"
+        ):
+            self.run_review(reviewer)
+        self.assertCountEqual(
+            order,
+            [
+                "independent",
+                "state",
+                "challenger",
+                *pipeline.ADVERSARIAL_STAGES,
+                "concurrency",
+                "verifier",
+            ],
+        )
+        self.assertLess(order.index("state"), order.index("challenger"))
+        for stage in (*pipeline.ADVERSARIAL_STAGES, "concurrency"):
+            self.assertLess(order.index("challenger"), order.index(stage))
+            self.assertLess(order.index(stage), order.index("verifier"))
+        self.assertEqual(self.debug["routing"]["selected"]["tier"], "sensitive")
+        self.assertEqual(self.debug["routing"]["escalated_by"], "challenger")
+        self.assertEqual(self.debug["coverage"]["status"], "complete")
 
     def test_failed_verifier_retains_compact_history_and_fails_run(self):
         self.tier, self.audits = "routine", []
@@ -859,6 +958,8 @@ class PipelineTests(unittest.TestCase):
         def reviewer(*args, **kwargs):
             if kwargs["stage_name"] == "independent":
                 return discovery([candidate()])
+            if kwargs["stage_name"] == "challenger":
+                return discovery()
             self.assertEqual(kwargs["stage_name"], "verifier")
             raise TimeoutError("Provider unavailable")
 
@@ -901,6 +1002,8 @@ class PipelineTests(unittest.TestCase):
                         if failure == "discovery":
                             raise TimeoutError()
                         return discovery()
+                    if kwargs["stage_name"] == "challenger":
+                        return discovery()
                     result = json.loads(verification())
                     result["backport_assessment"] = {
                         "verdict": "Faithful",
@@ -940,7 +1043,7 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("target release branch", kwargs["prompt"])
             if stage == "archaeologist":
                 return archaeology()
-            if stage in {"independent", "build"}:
+            if stage in {"independent", "build", "challenger"}:
                 return discovery([candidate()] if stage == "independent" else [])
             if stage == "verifier":
                 self.assertIn(
@@ -993,7 +1096,14 @@ class PipelineTests(unittest.TestCase):
             )
         self.assertEqual(
             set(seen),
-            {"archaeologist", "independent", "build", "verifier", "major_verifier"},
+            {
+                "archaeologist",
+                "independent",
+                "build",
+                "challenger",
+                "verifier",
+                "major_verifier",
+            },
         )
         self.assertEqual(self.debug["stages"]["alternatives"]["status"], "skipped")
         self.assertEqual(
@@ -1077,6 +1187,8 @@ class PipelineTests(unittest.TestCase):
         self.tier, self.audits = "routine", []
 
         def review(*args, **kwargs):
+            if kwargs["stage_name"] == "challenger":
+                return discovery()
             if kwargs["stage_name"] == "verifier":
                 return verification(
                     [
@@ -1112,22 +1224,40 @@ class PipelineTests(unittest.TestCase):
             "title": "Design concern",
             "body": "Prefer the existing approach for this interface.",
         }
+        verifier_candidates = []
 
         def review(*args, **kwargs):
-            return (
-                verification(
+            stage = kwargs["stage_name"]
+            if stage == "challenger":
+                return discovery(
+                    [
+                        {**candidate(), "kind": "design"},
+                        {**candidate("Rejected claim"), "kind": "defect"},
+                    ]
+                )
+            if stage == "verifier":
+                verifier_candidates.extend(
+                    json.loads(args[1].split("Verification input:\n")[1])[
+                        "candidate_findings"
+                    ]
+                )
+                return verification(
                     [
                         {
-                            "candidate_ids": ["independent:1"],
+                            "candidate_ids": ["challenger:1"],
                             "disposition": "publish",
                             "reason": "Verified",
                             "finding": design,
-                        }
+                        },
+                        {
+                            "candidate_ids": ["challenger:2"],
+                            "disposition": "drop",
+                            "reason": "The caller already checks the precondition",
+                            "finding": None,
+                        },
                     ]
                 )
-                if kwargs["stage_name"] == "verifier"
-                else discovery([{**candidate(), "kind": "design"}])
-            )
+            return discovery()
 
         self.debug = {}
 
@@ -1135,16 +1265,32 @@ class PipelineTests(unittest.TestCase):
             return '{"concept_summary":null,"findings":[]}', {"status": "completed"}
 
         content = self.run_review(review, edit)
+        self.assertEqual(
+            [(item["id"], item["kind"]) for item in verifier_candidates],
+            [("challenger:1", "design"), ("challenger:2", "defect")],
+        )
+        self.assertEqual(len(self.result.findings), 1)
+        self.assertNotIn("Rejected claim", content)
         self.assertIn(design["body"], content)
         self.assertTrue(self.debug["stages"]["collator"]["used_verified_wording"])
         self.assertIsNone(self.debug["finding_attribution"][0]["edited_by"])
         finding = self.result.findings[0]
+        self.assertEqual(finding["kind"], "design")
+        self.assertEqual(
+            self.debug["finding_attribution"][0]["candidate_ids"], ["challenger:1"]
+        )
+        self.assertEqual(finding["raised_by"], ["challenger"])
+        self.assertEqual(
+            finding["raised_by_models"], [self.prompts.models["challenger"]]
+        )
+        self.assertEqual(finding["verified_by"], "verifier")
         self.assertEqual(finding["body"], design["body"])
         self.assertEqual(finding["presented_body"], design["body"])
         self.assertIsNone(finding["edited_by"])
+        self.assertEqual(self.debug["coverage"]["status"], "complete")
 
     def test_verified_material_concept_concern_gets_public_paragraph(self):
-        self.tier, self.audits = "routine", []
+        self.tier, self.audits = "routine", ["dead_code"]
         concern = {
             **assessment(),
             "assessment": "rework_approach",
@@ -1152,24 +1298,56 @@ class PipelineTests(unittest.TestCase):
             "review_reason": "The process cost is decisive.",
             "recommendation": "Doing nothing is conceptually stronger because the PR adds process cost.",
         }
+        challenge = {}
 
         def review(*args, **kwargs):
-            if kwargs["stage_name"] == "archaeologist":
+            stage = kwargs["stage_name"]
+            if stage == "archaeologist":
                 return archaeology(concern)
-            if kwargs["stage_name"] == "verifier":
+            if stage == "alternatives":
+                return json.dumps(
+                    {"coverage": COMPLETE, "alternatives": concern["alternatives"]}
+                )
+            if stage in {"independent", "dead_code"}:
+                return discovery([candidate()])
+            if stage == "challenger":
+                challenge.update(json.loads(args[1].split("Challenge input:\n")[1]))
+                return discovery()
+            if stage == "verifier":
                 return verification(
+                    decisions=[
+                        {
+                            "candidate_ids": [f"{source}:1"],
+                            "disposition": "drop",
+                            "reason": "The fixtures exercise different paths",
+                            "finding": None,
+                        }
+                        for source in ("independent", "dead_code")
+                    ],
                     concept={
                         "disposition": "publish",
                         "reason": "The cited discussion supports a material process cost.",
                         "assessment": concern,
                         "proposed_review": "would_stop",
                         "review_reason": "The verified process cost would stop the review.",
-                    }
+                    },
                 )
             return discovery()
 
         content = self.run_review(review, archaeology_enabled=True)
 
+        self.assertEqual(
+            [item["id"] for item in challenge["candidate_findings"]],
+            ["independent:1", "dead_code:1"],
+        )
+        for stage in ("independent", "dead_code"):
+            self.assertEqual(
+                challenge["discovery_reviews"][stage],
+                {"status": "completed", "coverage": COMPLETE},
+            )
+        self.assertEqual(challenge["concept_candidate"], concern)
+        self.assertEqual(challenge["blind_alternatives"], concern["alternatives"])
+        self.assertEqual(self.debug["coverage"]["status"], "complete")
         self.assertIn("Concept and approach", content)
         self.assertIn("process cost", content)
         self.assertIn("https://example.invalid/o/r/pulls/42", content)

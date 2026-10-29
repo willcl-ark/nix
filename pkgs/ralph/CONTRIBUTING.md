@@ -10,6 +10,7 @@ prompt, model, reasoning effort or tool limit.
 | General first-pass review | [independent/prompt.md](agents/independent/prompt.md) |
 | Instructions shared by discovery agents | [shared/discovery.md](agents/shared/discovery.md) |
 | A specialist's review | `<agent>/prompt.md`, such as [design/prompt.md](agents/design/prompt.md) |
+| Challenge prior discovery and the proposed approach | [challenger/prompt.md](agents/challenger/prompt.md) |
 | Which leads survive verification | [verifier/prompt.md](agents/verifier/prompt.md) |
 | Public finding structure and writing guidance | [shared/finding-format.md](agents/shared/finding-format.md) |
 | Wording of accepted findings | [collator/prompt.md](agents/collator/prompt.md) |
@@ -91,10 +92,16 @@ Frozen evaluations keep those saved values until explicitly given new settings.
 - [shared/backport.md](agents/shared/backport.md) supplements stages reviewing backports.
 - [verifier/reconciliation.md](agents/verifier/reconciliation.md) covers earlier findings.
 - [feedback](agents/feedback) maps earlier findings to author replies before verification.
+- [challenger](agents/challenger) sees prior discovery candidates and any concept
+  assessment or blind alternatives. Its candidates use the shared discovery
+  instructions and the normal verifier; it has no separate public section.
 - The service's later addressed-finding checks remain in the companion package's
   [follow-up prompt](../ralph-service/audits/addressed_findings.md).
 
 To try a complete copied agent directory, pass `--agents-dir DIR` to
 `check-agents` or `review`. The service uses `services.ralph.agentsDir` or
-`engineConfig.agents_dir`. This replaces the old separate prompt-file,
+`engineConfig.agents_dir`. Custom directories must include `challenger` with
+its prompt and config. Frozen configurations and evaluations from before this
+stage need fresh configuration and recapture; no migration is provided.
+This replaces the old separate prompt-file,
 audit-prompt-directory and model-map overrides.
