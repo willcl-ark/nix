@@ -22,6 +22,7 @@ _PLACEHOLDERS = {
     "backport": ("verdict", "summary", "details"),
     "findings": ("findings",),
     "finding": ("severity", "title", "summary", "location", "side", "body"),
+    "brief_finding": ("severity", "title", "summary", "location", "side"),
     "retained": ("label", "summary", "location", "side", "body", "provenance"),
     "provenance": ("provenance",),
     "resolved": ("history",),
@@ -103,7 +104,106 @@ def _render_sections(template, sections):
     return "\n\n".join(paragraph for paragraph in paragraphs if paragraph.strip())
 
 
+# A display limit only. Full reports and structured exports retain every finding.
+COMMENT_FINDING_LIMIT = 6
+SEVERITY_ORDER = ("critical", "major", "minor", "suggestion")
+
+
+def _comment_findings(findings):
+    # The verifier orders equally severe findings by impact and evidence.
+    return sorted(
+        findings, key=lambda finding: SEVERITY_ORDER.index(finding["severity"])
+    )[:COMMENT_FINDING_LIMIT]
+
+
+def _brief_finding(finding, comment_format, location=None):
+    return Template(comment_format["brief_finding"]).substitute(
+        severity=severity_label(finding["severity"]),
+        title=finding.get("presented_title") or finding["title"],
+        summary=finding.get("presented_summary") or finding["summary"],
+        location=location or f"{finding.get('path', '')}:{finding.get('line', '')}",
+        side=finding.get("side", "head"),
+    )
+
+
 def render(
+    findings,
+    limitations=(),
+    concept_summary=None,
+    alternatives=(),
+    backport=None,
+    review_memory=None,
+    verification_failed=False,
+    *,
+    comment_format=None,
+    review_tier=None,
+    report_url=None,
+):
+    """Render a bounded current review; history and explanations live in the report."""
+    comment_format = (
+        load_format() if comment_format is None else validate_format(comment_format)
+    )
+    sections = dict.fromkeys(_PLACEHOLDERS["comment"], "")
+    selected = [] if verification_failed else _comment_findings(findings)
+    if verification_failed:
+        sections["verification_failed"] = (
+            "Review failed because required verification did not complete."
+        )
+    if selected:
+        sections["findings"] = Template(comment_format["findings"]).substitute(
+            findings="\n\n".join(
+                _brief_finding(finding, comment_format) for finding in selected
+            )
+        )
+    if concept_summary and not verification_failed:
+        sections["design"] = Template(comment_format["design"]).substitute(
+            design=concept_summary
+        )
+    if backport is not None:
+        sections["backport"] = Template(comment_format["backport"]).substitute(
+            verdict=backport["verdict"], summary=backport["summary"], details=""
+        )
+    notices = []
+    if len(findings) > len(selected) and not verification_failed:
+        count = len(findings) - len(selected)
+        label = f"{count} additional verified finding{'s' if count != 1 else ''} in the full report"
+        notices.append(f"[{label}](<{report_url}>)." if report_url else label + ".")
+    # Never replay unverified claims or infer that omitted history was resolved.
+    unlinked = [
+        entry
+        for entry in review_memory or []
+        if entry.get("status") not in {"fixed", "invalid"}
+        and not entry.get("current_finding_ids")
+    ]
+    if unlinked:
+        notices.append(
+            "Earlier concerns remain unresolved; see the full report for their current assessments."
+        )
+    if limitations or any(
+        entry.get("status") == "unclear" for entry in review_memory or []
+    ):
+        sections["limitations"] = Template(comment_format["limitations"]).substitute(
+            coverage_notice="Review coverage was incomplete.", limitations=""
+        )
+    if (
+        not selected
+        and not concept_summary
+        and not backport
+        and not verification_failed
+    ):
+        sections["empty"] = (
+            "No verified findings are available from this review."
+            if limitations or unlinked
+            else "I found no actionable issues in this static review."
+        )
+    sections["overview"] = "\n\n".join(notices)
+    content = _render_sections(comment_format["comment"], sections)
+    if review_tier:
+        content += f"\n\n<!-- Review tier: {escape(review_tier)} -->"
+    return content
+
+
+def render_report(
     findings,
     limitations=(),
     concept_summary=None,
@@ -412,24 +512,25 @@ def render_github(
     comment_format = (
         load_format() if comment_format is None else validate_format(comment_format)
     )
-    rendered = []
-    for finding in findings:
-        location = source_location(finding, repository_url, base_sha, head_sha)
-        rendered.append(
-            Template(comment_format["finding"]).substitute(
-                title=finding.get("presented_title") or finding["title"],
-                severity=severity_label(finding["severity"]),
-                summary=finding.get("presented_summary") or finding["summary"],
-                body=finding.get("presented_body") or finding["body"],
-                location=location,
-                side=finding.get("side", "head"),
-            )
+    selected = _comment_findings(findings)
+    rendered = [
+        _brief_finding(
+            finding,
+            comment_format,
+            source_location(finding, repository_url, base_sha, head_sha),
         )
+        for finding in selected
+    ]
     content = _render_sections(
         comment_format["github"],
         {
             "new_findings_notice": (
-                f"{len(findings)} major finding{'s' if len(findings) != 1 else ''}."
+                f"{len(selected)} major finding{'s' if len(selected) != 1 else ''}."
+                + (
+                    f" {len(findings) - len(selected)} additional verified findings in the full report."
+                    if len(findings) > len(selected)
+                    else ""
+                )
                 if findings
                 else ""
             ),

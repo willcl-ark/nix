@@ -194,7 +194,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(edited[1]["kind"], "design")
         self.assertIn(
             "incomplete",
-            final_comment.render(edited, ["A selected audit was unavailable."]),
+            final_comment.render_report(edited, ["A selected audit was unavailable."]),
         )
 
     def test_omitted_null_finding_preserves_verified_findings(self):
@@ -360,7 +360,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         finding = self.finding()
         # A PR-introduced regression can still repeat the previous report.
         memory = self.memory()
-        rendered = final_comment.render([finding], review_memory=[memory])
+        rendered = final_comment.render_report([finding], review_memory=[memory])
         self.assertIn(
             "<summary>[Major · still present] Existing index problem</summary>",
             rendered,
@@ -373,15 +373,15 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
 
         memory["unchanged_since_report"] = False
         memory["unchanged"] = True
-        rendered = final_comment.render([finding], review_memory=[memory])
+        rendered = final_comment.render_report([finding], review_memory=[memory])
         self.assertIn(finding["summary"], rendered.split("<details>", 1)[0])
 
     def test_uncertain_and_resolved_findings_keep_their_records(self):
         memory = self.memory(
             status="unclear", unchanged_since_report=False, current_finding_ids=[]
         )
-        rendered = final_comment.render([], review_memory=[memory])
-        clean_result = final_comment.render([])
+        rendered = final_comment.render_report([], review_memory=[memory])
+        clean_result = final_comment.render_report([])
         self.assertNotIn(clean_result, rendered)
         self.assertIn("[Major · not confirmed]", rendered)
         self.assertIn("Not confirmed against this revision", rendered)
@@ -389,7 +389,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         for status in ("fixed", "invalid"):
             with self.subTest(status=status):
                 memory["status"] = status
-                rendered = final_comment.render([], review_memory=[memory])
+                rendered = final_comment.render_report([], review_memory=[memory])
                 self.assertTrue(rendered.startswith(clean_result))
                 self.assertIn("<summary>Resolved findings</summary>", rendered)
                 self.assertIn(memory["body"], rendered)
@@ -404,7 +404,9 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
 
         # Existing review records still retain their explanation.
         del memory["summary"]
-        self.assertIn(memory["body"], final_comment.render([], review_memory=[memory]))
+        self.assertIn(
+            memory["body"], final_comment.render_report([], review_memory=[memory])
+        )
 
     def test_duplicate_reports_share_one_body_and_keep_each_origin(self):
         original = self.memory(
@@ -420,7 +422,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             body="Duplicate concern body",
         )
         memory = [original, duplicate]
-        rendered = final_comment.render([], review_memory=memory)
+        rendered = final_comment.render_report([], review_memory=memory)
         self.assertEqual(rendered.count(duplicate["body"]), 1)
         self.assertNotIn(original["body"], rendered)
         for origin in (
@@ -432,13 +434,13 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             self.assertIn(origin, rendered)
         self.assertIn("[Author reply](https://example.org/reply)", rendered)
         current = self.finding(body="Current verified explanation.")
-        rendered = final_comment.render([current], review_memory=memory)
+        rendered = final_comment.render_report([current], review_memory=memory)
         self.assertEqual(rendered.count(current["body"]), 1)
         self.assertNotIn(duplicate["body"], rendered)
 
     def test_retained_html_labels_are_escaped(self):
         memory = self.memory(title="Check `<script>` & bounds", current_finding_ids=[])
-        rendered = final_comment.render([], review_memory=[memory])
+        rendered = final_comment.render_report([], review_memory=[memory])
         self.assertIn(
             "Check <code>&lt;script&gt;</code> &amp; bounds</summary>", rendered
         )
@@ -450,7 +452,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             id="finding:2", title="Second issue", body="Second current explanation."
         )
         shared = self.memory(current_finding_ids=["finding:1", "finding:2"])
-        rendered = final_comment.render([first, second], review_memory=[shared])
+        rendered = final_comment.render_report([first, second], review_memory=[shared])
         self.assertEqual(rendered.count(shared["source_head"]), 2)
         for finding in (first, second):
             self.assertEqual(rendered.count(finding["body"]), 1)
@@ -461,7 +463,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             source_head="another-revision",
             body="Another historical explanation.",
         )
-        rendered = final_comment.render(
+        rendered = final_comment.render_report(
             [first, second], review_memory=[shared, changed]
         )
         main, history = rendered.split("<summary>Previous findings", 1)
@@ -478,7 +480,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             presented_summary="Published summary.",
             presented_body="Published explanation.",
         )
-        rendered = final_comment.render([], review_memory=[memory])
+        rendered = final_comment.render_report([], review_memory=[memory])
         for field in ("title", "summary", "body"):
             self.assertIn(memory["presented_" + field], rendered)
             self.assertNotIn(memory[field], rendered)
@@ -500,7 +502,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         memory["severity"] = "minor"
         duplicate = self.memory(key="old:2", duplicate_of="old:1")
         for failed in (False, True):
-            rendered = final_comment.render(
+            rendered = final_comment.render_report(
                 [], review_memory=[memory, duplicate], verification_failed=failed
             )
             for finding in memory["last_presented_findings"]:

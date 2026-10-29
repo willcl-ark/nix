@@ -51,8 +51,8 @@ class GitHubTests(unittest.TestCase):
     def test_only_major_findings_with_report(self):
         result = self.result()
         result["engine"] = engine.load().identity
-        result["engine"]["config"]["comment_format"]["finding"] = (
-            "${body}\n\n[${severity}] ${title}: ${summary} (${location}, ${side})"
+        result["engine"]["config"]["comment_format"]["brief_finding"] = (
+            "${summary}\n\n[${severity}] ${title} (${location}, ${side})"
         )
         with patch.object(
             github,
@@ -72,15 +72,14 @@ class GitHubTests(unittest.TestCase):
         body = args[3]["body"]
         for included in (
             "Edited title",
-            "Edited body",
             "src/test.cpp:5",
             "https://review.example/report.html",
             f"https://github.com/owner/repo/blob/{result['head_sha']}/src/test.cpp#L5",
         ):
             self.assertIn(included, body)
-        for excluded in ("Original", "Minor"):
+        for excluded in ("Original", "Minor", "Edited body"):
             self.assertNotIn(excluded, body)
-        self.assertLess(body.index("Edited body"), body.index("Edited title"))
+        self.assertLess(body.index("Edited summary"), body.index("Edited title"))
 
     def test_base_location_uses_reviewed_merge_base(self):
         result = self.result()

@@ -7,9 +7,15 @@ changes without API keys, a Git checkout to review, or a running service:
 python3 pkgs/ralph/final_comment/preview.py > /tmp/ralph-comment.md
 ```
 
-Open `/tmp/ralph-comment.md` in your Markdown previewer. The default example has
-findings, a design assessment, an alternative, a retained concern, a resolved
-concern and a coverage limitation. Check the failed-verification example too:
+Open `/tmp/ralph-comment.md` in your Markdown previewer. Comments show at most six
+current verified findings. To inspect their full explanations, alternatives and
+review history, preview the same example as a report:
+
+```sh
+python3 pkgs/ralph/final_comment/preview.py --report > /tmp/ralph-report.md
+```
+
+Check the failed-verification example too:
 
 ```sh
 python3 pkgs/ralph/final_comment/preview.py \
@@ -21,7 +27,7 @@ These are fictional examples. To try different content, copy an example JSON
 file and pass its path to the same command. Include a before/after preview in
 your pull request so reviewers can see the layout change.
 
-The shorter GitHub comment uses `github.md` and the same `finding.md`:
+The GitHub comment uses `github.md` and the same `brief_finding.md`:
 
 ```sh
 python3 pkgs/ralph/final_comment/preview.py --github > /tmp/ralph-github-comment.md
@@ -32,7 +38,8 @@ python3 pkgs/ralph/final_comment/preview.py --github > /tmp/ralph-github-comment
 | File | Controls | Placeholders |
 | --- | --- | --- |
 | `comment.md` | Section order and any text shared by every comment | `verification_failed`, `overview`, `backport`, `findings`, `design`, `alternatives`, `history`, `empty`, `limitations` |
-| `finding.md` | Each finding's visible summary and expandable explanation | `severity`, `title`, `summary`, `location`, `side`, `body` |
+| `brief_finding.md` | Each comment finding's title, summary and source location | `severity`, `title`, `summary`, `location`, `side` |
+| `finding.md` | Each report finding's visible summary and expandable explanation | `severity`, `title`, `summary`, `location`, `side`, `body` |
 | `retained.md` | A compact earlier finding, including its explanation and provenance | `label`, `summary`, `location`, `side`, `body`, `provenance` |
 | `provenance.md` | Earlier report references for a materially changed finding | `provenance` |
 | `resolved.md` | Collapsed history of fixed or invalid findings | `history` |
@@ -55,27 +62,29 @@ in `comment.md`. Keep a blank line between section placeholders. Ralph omits
 empty sections and their blank paragraphs. The other files control headings
 and the Markdown around their content.
 
-New and materially changed findings show their severity, title and a one-sentence
-summary. Source locations are visible; explanations are collapsed. Severity symbols
-accompany text labels, and design findings share the same severity ordering.
-Previous findings are grouped under one collapsed section. Each uses a collapsed
-heading with severity and status,
-even when the author has not replied. Their full text, original review link,
-revision history and any author replies remain in the comment. Repeated
-verification reasoning stays in the full trace. Fixed and invalid findings
-remain under "Resolved findings", with the resolution reason.
+Comments show severity, title, a one-sentence summary and source location for at
+most six current verified findings. They sort by severity, preserving the
+verifier's impact and evidence order within each severity. Additional findings
+link to the full report. Earlier unresolved concerns receive one short notice;
+their entries, resolved history, finding bodies and alternatives stay in the
+report. Concept feedback and a brief backport assessment can still appear.
+
+Reports retain every finding and its expandable explanation. Previous findings
+are grouped under one collapsed section, including their original review links,
+revision history and author replies. Fixed and invalid findings remain under
+"Resolved findings", with the resolution reason.
 
 Ralph still decides which findings were verified and which earlier reports refer
 to the same concern. The verifier's `unchanged_since_report` assessment controls
-compact presentation, including regressions introduced by the PR. Editing the
-wording alone does not count as a changed finding.
+retained entries in the report, including regressions introduced by the PR.
+Editing the wording alone does not count as a changed finding.
 Dynamic HTML summary labels are escaped, with backtick code spans rendered
 as HTML code tags. New findings require a summary; older
 review records without one retain their stored explanation.
 The failure, incomplete-coverage and overview notices come from
 Python and must stay in the templates. Editing the layout cannot remove their
-placeholders. Failed verification retains earlier titles and statuses without
-republishing their unverified bodies.
+placeholders. Failed verification retains earlier titles and statuses in the
+report without republishing their unverified bodies.
 
 For the wording of findings and concept summaries, edit the
 [collator prompt](../agents/collator/prompt.md). That prompt edits accepted
@@ -90,7 +99,12 @@ comment_format=snapshot)` uses that snapshot without rereading files. Saved
 engine configurations include the snapshot so template edits change run
 identity and replay keeps the original format.
 
-Both renderers accept `review_tier` to retain the final selected routing tier in hidden HTML metadata
+`render()` produces the concise comment. `render_report()` preserves the full
+review and is used for saved pipeline content. Both use the template snapshot;
+the display limit does not truncate structured exports. `render()` also accepts
+`report_url` for links to findings beyond the comment limit.
+
+All renderers accept `review_tier` to retain the final selected routing tier in hidden HTML metadata
 after the template content. When no tier is available, they omit the footer.
 
 `render_github(findings, *, head_sha, report_url, has_retained=False,

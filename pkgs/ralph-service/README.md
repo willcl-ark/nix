@@ -83,13 +83,12 @@ agents by default. Use `--agents-dir DIR` or `services.ralph.agentsDir` to selec
 a complete alternate agent directory. `ralph-evaluate capture` and `run` accept
 the same option; replay keeps the captured settings unless explicitly overridden.
 
-New findings show an actionable title and one sentence explaining the impact,
-with the detailed explanation in an expandable section. Unchanged retained
-findings use compact expandable entries. Resolved findings stay in collapsed
-history as the service updates the same comment each round. Saved review reports
-preserve both the summary and detailed explanation. Alternatives are collapsed
-under their titles. Comments show a short incomplete-review notice; diagnostic
-limitations and the base revision stay in the full report. The comment footer
+For the current engine, mirror comments show at most six current verified
+findings, ordered by severity and then the verifier's impact and evidence order.
+Each shows its title, impact summary and source location. Additional findings
+link to the full report. Earlier unresolved concerns and incomplete coverage
+receive short notices. Finding explanations, alternatives and full review
+history remain in saved reports and structured exports. The comment footer
 links the reviewed revision and report.
 
 The follow-up command loads its own `audits/addressed_findings.md` and default
@@ -147,7 +146,9 @@ not undo published comments or recorded model requests.
 Optional `--github-repository owner/repo` and `--github-token-file /run/secrets/token`
 authenticate upstream metadata and author-feedback reads independently of posting.
 Add `--github-post-major-findings` to maintain one upstream GitHub comment with
-exactly `major` findings and a public report link. Posting requires both report
+exactly `major` findings and a public report link. The same six-finding limit and
+brief format apply after eligibility checks; the full report retains the rest.
+Posting requires both report
 options and the GitHub credentials. Later completed reviews update
 or delete the comment when major findings change or disappear. Skipped reviews
 and missing findings exports preserve it. Upstream PR numbers must match the

@@ -4,7 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-from final_comment import render
+from final_comment import render_report as render
 
 from . import coverage, experiments, feedback, model, protocol, routing
 from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES

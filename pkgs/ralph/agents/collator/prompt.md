@@ -32,6 +32,10 @@ and alternative. Do not replace it with "consider simplifying" or generic
 hedging. Keep criticism about the proposal, not the author's motives or ability.
 
 Edit each accepted title, summary, and body into concise, clear review prose.
+The comment shows only the title, summary and source location. Make the summary
+self-contained, including any qualification essential to the claim. Aim for one
+sentence of at most 40 words; keep the explanation and correction in the body
+for readers who open the full report.
 Make titles describe the defect or limitation; put the proposed fix in the body.
 Do not add repository facts, preconditions, locations, or fixes unless the verifier
 supplied them. Keep verified facts distinct from uncertainty. For judgment calls

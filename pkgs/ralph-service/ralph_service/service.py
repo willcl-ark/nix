@@ -16,6 +16,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from final_comment import render
 from ralph import trace as core_trace
 from . import badge, config, forgejo, github, report, repository, trace, monitor
 from ralph import repository as local_repository
@@ -460,6 +461,25 @@ def process_job(
                 if not jobs.save_result(job, result_record):
                     outcome = "superseded"
                     return outcome
+            if engine_identity["name"] == "current" and not saved["run"].get("skipped"):
+                diagnostics = core_trace.current_diagnostics(saved)
+                coverage = diagnostics.get("coverage", {})
+                concept = diagnostics.get("concept_assessment", {})
+                content = render(
+                    core_trace.findings_export(saved) or [],
+                    coverage.get("limitations", []),
+                    concept.get("summary")
+                    if concept.get("status") == "verified"
+                    else None,
+                    backport=saved["output"]["exports"].get("backport_assessment"),
+                    review_memory=core_trace.review_memory_export(saved),
+                    verification_failed=run_status == "failed",
+                    comment_format=engine_identity["config"]["comment_format"],
+                    review_tier=diagnostics.get("routing", {})
+                    .get("selected", {})
+                    .get("tier"),
+                    report_url=saved["run"].get("report_url"),
+                )
             stage = "publish"
             result = forgejo.publish_review(
                 bot_config,

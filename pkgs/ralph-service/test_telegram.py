@@ -66,7 +66,9 @@ class TelegramTests(unittest.TestCase):
             }
         ]
         result = self.result(
-            final_comment.render([], ["Verifier unavailable"], review_memory=memory)
+            final_comment.render_report(
+                [], ["Verifier unavailable"], review_memory=memory
+            )
         )
         result["output"]["exports"]["review_memory"] = memory
         text = self.render(result)

@@ -304,7 +304,7 @@ class ServiceTests(unittest.TestCase):
             self.assertLogs(level="INFO") as logs,
         ):
             self.assertEqual(self.process(job), "updated")
-        self.assertEqual(publish.call_args.args[6], result["content"])
+        self.assertIn("Review failed", publish.call_args.args[6])
         self.assertEqual(
             self.jobs.latest_completed_result(42)["run"]["status"], "failed"
         )
@@ -335,6 +335,60 @@ class ServiceTests(unittest.TestCase):
         publish.assert_called_once_with(
             "owner/repo", "write-token", 42, job["review_result"]
         )
+
+    def test_mirror_comment_is_bounded_and_report_keeps_all_findings(self):
+        self.bot_config = replace(
+            self.bot_config,
+            report_dir=self.state_dir / "public",
+            report_base_url="https://review.example.org/traces",
+        )
+        findings = [
+            {
+                "id": f"finding:{i}",
+                "title": f"Issue {i}",
+                "severity": "minor",
+                "summary": f"Summary {i}.",
+                "body": f"Explanation {i}.",
+                "path": "src/test.cpp",
+                "line": i + 1,
+                "side": "head",
+            }
+            for i in range(8)
+        ]
+        full_review = "\n\n".join(finding["body"] for finding in findings)
+        job = self.enqueue()
+        result = self.saved_result(full_review, findings=findings)
+        result["output"]["exports"]["review_memory"] = [
+            {
+                "key": "previous:1",
+                "title": "Old claim",
+                "body": "Old explanation",
+                "severity": "minor",
+                "status": "unclear",
+            }
+        ]
+        job["review_result"] = result
+        self.jobs.save_result(job, result)
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "publish_review", return_value="updated") as publish,
+            patch.object(
+                service.runner, "run_review", side_effect=AssertionError("paid rerun")
+            ),
+        ):
+            self.assertEqual(self.process(job), "updated")
+        comment = publish.call_args.args[6]
+        self.assertIn("Summary 5.", comment)
+        self.assertNotIn("Summary 6.", comment)
+        self.assertNotIn("Old claim", comment)
+        self.assertIn("2 additional verified findings", comment)
+        self.assertIn("https://review.example.org/traces/", comment)
+        reports = list(self.bot_config.report_dir.glob("*.json"))
+        self.assertEqual(len(reports), 1)
+        report = json.loads(reports[0].read_text())
+        self.assertEqual(report["review"], full_review)
+        self.assertEqual(len(report["findings"]), 8)
+        self.assertEqual(report["review_memory"][0]["title"], "Old claim")
 
     def test_stale_forgejo_result_never_publishes_to_github(self):
         self.bot_config = replace(

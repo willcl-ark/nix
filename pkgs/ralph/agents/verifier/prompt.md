@@ -279,3 +279,9 @@ and counterevidence.
 
 A verified design finding may recommend against merging the current approach
 when its body establishes why.
+
+Order published findings by severity, then concrete impact and strength of
+evidence. Preserve this priority order within each severity. Merge candidates
+that describe the same failure mechanism and consequence into one finding.
+Include every supported actionable issue; the caller caps the comment at six
+and keeps the complete review in the full report. Do not fill a quota.

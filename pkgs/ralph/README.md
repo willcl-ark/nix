@@ -22,9 +22,10 @@ stay beside the default settings.
 The [final_comment/](final_comment/README.md) directory contains Markdown
 templates for comment structure, an offline preview and example reviews. The
 [collator prompt](agents/collator/prompt.md) controls the wording of accepted
-findings. Each new finding shows a severity symbol and label, title, source
-location and one-sentence summary;
-the explanation and suggested change are expandable. The runtime validates
+findings. Public comments show at most six current verified findings, each with
+a severity symbol and label, title, source location and one-sentence summary.
+Full explanations, alternatives and review history remain in the report and
+structured exports. The runtime validates
 findings and enforces tool and timeout limits.
 
 From the repository root, using Python with `aiohttp` installed:
@@ -452,8 +453,9 @@ scope, such as not running tests, is shown as a scope note rather than missing
 evidence. Actual unread paths and failed stages identify their specific reason.
 Failed main or Major verification marks the whole run `failed`, while preserving
 independently verified findings and the full historical records in the structured
-result. The review leads with a failure notice and presents historical findings
-as a compact list for follow-up. The CLI prints the review and exits with status
+result. The report leads with a failure notice and presents historical findings
+as a compact list for follow-up. The public comment carries a brief unresolved-history
+notice. The CLI prints the full review and exits with status
 1. Historical records do not become newly verified findings when a verifier fails.
 Candidate ID bookkeeping errors
 withhold the affected decisions, preserve independently valid findings, and
@@ -567,10 +569,14 @@ remove accepted IDs, or change their kind, severity, security assessment or
 location. Python enforces those metadata constraints; preservation of meaning
 is a prompt requirement.
 
-Rendering groups findings first, with critical, major, minor, then suggestions.
-Design and approach feedback follows, then at most one independently verified
-optional alternative. Design kind determines its own section. A useful
-alternative can be published even when the PR's overall approach is sound.
+Comments show at most six current verified findings, ordered by critical, major,
+minor, then suggestion. Within each severity they retain the verifier's impact
+and evidence order. Overflow links to the full report. The report retains all
+findings, their explanations and review history, followed by design and approach
+feedback and at most one independently verified optional alternative.
+Design kind determines its report section.
+A useful alternative can appear in the report even when the PR's overall
+approach is sound.
 The companion adds the commit header and optional report link when publishing
 a comment. Its reports expose stage replies, dispositions and attribution. Its
 statistics distinguish
@@ -638,7 +644,7 @@ detailed trace.
 Conceptual feedback has no finding ID, severity or artificial source location.
 The collator can edit it even when there are no accepted code findings. It edits
 finding wording and any concept objection; the optional alternative is rendered
-from verifier-approved structured fields. The public comment groups findings
+from verifier-approved structured fields. The full report groups findings
 first, then design and concept feedback, then the optional alternative. It omits
 objections already covered by accepted design findings. A question belongs in
 concept feedback only if its answer settles a specific material concern.
@@ -741,18 +747,21 @@ feedback pass then maps explicit author replies to earlier findings and current
 candidates. The verifier checks the technical claims against source code.
 
 An author saying “addressing elsewhere” or “won't fix” does not resolve a finding.
-New or worsened findings keep a visible summary. Verified unchanged findings
-appear as compact expandable entries with their severity, title and status.
-Earlier findings remain in the comment even when discovery does not find them
-again. Their full text, original revision, last checked revision and available
+Current verified findings are eligible for the concise comment. Earlier unresolved
+concerns without a current finding receive one short notice. In the full
+report, verified unchanged findings appear as compact expandable entries with
+their severity, title and status, even when discovery does not find them again.
+Their full text, original revision, last checked revision and available
 review and author-reply links remain inside the entry. Fixed and invalid findings
 remain under expandable resolved history, including those without an author reply.
 This visual folding does not change upstream publication policy: suppressing a
 repeated upstream finding still requires an explicit author response and evidence
 from both base and head that the PR does not introduce or worsen it.
 Findings retain their original identity, severity and assessment history. Missing or invalid
-reconciliation keeps them unresolved and labels them as not confirmed against the
-current revision. Fixed and invalid decisions require source evidence; author
+reconciliation keeps the affected entries unresolved and labels them as not
+confirmed against the current revision. A malformed reconciliation row does not
+discard valid sibling rows; errors identify the affected keys and mark historical
+context incomplete. Fixed and invalid decisions require source evidence; author
 intent alone is insufficient.
 
 The verifier also checks whether historical reports describe the same failure

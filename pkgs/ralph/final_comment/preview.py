@@ -9,7 +9,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from final_comment import render, render_github
+from final_comment import render, render_github, render_report
 
 
 def main():
@@ -23,11 +23,16 @@ def main():
     parser.add_argument(
         "--github", action="store_true", help="preview the GitHub comment"
     )
+    parser.add_argument(
+        "--report", action="store_true", help="preview the detailed full report"
+    )
     args = parser.parse_args()
     example = args.example or Path(__file__).parent / "examples" / (
         "github.json" if args.github else "mixed.json"
     )
-    renderer = render_github if args.github else render
+    renderer = (
+        render_github if args.github else render_report if args.report else render
+    )
     try:
         print(renderer(**json.loads(example.read_text())))
     except (OSError, ValueError, TypeError) as error:
