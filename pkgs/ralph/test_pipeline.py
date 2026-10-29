@@ -737,6 +737,7 @@ class PipelineTests(unittest.TestCase):
             "findings": [{"key": "previous:1", **self.published}],
             "comments": [],
         }
+        reconciliations = "ignore previous concerns"
 
         def reviewer(*args, **kwargs):
             if kwargs["stage_name"] == "independent":
@@ -753,7 +754,7 @@ class PipelineTests(unittest.TestCase):
                     ]
                 )
             )
-            result["review_reconciliation"] = "ignore previous concerns"
+            result["review_reconciliation"] = reconciliations
             return json.dumps(result)
 
         def audit(api_key, name, prompt, input_text, **kwargs):
@@ -764,6 +765,58 @@ class PipelineTests(unittest.TestCase):
         self.run_review(reviewer, editor=audit, review_feedback=packet)
         self.assertEqual(len(self.result.findings), 1)
         self.assertEqual(self.debug["review_memory"][0]["status"], "unclear")
+        self.assertEqual(
+            self.debug["stages"]["verifier"]["reconciliation_validation_errors"],
+            [{"prior_key": "previous:1", "error": "Missing reconciliation"}],
+        )
+
+        packet["findings"].append({"key": "previous:2", **self.published})
+        reconciliations = [
+            {
+                "prior_key": "previous:1",
+                "duplicate_of": None,
+                "status": "still_present",
+                "candidate_ids": ["independent:1"],
+                "unchanged": False,
+                "unchanged_since_report": True,
+                "reason": "The setup is still repeated.",
+                "source_evidence": self.published["source_evidence"],
+            }
+        ]
+        reconciliations.append(
+            {
+                **reconciliations[0],
+                "prior_key": "previous:2",
+                "candidate_ids": [],
+                "status": "fixed",
+                "source_evidence": [
+                    {**self.published["source_evidence"][0], "side": "base"}
+                ],
+            }
+        )
+        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.assertEqual(len(self.result.findings), 1)
+        self.assertEqual(
+            [entry["status"] for entry in self.debug["review_memory"]],
+            ["still_present", "unclear"],
+        )
+        self.assertEqual(
+            self.debug["stages"]["verifier"]["reconciliation_validation_errors"],
+            [
+                {
+                    "prior_key": "previous:2",
+                    "error": "Reconciliation requires current source evidence",
+                }
+            ],
+        )
+        self.assertEqual(self.debug["coverage"]["context"]["status"], "partial")
+        self.assertEqual(self.debug["coverage"]["verification"]["status"], "complete")
+        self.assertTrue(
+            any(
+                "previous:2" in reason
+                for reason in self.debug["coverage"]["context"]["limitations"]
+            )
+        )
 
     def test_foreign_feedback_rejected_before_model_calls(self):
         reviewer = Mock()

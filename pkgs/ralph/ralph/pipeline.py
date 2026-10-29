@@ -240,12 +240,17 @@ def _verify_candidates(
         )
         if feedback_packet is not None:
             try:
+                reconciliation_errors = []
                 debug["review_memory"] = feedback.reconcile(
                     feedback_packet,
                     reconciliation,
                     candidates,
                     snapshot,
                     mappings=feedback_mappings,
+                    validation_errors=reconciliation_errors,
+                )
+                stages["verifier"]["reconciliation_validation_errors"] = (
+                    reconciliation_errors
                 )
             except Exception as exc:
                 stages["verifier"]["feedback_validation_error"] = str(exc)

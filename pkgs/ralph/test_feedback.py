@@ -252,6 +252,80 @@ class FeedbackTests(unittest.TestCase):
         self.assertTrue(all(r["status"] == "still_present" for r in records))
         self.assertTrue(all(r["duplicate_of"] is None for r in records))
 
+    def test_invalid_assessment_retains_valid_siblings_and_duplicate_links(self):
+        original = self.packet["findings"][0]
+        self.packet["findings"].extend(
+            {**original, "key": key} for key in ("invalid", "duplicate")
+        )
+        errors = []
+        records = feedback.reconcile(
+            self.packet,
+            [
+                self.assessment(),
+                self.assessment(
+                    prior_key="invalid",
+                    status="fixed",
+                    source_evidence=[
+                        {
+                            "path": "index.cpp",
+                            "line": 1,
+                            "side": "base",
+                            "excerpt": "shared_limit();",
+                        }
+                    ],
+                ),
+                self.assessment(prior_key="duplicate", duplicate_of=original["key"]),
+            ],
+            self.candidates,
+            self.snapshot,
+            validation_errors=errors,
+        )
+        self.assertEqual(
+            [entry["status"] for entry in records],
+            ["still_present", "unclear", "still_present"],
+        )
+        self.assertEqual(records[2]["duplicate_of"], original["key"])
+        self.assertIsNone(records[1]["checked_head"])
+        self.assertEqual(
+            errors,
+            [
+                {
+                    "prior_key": "invalid",
+                    "error": "Reconciliation requires current source evidence",
+                }
+            ],
+        )
+
+    def test_duplicate_assessment_keys_reject_all_rows_for_that_key(self):
+        original = self.packet["findings"][0]
+        self.packet["findings"].append({**original, "key": "valid"})
+        for conflicting in (
+            self.assessment(status="fixed"),
+            {"prior_key": original["key"]},
+        ):
+            for rows in (
+                [conflicting, self.assessment()],
+                [self.assessment(), conflicting],
+            ):
+                with self.subTest(rows=rows):
+                    errors = []
+                    records = feedback.reconcile(
+                        self.packet,
+                        [*rows, self.assessment(prior_key="valid")],
+                        self.candidates,
+                        self.snapshot,
+                        validation_errors=errors,
+                    )
+                    self.assertEqual(records[0]["status"], "unclear")
+                    self.assertEqual(records[1]["status"], "still_present")
+                    self.assertTrue(
+                        any(
+                            item["prior_key"] == original["key"]
+                            and "duplicate" in item["error"].lower()
+                            for item in errors
+                        )
+                    )
+
     def test_duplicate_links_require_current_evidence_and_a_canonical_target(self):
         original = self.packet["findings"][0]
         repeated = {**original, "key": "2:2:review:1"}

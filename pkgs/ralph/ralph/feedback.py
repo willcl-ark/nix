@@ -2,6 +2,7 @@
 
 import copy
 import json
+from collections import Counter
 
 from .protocol import (
     SOURCE_EVIDENCE,
@@ -127,20 +128,36 @@ def parse_feedback(text, packet, candidates):
     return result
 
 
-def reconcile(packet, assessments, candidates, snapshot, mappings=None):
+def reconcile(
+    packet, assessments, candidates, snapshot, mappings=None, *, validation_errors=None
+):
     """Retain every historical finding; incomplete or invalid checks fail open."""
     entries = copy.deepcopy(packet.get("findings", []))
     prior = {entry["key"] for entry in entries}
     current = {entry["id"] for entry in candidates}
     decisions = {}
-    try:
-        if not isinstance(assessments, list):
-            raise InvalidReview("Missing reconciliation")
-        for assessment in assessments:
+    errors = validation_errors if validation_errors is not None else []
+    if not isinstance(assessments, list):
+        errors.extend(
+            {"prior_key": entry["key"], "error": "Missing reconciliation"}
+            for entry in entries
+        )
+        assessments = []
+    counts = Counter(
+        item["prior_key"]
+        for item in assessments
+        if isinstance(item, dict) and isinstance(item.get("prior_key"), str)
+    )
+    for assessment in assessments:
+        key = assessment.get("prior_key") if isinstance(assessment, dict) else None
+        try:
+            # Reject every row for an ambiguous key, including when one of the
+            # repeated rows is malformed. Independent assessments still count.
+            if isinstance(key, str) and counts[key] > 1:
+                raise InvalidReview("Duplicate prior assessment")
             _object(assessment, ASSESSMENT["properties"])
-            key = assessment["prior_key"]
-            if not isinstance(key, str) or key not in prior or key in decisions:
-                raise InvalidReview("Unknown or duplicate prior assessment")
+            if not isinstance(key, str) or key not in prior:
+                raise InvalidReview("Unknown prior assessment")
             _references(assessment["candidate_ids"], current)
             duplicate = assessment["duplicate_of"]
             if duplicate is not None and (
@@ -171,8 +188,13 @@ def reconcile(packet, assessments, candidates, snapshot, mappings=None):
             ):
                 raise InvalidReview("Reconciliation requires current source evidence")
             decisions[key] = assessment
-    except (InvalidReview, KeyError, TypeError):
-        decisions = {}
+        except (InvalidReview, KeyError, TypeError) as exc:
+            error = {
+                "prior_key": key if isinstance(key, str) else None,
+                "error": str(exc),
+            }
+            if error not in errors:
+                errors.append(error)
     # Only source-checked, direct links may merge historical reports for display.
     # Validate against the original decisions so a rejected chain cannot become
     # acceptable merely because an earlier link was cleared.

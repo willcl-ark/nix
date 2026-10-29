@@ -91,6 +91,17 @@ def summarize(debug):
             if name in {"verifier", "major_verifier"}
             else "inspection"
         )
+        for error in stage.get("reconciliation_validation_errors", []):
+            issue(
+                name,
+                "context",
+                f"Previous finding {error['prior_key']} was not reverified: "
+                + error["error"],
+            )
+            contexts.append("partial")
+        if stage.get("feedback_validation_error"):
+            issue(name, "context", stage["feedback_validation_error"])
+            contexts.append("partial")
         state = stage.get("status")
         if state in FAILURES:
             status = "failed"
