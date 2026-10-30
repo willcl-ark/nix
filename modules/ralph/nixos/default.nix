@@ -566,6 +566,10 @@ in
         Restart = "always";
         RestartSec = "10s";
 
+        # Drain current reviews without signalling their experiment subprocesses.
+        KillMode = "mixed";
+        TimeoutStopSec = "infinity";
+
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;

@@ -2,9 +2,14 @@ import hashlib
 import hmac
 import http.client
 import json
+import signal
 import sqlite3
+import subprocess
+import sys
 import tempfile
+import textwrap
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -547,6 +552,148 @@ class ServiceTests(unittest.TestCase):
             )
         self.assertEqual(stored, self.review_engine.identity)
         self.assertFalse(self.jobs.complete(interrupted))
+
+    def test_shutdown_drains_running_review_while_webhooks_keep_queueing(self):
+        child = textwrap.dedent("""
+            import sys
+            import threading
+            import time
+            from http.server import ThreadingHTTPServer
+            from pathlib import Path
+            from types import SimpleNamespace
+            from ralph_service import config, service
+            from ralph_service.jobs import JobStore
+
+            root = Path(sys.argv[1])
+            jobs = JobStore(root / "jobs.sqlite3")
+            bot = config.BotConfig(
+                "https://git.example.org/owner/repo.git", "owner/repo",
+                "https://git.example.org/api/v1/repos/owner/repo",
+            )
+
+            class RecordedEvent(threading.Event):
+                def __init__(self, name):
+                    super().__init__()
+                    self.name = name
+
+                def set(self):
+                    super().set()
+                    (root / self.name).touch()
+
+            class ReadyServer(ThreadingHTTPServer):
+                def service_actions(self):
+                    (root / "ready").touch()
+
+            def process(job, jobs, *args):
+                (root / "started").touch()
+                while not (root / "finish").exists():
+                    time.sleep(0.01)
+                assert jobs.is_current(job)
+                assert jobs.save_result(job, {"content": "Finished review"})
+                (root / "published").touch()
+                jobs.complete(job)
+
+            service.process_job = process
+            service.consume_review_requests = lambda *args: None
+            drain = RecordedEvent("draining")
+            commands_stop = RecordedEvent("commands-stopped")
+            review_engine = SimpleNamespace(identity={"name": "test"})
+            reviews = [threading.Thread(
+                target=service.worker,
+                args=(jobs, root, "key", "token", "ralph", bot, None, review_engine),
+                kwargs={"stop_event": drain}, daemon=True,
+            )]
+            commands = threading.Thread(
+                target=service.command_worker, args=(None, None, None, None, None),
+                kwargs={"stop_event": commands_stop}, daemon=True,
+            )
+            server = ReadyServer(
+                ("127.0.0.1", 0),
+                service.make_handler(b"secret", jobs, bot, review_engine.identity),
+            )
+            (root / "port").write_text(str(server.server_port))
+            service.serve_until_stopped(server, reviews, commands, drain, commands_stop)
+        """)
+        for busy, signum in ((True, signal.SIGTERM), (False, signal.SIGINT)):
+            with self.subTest(busy=busy), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                jobs = JobStore(root / "jobs.sqlite3")
+                if busy:
+                    for number in (42, 43):
+                        jobs.enqueue(
+                            number,
+                            "master",
+                            "a" * 40,
+                            "opened",
+                            engine_identity={"name": "test"},
+                        )
+                process = subprocess.Popen(
+                    [sys.executable, "-B", "-c", child, directory],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+
+                def await_file(name):
+                    deadline = time.monotonic() + 5
+                    while not (root / name).exists():
+                        if process.poll() is not None:
+                            self.fail(process.communicate()[1])
+                        self.assertLess(time.monotonic(), deadline, name)
+                        time.sleep(0.01)
+
+                try:
+                    await_file("ready")
+                    if busy:
+                        await_file("started")
+                    process.send_signal(signum)
+                    if busy:
+                        await_file("draining")
+                        self.assertIsNone(process.poll())
+                        self.assertFalse((root / "commands-stopped").exists())
+                        event = payload()
+                        event["repository"]["full_name"] = "owner/repo"
+                        event["repository"]["html_url"] = (
+                            "https://git.example.org/owner/repo"
+                        )
+                        event["pull_request"]["number"] = 44
+                        body = json.dumps(event).encode()
+                        signature = hmac.new(
+                            b"secret", body, hashlib.sha256
+                        ).hexdigest()
+                        connection = http.client.HTTPConnection(
+                            "127.0.0.1", int((root / "port").read_text()), timeout=5
+                        )
+                        connection.request(
+                            "POST",
+                            "/webhooks/forgejo",
+                            body,
+                            {
+                                "X-Forgejo-Event": "pull_request",
+                                "X-Forgejo-Signature": signature,
+                            },
+                        )
+                        response = connection.getresponse()
+                        response.read()
+                        connection.close()
+                        self.assertEqual(response.status, 202)
+                        (root / "finish").touch()
+                    _, stderr = process.communicate(timeout=5)
+                    self.assertEqual(process.returncode, 0, stderr)
+                    self.assertTrue((root / "commands-stopped").exists())
+                    if busy:
+                        self.assertTrue((root / "published").exists())
+                        with closing(sqlite3.connect(root / "jobs.sqlite3")) as db:
+                            states = db.execute(
+                                "SELECT number,status FROM jobs ORDER BY number"
+                            ).fetchall()
+                        self.assertEqual(
+                            states, [(42, "complete"), (43, "pending"), (44, "pending")]
+                        )
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate()
 
 
 def payload(action="opened", head="a" * 40):

@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import re
+import signal
 import sqlite3
 import subprocess
 import threading
@@ -724,13 +725,14 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
             )
 
 
-def command_worker(store, jobs, bot_config, token, high_engine):
-    while True:
+def command_worker(store, jobs, bot_config, token, high_engine, stop_event=None):
+    stop_event = stop_event or threading.Event()
+    while not stop_event.is_set():
         try:
             consume_review_requests(store, jobs, bot_config, token, high_engine)
         except Exception:
             logging.exception("Could not process Telegram review requests")
-        time.sleep(5)
+        stop_event.wait(5)
 
 
 def worker(
@@ -913,6 +915,53 @@ def make_handler(secret, jobs, bot_config, engine_identity=None):
     return Handler
 
 
+def serve_until_stopped(
+    server, workers, command_thread, drain_event, command_stop_event
+):
+    shutdown_requested = False
+
+    def request_shutdown(signum, frame):
+        nonlocal shutdown_requested
+        # Signal handlers must not acquire locks, including Event.set()'s lock.
+        shutdown_requested = True
+
+    previous_handlers = {}
+    http_thread = threading.Thread(
+        target=server.serve_forever, name="review-webhooks", daemon=True
+    )
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[signum] = signal.signal(signum, request_shutdown)
+        http_thread.start()
+        command_thread.start()
+        for thread in workers:
+            thread.start()
+        while not shutdown_requested:
+            http_thread.join(timeout=0.5)
+            if not http_thread.is_alive():
+                raise RuntimeError("Webhook server stopped unexpectedly")
+    finally:
+        try:
+            drain_event.set()
+            logging.info("Draining review workers; new requests will remain queued")
+            # Claims already entered when draining begins belong to this process.
+            # Keep ingestion available until their results have been published.
+            for thread in workers:
+                if thread.ident is not None:
+                    thread.join()
+            command_stop_event.set()
+            if command_thread.ident is not None:
+                command_thread.join()
+            if http_thread.is_alive():
+                server.shutdown()
+            if http_thread.ident is not None:
+                http_thread.join()
+        finally:
+            server.server_close()
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--listen", default="127.0.0.1")
@@ -1077,13 +1126,16 @@ def main():
     command_store = monitor.NotificationStore(args.state_dir / "telegram.sqlite3")
     ledger = usage_tracking.Ledger(args.state_dir / "usage.sqlite3")
     logging.info("review queue recovered_claims=%d workers=%d", recovered, args.workers)
-    threading.Thread(
+    drain_event = threading.Event()
+    command_stop_event = threading.Event()
+    command_thread = threading.Thread(
         target=command_worker,
         name="review-commands",
         args=(command_store, jobs, bot_config, forgejo_token, high_engine),
+        kwargs={"stop_event": command_stop_event},
         daemon=True,
-    ).start()
-    for index in range(args.workers):
+    )
+    workers = [
         threading.Thread(
             target=worker,
             name=f"review-{index + 1}",
@@ -1098,13 +1150,18 @@ def main():
                 review_engine,
             ),
             kwargs={
+                "stop_event": drain_event,
                 "github_token": github_token,
                 "github_post_major_findings": args.github_post_major_findings,
             },
             daemon=True,
-        ).start()
+        )
+        for index in range(args.workers)
+    ]
     server = ThreadingHTTPServer(
         (args.listen, args.port),
         make_handler(secret, jobs, bot_config, review_engine.identity),
     )
-    server.serve_forever()
+    serve_until_stopped(
+        server, workers, command_thread, drain_event, command_stop_event
+    )

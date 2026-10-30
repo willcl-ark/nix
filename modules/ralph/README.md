@@ -233,6 +233,17 @@ review payloads are saved before publication. Publication retries reuse that
 payload. Transient failures have bounded retries; pending claims recover when
 the service restarts. ralph retains one editable comment per PR.
 
+On SIGTERM or SIGINT, Ralph stops claiming jobs and lets active reviews finish,
+including saving and publishing their results. Webhooks remain available during
+the drain and queue work for the next process. Deployment therefore waits for
+the active reviews, even if new work keeps arriving. There is a brief webhook
+outage while the process restarts.
+
+The NixOS service sends the shutdown signal only to Ralph's main process so
+review experiments can finish too. It waits without a stop timeout; a stuck
+review can hold up deployment and requires an operator to intervene. Forced
+termination still uses the persisted-job recovery described above.
+
 The public PR comment contains the marker, base and head commits, and verified
 review text. When full reports are configured, it also links to the report. It
 does not include a collapsed debug section, finding-attribution table, or
