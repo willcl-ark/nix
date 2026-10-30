@@ -9,3 +9,8 @@ max_history_calls = 8
 max_web_search_calls_per_response = 2
 timeout = 1800
 final_timeout = 1800
+
+[profiles.high]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+max_output_tokens = 16000
