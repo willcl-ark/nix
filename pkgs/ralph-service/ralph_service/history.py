@@ -66,6 +66,10 @@ def save_history(report_dir, number=None):
                 "head": str(record.get("head") or "unknown"),
                 "report_id": name,
                 "reviewed": _date(timestamp),
+                "timestamp": timestamp,
+                "findings": len(record["findings"])
+                if isinstance(record.get("findings"), list)
+                else "Unknown",
                 "status": str(record.get("status") or "unknown"),
                 "latest": _latest_label(records) if index == 0 else "",
             }
@@ -205,26 +209,39 @@ async function searchReports(query) {
             || (commit !== null && report.head.toLowerCase().startsWith(commit)));
         status.textContent = `${matches.length} report(s) matching ${query}.`;
         const results = document.getElementById('search-results');
-        for (const number of [...new Set(matches.map(report => report.pr))].sort((a, b) => a - b)) {
-            const section = document.createElement('section');
-            const heading = document.createElement('h2');
-            const history = document.createElement('a');
-            history.href = `${number}/`;
-            history.textContent = `PR #${number} · All reports`;
-            heading.append(history);
-            section.append(heading);
-            const list = document.createElement('ul');
-            for (const report of matches.filter(report => report.pr === number)) {
-                const item = document.createElement('li');
-                const link = document.createElement('a');
-                link.href = `${encodeURIComponent(report.report_id)}.html`;
-                link.textContent = `${report.reviewed}${report.latest ? " " + report.latest : ""} · ${report.head} · ${report.status}`;
-                item.append(link);
-                list.append(item);
-            }
-            section.append(list);
-            results.append(section);
+        matches.sort((a, b) => (b.timestamp ?? -Infinity) - (a.timestamp ?? -Infinity)
+            || b.report_id.localeCompare(a.report_id));
+        if (!matches.length) return;
+        const scroll = document.createElement('div');
+        scroll.className = 'table-scroll';
+        const table = document.createElement('table');
+        const header = table.createTHead().insertRow();
+        for (const title of ['PR', 'Reviewed', 'Commit', 'Outcome', 'Findings', 'Report']) {
+            const cell = document.createElement('th');
+            cell.textContent = title;
+            header.append(cell);
         }
+        const body = table.createTBody();
+        function link(cell, href, text) {
+            const anchor = document.createElement('a');
+            anchor.href = href;
+            anchor.textContent = text;
+            cell.append(anchor);
+        }
+        for (const report of matches) {
+            const row = body.insertRow();
+            link(row.insertCell(), `${report.pr}/`, `#${report.pr}`);
+            row.insertCell().textContent = `${report.reviewed}${report.latest ? " " + report.latest : ""}`;
+            const commitCell = row.insertCell();
+            const code = document.createElement('code');
+            link(code, `${report.pr}/?commit=${encodeURIComponent(report.head)}`, report.head);
+            commitCell.append(code);
+            row.insertCell().textContent = report.status;
+            row.insertCell().textContent = report.findings;
+            link(row.insertCell(), `${encodeURIComponent(report.report_id)}.html`, 'Full report');
+        }
+        scroll.append(table);
+        results.append(scroll);
     } catch (error) {
         status.textContent = 'Could not load the report index. Please try again later.';
     }
