@@ -266,6 +266,19 @@ and configuration. Each review run has a distinct URL, and publication retries
 reuse the saved report without changing its contents. If a report cannot be
 written, the review is published without a report link.
 
+New reports include **Challenger outcomes**, joining each original candidate to
+the validated challenge, source verification and final publication decision.
+Expand the cells for reasons and source evidence. The stats **Agents** page
+summarizes challenger outcomes by model; open its agent page to search candidates
+or filter for **Refuted, then approved** and other outcomes. Counts refer to
+candidates, including merged candidates separately, and measure agent agreement
+rather than correctness or confirmed delivery. Missing decisions stay unassessed.
+
+Statistics use retained normalized challenge records, including earlier runs of
+the refutation pipeline. Historical discovery-mode challengers are excluded from
+these counts. Existing report snapshots remain unchanged; their evidence links
+open the original report, where challenger replies remain under Agent Outputs.
+
 Reports, histories and search share the stats page's green palette and light/dark
 toggle. Theme assets are small local CSS and JavaScript files with no external
 libraries, fonts or network requests.

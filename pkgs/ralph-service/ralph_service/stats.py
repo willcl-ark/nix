@@ -1379,6 +1379,7 @@ def _new_stage():
         ),
         "accepted_findings": 0,
         "findings": [],
+        "challenge_tracking": None,
         "concept_stage": False,
         "conceptual_concerns": 0,
         "sole_source_findings": 0,
@@ -1491,6 +1492,50 @@ def _add_stage_results(stages, debug, row, report_name):
         record["stage"] = name
         record["configured_model"] = model
         record["findings"].extend(_stage_findings(debug, name, stage, row, report_name))
+        if name == "challenger":
+            challenges = core_trace.challenge_records(debug)
+            if challenges is not None:
+                if record["challenge_tracking"] is None:
+                    record["challenge_tracking"] = {
+                        "runs": 0,
+                        "outcomes": dict.fromkeys(
+                            ("refuted", "not_refuted", "unresolved"), 0
+                        ),
+                        "refuted_final_decisions": dict.fromkeys(
+                            ("publish", "drop", "unresolved", "unassessed"), 0
+                        ),
+                        "candidates": [],
+                    }
+                tracking = record["challenge_tracking"]
+                tracking["runs"] += 1
+                for challenge in challenges:
+                    tracking["outcomes"][challenge["outcome"]] += 1
+                    if challenge["outcome"] == "refuted":
+                        tracking["refuted_final_decisions"][
+                            challenge["final_disposition"] or "unassessed"
+                        ] += 1
+                    tracking["candidates"].append(
+                        {
+                            **{
+                                key: challenge[key]
+                                for key in (
+                                    "candidate_id",
+                                    "source",
+                                    "title",
+                                    "path",
+                                    "line",
+                                    "side",
+                                    "outcome",
+                                    "verifier_disposition",
+                                    "final_disposition",
+                                    "finding_id",
+                                )
+                            },
+                            "number": row["number"],
+                            "job_id": row["id"],
+                            "report_name": report_name,
+                        }
+                    )
         stage_metrics = metrics.get(name, {})
         record["concept_stage"] = bool(stage_metrics.get("concept_stage"))
         record["conceptual_concerns"] += stage_metrics.get("conceptual_concerns", 0)
@@ -1571,6 +1616,8 @@ def _stage_records(stages):
             "model_seconds": round(record["model_seconds"], 2),
             "ledger": _final_request_totals(record["ledger"]),
         }
+        if record["challenge_tracking"] is not None:
+            stage_record["challenge_tracking"] = record["challenge_tracking"]
         records.append(stage_record)
     return records
 

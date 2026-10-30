@@ -158,11 +158,12 @@ def _report_link(review, report_base_url):
     return _report_name_link(name, report_base_url, "report")
 
 
-def _report_name_link(name, report_base_url, text):
+def _report_name_link(name, report_base_url, text, *, anchor=""):
     base = _valid_http_base(report_base_url)
     if name is None or base is None:
         return "N/A"
-    return _link(f"{base}/{quote(name, safe='._-')}", text)
+    fragment = "#" + quote(anchor) if anchor else ""
+    return _link(f"{base}/{quote(name, safe='._-')}{fragment}", text)
 
 
 def _compare_link(assessment, repository_url):
@@ -689,7 +690,7 @@ def _stage_findings_details(stage, repository_url, report_base_url):
         )
         rows.append(row.replace("<tr>", f'<tr data-filter="{_escape(group)}">', 1))
     return (
-        '<p class="note">Candidate rows can merge into one accepted finding. Publish is the judge '
+        '<p class="note">Candidate rows can merge into one accepted finding. Publish is the final '
         "decision; accepted attribution is recorded separately.</p>"
         + _interactive_table(
             ["PR", "Finding", "Judge decision", "Attribution", "Report"],
@@ -703,6 +704,137 @@ def _stage_findings_details(stage, repository_url, report_base_url):
                 ("publish", "Published without accepted attribution"),
             ],
         )
+    )
+
+
+def _challenge_details(tracking, repository_url, report_base_url):
+    outcomes = _mapping(tracking.get("outcomes"))
+    final = _mapping(tracking.get("refuted_final_decisions"))
+    rows = []
+    for item in sorted(
+        _list(tracking.get("candidates")), key=_review_sort_key, reverse=True
+    ):
+        outcome = item["outcome"]
+        decision = item.get("final_disposition") or "unassessed"
+        group = f"refuted_{decision}" if outcome == "refuted" else outcome
+        title = _escape(item.get("title"))
+        location = ":".join(
+            str(item[key]) for key in ("path", "line") if item.get(key) is not None
+        )
+        title += '<span class="subline">' + _escape(location) + "</span>"
+        title += (
+            '<span class="subline">' + _escape(item.get("candidate_id")) + "</span>"
+        )
+        row = _cells(
+            [
+                _pr_link(item, repository_url),
+                title,
+                _escape(outcome.replace("_", " ").capitalize()),
+                _escape(
+                    (item.get("verifier_disposition") or "unassessed").capitalize()
+                ),
+                _escape(
+                    {
+                        "publish": "Approved for publication",
+                        "drop": "Dropped",
+                        "unresolved": "Unresolved",
+                        "unassessed": "Unassessed",
+                    }[decision]
+                ),
+                _report_name_link(
+                    _safe_report_name(item),
+                    report_base_url,
+                    "evidence",
+                    anchor="challenger",
+                ),
+            ]
+        )
+        rows.append(row.replace("<tr>", f'<tr data-filter="{_escape(group)}">', 1))
+    return (
+        "<section><h2>Challenged candidates</h2>"
+        + _key_value_table(
+            {
+                "Tracked runs": _fmt_int(tracking.get("runs")),
+                "Refuted": _fmt_int(outcomes.get("refuted")),
+                "Not refuted": _fmt_int(outcomes.get("not_refuted")),
+                "Unresolved challenges": _fmt_int(outcomes.get("unresolved")),
+                "Refuted, then approved": _fmt_int(final.get("publish")),
+                "Refuted, then dropped": _fmt_int(final.get("drop")),
+                "Refuted, final decision unresolved": _fmt_int(final.get("unresolved")),
+                "Refuted, final decision unassessed": _fmt_int(final.get("unassessed")),
+            }
+        )
+        + '<p class="note">Counts are candidates, including merged candidates separately. '
+        "Older discovery runs without challenge records are excluded. These are agent "
+        "decisions, not measured accuracy or confirmed publication.</p>"
+        + (
+            _interactive_table(
+                [
+                    "PR",
+                    "Candidate",
+                    "Challenger",
+                    "Source verification",
+                    "Final decision",
+                    "Report",
+                ],
+                rows,
+                "challenges",
+                [
+                    ("refuted_publish", "Refuted, then approved"),
+                    ("refuted_drop", "Refuted, then dropped"),
+                    ("refuted_unresolved", "Refuted, final decision unresolved"),
+                    ("refuted_unassessed", "Refuted, final decision unassessed"),
+                    ("not_refuted", "Not refuted"),
+                    ("unresolved", "Challenge unresolved"),
+                ],
+            )
+            if rows
+            else "<p>No candidates required a challenge in these runs.</p>"
+        )
+        + "</section>"
+    )
+
+
+def _challenger_section(summary):
+    rows = []
+    for stage in _list(summary.get("stages")):
+        if not isinstance(stage, dict):
+            continue
+        tracking = _mapping(stage.get("challenge_tracking"))
+        if not tracking:
+            continue
+        outcomes = _mapping(tracking.get("outcomes"))
+        final = _mapping(tracking.get("refuted_final_decisions"))
+        rows.append(
+            _cells(
+                [
+                    _stage_label(stage),
+                    _fmt_int(tracking.get("runs")),
+                    _fmt_int(outcomes.get("refuted")),
+                    _fmt_int(outcomes.get("not_refuted")),
+                    _fmt_int(outcomes.get("unresolved")),
+                    _fmt_int(final.get("publish")),
+                ]
+            )
+        )
+    if not rows:
+        return ""
+    return (
+        '<section><h2>Challenger outcomes</h2><p class="note">Open the challenger to inspect '
+        "refutations alongside source verification and final decisions. Counts exclude "
+        "older discovery runs and do not measure correctness.</p>"
+        + _data_table(
+            [
+                "Agent / model",
+                "Tracked runs",
+                "Refuted",
+                "Not refuted",
+                "Unresolved",
+                "Refuted, then approved",
+            ],
+            rows,
+        )
+        + "</section>"
     )
 
 
@@ -1581,6 +1713,7 @@ def _html(summary, repository_url, report_base_url):
 def _agents_html(summary, repository_url, report_base_url):
     body = (
         '<h1>Agents</h1><p class="subtitle">Findings and reliability by stage and configured model.</p>'
+        + _challenger_section(summary)
         + _stage_section(summary, repository_url, report_base_url)
         + "<section><h2>Coverage snapshot</h2>"
         + _section_note(
@@ -1597,6 +1730,21 @@ def _stage_html(summary, stage, repository_url, report_base_url):
     ledger = _mapping(stage.get("ledger"))
     candidates = _mapping(stage.get("candidate_counts"))
     statuses = _mapping(stage.get("status_counts"))
+    tracking = _mapping(stage.get("challenge_tracking"))
+    findings = _list(stage.get("findings"))
+    candidate_section = ""
+    if tracking:
+        candidate_section = _challenge_details(
+            tracking, repository_url, report_base_url
+        )
+    if not tracking or findings:
+        candidate_section += (
+            "<section><h2>"
+            + ("Earlier discovery findings" if tracking else "Candidate findings")
+            + "</h2>"
+            + _stage_findings_details(stage, repository_url, report_base_url)
+            + "</section>"
+        )
     body = (
         "<p>"
         + _internal_link("index.html", "← All agents")
@@ -1606,10 +1754,18 @@ def _stage_html(summary, stage, repository_url, report_base_url):
         + _escape(stage.get("configured_model", "unknown"))
         + "</p>"
         + '<div class="cards">'
-        + _kpi(
-            "Accepted findings",
-            _fmt_int(stage.get("accepted_findings")),
-            f"{_fmt_int(stage.get('sole_source_findings'))} unique; {_fmt_int(stage.get('shared_findings'))} shared",
+        + (
+            _kpi(
+                "Challenged candidates",
+                _fmt_int(len(_list(tracking.get("candidates")))),
+                f"{_fmt_int(tracking.get('runs'))} tracked runs; older discovery runs excluded",
+            )
+            if tracking
+            else _kpi(
+                "Accepted findings",
+                _fmt_int(stage.get("accepted_findings")),
+                f"{_fmt_int(stage.get('sole_source_findings'))} unique; {_fmt_int(stage.get('shared_findings'))} shared",
+            )
         )
         + _kpi(
             "Completion",
@@ -1625,9 +1781,8 @@ def _stage_html(summary, stage, repository_url, report_base_url):
             "Input tokens",
             _fmt_tokens(ledger, "input"),
         )
-        + "</div><section><h2>Candidate findings</h2>"
-        + _stage_findings_details(stage, repository_url, report_base_url)
-        + "</section>"
+        + "</div>"
+        + candidate_section
         + '<div class="split"><section><h2>Run status</h2>'
         + _key_value_table({k: _fmt_int(v) for k, v in statuses.items()})
         + _key_value_table(
@@ -1641,20 +1796,35 @@ def _stage_html(summary, stage, repository_url, report_base_url):
         + _key_value_table(
             {k: _fmt_int(v) for k, v in _mapping(stage.get("coverage_counts")).items()}
         )
-        + "</section><section><h2>Candidate decisions</h2>"
-        + _key_value_table({k: _fmt_int(v) for k, v in candidates.items()})
-        + _key_value_table(
-            {
-                "Selected among assessed": _fmt_percent(
-                    candidates.get("publish"), _candidate_denominator(candidates)
-                ),
-                "Accepted / executed run": _fmt_decimal(
-                    stage.get("accepted_per_executed_run"), 3
-                ),
-                "Conceptual concerns": _fmt_int(stage.get("conceptual_concerns")),
-            }
+        + "</section>"
+        + (
+            "<section><h2>"
+            + ("Earlier discovery decisions" if tracking else "Candidate decisions")
+            + "</h2>"
+            + _key_value_table({k: _fmt_int(v) for k, v in candidates.items()})
+            + (
+                _key_value_table(
+                    {
+                        "Selected among assessed": _fmt_percent(
+                            candidates.get("publish"),
+                            _candidate_denominator(candidates),
+                        ),
+                        "Accepted / executed run": _fmt_decimal(
+                            stage.get("accepted_per_executed_run"), 3
+                        ),
+                        "Conceptual concerns": _fmt_int(
+                            stage.get("conceptual_concerns")
+                        ),
+                    }
+                )
+                + '<p class="note">Selection uses publish, drop and unresolved candidates; unassessed candidates are excluded.</p>'
+                if not tracking
+                else '<p class="note">These counts belong to earlier discovery runs.</p>'
+            )
+            + "</section>"
+            if not tracking or findings
+            else ""
         )
-        + '<p class="note">Selection uses publish, drop and unresolved candidates; unassessed candidates are excluded.</p></section>'
         + "<section><h2>Usage</h2>"
         + _key_value_table(
             {

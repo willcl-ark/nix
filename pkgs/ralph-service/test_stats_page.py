@@ -10,6 +10,140 @@ from ralph_service import jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
+    def test_challenger_tracking_keeps_disagreements_and_unknowns_visible(self):
+        title = "<script>candidate</script>"
+        originals = [
+            {"title": name, "path": "src/test.cpp", "line": index, "side": "head"}
+            for index, name in enumerate(
+                (title, "Pending verification", "Bad refutation"), 1
+            )
+        ]
+        current = {
+            "schema_version": 2,
+            "candidate_sources": dict.fromkeys(
+                ("tests:1", "tests:2", "tests:3"), "tests"
+            ),
+            "stages": {
+                "tests": {"raw_output": json.dumps({"findings": originals})},
+                "challenger": {
+                    "model": "challenger-model",
+                    "status": "completed",
+                    "raw_output": json.dumps(
+                        {
+                            "challenges": [
+                                {"candidate_id": "tests:3", "outcome": "refuted"}
+                            ]
+                        }
+                    ),
+                },
+                "verifier": {
+                    "decisions": [
+                        {"candidate_ids": ["tests:1"], "disposition": "supported"}
+                    ]
+                },
+            },
+            "challenges": [
+                {
+                    "candidate_id": f"tests:{index}",
+                    "outcome": outcome,
+                    "reason": "Full explanation belongs only in the report.",
+                    "source_evidence": [{"excerpt": "Full source stays in report."}],
+                }
+                for index, outcome in enumerate(("refuted", "refuted", "unresolved"), 1)
+            ],
+            "decisions": [{"candidate_ids": ["tests:1"], "disposition": "publish"}],
+        }
+        historical = {
+            "schema_version": 2,
+            "candidate_sources": {"challenger:1": "challenger"},
+            "stages": {
+                "challenger": {
+                    "model": "challenger-model",
+                    "status": "completed",
+                    "raw_output": json.dumps(
+                        {"findings": [{"title": "Earlier discovery"}]}
+                    ),
+                }
+            },
+            "decisions": [
+                {"candidate_ids": ["challenger:1"], "disposition": "publish"}
+            ],
+            "finding_attribution": [
+                {
+                    "finding_id": "finding:1",
+                    "raised_by": ["challenger"],
+                    "candidate_ids": ["challenger:1"],
+                    "title": "Earlier discovery",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "reports"
+            store = jobs.JobStore(root / "jobs.sqlite3")
+            for number, debug in ((42, current), (43, historical)):
+                identity = {"name": "current"}
+                head = "a" * 40
+                store.enqueue(
+                    number, "master", head, "opened", engine_identity=identity
+                )
+                job = store.claim()
+                result = {
+                    "schema_version": 1,
+                    "head_sha": head,
+                    "engine": identity,
+                    "output": {
+                        "schema_version": 2,
+                        "data": debug,
+                        "exports": {"findings": []},
+                    },
+                }
+                store.save_result(job, result)
+                store.complete(job)
+                report.save_report(
+                    reports,
+                    number,
+                    result,
+                    f"{number}-{head}-{job['id']}-{job['generation']}",
+                )
+            summary = stats.collect_stats(root, reports)
+            challenger = next(
+                stage for stage in summary["stages"] if stage["stage"] == "challenger"
+            )
+            tracking = challenger["challenge_tracking"]
+            self.assertEqual(challenger["saved_result_runs"], 2)
+            self.assertEqual(challenger["accepted_findings"], 1)
+            self.assertEqual(tracking["runs"], 1)
+            self.assertEqual(tracking["outcomes"]["refuted"], 2)
+            self.assertEqual(tracking["outcomes"]["unresolved"], 1)
+            self.assertEqual(tracking["refuted_final_decisions"]["publish"], 1)
+            self.assertEqual(tracking["refuted_final_decisions"]["unassessed"], 1)
+            self.assertEqual(tracking["refuted_final_decisions"]["drop"], 0)
+            self.assertEqual(len(tracking["candidates"]), 3)
+            self.assertNotIn("source_evidence", tracking["candidates"][0])
+            self.assertNotIn("reason", tracking["candidates"][0])
+            self.assertIsNone(tracking["candidates"][1]["final_disposition"])
+            public = root / "public"
+            stats_page.save_stats(
+                public,
+                summary,
+                "https://code.example.org/repo",
+                "https://reports.example.org/traces",
+            )
+            detail = (
+                public / "agents" / stats_page._stage_filename(challenger)
+            ).read_text()
+            agents = (public / "agents/index.html").read_text()
+            self.assertIn('data-filter="refuted_publish"', detail)
+            self.assertIn("Approved for publication", detail)
+            self.assertIn("Unassessed", detail)
+            self.assertIn(".html#challenger", detail)
+            self.assertIn("&lt;script&gt;candidate&lt;/script&gt;", detail)
+            self.assertNotIn("<script>candidate", detail)
+            self.assertIn("Earlier discovery", detail)
+            self.assertIn(stats_page._stage_filename(challenger), agents)
+            self.assertIn("Refuted, then approved", agents)
+
     def test_daily_trends_accumulate_without_treating_missing_counts_as_zero(self):
         summary = {
             "time_series": [
