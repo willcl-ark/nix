@@ -356,13 +356,13 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             **changes,
         }
 
-    def test_unchanged_repeat_is_compact_without_author_response(self):
+    def test_unchanged_repeat_is_a_visible_current_finding(self):
         finding = self.finding()
         # A PR-introduced regression can still repeat the previous report.
         memory = self.memory()
         rendered = final_comment.render_report([finding], review_memory=[memory])
         self.assertIn(
-            "<summary>[Major · still present] Existing index problem</summary>",
+            "**🔴 Major · Existing index problem**",
             rendered,
         )
         self.assertEqual(rendered.count(finding["body"]), 1)
@@ -375,6 +375,61 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         memory["unchanged"] = True
         rendered = final_comment.render_report([finding], review_memory=[memory])
         self.assertIn(finding["summary"], rendered.split("<details>", 1)[0])
+
+    def test_head_verified_history_joins_current_findings_and_overflow(self):
+        memory = self.memory(
+            current_finding_ids=[],
+            source_evidence=[{"path": "current.cpp", "line": 12, "side": "head"}],
+        )
+        findings = [
+            self.finding(id=f"new:{i}", title=f"Suggestion {i}", severity="suggestion")
+            for i in range(7)
+        ]
+        rendered = final_comment.render_report(
+            findings,
+            review_memory=[memory],
+            head_sha="current-revision",
+        )
+        main, extra = rendered.split(
+            "<summary>Additional verified findings (2)</summary>"
+        )
+        self.assertIn("🔴 Major", main)
+        self.assertIn(memory["title"], main)
+        self.assertIn(memory["reason"], main)
+        self.assertIn("current.cpp:12", main)
+        self.assertIn("Suggestion 4", main)
+        self.assertIn("Suggestion 5", extra)
+        self.assertIn("Suggestion 6", extra)
+        self.assertNotIn("Previous findings", rendered)
+        self.assertIn(memory["body"], rendered)
+        self.assertIn("previously reported", rendered)
+
+        duplicate = {**memory, "key": "old:duplicate", "duplicate_of": memory["key"]}
+        rendered = final_comment.render_report(
+            [],
+            review_memory=[{**memory, "status": "unclear"}, duplicate],
+            head_sha="current-revision",
+        )
+        self.assertIn("🔴 Major", rendered.split("<details>", 1)[0])
+        self.assertIn("Original review", rendered)
+        self.assertNotIn("Unconfirmed previous findings", rendered)
+        self.assertEqual(rendered.count(memory["body"]), 1)
+
+        for changes in (
+            {"checked_head": "stale-revision"},
+            {"status": "unclear"},
+            {"source_evidence": []},
+            {"current_candidate_ids": ["withheld:1"]},
+        ):
+            with self.subTest(changes=changes):
+                rendered = final_comment.render_report(
+                    [],
+                    review_memory=[{**memory, **changes}],
+                    head_sha="current-revision",
+                )
+                main, history = rendered.split("<summary>Unconfirmed previous findings")
+                self.assertNotIn(memory["title"], main)
+                self.assertIn(memory["title"], history)
 
     def test_uncertain_and_resolved_findings_keep_their_records(self):
         memory = self.memory(
@@ -466,9 +521,9 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         rendered = final_comment.render_report(
             [first, second], review_memory=[shared, changed]
         )
-        main, history = rendered.split("<summary>Previous findings", 1)
+        main = rendered
         self.assertIn(first["body"], main)
-        self.assertIn(second["body"], history)
+        self.assertIn(second["body"], main)
         for entry in (shared, changed):
             self.assertIn(entry["source_head"], main)
             self.assertNotIn(entry["body"], rendered)
@@ -511,7 +566,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             self.assertNotIn(memory["presented_body"], rendered)
             self.assertNotIn(memory["body"], rendered)
             if not failed:
-                self.assertIn("[Critical · still present] Latest title", rendered)
+                self.assertIn("[Critical · not confirmed] Latest title", rendered)
 
 
 if __name__ == "__main__":

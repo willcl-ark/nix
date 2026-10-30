@@ -158,6 +158,7 @@ def _current_findings(findings, memory, head_sha):
                 # Reconciliation describes the claim at this head; old wording and
                 # old line numbers need not still be accurate.
                 "summary": entry["reason"],
+                "body": entry["reason"],
                 "path": source["path"],
                 "line": source["line"],
                 "side": "head",
@@ -270,6 +271,7 @@ def render_report(
     *,
     comment_format=None,
     review_tier=None,
+    head_sha=None,
 ):
     if comment_format is None:
         comment_format = load_format()
@@ -302,6 +304,9 @@ def render_report(
             details="\n\n" + "\n\n".join(details) if details else "",
         )
     memory = review_memory or []
+    findings, included_history = _current_findings(
+        findings, memory, None if verification_failed else head_sha
+    )
     memory_groups = {}
     for index, entry in enumerate(memory):
         key = entry.get("duplicate_of") or entry.get("key") or index
@@ -390,15 +395,9 @@ def render_report(
         ]
         return "Previous reports of the same concern:\n\n" + "\n".join(reports)
 
-    def memory_text(groups, finding):
+    def memory_text(groups, finding, status=None):
         active = [entry for group in groups for entry in active_entries(group)]
-        status = (
-            "still present"
-            if active and all(item.get("status") == "still_present" for item in active)
-            else "not confirmed"
-            if active
-            else "resolved"
-        )
+        status = status or ("not confirmed" if active else "resolved")
         return fill(
             "retained",
             label=summary_label(
@@ -422,24 +421,22 @@ def render_report(
             for key, group in memory_groups.items()
             if any(
                 finding["id"] in entry.get("current_finding_ids", [])
+                or (entry["key"] in included_history and finding["id"] == entry["key"])
                 for entry in active_entries(group)
             )
         }
         if linked:
             matched_groups.update(linked)
-            if all(
-                entry.get("status") == "still_present"
-                and entry.get("unchanged_since_report")
-                for group in linked.values()
-                for entry in active_entries(group)
-            ):
-                history.append(memory_text(linked.values(), finding))
-                unresolved_history.append(finding)
-                continue
-            text += "\n\n" + fill(
-                "provenance",
-                provenance="\n\n".join(provenance(group) for group in linked.values()),
-            )
+            reports = []
+            for key, group in linked.items():
+                if key in included_history:
+                    for old in published_findings(
+                        representative(active_entries(group))
+                    ):
+                        reports.append(memory_text([group], old, "previously reported"))
+                else:
+                    reports.append(provenance(group))
+            text += "\n\n" + fill("provenance", provenance="\n\n".join(reports))
         current_counts[finding["severity"]] += 1
         finding_groups.setdefault(finding["severity"], []).append(text)
     for key, group in memory_groups.items():
@@ -466,7 +463,17 @@ def render_report(
         if group:
             rendered_findings.extend(group)
     if rendered_findings:
-        sections["findings"] = fill("findings", findings="\n\n".join(rendered_findings))
+        visible = rendered_findings[:COMMENT_FINDING_LIMIT]
+        extra = rendered_findings[COMMENT_FINDING_LIMIT:]
+        if extra:
+            visible.append(
+                fill(
+                    "history",
+                    label=f"Additional verified findings ({len(extra)})",
+                    history="\n\n".join(extra),
+                )
+            )
+        sections["findings"] = fill("findings", findings="\n\n".join(visible))
     rendered_design = []
     if concept_summary:
         rendered_design.append(f"**Concept and approach.** {concept_summary}")
@@ -498,13 +505,7 @@ def render_report(
             "alternatives", alternatives="\n\n".join(rendered_alternatives)
         )
     if history or resolved_history:
-        previous_kind = (
-            "suggestions"
-            if unresolved_history
-            and all(item.get("severity") == "suggestion" for item in unresolved_history)
-            else "findings"
-        )
-        history_label = f"Previous {previous_kind} ({len(unresolved_history)})"
+        history_label = f"Unconfirmed previous findings ({len(unresolved_history)})"
         if not unresolved_history:
             history_label = "Previous findings"
         if resolved_history:
@@ -537,16 +538,11 @@ def render_report(
         if current_counts[severity]
     ]
     if unresolved_history:
-        previous_noun = (
-            previous_kind.removesuffix("s")
-            if len(unresolved_history) == 1
-            else previous_kind
+        count = len(unresolved_history)
+        counts.append(
+            f"{count} unconfirmed previous finding{'s' if count != 1 else ''}"
         )
-        counts.append(f"{len(unresolved_history)} previous {previous_noun}")
     sections["overview"] = " · ".join(counts)
-    if unresolved_history and not current_counts and not verification_failed:
-        verb = "remains" if len(unresolved_history) == 1 else "remain"
-        sections["overview"] = f"No new findings. {sections['overview']} {verb}."
     content = _render_sections(comment_format["comment"], sections)
     if review_tier:
         content += f"\n\n<!-- Review tier: {escape(review_tier)} -->"

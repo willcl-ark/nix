@@ -70,15 +70,19 @@ findings link to the full report. Unverified historical concerns receive one sho
 their entries, resolved history, finding bodies and alternatives stay in the
 report. Concept feedback and a brief backport assessment can still appear.
 
-Reports retain every finding and its expandable explanation. Previous findings
-are grouped under one collapsed section, including their original review links,
-revision history and author replies. Fixed and invalid findings remain under
+Reports put the six highest-severity currently verified findings first, using
+the same titles, severity symbols and summaries as comments. Repeated findings
+stay in this list when verified at the reviewed head. Additional verified
+findings are expandable, and every finding retains its detailed explanation.
+Original review links, revision history and author replies stay with each
+finding under "Previous reports". Unconfirmed previous concerns are grouped
+separately in a collapsed section. Fixed and invalid findings remain under
 "Resolved findings", with the resolution reason.
 
 Ralph still decides which findings were verified and which earlier reports refer
-to the same concern. The verifier's `unchanged_since_report` assessment controls
-retained entries in the report, including regressions introduced by the PR.
-Editing the wording alone does not count as a changed finding.
+to the same concern. The verifier's `unchanged_since_report` assessment does not
+hide a current verified finding. Historical concerns require verification at the reviewed head
+before joining the current list; their age alone does not establish correctness.
 Dynamic HTML summary labels are escaped, with backtick code spans rendered
 as HTML code tags. New findings require a summary; older
 review records without one retain their stored explanation.
