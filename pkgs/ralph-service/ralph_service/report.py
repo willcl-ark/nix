@@ -13,6 +13,8 @@ from markdown_it import MarkdownIt
 
 from ralph import trace as core_trace
 
+from . import theme
+
 
 REPORT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 ATTRIBUTION_FIELDS = (
@@ -948,19 +950,12 @@ def _html_report(record, json_name):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Review report PR #{_escape(record["pr"])}</title>
-<style>
-body {{ margin: 2rem auto; max-width: 76rem; padding: 0 1rem; color: #1f2933; font: 16px/1.5 system-ui, sans-serif; overflow-wrap: anywhere; }}
-a {{ color: #075985; }}
-.notice {{ border-left: 4px solid #d97706; background: #fff7ed; padding: 0.75rem 1rem; }}
-pre {{ background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; overflow-x: auto; padding: 1rem; white-space: pre-wrap; }}
-table {{ border-collapse: collapse; width: 100%; }}
-th, td {{ border: 1px solid #d0d7de; padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; }}
-th {{ background: #f6f8fa; }}
-details {{ border-top: 1px solid #d0d7de; padding: 0.75rem 0; }}
-summary {{ cursor: pointer; font-weight: 600; }}
+<style>{_style()}
 </style>
+<script src="theme.js" defer></script>
 </head>
 <body>
+{theme.BUTTON}
 <header>
 <h1>Forgejo Review Report</h1>
 {outcome}
@@ -1035,6 +1030,20 @@ def _export_findings_html(record):
     )
 
 
+def _style():
+    return (
+        theme.STYLE
+        + """
+body { margin: 2rem auto; max-width: 76rem; padding: 0 1rem; font-size: 16px; overflow-wrap: anywhere; }
+.notice { border-left: 4px solid var(--accent); background: var(--raised); padding: .75rem 1rem; }
+pre { white-space: pre-wrap; }
+th, td { vertical-align: top; }
+details { border-top: 1px solid var(--border); padding: .75rem 0; }
+summary { cursor: pointer; font-weight: 600; }
+"""
+    )
+
+
 def _write_public_file(path, content, *, replace=True):
     path = Path(path)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
@@ -1068,6 +1077,7 @@ def save_report(report_dir, number, result, report_id):
     if not isinstance(report_id, str) or not REPORT_ID.fullmatch(report_id):
         raise ValueError("report_id must be a safe filename stem")
     report_dir = Path(report_dir)
+    theme.save_assets(report_dir)
     report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
     html_name = f"{report_id}.html"
     json_name = f"{report_id}.json"

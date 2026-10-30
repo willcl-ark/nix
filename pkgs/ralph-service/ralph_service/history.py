@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from . import report
+from . import report, theme
 
 
 def _report_time(record, path):
@@ -28,6 +28,7 @@ def _report_time(record, path):
 def save_history(report_dir, number=None):
     """Refresh all PR indexes, or just one PR, without changing report artifacts."""
     report_dir = Path(report_dir)
+    theme.save_assets(report_dir)
     report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
     report._write_public_file(report_dir / "history.js", _script())
     groups = defaultdict(list)
@@ -105,7 +106,8 @@ def _page(number, records):
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ralph reports for PR #{number}</title>
-<style>{_style()}</style><script src="../history.js" defer></script></head><body>
+<style>{_style()}</style><script src="../theme.js" defer></script><script src="../history.js" defer></script></head><body>
+{theme.BUTTON}
 <p><a href="../">Search all reports</a></p>
 <h1>Ralph reports for PR #{number}</h1>
 <p>Saved review runs, newest first. Multiple reports may review the same commit.
@@ -137,15 +139,14 @@ def _date(timestamp):
 
 
 def _style():
-    return """body { font: 16px system-ui, sans-serif; margin: 2rem auto; padding: 0 1rem; max-width: 90rem; color: #202124; background: #fafafa; }
-a { color: #185abc; }
-.table-scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; background: white; }
-th, td { text-align: left; padding: .75rem; border-bottom: 1px solid #ddd; }
+    return (
+        theme.STYLE
+        + """body { margin: 2rem auto; padding: 0 1rem; max-width: 90rem; }
+.table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: .65rem; }
 code { font-size: .85em; }
-input, button { font: inherit; padding: .35rem; }
 form { margin: 1rem 0; }
 """
+    )
 
 
 def _search_page():
@@ -153,7 +154,8 @@ def _search_page():
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Search Ralph reports</title>
-<style>{_style()}</style><script src="history.js" defer></script></head><body>
+<style>{_style()}</style><script src="theme.js" defer></script><script src="history.js" defer></script></head><body>
+{theme.BUTTON}
 <h1>Search Ralph reports</h1>
 <form><label>PR number <input name="q" placeholder="PR number, e.g. 36688" aria-label="PR number or commit"></label>
 <button type="submit">Search</button></form>

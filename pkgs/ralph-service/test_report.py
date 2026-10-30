@@ -73,7 +73,9 @@ if (value < 1) return;
         self.assertIn("Reject <code>zero</code> before dividing.", rendered)
         self.assertIn("<li>Validate input</li>", rendered)
         self.assertIn("if (value &lt; 1) return;", rendered)
-        self.assertNotIn("<script", rendered)
+        self.assertNotIn(
+            "<script", rendered.replace('<script src="theme.js" defer></script>', "")
+        )
         self.assertNotIn("javascript:", rendered)
         self.assertNotIn("onclick", rendered)
         self.assertNotIn("onerror", rendered)

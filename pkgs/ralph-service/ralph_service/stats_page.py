@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from . import report
+from . import report, theme
 
 
 MISSING = object()
@@ -1236,13 +1236,9 @@ def _charts_section(summary):
 
 
 def _style():
-    return """
-:root { color-scheme: dark; --bg: #111313; --surface: #191c1c; --raised: #222727; --text: #e8ece8; --muted: #9ca9a3; --border: #303836; --accent: #75dbb1; }
-:root[data-theme="light"] { color-scheme: light; --bg: #f3f5f2; --surface: #ffffff; --raised: #eaf0eb; --text: #23392f; --muted: #596d60; --border: #d6e0d8; --accent: #187454; }
-* { box-sizing: border-box; }
-body { margin: 0; color: var(--text); background: var(--bg); font: 14px/1.55 system-ui, sans-serif; }
-a { color: var(--accent); text-underline-offset: .18em; }
-a:hover { color: var(--text); }
+    return (
+        theme.STYLE
+        + """
 header { position: fixed; inset: 0 auto 0 0; width: 14rem; background: var(--surface); border-right: 1px solid var(--border); padding: 2rem 1.1rem; display: flex; flex-direction: column; z-index: 5; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: .75rem; font-size: 1.3rem; font-weight: 750; text-decoration: none; color: var(--text); letter-spacing: -.04em; }
 .brand-mark { display: grid; place-items: center; width: 2.3rem; height: 2.3rem; border-radius: .65rem; background: var(--accent); color: var(--bg); font: 700 1.25rem ui-monospace, monospace; }
@@ -1364,10 +1360,13 @@ meter::-moz-meter-bar { background: var(--accent); border-radius: 1rem; }
   .finding-score meter { display: none; }
 }
 """
+    )
 
 
 def _script():
-    return """
+    return (
+        theme.SCRIPT
+        + """
 const trendControls = document.querySelector('.chart-controls');
 if (trendControls) {
   trendControls.hidden = false;
@@ -1380,22 +1379,6 @@ if (trendControls) {
         panel.hidden = panel.dataset.trendPanel !== button.dataset.trendMode;
       });
     });
-  });
-}
-const themeToggle = document.querySelector('[data-theme-toggle]');
-if (themeToggle) {
-  function setTheme(theme) {
-    document.documentElement.dataset.theme = theme;
-    themeToggle.textContent = theme === 'dark' ? 'Light theme' : 'Dark theme';
-  }
-  let theme = 'dark';
-  try { theme = localStorage.getItem('ralph-theme') === 'light' ? 'light' : 'dark'; } catch {}
-  setTheme(theme);
-  themeToggle.hidden = false;
-  themeToggle.addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    try { localStorage.setItem('ralph-theme', next); } catch {}
   });
 }
 const leaderboard = document.querySelector('#leaderboard table');
@@ -1459,6 +1442,7 @@ document.querySelectorAll('.data-list').forEach(list => {
   render();
 });
 """
+    )
 
 
 def _wrap_tables(html_text):

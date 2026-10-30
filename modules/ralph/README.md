@@ -241,6 +241,10 @@ and configuration. Each review run has a distinct URL, and publication retries
 reuse the saved report without changing its contents. If a report cannot be
 written, the review is published without a report link.
 
+Reports, histories and search share the stats page's green palette and light/dark
+toggle. Theme assets are small local CSS and JavaScript files with no external
+libraries, fonts or network requests.
+
 Each PR has a history page at `reportBaseUrl/<PR>/`, linked as **Previous
 reports** from new review comments and full reports. It lists every available
 public report, including reruns of the same commit. Add `?commit=<SHA>` to

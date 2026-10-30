@@ -45,7 +45,7 @@ stdenvNoCC.mkDerivation {
     for launcher in bot.py evaluate.py followup.py monitor.py; do
       install -Dm755 "$launcher" $out/libexec/ralph-service/"$launcher"
     done
-    for module in ralph_service/*.py; do
+    for module in ralph_service/*.py ralph_service/*.css ralph_service/*.js; do
       install -Dm644 "$module" $out/libexec/ralph-service/"$module"
     done
     install -Dm644 audits/addressed_findings.md $out/libexec/ralph-service/audits/addressed_findings.md
