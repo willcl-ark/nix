@@ -802,3 +802,7 @@ Telegram's retry delay. A crash after Telegram
 accepts a message but before Ralph records delivery can cause a duplicate.
 The monitor keeps the existing database at this path; no migration is needed.
 It runs without an extra systemd timer.
+
+The review listing shows estimated severity counts from published findings, with
+severity filtering and sorting. Muted dots mean zero; question marks mean severity
+data is unavailable. Unclassified findings appear separately when present.

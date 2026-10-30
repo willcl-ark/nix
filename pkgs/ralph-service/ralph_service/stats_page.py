@@ -586,6 +586,11 @@ def _data_table(headers, rows):
         "Executed",
         "Failed",
         "Findings",
+        "Critical",
+        "Major",
+        "Minor",
+        "Suggestions",
+        "Unclassified",
         "Sole accepted",
         "Shared accepted",
     }
@@ -622,7 +627,7 @@ def _cells(values):
     )
 
 
-def _interactive_table(headers, rows, label, filters=()):
+def _interactive_table(headers, rows, label, filters=(), controls=""):
     options = "".join(
         f'<option value="{_escape(value)}">{_escape(text)}</option>'
         for value, text in filters
@@ -640,6 +645,7 @@ def _interactive_table(headers, rows, label, filters=()):
         '<div class="data-list"><div class="list-controls" hidden>'
         f'<label>Search {_escape(label)} <input type="search" data-search></label>'
         + select
+        + controls
         + "</div>"
         + _data_table(headers, rows)
         + '<div class="pagination" hidden><button type="button" data-prev>Previous</button>'
@@ -954,6 +960,13 @@ def _sorted_reviews(summary):
 def _reviews_table(reviews, repository_url, report_base_url):
     if not reviews:
         return "<p>No saved reviews were recorded.</p>"
+    levels = ["critical", "major", "minor", "suggestion"]
+    if any(
+        set(_mapping(_mapping(r.get("findings")).get("severities"))) - set(levels)
+        for r in reviews
+    ):
+        levels.append("unknown")
+    labels = {"suggestion": "Suggestions", "unknown": "Unclassified"}
     rows = []
     latest = {}
     for review in reviews:
@@ -969,6 +982,24 @@ def _reviews_table(reviews, repository_url, report_base_url):
             latest[number] = review
     for review in reviews:
         findings = _mapping(review.get("findings"))
+        severities = findings.get("severities")
+        counts = _mapping(severities)
+        counts = {
+            level: sum(
+                value
+                for key, value in counts.items()
+                if key == level or (level == "unknown" and key not in levels)
+            )
+            for level in levels
+        }
+        severity_cells = "".join(
+            f'<td class="numeric severity {level if counts[level] else "zero"}">'
+            + (str(counts[level]) if counts[level] else '<span aria-label="0">·</span>')
+            + "</td>"
+            if severities is not None
+            else '<td class="numeric severity zero"><span title="Severity unavailable">?</span></td>'
+            for level in levels
+        )
         title = _escape(review.get("pr_title") or "Unknown")
         head = review.get("head")
         base = _valid_http_base(repository_url)
@@ -990,10 +1021,11 @@ def _reviews_table(reviews, repository_url, report_base_url):
                     f'<code data-search-text="{head if _valid_sha(head) else ""}">{commit}</code>',
                     _report_link(review, report_base_url),
                     _escape(review.get("review_status", "unknown")),
-                    "unsupported"
-                    if findings.get("export_status") == "unsupported"
-                    else _fmt_int(findings.get("published")),
                 ]
+            )
+            .replace("</tr>", severity_cells + "</tr>")
+            .replace(
+                "<tr>", '<tr data-severities="' + _escape(json.dumps(counts)) + '">'
             )
         )
     return _interactive_table(
@@ -1003,10 +1035,18 @@ def _reviews_table(reviews, repository_url, report_base_url):
             "Commit",
             "Report",
             "Outcome",
-            "Findings",
+            *[labels.get(level, level.title()) for level in levels],
         ],
         rows,
         "reviews",
+        controls='<label>Severity <select data-severity><option value="">Any</option>'
+        + "".join(
+            f'<option value="{level}">{labels.get(level, level.title())}</option>'
+            for level in levels
+        )
+        + "</select></label><label>Sort <select data-review-sort>"
+        '<option value="newest">Newest first</option><option value="severity">Severity</option>'
+        "</select></label>",
     )
 
 
@@ -1277,6 +1317,9 @@ tbody tr:hover { background: var(--raised); }
 td { font-variant-numeric: tabular-nums; }
 .reviews-list td { padding-top: .45rem; padding-bottom: .45rem; white-space: nowrap; }
 .review-title { display: block; max-width: 50ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.severity.zero { opacity: .35; }
+.severity.major { color: #b47d32; font-weight: 600; }
+.severity.critical { color: #cf5862; font-weight: 600; }
 .numeric { text-align: right; white-space: nowrap; }
 td:first-child { min-width: 5rem; }
 .key-values { display: grid; grid-template-columns: minmax(8rem, 1fr) 1fr; gap: .6rem 1rem; margin: .5rem 0; min-width: 15rem; }
@@ -1414,6 +1457,9 @@ document.querySelectorAll('.data-list').forEach(list => {
   const rows = [...list.querySelector('tbody').children];
   const search = list.querySelector('[data-search]');
   const filter = list.querySelector('select[data-filter]');
+  const severity = list.querySelector('[data-severity]');
+  const sort = list.querySelector('[data-review-sort]');
+  const counts = new Map(rows.map(row => [row, JSON.parse(row.dataset.severities || '{}')]));
   const previous = list.querySelector('[data-prev]');
   const next = list.querySelector('[data-next]');
   const status = list.querySelector('[data-page]');
@@ -1424,7 +1470,16 @@ document.querySelectorAll('.data-list').forEach(list => {
   function render() {
     const query = search.value.trim().toLocaleLowerCase();
     const matches = rows.filter((row, index) => searchable[index].includes(query)
-      && (!filter || !filter.value || row.dataset.filter === filter.value));
+      && (!filter || !filter.value || row.dataset.filter === filter.value)
+      && (!severity || !severity.value || counts.get(row)[severity.value] > 0));
+    if (sort && sort.value === 'severity') matches.sort((a, b) => {
+      for (const level of ['critical', 'major', 'minor', 'suggestion', 'unknown']) {
+        const difference = (counts.get(b)[level] || 0) - (counts.get(a)[level] || 0);
+        if (difference) return difference;
+      }
+      return 0;
+    });
+    list.querySelector('tbody').append(...matches);
     page = Math.min(page, Math.max(0, Math.ceil(matches.length / size) - 1));
     rows.forEach(row => { row.hidden = true; });
     matches.slice(page * size, (page + 1) * size).forEach(row => { row.hidden = false; });
@@ -1436,6 +1491,7 @@ document.querySelectorAll('.data-list').forEach(list => {
   }
   search.addEventListener('input', () => { page = 0; render(); });
   if (filter) filter.addEventListener('change', () => { page = 0; render(); });
+  for (const control of [severity, sort]) if (control) control.addEventListener('change', () => { page = 0; render(); });
   previous.addEventListener('click', () => { page--; render(); });
   next.addEventListener('click', () => { page++; render(); });
   list.querySelector('.list-controls').hidden = false;
@@ -1616,7 +1672,7 @@ def _stage_html(summary, stage, repository_url, report_base_url):
 
 def _reviews_html(summary, repository_url, report_base_url):
     body = (
-        '<h1>Reviews</h1><p class="subtitle">Search saved reviews by PR, commit or outcome. Newest first.</p>'
+        '<h1>Reviews</h1><p class="subtitle">Search saved reviews by PR, commit or outcome. Severity is estimated by Ralph.</p>'
         + '<section class="reviews-list">'
         + _reviews_table(_sorted_reviews(summary), repository_url, report_base_url)
         + "</section>"
