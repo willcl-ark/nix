@@ -113,3 +113,6 @@ waits for the local `guix publish` endpoint to serve all resulting substitutes.
 When `builder.publisherHosts` is non-empty, the worker marks each completed job
 for publication. A root-owned post-build step copies its profile closures to
 each SSH host and creates remote GC roots before recording publication.
+
+Guix manages its store directory and permissions. The publisher does not apply
+tmpfiles permissions to the store, which NixOS mounts read-only.

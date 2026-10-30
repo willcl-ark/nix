@@ -164,7 +164,6 @@ in
     '';
 
     systemd.tmpfiles.rules = [
-      "d ${cfg.storeDir} 0755 root root -"
       "d ${cfg.dataDir} 0751 ${dataDirOwner} ${dataDirGroup} -"
       "z ${cfg.dataDir} 0751 ${dataDirOwner} ${dataDirGroup} -"
       "d ${publishCacheDirectory} 0755 guix-publish guix-publish -"
