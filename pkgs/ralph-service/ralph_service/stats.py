@@ -197,6 +197,7 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             "number": row["number"],
             "generation": row["generation"],
             "head": result.get("head_sha") or row["head"],
+            "pr_title": _optional_string((result.get("run") or {}).get("pr_title")),
             "status": row["status"],
             "review_status": (result.get("run") or {}).get("status", "unknown"),
             "job_attempts": row["attempts"],

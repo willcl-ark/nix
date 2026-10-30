@@ -969,6 +969,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
             latest[number] = review
     for review in reviews:
         findings = _mapping(review.get("findings"))
+        title = _escape(review.get("pr_title") or "Unknown")
         head = review.get("head")
         base = _valid_http_base(repository_url)
         commit = (
@@ -985,6 +986,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
             _cells(
                 [
                     _pr_link(review, repository_url) + marker,
+                    f'<span class="review-title" title="{title}">{title}</span>',
                     f'<code data-search-text="{head if _valid_sha(head) else ""}">{commit}</code>',
                     _report_link(review, report_base_url),
                     _escape(review.get("review_status", "unknown")),
@@ -997,6 +999,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
     return _interactive_table(
         [
             "PR",
+            "PR title",
             "Commit",
             "Report",
             "Outcome",
@@ -1273,6 +1276,7 @@ tbody tr:last-child > td { border-bottom: 0; }
 tbody tr:hover { background: var(--raised); }
 td { font-variant-numeric: tabular-nums; }
 .reviews-list td { padding-top: .45rem; padding-bottom: .45rem; white-space: nowrap; }
+.review-title { display: block; max-width: 50ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .numeric { text-align: right; white-space: nowrap; }
 td:first-child { min-width: 5rem; }
 .key-values { display: grid; grid-template-columns: minmax(8rem, 1fr) 1fr; gap: .6rem 1rem; margin: .5rem 0; min-width: 15rem; }
