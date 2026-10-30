@@ -246,7 +246,7 @@ reports** from new review comments and full reports. It lists every available
 public report, including reruns of the same commit. Add `?commit=<SHA>` to
 filter by a full commit hash or prefix. The archive root at `reportBaseUrl/`
 provides a search form for PR numbers and commit hashes or prefixes. It stays
-empty until a search is submitted. Reports appear newest first, with a star on
+empty until a search is submitted. Reports appear newest first, with 🟠 beside
 the most recent dated report. Undated backfills appear last and never receive
 a most-recent badge. The stats timer refreshes its public
 `history.json` catalog alongside the PR history pages.

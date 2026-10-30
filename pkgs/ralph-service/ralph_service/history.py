@@ -14,15 +14,15 @@ from . import report
 def _report_time(record, path):
     value = record.get("review_completed_at")
     if value == "unknown":
-        return None, False
+        return None
     if isinstance(value, str):
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             if parsed.tzinfo is not None:
-                return parsed.timestamp(), False
+                return parsed.timestamp()
         except ValueError:
             pass
-    return path.stat().st_mtime, True
+    return path.stat().st_mtime
 
 
 def save_history(report_dir, number=None):
@@ -47,8 +47,8 @@ def save_history(report_dir, number=None):
                 or not report.REPORT_ID.fullmatch(path.stem)
             ):
                 continue
-            timestamp, estimated = _report_time(record, path)
-            groups[pr].append((timestamp, path.stem, estimated, record))
+            timestamp = _report_time(record, path)
+            groups[pr].append((timestamp, path.stem, record))
         except (OSError, ValueError) as exc:
             logging.warning("Could not index public report %s: %s", path.name, exc)
     for pr, records in groups.items():
@@ -65,12 +65,12 @@ def save_history(report_dir, number=None):
                 "pr": pr,
                 "head": str(record.get("head") or "unknown"),
                 "report_id": name,
-                "reviewed": _date(timestamp, estimated),
+                "reviewed": _date(timestamp),
                 "status": str(record.get("status") or "unknown"),
                 "latest": _latest_label(records) if index == 0 else "",
             }
             for pr, records in groups.items()
-            for index, (timestamp, name, estimated, record) in enumerate(records)
+            for index, (timestamp, name, record) in enumerate(records)
         ]
         report._write_public_file(
             report_dir / "history.json", json.dumps(catalog, ensure_ascii=False) + "\n"
@@ -81,12 +81,12 @@ def save_history(report_dir, number=None):
 
 def _page(number, records):
     rows = []
-    for index, (timestamp, name, estimated, record) in enumerate(records):
+    for index, (timestamp, name, record) in enumerate(records):
         head = str(record.get("head") or "unknown")
         escaped_head = html.escape(head, quote=True)
-        date = _date(timestamp, estimated)
+        date = _date(timestamp)
         if index == 0 and _latest_label(records):
-            date += f"<br><strong>{_latest_label(records)}</strong>"
+            date += f" {_latest_label(records)}"
         findings = record.get("findings")
         count = str(len(findings)) if isinstance(findings, list) else "Unknown"
         rows.append(
@@ -112,8 +112,6 @@ A saved report does not necessarily mean its review was posted.</p>
 <div class="table-scroll"><table><thead><tr><th>Reviewed</th><th>Commit</th>
 <th>Outcome</th><th>Findings</th><th>Report</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
-<p>* Older reports use the public report file's modification time. Undated reports
-are listed last; their order relative to dated reports is unknown.</p>
 <noscript>Commit filtering requires JavaScript. All reports are listed above.</noscript>
 </body></html>
 """
@@ -122,20 +120,16 @@ are listed last; their order relative to dated reports is unknown.</p>
 def _latest_label(records):
     if not records or records[0][0] is None:
         return ""
-    return (
-        "★ Most recent dated report"
-        if any(item[0] is None for item in records)
-        else "★ Most recent"
-    )
+    return "🟠"
 
 
-def _date(timestamp, estimated):
+def _date(timestamp):
     if timestamp is None:
         return "Unknown"
     date = datetime.fromtimestamp(timestamp, timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S UTC"
     )
-    return date + (" *" if estimated else "")
+    return date
 
 
 def _style():
@@ -224,13 +218,8 @@ async function searchReports(query) {
                 const item = document.createElement('li');
                 const link = document.createElement('a');
                 link.href = `${encodeURIComponent(report.report_id)}.html`;
-                link.textContent = `${report.reviewed} · ${report.head} · ${report.status}`;
+                link.textContent = `${report.reviewed}${report.latest ? " " + report.latest : ""} · ${report.head} · ${report.status}`;
                 item.append(link);
-                if (report.latest) {
-                    const badge = document.createElement('strong');
-                    badge.textContent = ` ${report.latest}`;
-                    item.append(badge);
-                }
                 list.append(item);
             }
             section.append(list);
