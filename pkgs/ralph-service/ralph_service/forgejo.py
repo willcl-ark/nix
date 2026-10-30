@@ -594,6 +594,7 @@ def review_body(
     report_link = f" · [Full review report](<{report_url}>)" if report_url else ""
     if history_url:
         report_link += f" · [Previous reports](<{history_url}>)"
+    permalink = f"\n[permalink](<{report_url}>)\n" if report_url else ""
     marker = engine_marker(engine_identity)
     identity_marker = f"{marker}\n" if marker else ""
     case_marker = (
@@ -605,7 +606,7 @@ def review_body(
         f"<!-- ralph-head:{head_sha} -->\n"
         f"{case_marker}\n{content}\n\n---\n\n"
         f"Reviewed: [`{head_sha[:12]}`](<{repository_url}/commit/{head_sha}>)"
-        f"{report_link}\n"
+        f"{report_link}\n{permalink}"
     )
 
 

@@ -795,6 +795,11 @@ class WebhookTests(unittest.TestCase):
             "[Full review report](<https://review.example.org/traces/report.html>)",
             body,
         )
+        self.assertTrue(
+            body.endswith(
+                "\n\n[permalink](<https://review.example.org/traces/report.html>)\n"
+            )
+        )
         comment = {"body": body}
         self.assertTrue(forgejo.comment_matches_head(comment, head))
         self.assertTrue(
