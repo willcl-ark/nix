@@ -211,6 +211,18 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
                 "export_status": "supported"
                 if exported_findings is not None
                 else "unsupported",
+                "severities": dict(
+                    Counter(
+                        (
+                            finding.get("severity")
+                            if isinstance(finding.get("severity"), str)
+                            else "unknown"
+                        )
+                        for finding in findings
+                    )
+                )
+                if exported_findings is not None and row["status"] == "complete"
+                else None,
                 "saved": len(findings) if exported_findings is not None else None,
                 "published": (len(findings) if row["status"] == "complete" else 0)
                 if exported_findings is not None

@@ -86,6 +86,12 @@ class StatsPageTests(unittest.TestCase):
             "https://example.org/reports",
         )
         self.assertIn("failed", html)
+        self.assertEqual(summary["reviews"][0]["findings"]["severities"], {"minor": 1})
+        from html import unescape
+
+        counts = json.loads(unescape(re.search(r'data-severities="([^"]+)"', html)[1]))
+        self.assertEqual(counts["minor"], 1)
+        self.assertEqual(sum(counts.values()), 1)
 
     def test_latest_marker_tracks_the_latest_available_report_per_pr(self):
         reviews = [
@@ -97,7 +103,7 @@ class StatsPageTests(unittest.TestCase):
         rendered = stats_page._reviews_table(
             reviews, "https://example.org/repo", "https://example.org/reports"
         )
-        rows = re.findall(r"<tr>.*?</tr>", rendered, flags=re.S)
+        rows = re.findall(r"<tr\b[^>]*>.*?</tr>", rendered, flags=re.S)
         self.assertEqual(rendered.count("🟠"), 2)
         for row in rows:
             if "newer.html" in row or "other-pr.html" in row:
