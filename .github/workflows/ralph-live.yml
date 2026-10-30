@@ -19,7 +19,7 @@ on:
       proxy_url:
         description: CLIProxyAPI HTTPS URL over Tailscale, ending in /v1
         required: true
-        default: "https://nero.tail1977.ts.net/v1"
+        default: "https://nero.tail1977.ts.net:8443/v1"
         type: string
 
 permissions:
