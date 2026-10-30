@@ -955,13 +955,28 @@ def _reviews_table(reviews, repository_url, report_base_url):
     if not reviews:
         return "<p>No saved reviews were recorded.</p>"
     rows = []
+    latest = {}
+    for review in reviews:
+        number = _pr_number(review)
+        if (
+            number is not None
+            and _safe_report_name(review) is not None
+            and (
+                number not in latest
+                or _review_sort_key(review) > _review_sort_key(latest[number])
+            )
+        ):
+            latest[number] = review
     for review in reviews:
         findings = _mapping(review.get("findings"))
         ledger = _mapping(review.get("ledger"))
         archaeology = _mapping(review.get("archaeology"))
         detail = _key_value_table(
             {
+                "Job": review.get("job_id", "N/A"),
                 "Generation": review.get("generation", "N/A"),
+                "Delivery": review.get("status", "saved"),
+                "Coverage": review.get("coverage", "unknown"),
                 "Historical context": review.get("context_coverage", "unknown"),
                 "Verification": review.get("verification_status", "unknown"),
                 "Saved findings": findings.get("saved", "N/A"),
@@ -977,20 +992,27 @@ def _reviews_table(reviews, repository_url, report_base_url):
                 "Output tokens": _fmt_tokens(ledger, "output"),
             }
         )
+        head = review.get("head")
+        base = _valid_http_base(repository_url)
+        commit = (
+            _link(f"{base}/commit/{head}", head[:12])
+            if base and _valid_sha(head)
+            else "N/A"
+        )
+        marker = (
+            ' <span title="Most recent saved review">🟠</span>'
+            if latest.get(_pr_number(review)) is review
+            else ""
+        )
         rows.append(
             _cells(
                 [
-                    _pr_link(review, repository_url)
-                    + '<span class="subline">Job '
-                    + _fmt_int(review.get("job_id"))
-                    + "</span>",
+                    _pr_link(review, repository_url) + marker,
+                    f'<code data-search-text="{head if _valid_sha(head) else ""}">{commit}</code>',
                     _escape(review.get("review_status", "unknown")),
-                    _escape(review.get("status", "saved")),
-                    _escape(review.get("coverage", "unknown")),
                     "unsupported"
                     if findings.get("export_status") == "unsupported"
                     else _fmt_int(findings.get("published")),
-                    _fmt_int(ledger.get("request_count")),
                     _report_link(review, report_base_url),
                     "<details><summary>Details</summary>" + detail + "</details>",
                 ]
@@ -998,12 +1020,10 @@ def _reviews_table(reviews, repository_url, report_base_url):
         )
     return _interactive_table(
         [
-            "Review",
-            "Review status",
-            "Delivery",
-            "Coverage",
+            "PR",
+            "Commit",
+            "Outcome",
             "Findings",
-            "Records",
             "Report",
             "Details",
         ],
@@ -1277,6 +1297,8 @@ th { font-size: .75rem; font-weight: 650; color: var(--muted); background: var(-
 tbody tr:last-child > td { border-bottom: 0; }
 tbody tr:hover { background: var(--raised); }
 td { font-variant-numeric: tabular-nums; }
+.reviews-list td { padding-top: .45rem; padding-bottom: .45rem; }
+.reviews-list td:not(:last-child), .reviews-list summary { white-space: nowrap; }
 .numeric { text-align: right; white-space: nowrap; }
 td:first-child { min-width: 5rem; }
 .key-values { display: grid; grid-template-columns: minmax(8rem, 1fr) 1fr; gap: .6rem 1rem; margin: .5rem 0; min-width: 15rem; }
@@ -1417,7 +1439,8 @@ document.querySelectorAll('.data-list').forEach(list => {
   const previous = list.querySelector('[data-prev]');
   const next = list.querySelector('[data-next]');
   const status = list.querySelector('[data-page]');
-  const searchable = rows.map(row => row.textContent.toLocaleLowerCase());
+  const searchable = rows.map(row => (row.textContent + ' ' + [...row.querySelectorAll('[data-search-text]')]
+    .map(cell => cell.dataset.searchText).join(' ')).toLocaleLowerCase());
   const size = 25;
   let page = 0;
   function render() {
@@ -1454,9 +1477,9 @@ def _wrap_tables(html_text):
 
 def _header(summary, page_prefix="", active="Overview"):
     links = [
+        ("reviews/", "Reviews"),
         ("index.html", "Overview"),
         ("agents/", "Agents"),
-        ("reviews/", "Reviews"),
         ("addressed/", "Outcomes"),
         ("usage/", "Usage"),
         ("limits/", "Limits"),
@@ -1478,7 +1501,7 @@ def _header(summary, page_prefix="", active="Overview"):
     preview = _field(summary, "preview_notice", "")
     return (
         '<header><div class="header-top">'
-        + f'<a class="brand" href="{page_prefix}index.html"><span class="brand-mark" aria-hidden="true">r.</span>'
+        + f'<a class="brand" href="{page_prefix}reviews/"><span class="brand-mark" aria-hidden="true">r.</span>'
         + "<span>ralph<small>Review statistics</small></span></a></div>"
         + (f'<p class="preview">{_escape(preview)}</p>' if preview else "")
         + '<div class="nav-label">Workspace</div><nav aria-label="Statistics">'
@@ -1615,8 +1638,8 @@ def _stage_html(summary, stage, repository_url, report_base_url):
 
 def _reviews_html(summary, repository_url, report_base_url):
     body = (
-        '<h1>Reviews</h1><p class="subtitle">Search saved reviews by PR, job or review status. Newest first.</p>'
-        + "<section><h2>Saved reviews</h2>"
+        '<h1>Reviews</h1><p class="subtitle">Search saved reviews by PR, commit or outcome. Newest first.</p>'
+        + '<section class="reviews-list">'
         + _reviews_table(_sorted_reviews(summary), repository_url, report_base_url)
         + "</section>"
     )

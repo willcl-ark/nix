@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -86,6 +87,24 @@ class StatsPageTests(unittest.TestCase):
         )
         self.assertIn("failed", html)
         self.assertIn("Delivery", html)
+
+    def test_latest_marker_tracks_the_latest_available_report_per_pr(self):
+        reviews = [
+            {"number": 42, "job_id": 1, "report_name": "older.html"},
+            {"number": 42, "job_id": 3},
+            {"number": 43, "job_id": 4, "report_name": "other-pr.html"},
+            {"number": 42, "job_id": 2, "report_name": "newer.html"},
+        ]
+        rendered = stats_page._reviews_table(
+            reviews, "https://example.org/repo", "https://example.org/reports"
+        )
+        rows = re.findall(r"<tr>.*?</tr>", rendered, flags=re.S)
+        self.assertEqual(rendered.count("🟠"), 2)
+        for row in rows:
+            if "newer.html" in row or "other-pr.html" in row:
+                self.assertIn("🟠", row)
+            if "older.html" in row:
+                self.assertNotIn("🟠", row)
 
     def test_adversarial_comparison_keeps_historical_gemini_and_counts_claude(self):
         paired = stats._new_adversarial_comparison()
