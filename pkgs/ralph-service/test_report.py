@@ -7,6 +7,82 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    def test_challenger_comparison_preserves_disagreement_and_safe_evidence(self):
+        evidence = {
+            "path": "src/example.cpp",
+            "line": 12,
+            "side": "head",
+            "excerpt": "if (height < activation) return;",
+        }
+        debug = {
+            "schema_version": 2,
+            "candidate_sources": {"tests:1": "tests"},
+            "challenges": [
+                {
+                    "candidate_id": "tests:1",
+                    "outcome": "refuted",
+                    "reason": "The guard already covers activation.",
+                    "source_evidence": [
+                        {**evidence, "private": "unpublished-runner-value"}
+                    ],
+                }
+            ],
+            "stages": {
+                "tests": {
+                    "raw_output": json.dumps(
+                        {
+                            "findings": [
+                                {
+                                    "title": "<script>candidate()</script>",
+                                    "path": "src/example.cpp",
+                                    "line": 12,
+                                    "side": "head",
+                                }
+                            ]
+                        }
+                    )
+                },
+                "verifier": {
+                    "decisions": [
+                        {
+                            "candidate_ids": ["tests:1"],
+                            "disposition": "supported",
+                            "reason": "The guard applies to another entry point.",
+                        }
+                    ]
+                },
+            },
+            "decisions": [
+                {
+                    "candidate_ids": ["tests:1"],
+                    "disposition": "publish",
+                    "reason": "The uncovered entry point is reachable.",
+                    "finding": {"id": "finding:1", "title": "Check both entry points"},
+                }
+            ],
+        }
+        result = {
+            "schema_version": 1,
+            "engine": {"name": "current"},
+            "output": {"schema_version": 2, "data": debug},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, result, "challenge-review")
+            public = json.loads((root / "challenge-review.json").read_text())
+            rendered = (root / name).read_text()
+        challenge = public["challenges"][0]
+        self.assertEqual(challenge["source_evidence"], [evidence])
+        self.assertEqual(challenge["verifier_disposition"], "supported")
+        self.assertEqual(challenge["final_disposition"], "publish")
+        self.assertIn('id="challenger"', rendered)
+        self.assertIn("Refuted, then approved", rendered)
+        self.assertIn("The guard applies to another entry point.", rendered)
+        self.assertIn("&lt;script&gt;candidate()&lt;/script&gt;", rendered)
+        self.assertNotIn("<script>candidate()</script>", rendered)
+        self.assertNotIn("unpublished-runner-value", rendered)
+        self.assertNotIn("unpublished-runner-value", json.dumps(public))
+
     def test_automatic_high_profile_reports_effective_settings(self):
         result = {
             "schema_version": 1,

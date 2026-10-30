@@ -387,6 +387,36 @@ def _public_source_evidence(value):
     ]
 
 
+def _public_challenges(debug):
+    records = core_trace.challenge_records(debug)
+    if records is None:
+        return None
+    return [
+        {
+            **_filtered(
+                record,
+                (
+                    "candidate_id",
+                    "source",
+                    "title",
+                    "path",
+                    "line",
+                    "side",
+                    "outcome",
+                    "reason",
+                    "verifier_disposition",
+                    "verifier_reason",
+                    "final_disposition",
+                    "final_reason",
+                    "finding_id",
+                ),
+            ),
+            "source_evidence": _public_source_evidence(record.get("source_evidence")),
+        }
+        for record in records
+    ]
+
+
 def _public_decisions(debug):
     decisions = []
     for decision in debug.get("decisions", []):
@@ -581,6 +611,7 @@ def _public_record(number, result, report_id):
         record["concept_assessment"] = _public_concept_assessment(debug)
         record["finding_attribution"] = _public_attribution(debug)
         record["decisions"] = _public_decisions(debug)
+        record["challenges"] = _public_challenges(debug)
     return record
 
 
@@ -890,6 +921,62 @@ def _decisions_html(decisions):
     return "".join(sections)
 
 
+def _challenges_html(records):
+    if records is None:
+        return (
+            "<p>Candidate-challenge tracking is unavailable for this saved report.</p>"
+        )
+    if not records:
+        return "<p>No candidates required challenge.</p>"
+    labels = {
+        "refuted": "Refuted",
+        "not_refuted": "Not refuted",
+        "unresolved": "Unresolved",
+        "supported": "Supported",
+        "publish": "Approved for publication",
+        "drop": "Dropped",
+    }
+    refuted = [record for record in records if record["outcome"] == "refuted"]
+    approved = sum(record.get("final_disposition") == "publish" for record in refuted)
+    rows = []
+    for record in records:
+        location = (
+            f"{record['path']}:{record.get('line', '')} ({record.get('side', '')})"
+            if record.get("path")
+            else ""
+        )
+        cells = [
+            f"<td><strong>{_escape(record['title'])}</strong><br>"
+            f"<code>{_escape(record['candidate_id'])}</code><br>{_escape(location)}</td>"
+        ]
+        for disposition, reason, evidence in (
+            (record["outcome"], record.get("reason"), record.get("source_evidence")),
+            (record.get("verifier_disposition"), record.get("verifier_reason"), None),
+            (record.get("final_disposition"), record.get("final_reason"), None),
+        ):
+            label = labels.get(disposition, "Unassessed")
+            if disposition == "publish" and record["outcome"] == "refuted":
+                label = "Refuted, then approved"
+            details = (
+                "<details><summary>Reason and evidence</summary>"
+                f"<p>{_escape(reason or 'No decision was recorded.')}</p>"
+                + (_json_html(evidence) if evidence else "")
+                + "</details>"
+            )
+            cells.append(f"<td>{_escape(label)}{details}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    return (
+        f"<p>{len(records)} candidates; {len(refuted)} refutations; "
+        f"{approved} refutations followed by publication approval.</p>"
+        "<p>Counts refer to candidates; several candidates may become one finding. "
+        "Downstream decisions show agreement between agents. They do not establish "
+        "correctness or confirm delivery.</p>"
+        "<table><thead><tr><th>Candidate</th><th>Challenger</th>"
+        "<th>Source verification</th><th>Final decision</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
 def _stage_html(name, stage, stage_output):
     title = f"{name}: {stage.get('status', 'unknown')}"
     if stage.get("model"):
@@ -977,6 +1064,8 @@ def _html_report(record, json_name):
 {_coverage_html(record.get("coverage"), detailed=True)}</section>
 <section><h2>Findings</h2>
 {_findings_html(record.get("finding_attribution") or [])}</section>
+<section id="challenger"><h2>Challenger outcomes</h2>
+{_challenges_html(record.get("challenges"))}</section>
 <section><h2>Final Decisions</h2>
 {_decisions_html(record.get("decisions") or [])}</section>
 <section><h2>Agent Outputs</h2>{stage_sections}{orphan_outputs}</section>

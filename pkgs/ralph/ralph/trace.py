@@ -1,5 +1,7 @@
 """Review metrics and pure result accessors."""
 
+import json
+
 from .config import AUDIT_NAMES
 
 
@@ -24,6 +26,73 @@ RUN_METRIC_FIELDS = {
 def finding_attribution(debug):
     attribution = debug.get("finding_attribution") or []
     return list(attribution) if isinstance(attribution, list) else []
+
+
+def challenge_records(debug):
+    """Join validated challenges to original candidates and downstream decisions.
+
+    None means no challenge accounting was recorded, including discovery-era
+    challengers. An empty list means the new pipeline had no candidates.
+    """
+    challenges = debug.get("challenges")
+    if not isinstance(challenges, list):
+        return None
+    stages = debug.get("stages") or {}
+    sources = debug.get("candidate_sources") or {}
+    originals = {}
+    for source in sorted(set(sources.values())):
+        stage = stages.get(source) or {}
+        try:
+            output = json.loads(stage.get("raw_output") or "{}")
+        except (TypeError, ValueError):
+            continue
+        findings = output.get("findings") if isinstance(output, dict) else None
+        if isinstance(findings, list):
+            originals.update(
+                (f"{source}:{index}", finding)
+                for index, finding in enumerate(findings, 1)
+                if isinstance(finding, dict)
+            )
+
+    def by_candidate(decisions):
+        return {
+            identifier: decision
+            for decision in decisions
+            if isinstance(decision, dict)
+            for identifier in decision.get("candidate_ids") or []
+            if isinstance(identifier, str)
+        }
+
+    verified = by_candidate((stages.get("verifier") or {}).get("decisions") or [])
+    final = by_candidate(debug.get("decisions") or [])
+    records = []
+    for challenge in challenges:
+        identifier = challenge["candidate_id"]
+        verification = verified.get(identifier, {})
+        decision = final.get(identifier, {})
+        # An interrupted run can retain the verifier's provisional decisions
+        # here, before the judge replaces them with publication decisions.
+        if decision.get("disposition") not in {"publish", "drop", "unresolved"}:
+            decision = {}
+        finding = decision.get("finding") or {}
+        original = originals.get(identifier) or finding
+        records.append(
+            {
+                "candidate_id": identifier,
+                "source": sources.get(identifier),
+                "title": original.get("title") or identifier,
+                **{key: original.get(key) for key in ("path", "line", "side")},
+                "outcome": challenge["outcome"],
+                "reason": challenge["reason"],
+                "source_evidence": challenge.get("source_evidence", []),
+                "verifier_disposition": verification.get("disposition"),
+                "verifier_reason": verification.get("reason"),
+                "final_disposition": decision.get("disposition"),
+                "final_reason": decision.get("reason"),
+                "finding_id": finding.get("id"),
+            }
+        )
+    return records
 
 
 def current_diagnostics(result):

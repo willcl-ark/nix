@@ -1,9 +1,110 @@
+import json
 import unittest
 
+from ralph import trace
 from ralph.trace import request_metrics, result_metrics, stage_metrics
 
 
 class TraceTests(unittest.TestCase):
+    def test_challenges_keep_original_candidates_and_downstream_disagreements(self):
+        debug = {
+            "candidate_sources": {
+                "tests:1": "tests",
+                "tests:2": "tests",
+                "tests:3": "tests",
+            },
+            "challenges": [
+                {
+                    "candidate_id": "tests:1",
+                    "outcome": "refuted",
+                    "reason": "The guard excludes this input.",
+                    "source_evidence": [],
+                },
+                {
+                    "candidate_id": "tests:2",
+                    "outcome": "not_refuted",
+                    "reason": "The boundary remains uncovered.",
+                    "source_evidence": [],
+                },
+                {
+                    "candidate_id": "tests:3",
+                    "outcome": "unresolved",
+                    "reason": "Refutation evidence failed validation.",
+                    "source_evidence": [],
+                },
+            ],
+            "stages": {
+                "tests": {
+                    "raw_output": json.dumps(
+                        {
+                            "findings": [
+                                {
+                                    "title": "Wrong activation boundary",
+                                    "path": "test/example.py",
+                                    "line": 12,
+                                    "side": "head",
+                                },
+                                {"title": "Missing activation assertion"},
+                                {"title": "Uninspected fixture"},
+                            ]
+                        }
+                    )
+                },
+                "challenger": {
+                    "raw_output": json.dumps(
+                        {
+                            "challenges": [
+                                {"candidate_id": "tests:3", "outcome": "refuted"}
+                            ]
+                        }
+                    )
+                },
+                "verifier": {
+                    "decisions": [
+                        {
+                            "candidate_ids": ["tests:1", "tests:2"],
+                            "disposition": "supported",
+                            "reason": "The guard checks another condition.",
+                        }
+                    ]
+                },
+            },
+            "decisions": [
+                {
+                    "candidate_ids": ["tests:1", "tests:2"],
+                    "disposition": "publish",
+                    "reason": "The source establishes the gap.",
+                    "finding": {"id": "finding:1", "title": "Merged boundary finding"},
+                }
+            ],
+        }
+        records = trace.challenge_records(debug)
+        self.assertEqual(
+            [row["title"] for row in records],
+            [
+                "Wrong activation boundary",
+                "Missing activation assertion",
+                "Uninspected fixture",
+            ],
+        )
+        self.assertEqual(
+            [row["final_disposition"] for row in records], ["publish", "publish", None]
+        )
+        self.assertEqual(records[0]["verifier_disposition"], "supported")
+        self.assertEqual(records[0]["finding_id"], "finding:1")
+        self.assertEqual(records[0]["source"], "tests")
+        self.assertEqual(records[0]["path"], "test/example.py")
+        self.assertEqual(records[2]["outcome"], "unresolved")
+        self.assertIsNone(records[2]["verifier_disposition"])
+        debug["decisions"] = debug["stages"]["verifier"]["decisions"]
+        interrupted = trace.challenge_records(debug)
+        self.assertEqual(interrupted[0]["verifier_disposition"], "supported")
+        self.assertIsNone(interrupted[0]["final_disposition"])
+        del debug["challenges"]
+        self.assertIsNone(trace.challenge_records(debug))
+        debug["challenges"] = []
+        self.assertEqual(trace.challenge_records(debug), [])
+
     def test_usage_totals_do_not_depend_on_model_pricing(self):
         stage = {
             "model": "unlisted-subscription-model",
