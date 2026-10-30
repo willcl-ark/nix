@@ -852,6 +852,9 @@ def _stage_html(name, stage, stage_output):
     title = f"{name}: {stage.get('status', 'unknown')}"
     if stage.get("model"):
         title += f" ({stage['model']})"
+    marker = {"completed": "🟢", "skipped": "🔴"}.get(stage.get("status"))
+    if marker:
+        title += f" {marker}"
     raw_output = stage.get("raw_output")
     output_blocks = []
     if raw_output is not None:
