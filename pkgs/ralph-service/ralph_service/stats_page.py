@@ -969,29 +969,6 @@ def _reviews_table(reviews, repository_url, report_base_url):
             latest[number] = review
     for review in reviews:
         findings = _mapping(review.get("findings"))
-        ledger = _mapping(review.get("ledger"))
-        archaeology = _mapping(review.get("archaeology"))
-        detail = _key_value_table(
-            {
-                "Job": review.get("job_id", "N/A"),
-                "Generation": review.get("generation", "N/A"),
-                "Delivery": review.get("status", "saved"),
-                "Coverage": review.get("coverage", "unknown"),
-                "Historical context": review.get("context_coverage", "unknown"),
-                "Verification": review.get("verification_status", "unknown"),
-                "Saved findings": findings.get("saved", "N/A"),
-                "Concept": archaeology.get("status", "N/A"),
-                "Concept published": archaeology.get("published_concern", False),
-                "Research complete": archaeology.get("research_completed", False),
-                "Citations": archaeology.get("citation_count", "N/A"),
-                "Alternatives": archaeology.get("alternative_count", "N/A"),
-                "Request records": ledger.get("request_count", "N/A"),
-                "Failed/retries": review.get("recorded_failed_attempts", "N/A"),
-                "Input tokens": _fmt_tokens(ledger, "input"),
-                "Cached tokens": _fmt_tokens(ledger, "cached"),
-                "Output tokens": _fmt_tokens(ledger, "output"),
-            }
-        )
         head = review.get("head")
         base = _valid_http_base(repository_url)
         commit = (
@@ -1009,12 +986,11 @@ def _reviews_table(reviews, repository_url, report_base_url):
                 [
                     _pr_link(review, repository_url) + marker,
                     f'<code data-search-text="{head if _valid_sha(head) else ""}">{commit}</code>',
+                    _report_link(review, report_base_url),
                     _escape(review.get("review_status", "unknown")),
                     "unsupported"
                     if findings.get("export_status") == "unsupported"
                     else _fmt_int(findings.get("published")),
-                    _report_link(review, report_base_url),
-                    "<details><summary>Details</summary>" + detail + "</details>",
                 ]
             )
         )
@@ -1022,10 +998,9 @@ def _reviews_table(reviews, repository_url, report_base_url):
         [
             "PR",
             "Commit",
+            "Report",
             "Outcome",
             "Findings",
-            "Report",
-            "Details",
         ],
         rows,
         "reviews",
@@ -1297,8 +1272,7 @@ th { font-size: .75rem; font-weight: 650; color: var(--muted); background: var(-
 tbody tr:last-child > td { border-bottom: 0; }
 tbody tr:hover { background: var(--raised); }
 td { font-variant-numeric: tabular-nums; }
-.reviews-list td { padding-top: .45rem; padding-bottom: .45rem; }
-.reviews-list td:not(:last-child), .reviews-list summary { white-space: nowrap; }
+.reviews-list td { padding-top: .45rem; padding-bottom: .45rem; white-space: nowrap; }
 .numeric { text-align: right; white-space: nowrap; }
 td:first-child { min-width: 5rem; }
 .key-values { display: grid; grid-template-columns: minmax(8rem, 1fr) 1fr; gap: .6rem 1rem; margin: .5rem 0; min-width: 15rem; }

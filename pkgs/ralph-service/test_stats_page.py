@@ -86,7 +86,6 @@ class StatsPageTests(unittest.TestCase):
             "https://example.org/reports",
         )
         self.assertIn("failed", html)
-        self.assertIn("Delivery", html)
 
     def test_latest_marker_tracks_the_latest_available_report_per_pr(self):
         reviews = [
