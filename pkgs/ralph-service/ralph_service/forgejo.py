@@ -570,6 +570,7 @@ def review_body(
     *,
     source_base_sha,
     report_url=None,
+    history_url=None,
     engine_identity=None,
     review_fingerprint=None,
 ):
@@ -591,6 +592,8 @@ def review_body(
         flags=re.MULTILINE,
     )
     report_link = f" · [Full review report](<{report_url}>)" if report_url else ""
+    if history_url:
+        report_link += f" · [Previous reports](<{history_url}>)"
     marker = engine_marker(engine_identity)
     identity_marker = f"{marker}\n" if marker else ""
     case_marker = (
@@ -655,6 +658,11 @@ def publish_review(
         content,
         source_base_sha=source_base_sha,
         report_url=report_url,
+        history_url=(
+            f"{bot_config.report_base_url}/{number}/"
+            if report_url and bot_config.report_base_url
+            else None
+        ),
         engine_identity=engine_identity,
         review_fingerprint=review_fingerprint,
     )

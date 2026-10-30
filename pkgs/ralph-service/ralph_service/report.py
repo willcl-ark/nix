@@ -486,6 +486,7 @@ def _public_record(number, result, report_id):
     metrics = core_trace.result_metrics(result)
     record = {
         "report_id": report_id,
+        "review_completed_at": (result.get("run") or {}).get("review_completed_at"),
         "status": (result.get("run") or {}).get("status", "unknown"),
         "pr": number,
         "base": result.get("base_sha"),
@@ -964,7 +965,9 @@ summary {{ cursor: pointer; font-weight: 600; }}
 Base: <code>{_escape(record["base"])}</code></p>
 {profile}
 <p><a href="{_escape(json_name)}" download>Download JSON report</a></p>
-<p><a href="stats/">Review statistics</a></p>
+<p><a href="{
+        _escape(record["pr"])
+    }/">Previous reports</a> · <a href="stats/">Review statistics</a></p>
 </header>
 <p class="notice">{_escape(record["notice"])}</p>
 <section>
@@ -1029,7 +1032,7 @@ def _export_findings_html(record):
     )
 
 
-def _write_public_file(path, content):
+def _write_public_file(path, content, *, replace=True):
     path = Path(path)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
     data = content.encode("utf-8")
@@ -1040,7 +1043,15 @@ def _write_public_file(path, content):
             file.flush()
             os.fchmod(file.fileno(), 0o644)
             os.fsync(file.fileno())
-        os.replace(tmp, path)
+        if replace:
+            os.replace(tmp, path)
+        else:
+            try:
+                os.link(tmp, path)
+            except FileExistsError:
+                pass
+            finally:
+                tmp.unlink()
     except Exception:
         try:
             tmp.unlink()
@@ -1057,8 +1068,17 @@ def save_report(report_dir, number, result, report_id):
     report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
     html_name = f"{report_id}.html"
     json_name = f"{report_id}.json"
-    record = _public_record(number, result, report_id)
-    json_text = json.dumps(record, ensure_ascii=False, indent=2)
-    _write_public_file(report_dir / json_name, json_text + "\n")
-    _write_public_file(report_dir / html_name, _html_report(record, json_name))
+    json_path, html_path = report_dir / json_name, report_dir / html_name
+    if html_path.exists():
+        if not json_path.exists():
+            raise OSError(f"Existing report has no JSON snapshot: {html_name}")
+        return html_name
+    if not json_path.exists():
+        record = _public_record(number, result, report_id)
+        json_text = json.dumps(record, ensure_ascii=False, indent=2)
+        _write_public_file(json_path, json_text + "\n", replace=False)
+    # A retry, including recovery after writing JSON alone, must render the
+    # saved snapshot rather than a potentially changed result or projection.
+    record = json.loads(json_path.read_text(encoding="utf-8"))
+    _write_public_file(html_path, _html_report(record, json_name), replace=False)
     return html_name

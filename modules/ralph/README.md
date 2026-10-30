@@ -238,8 +238,26 @@ Reports include full preliminary agent replies, coverage limitations, and
 review details. Preliminary candidates remain unverified; the main review
 contains verified findings. Public reports exclude private request payloads
 and configuration. Each review run has a distinct URL, and publication retries
-reuse it. If a report cannot be written, the review is published without a
-report link. Existing comments and private traces are not backfilled.
+reuse the saved report without changing its contents. If a report cannot be
+written, the review is published without a report link.
+
+Each PR has a history page at `reportBaseUrl/<PR>/`, linked as **Previous
+reports** from new review comments and full reports. It lists every available
+public report, including reruns of the same commit. Add `?commit=<SHA>` to
+filter by a full commit hash or prefix. History pages are generated static HTML;
+configure the web server to serve directory indexes and redirect `<PR>` to
+`<PR>/`. The stats timer rebuilds history from existing public HTML/JSON pairs,
+so reports already on disk appear automatically. Older reports without a
+recorded completion time use their file modification time. Saved reports may
+include reviews that were never posted. Private traces are never served or
+indexed directly.
+
+To recover missing reports from completed saved jobs, run the installed service
+Python environment with `python -m ralph_service.backfill --state-dir DIR
+--report-dir DIR`. This previews recoverable reports; add `--apply` to write
+them and refresh history. It makes no model calls or comment updates. Existing
+reports are preserved, missing historical dates are shown as unknown, and
+unrecoverable jobs are reported.
 
 When reports are configured, a timer also refreshes `reportDir/stats/index.html`
 and its public JSON download every five minutes. The dashboard reads durable

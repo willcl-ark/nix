@@ -7,6 +7,33 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    def test_retry_preserves_snapshot_and_recovers_missing_html(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = {
+                "content": "Original review",
+                "head_sha": "a" * 40,
+                "run": {"review_completed_at": "2026-10-30T12:00:00Z"},
+            }
+            name = report.save_report(root, 123, result, "123-first")
+            original_html = (root / name).read_bytes()
+            original_json = (root / "123-first.json").read_bytes()
+            self.assertIn(b'href="123/"', original_html)
+            result["content"] = "Changed on retry"
+            report.save_report(root, 123, result, "123-first")
+            self.assertEqual((root / name).read_bytes(), original_html)
+            self.assertEqual((root / "123-first.json").read_bytes(), original_json)
+            (root / name).unlink()
+            report.save_report(root, 123, result, "123-first")
+            self.assertEqual((root / name).read_bytes(), original_html)
+            second = report.save_report(root, 123, result, "123-rerun")
+            self.assertIn("Changed on retry", (root / second).read_text())
+            self.assertEqual((root / name).read_bytes(), original_html)
+            self.assertEqual(
+                json.loads(original_json)["review_completed_at"],
+                "2026-10-30T12:00:00Z",
+            )
+
     def test_review_markdown_is_rendered_and_sanitized(self):
         review = """##### Findings
 

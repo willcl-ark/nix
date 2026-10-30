@@ -18,7 +18,17 @@ from pathlib import Path
 
 from final_comment import render
 from ralph import trace as core_trace
-from . import badge, config, forgejo, github, report, repository, trace, monitor
+from . import (
+    badge,
+    config,
+    forgejo,
+    github,
+    history,
+    report,
+    repository,
+    trace,
+    monitor,
+)
 from ralph import repository as local_repository
 from ralph import engine, model, runner
 from ralph import usage as usage_tracking
@@ -458,6 +468,15 @@ def process_job(
                         number,
                         type(exc).__name__,
                     )
+                if result_record["run"].get("report_url"):
+                    try:
+                        history.save_history(bot_config.report_dir, number)
+                    except OSError as exc:
+                        logging.warning(
+                            "Could not refresh review history for PR %d: %s",
+                            number,
+                            type(exc).__name__,
+                        )
                 if not jobs.save_result(job, result_record):
                     outcome = "superseded"
                     return outcome

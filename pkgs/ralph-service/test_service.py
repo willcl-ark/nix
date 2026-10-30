@@ -781,11 +781,20 @@ class WebhookTests(unittest.TestCase):
             source_base_sha="c" * 40,
             engine_identity=self.review_engine.identity,
             review_fingerprint="case",
+            report_url="https://review.example.org/traces/report.html",
+            history_url="https://review.example.org/traces/42/",
         )
         self.assertIn(f"/src/commit/{head}/src/a%20b.cpp#L12", body)
         self.assertIn(f"/src/commit/{'c' * 40}/src/removed.cpp#L8", body)
         self.assertIn(f"Reviewed: [`{head[:12]}`]", body)
         self.assertLess(body.index("Finding"), body.index("Reviewed:"))
+        self.assertIn(
+            "[Previous reports](<https://review.example.org/traces/42/>)", body
+        )
+        self.assertIn(
+            "[Full review report](<https://review.example.org/traces/report.html>)",
+            body,
+        )
         comment = {"body": body}
         self.assertTrue(forgejo.comment_matches_head(comment, head))
         self.assertTrue(

@@ -18,6 +18,7 @@ from ralph import trace as core_trace
 from . import (
     config,
     forgejo,
+    history,
     proxy_usage,
     repository,
     research,
@@ -1136,6 +1137,7 @@ def main(argv=None):
                 }
         else:
             summary["subscriptions"] = {"status": "not_configured", "accounts": []}
+        history.save_history(args.report_dir)
         stats_page.save_stats(
             args.report_dir / "stats",
             summary,
