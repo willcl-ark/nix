@@ -731,8 +731,9 @@ Skipped reviews and engines without a findings export leave it alone. Updates
 and deletion require an open upstream PR at the reviewed head. The Forgejo
 comment is unchanged. Publication failures use the existing saved-result retry
 queue without repeating the model review.
-Every exported Major must record `verified_by = "judge"`. If any lacks that
-approval, the GitHub operation returns `unverified` before making requests and
+Every exported Major must record `verified_by = "verifier"` and
+`judged_by = "judge"`. If any lacks those approvals, the GitHub operation returns
+`unverified` before making requests and
 leaves any existing comment alone. Old saved publication retries cannot bypass
 this requirement. Historical mirror reports remain unchanged; rerun their review
 to apply the new pipeline. Custom agent directories must replace `collator` and
