@@ -28,6 +28,8 @@ def _report_time(record, path):
 def save_history(report_dir, number=None):
     """Refresh all PR indexes, or just one PR, without changing report artifacts."""
     report_dir = Path(report_dir)
+    report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+    report._write_public_file(report_dir / "history.js", _script())
     groups = defaultdict(list)
     for path in report_dir.glob("*.json"):
         if not path.with_suffix(".html").is_file():
@@ -57,23 +59,34 @@ def save_history(report_dir, number=None):
         target = report_dir / str(pr) / "index.html"
         target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
         report._write_public_file(target, _page(pr, records))
+    if number is None:
+        catalog = [
+            {
+                "pr": pr,
+                "head": str(record.get("head") or "unknown"),
+                "report_id": name,
+                "reviewed": _date(timestamp, estimated),
+                "status": str(record.get("status") or "unknown"),
+                "latest": _latest_label(records) if index == 0 else "",
+            }
+            for pr, records in groups.items()
+            for index, (timestamp, name, estimated, record) in enumerate(records)
+        ]
+        report._write_public_file(
+            report_dir / "history.json", json.dumps(catalog, ensure_ascii=False) + "\n"
+        )
+        report._write_public_file(report_dir / "index.html", _search_page())
     return len(groups)
 
 
 def _page(number, records):
     rows = []
-    for timestamp, name, estimated, record in records:
+    for index, (timestamp, name, estimated, record) in enumerate(records):
         head = str(record.get("head") or "unknown")
         escaped_head = html.escape(head, quote=True)
-        date = (
-            datetime.fromtimestamp(timestamp, timezone.utc).strftime(
-                "%Y-%m-%d %H:%M:%S UTC"
-            )
-            if timestamp is not None
-            else "Unknown"
-        )
-        if estimated:
-            date += " *"
+        date = _date(timestamp, estimated)
+        if index == 0 and _latest_label(records):
+            date += f"<br><strong>{_latest_label(records)}</strong>"
         findings = record.get("findings")
         count = str(len(findings)) if isinstance(findings, list) else "Unknown"
         rows.append(
@@ -88,16 +101,8 @@ def _page(number, records):
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ralph reports for PR #{number}</title>
-<style>
-body {{ font: 16px system-ui, sans-serif; margin: 2rem auto; padding: 0 1rem; max-width: 90rem; color: #202124; background: #fafafa; }}
-a {{ color: #185abc; }}
-.table-scroll {{ overflow-x: auto; }}
-table {{ width: 100%; border-collapse: collapse; background: white; }}
-th, td {{ text-align: left; padding: .75rem; border-bottom: 1px solid #ddd; }}
-code {{ font-size: .85em; }}
-input, button {{ font: inherit; padding: .35rem; }}
-form {{ margin: 1rem 0; }}
-</style></head><body>
+<style>{_style()}</style><script src="../history.js" defer></script></head><body>
+<p><a href="../">Search all reports</a></p>
 <h1>Ralph reports for PR #{number}</h1>
 <p>Saved review runs, newest first. Multiple reports may review the same commit.
 A saved report does not necessarily mean its review was posted.</p>
@@ -107,22 +112,132 @@ A saved report does not necessarily mean its review was posted.</p>
 <div class="table-scroll"><table><thead><tr><th>Reviewed</th><th>Commit</th>
 <th>Outcome</th><th>Findings</th><th>Report</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
-<p>* Older reports use the public report file's modification time.</p>
+<p>* Older reports use the public report file's modification time. Undated reports
+are listed last; their order relative to dated reports is unknown.</p>
 <noscript>Commit filtering requires JavaScript. All reports are listed above.</noscript>
-<script>
-const commit = (new URLSearchParams(location.search).get('commit') || '').trim().toLowerCase();
-const rows = Array.from(document.querySelectorAll('tr[data-commit]'));
-document.querySelector('input[name="commit"]').value = commit;
-if (commit) {{
-    const valid = /^[0-9a-f]{{1,40}}$/.test(commit);
-    let shown = 0;
-    for (const row of rows) {{
-        row.hidden = !valid || !row.dataset.commit.toLowerCase().startsWith(commit);
-        if (!row.hidden) shown++;
-    }}
-    document.getElementById('filter-status').textContent = valid
-        ? `${{shown}} report(s) matching ${{commit}}.`
-        : 'Enter a hexadecimal commit hash or prefix.';
-}}
-</script></body></html>
+</body></html>
+"""
+
+
+def _latest_label(records):
+    if not records or records[0][0] is None:
+        return ""
+    return (
+        "★ Most recent dated report"
+        if any(item[0] is None for item in records)
+        else "★ Most recent"
+    )
+
+
+def _date(timestamp, estimated):
+    if timestamp is None:
+        return "Unknown"
+    date = datetime.fromtimestamp(timestamp, timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S UTC"
+    )
+    return date + (" *" if estimated else "")
+
+
+def _style():
+    return """body { font: 16px system-ui, sans-serif; margin: 2rem auto; padding: 0 1rem; max-width: 90rem; color: #202124; background: #fafafa; }
+a { color: #185abc; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: white; }
+th, td { text-align: left; padding: .75rem; border-bottom: 1px solid #ddd; }
+code { font-size: .85em; }
+input, button { font: inherit; padding: .35rem; }
+form { margin: 1rem 0; }
+"""
+
+
+def _search_page():
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search Ralph reports</title>
+<style>{_style()}</style><script src="history.js" defer></script></head><body>
+<h1>Search Ralph reports</h1>
+<form><label>PR number <input name="q" placeholder="PR number, e.g. 36688" aria-label="PR number or commit"></label>
+<button type="submit">Search</button></form>
+<p>You can also search by a commit hash or prefix.</p>
+<p id="search-status" role="status"></p>
+<div id="search-results"></div>
+<noscript>Report search requires JavaScript. Open a PR history by appending its number and a slash to this URL.</noscript>
+</body></html>
+"""
+
+
+def _script():
+    return """'use strict';
+const params = new URLSearchParams(location.search);
+const commitInput = document.querySelector('input[name="commit"]');
+if (commitInput) {
+    const commit = (params.get('commit') || '').trim().toLowerCase();
+    commitInput.value = commit;
+    if (commit) {
+        const valid = /^[0-9a-f]{1,40}$/.test(commit);
+        let shown = 0;
+        for (const row of document.querySelectorAll('tr[data-commit]')) {
+            row.hidden = !valid || !row.dataset.commit.toLowerCase().startsWith(commit);
+            if (!row.hidden) shown++;
+        }
+        document.getElementById('filter-status').textContent = valid
+            ? `${shown} report(s) matching ${commit}.`
+            : 'Enter a hexadecimal commit hash or prefix.';
+    }
+}
+
+const searchInput = document.querySelector('input[name="q"]');
+if (searchInput) {
+    const query = (params.get('q') || '').trim().toLowerCase();
+    searchInput.value = query;
+    if (query) searchReports(query);
+}
+
+async function searchReports(query) {
+    const status = document.getElementById('search-status');
+    const pr = /^#?[0-9]+$/.test(query) ? Number(query.replace('#', '')) : null;
+    const commit = /^[0-9a-f]{1,40}$/.test(query) ? query : null;
+    if (pr === null && commit === null) {
+        status.textContent = 'Enter a PR number or hexadecimal commit hash or prefix.';
+        return;
+    }
+    status.textContent = 'Searching reports…';
+    try {
+        const response = await fetch('history.json');
+        if (!response.ok) throw new Error('Report index unavailable');
+        const reports = await response.json();
+        const matches = reports.filter(report => report.pr === pr
+            || (commit !== null && report.head.toLowerCase().startsWith(commit)));
+        status.textContent = `${matches.length} report(s) matching ${query}.`;
+        const results = document.getElementById('search-results');
+        for (const number of [...new Set(matches.map(report => report.pr))].sort((a, b) => a - b)) {
+            const section = document.createElement('section');
+            const heading = document.createElement('h2');
+            const history = document.createElement('a');
+            history.href = `${number}/`;
+            history.textContent = `PR #${number} · All reports`;
+            heading.append(history);
+            section.append(heading);
+            const list = document.createElement('ul');
+            for (const report of matches.filter(report => report.pr === number)) {
+                const item = document.createElement('li');
+                const link = document.createElement('a');
+                link.href = `${encodeURIComponent(report.report_id)}.html`;
+                link.textContent = `${report.reviewed} · ${report.head} · ${report.status}`;
+                item.append(link);
+                if (report.latest) {
+                    const badge = document.createElement('strong');
+                    badge.textContent = ` ${report.latest}`;
+                    item.append(badge);
+                }
+                list.append(item);
+            }
+            section.append(list);
+            results.append(section);
+        }
+    } catch (error) {
+        status.textContent = 'Could not load the report index. Please try again later.';
+    }
+}
 """

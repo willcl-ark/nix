@@ -51,7 +51,7 @@ class BackfillTests(unittest.TestCase):
             self.assertIn(result["content"], new_json)
             self.assertTrue((reports / "123/index.html").is_file())
             self.assertEqual(backfill.backfill(root, reports, apply=True)["written"], 0)
-            self.assertEqual(len(list(reports.glob("*.html"))), 2)
+            self.assertEqual(len(list(reports.glob("123-*.html"))), 2)
 
     def test_missing_and_unsupported_results_are_reported_without_publication(self):
         with tempfile.TemporaryDirectory() as directory:

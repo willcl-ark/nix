@@ -244,7 +244,17 @@ written, the review is published without a report link.
 Each PR has a history page at `reportBaseUrl/<PR>/`, linked as **Previous
 reports** from new review comments and full reports. It lists every available
 public report, including reruns of the same commit. Add `?commit=<SHA>` to
-filter by a full commit hash or prefix. History pages are generated static HTML;
+filter by a full commit hash or prefix. The archive root at `reportBaseUrl/`
+provides a search form for PR numbers and commit hashes or prefixes. It stays
+empty until a search is submitted. Reports appear newest first, with a star on
+the most recent dated report. Undated backfills appear last and never receive
+a most-recent badge. The stats timer refreshes its public
+`history.json` catalog alongside the PR history pages.
+
+History pages load the external `history.js` script. Their content security
+policy must allow `script-src 'self'`, `connect-src 'self'` for the search
+catalog, and same-origin form submissions. Keep the stricter report policy on
+individual report HTML files. History pages are generated static HTML;
 configure the web server to serve directory indexes and redirect `<PR>` to
 `<PR>/`. The stats timer rebuilds history from existing public HTML/JSON pairs,
 so reports already on disk appear automatically. Older reports without a

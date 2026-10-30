@@ -39,13 +39,30 @@ class HistoryTests(unittest.TestCase):
             self.assertLess(page.index("../rerun.html"), page.index("../new.html"))
             self.assertLess(page.index("../new.html"), page.index("../old.html"))
             self.assertEqual(page.count('data-commit="' + "b" * 40), 2)
+            self.assertEqual(page.count("★ Most recent"), 1)
             self.assertIn("?commit=" + "a" * 40, page)
             self.assertNotIn("incomplete", page)
             self.assertNotIn("other.html", page)
             self.assertNotIn("secret", page)
             for path, content in before.items():
                 self.assertEqual(path.read_bytes(), content)
+            catalog = json.loads((root / "history.json").read_text())
+            self.assertEqual(
+                {item["report_id"] for item in catalog},
+                {"old", "new", "rerun", "other"},
+            )
+            self.assertNotIn("secret", (root / "history.json").read_text())
+            self.assertNotIn("review", catalog[0])
+            self.assertNotIn("Full report", (root / "index.html").read_text())
+            self.assertIn(
+                '<script src="history.js" defer>', (root / "index.html").read_text()
+            )
+            self.assertIn('<script src="../history.js" defer>', page)
+            self.assertNotIn("<script>", page)
+            (root / "history.js").unlink()
             self.assertEqual(history.save_history(root, 123), 1)
+            self.assertTrue((root / "history.js").is_file())
+            self.assertEqual(json.loads((root / "history.json").read_text()), catalog)
 
     def test_recorded_time_and_html_escaping(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -76,9 +93,14 @@ class HistoryTests(unittest.TestCase):
                 page.index("../earlier.html"), page.index("../backfilled.html")
             )
             self.assertIn("Unknown", page)
+            self.assertIn("★ Most recent dated report", page)
             self.assertIn("2026-02-01 00:00:00 UTC", page)
             self.assertNotIn('<script>alert("head")', page)
             self.assertNotIn("<img src=x", page)
+            (root / "earlier.html").unlink()
+            (root / "later.html").unlink()
+            history.save_history(root)
+            self.assertNotIn("★ Most recent", (root / "123/index.html").read_text())
 
 
 if __name__ == "__main__":
