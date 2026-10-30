@@ -2,10 +2,10 @@
 
 Ralph loads a selected local review engine. The default `current` engine performs
 static reviews of committed Bitcoin Core changes, discovers candidate findings
-in independent passes followed by a challenger, checks them against repository
-evidence, and returns verified findings and a separately verified conceptual
-assessment. Surviving Major findings can
-receive an optional build/test experiment in an isolated disposable workspace. The engine owns its Markdown and structured result; other engines need
+in independent passes, attempts to refute them, verifies their source support,
+and sends eligible findings to a final judge. The judge decides publication and
+writes final wording. Supported Major findings can receive an optional
+build/test experiment in an isolated disposable workspace before that decision. The engine owns its Markdown and structured result; other engines need
 not use the stages, diagnostics or exports described below. Operators can load
 only trusted engine modules included in the package. Engines own their output
 style and engine-specific checks; current-engine tests and diagnostics do not
@@ -22,7 +22,7 @@ stay beside the default settings.
 
 The [final_comment/](final_comment/README.md) directory contains Markdown
 templates for comment structure, an offline preview and example reviews. The
-[collator prompt](agents/collator/prompt.md) controls the wording of accepted
+[judge prompt](agents/judge/prompt.md) controls publication and final wording of
 findings. Public comments show at most six current verified findings, each with
 a severity symbol and label, title, source location and one-sentence summary.
 Full explanations, alternatives and review history remain in the report and
@@ -165,12 +165,12 @@ Older results retain their saved review text and declared exports; the current
 diagnostic adapter does not interpret their native stage details.
 
 Inside the current engine, [pipeline.py](ralph/pipeline.py) keeps scheduling,
-stage requests, verification and editing in separate functions. It returns a
+stage requests, source verification and final judging in separate functions. It returns a
 `ReviewResult` containing Markdown, final finding records and the verified
 concept concern. [current_engine.py](ralph/current_engine.py) builds exports
 from that result; diagnostic dictionaries retain stage details and partial
-attempts. Finding records preserve original and presented wording, and exports
-keep verification order even if the editor reorders the prose.
+attempts. Finding records preserve source-verification and judge attribution alongside
+the final approved wording.
 
 The diagrams and implementation details below describe the `current` engine.
 
@@ -204,7 +204,7 @@ flowchart LR
 | Invalid or failed routing, material missing context, or oversized patch | Use the sensitive general plan with all profiles, excluding script. Full and shadow modes still include script. Provider or stage failures remain explicit. |
 | Overview requests sensitive review from a lower tier | Add all general audits and profiles, excluding script. |
 | A focused audit requests sensitive review from a lower tier | Add adversarial, state and concurrency; keep selected profiles, or use all profiles if none were selected. |
-| Challenger requests sensitive review from a lower tier | Run missing sensitive audits before verification, without repeating the challenger. |
+| Consensus domain or conservative fallback | Promote remaining stages to high settings, preserving explicit stage overrides. |
 
 Paths do not impose a tier or add adversarial profiles. Comments in a consensus
 header can be routine; wallet logging and demonstrably mechanical refactors can
@@ -217,7 +217,9 @@ A sensitive tier always adds adversarial review, even when no domain profile is
 selected. Domain profiles extend that prompt; they are not separate model calls.
 An explicit model request for an adversarial profile requires sensitive coverage,
 so a contradictory lower-tier proposal cannot silently skip that request.
-These profiles are distinct from the `default` and `high` review settings profiles.
+These domain instructions are distinct from the `default` and `high` settings.
+Selecting consensus instructions also promotes the remaining stages to high.
+Conservative fallback does the same when classification is incomplete.
 
 | Changed paths, excluding tests where stated | Mandatory specialist coverage |
 | --- | --- |
@@ -285,16 +287,16 @@ flowchart LR
     class script,history,alternatives optional
 ```
 
-**2. Discover candidates and challenge the proposal**
+**2. Discover candidates and close test-review gaps**
 
 ```mermaid
 flowchart LR
-    overview["Independent<br/>overview"] --> adversarial["Adversarial passes<br/>Astra + Claude<br/>in parallel when selected"]
-    adversarial --> focused["Selected focused audits<br/>run sequentially"]
-    focused --> challenger["Challenger<br/>prior candidates + context"]
-    challenger --> pool["Candidate pool"]
-    classDef optional stroke-dasharray: 5 4
-    class adversarial,focused optional
+    overview["Independent overview"] --> adversarial["Selected adversarial passes<br/>Astra + Claude in parallel"]
+    adversarial --> focused["Selected early audits"]
+    focused --> tests["Test coverage review"]
+    tests --> followup["One test-coverage follow-up<br/>when required paths remain"]
+    followup --> remaining["Remaining selected audits"]
+    remaining --> pool["Candidate pool"]
 ```
 
 Focused audit order: concurrency, state, public_contract, build, tests,
@@ -302,40 +304,56 @@ dead_code, design. Discovery can escalate coverage and add pending audits.
 Claude adversarial review requires `claude-opus-5-5` on the configured proxy.
 A failed Claude pass is reported as incomplete coverage.
 
-The [challenger](agents/challenger/prompt.md) runs once after selected discovery
-at every tier, even when earlier stages found nothing. It investigates
-overlooked bugs, unsupported benefits, accepted assumptions and cleaner
-alternatives. It can return no findings. Whole-approach objections use design
-findings anchored to changed code; the existing concept assessment and public
-sections remain unchanged. Any missing sensitive audits it requests run before
-verification, without repeating the challenger.
+The tests audit returns grouped `test_coverage` assessments for every required
+path. Each names paths, status, exact source evidence, a distinguishing
+regression, and a reason. Checked means the implementation and relevant
+assertions were inspected. A confirmed missing assertion can be checked and
+reported as a finding; deferred means unfinished inspection. Not-applicable
+requires a concrete explanation, such as mechanical edits or generated data
+whose validation another group covers.
 
-**3. Verify, edit, double-check Majors and render**
+One bounded `tests_followup` runs immediately after tests, before later audits,
+when required paths remain omitted or deferred. It reuses the tests settings
+and prompt. Its input includes remaining assignments, prior assessments and
+reported candidates. It may add distinct findings but should not duplicate
+earlier candidates. Checked assignments from both passes are combined; original
+model replies and limitations remain in the trace. Remaining gaps stay visible
+after this pass. Neither a supplied excerpt nor a production-only read establishes test
+coverage.
+
+**3. Challenge, verify, judge and render**
 
 ```mermaid
 flowchart LR
-    verify["Verify candidates<br/>+ concept evidence"] --> edit["Edit accepted findings<br/>+ concept objection"]
-    edit --> write["Attempt Major reproduction<br/>Sol 6.1 high"]
-    write --> major["Verify Major wording<br/>Sol 6.1 medium"]
-    major --> render["Render review<br/>+ coverage limitations"]
-    classDef optional stroke-dasharray: 5 4
-    class edit,write,major optional
+    pool["Candidate pool"] --> challenge["Attempt candidate refutation"]
+    challenge --> verify["Assess source support<br/>for every original candidate"]
+    verify --> write["Optional Major reproduction"]
+    write --> judge["Final publication decisions<br/>and wording"]
+    judge --> render["Render approved review<br/>and coverage limitations"]
 ```
 
-Editing runs only when findings or a concept objection survive verification.
-An independently verified optional alternative goes straight to rendering.
-Only findings with severity exactly `major` go through the second verifier.
-This includes Major design findings. Other severities skip it. Sol checks the
-final edited title and body, with independent reads of the pinned base/head,
-before either the mirror review or GitHub export can publish them. It returns
-verdicts only and cannot rewrite, add, merge, or downgrade findings.
+The [challenger](agents/challenger/prompt.md) looks for the strongest source
+counterexample to each candidate. It returns `refuted`, `not_refuted`, or
+`unresolved`; refuted requires exact source evidence. It cannot add candidates,
+remove them, assign severity, or decide publication. All original candidates
+continue to the verifier with their challenge evidence.
 
-The write-verifier attempts experiments before that final check. It can report
-`reproduced`, `refuted`, or `inconclusive`, with references to runner-recorded
-commands. None of these outcomes alone decides publication. The final Major
-verifier assesses the evidence and exact wording. An impractical reproduction,
-missing environment, timeout, or writer failure still permits publication based
-on sufficient source evidence. A passing test alone does not refute a finding.
+The verifier returns `supported`, `refuted`, or `unresolved` for code claims.
+Only supported findings become eligible for the final judge. Judging is skipped
+when neither findings nor a concept objection are eligible. The judge checks
+those findings, their rebuttals, and optional experiment evidence, then returns
+`publish`, `drop`, or `unresolved` with final wording. Every publication needs
+exact source evidence. It cannot add findings, merge IDs, resurrect ineligible
+claims, or change severity, kind, security assessment, or location. Concept
+feedback is judged separately when eligible. No model edits approved wording
+afterward.
+
+The write-verifier can attempt reproduction of supported findings whose
+severity is exactly `major`, including design findings. It reports `reproduced`,
+`refuted`, or `inconclusive` with runner-recorded command references. These
+outcomes are evidence for the judge, not publication decisions. An unavailable
+environment, timeout, or impractical experiment does not invalidate a static
+proof. A passing test alone does not refute a finding.
 
 Experiments use the pinned Bix development environment supplied by the Nix
 package. Each `experiment_run` starts with pristine head or comparison-base
@@ -368,18 +386,19 @@ systemd-run --user --collect --wait --pipe \
 ```
 
 Without a delegated subtree or the packaged experiment environment, execution
-is unavailable and the final Major check still considers source evidence.
+is unavailable and the final judge still considers source evidence.
 
 Skipped audits do not make model calls. All review stages use the configured
 OpenAI-compatible endpoint and key. Concept research is advisory. Negative,
 failed or incomplete research never skips an independent, adversarial or focused code stage selected
 for the review.
 The initial discovery passes do not see each other's candidates or concept
-research output. The challenger receives their candidates, stage status and
-coverage, original review input, and any concept assessment or blind alternatives.
-The verifier sees the pooled candidates and this context, including named
-inspection gaps. Discovery has no access to current PR discussion tools;
-the challenger may receive summaries through the supplied research results.
+research output. The test follow-up receives the prior test assessments and
+remaining assignments. The challenger receives supplied candidates and the
+original review input to attempt refutation. The verifier receives every
+candidate, the challenge evidence, any concept assessment and alternatives, and
+named inspection gaps. Discovery and challenge do not use current PR discussion
+to decide code correctness.
 
 | Stage | Default model | Reasoning effort | Per-response output token ceiling | Evidence access |
 | --- | --- | --- | --- | --- |
@@ -393,13 +412,13 @@ the challenger may receive summaries through the supplied research results.
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
-| challenger, all tiers | gpt-6-luna | xhigh | 25,000 | Original input, prior candidates, coverage, optional concept and alternatives; full tool set |
+| challenger | gpt-6.1-sol | high | 25,000 | Supplied candidates and pinned source; attempted refutations only |
 | verifier, all tiers | claude-opus-5-5 | xhigh | 64,000 | Original input, candidates, concept candidate, code and research tools |
-| write_verifier, only when Majors survive | gpt-6.1-sol | high | 12,000 | Final Major wording, immutable source tools and isolated experiment commands |
-| major_verifier, only when Majors survive | gpt-6.1-sol | medium | 25,000 | Original input and final Major wording; code and base history tools |
+| write_verifier, when Majors are supported | gpt-6.1-sol | high | 12,000 | Supported Major claims, immutable source tools and isolated experiment commands |
+| judge | gpt-6.1-sol | high | 25,000 | Eligible findings, rebuttals, experiment evidence, and pinned source |
 | archaeologist | gpt-6-luna | low | 4,000 | Original input, base/head code tools, current discussion and research tools |
 | alternatives | Same as archaeologist | low | 4,000 | Neutral problem, goal and baseline; base-only code tools |
-| collator | gpt-6-luna | low | 6,000 | Accepted findings and conceptual assessment; no tools |
+| tests_followup, when gaps remain | Same as tests | Same as tests | Same as tests | Remaining coverage assignments and prior test assessments; one pass |
 
 Model requests use Responses event streams with a 1,800-second deadline per
 attempt in both review profiles, including tool calls, final responses and
@@ -435,14 +454,16 @@ research call is missing from the frozen manifest, the tool returns an
 unavailable-evidence message and the model continues from code and frozen input.
 
 Discovery allows 12 tool calls at routine tier, 24 at standard, and 48 at sensitive.
-The script and dead-code specialists allow 48; both adversarial passes and both
-verifiers allow 72. History and discussion sublimits are eight each per
+The script and dead-code specialists allow 48. Both adversarial passes allow 72
+under default settings and 128 under high settings. The verifier and judge allow
+72. The test follow-up reuses the resolved tests allowance once. History and
+discussion sublimits are eight each per
 tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit. The allowance of
 two per response is advisory, so a provider response can exceed it. The early
 concept stage never stops later code stages.
-Script, dead_code, independent, challenger, both adversarial passes and both
-verifier stages require a first inspection. Claude uses automatic tool selection
+Script, dead_code, independent, challenger, both adversarial passes, verifier,
+and judge require a first inspection. Claude uses automatic tool selection
 because Opus 5.5 rejects forced tool calls; Ralph checks that inspection occurred. At limits,
 a final turn uses collected evidence and must preserve uncertainty.
 
@@ -458,27 +479,26 @@ limit allows reference tracing even on routine PRs. These settings have not
 been tuned against live reviews.
 Custom agent directories must include the `dead_code` agent.
 
-Failed discovery becomes a coverage limitation; failed verification publishes
-no unverified findings. Failed editing falls back to verified wording.
-The Major pass checks findings after any optional write-verifier experiments.
-An API failure, invalid response, or missing decision withholds all pending
-Majors. Explicit `drop` and `unresolved` verdicts withhold those findings;
-non-Majors and concept results remain available. Reasoning effort and token
-limits are initial settings, not a measured accuracy guarantee.
-Custom agent directories must include the `challenger`, `write_verifier` and
-`major_verifier` agents. Frozen configurations and evaluations predating the
-challenger need fresh configuration and recapture; no migration is provided.
-The companion GitHub publisher also requires second-verifier provenance for
-every Major, including saved publication retries. An unchecked batch is skipped
-without posting or deleting a comment.
+Failed discovery becomes a coverage limitation. Failed source verification
+withholds unsupported findings. A failed or invalid judge response withholds
+pending findings and concept feedback; no earlier wording is used as fallback.
+Reasoning effort and token limits are initial settings, not an accuracy guarantee.
+
+Custom agent directories must include `challenger`, `write_verifier`, and
+`judge`, and remove `collator` and `major_verifier`. `tests_followup` has no
+separate configuration. Old frozen configurations and evaluations require fresh
+configuration and recapture; no migration is provided. The companion GitHub
+publisher requires judge approval for every exported Major, including saved
+publication retries. An unchecked batch is skipped without posting or deleting
+a comment.
 
 Public coverage separates code review, historical context, and verification.
 Missing advisory history does not reduce code coverage. Expected static-review
 scope, such as not running tests, is shown as a scope note rather than missing
 evidence. Actual unread paths and failed stages identify their specific reason.
-Failed main or Major verification marks the whole run `failed`, while preserving
-independently verified findings and the full historical records in the structured
-result. The report leads with a failure notice and presents historical findings
+Failed source verification or final judging marks the run `failed`. Historical
+records remain available in the structured result; they do not substitute for
+newly approved findings. The report leads with a failure notice and presents historical findings
 as a compact list for follow-up. The public comment carries a brief unresolved-history
 notice. The CLI prints the full review and exits with status
 1. Historical records do not become newly verified findings when a verifier fails.
@@ -497,45 +517,43 @@ so they can be read without following crossing arrows.
 
 ```mermaid
 flowchart LR
-    pool["Valid candidates"] --> verify["Verify claims"]
-    verify --> accept["Validate findings<br/>+ assign IDs"]
-    accept --> edit["Edit wording"]
-    edit --> write["Attempt Major reproduction"]
-    write --> major["Double-check Major wording"]
-    major --> render["Render verified feedback"]
+    pool["Valid candidates"] --> challenge["Attempt refutation"]
+    challenge --> verify["Assess source support"]
+    verify --> eligible["Validate supported findings<br/>and assign IDs"]
+    eligible --> write["Optional Major reproduction"]
+    write --> judge["Decide publication and wording"]
+    judge --> render["Render approved feedback"]
 ```
 
 | Check or outcome | What survives |
 | --- | --- |
 | Malformed discovery response | Discard that stage's candidates and record a limitation; keep other stages. |
-| Malformed verifier envelope or decision structure | Reject the verifier response; publish no findings from it. |
-| Unknown, repeated or omitted candidate IDs | Withhold affected decisions and mark affected or omitted candidates unresolved; retain independently valid findings. |
-| Claim is disproved or unsupported | Drop the claim. |
-| Decisive evidence is missing, or a finding fails validation | Withhold that finding and record a limitation; retain valid findings. |
-| Concept objection is unsupported or invalid | Withhold the objection; retain verified code findings. |
-| Editing fails or changes the accepted ID set | Keep all accepted findings with their original verified wording and metadata. |
-| Second verification rejects or cannot verify a Major | Withhold it from public findings and exports; retain the decisions in the trace. |
-| Second verification fails or has invalid ID accounting | Withhold every pending Major; preserve other severities and concept results. |
+| Challenger refutes a candidate | The candidate still reaches the verifier with counterevidence. |
+| Challenger fails | Keep every original candidate and record the challenge limitation. |
+| Malformed verifier envelope or decision structure | Reject the verifier response; none of its code findings become eligible. |
+| Unknown, repeated or omitted candidate IDs | Withhold affected decisions and mark them unresolved; retain independently valid findings. |
+| Decisive evidence is missing or mismatched | Withhold that finding and record the missing evidence. |
+| Concept objection is unsupported or invalid | Withhold the objection; retain eligible code findings. |
+| Judge drops or cannot settle a finding | Withhold it from publication and retain the decision in the trace. |
+| Judge fails or returns invalid accounting | Withhold pending findings; no wording fallback. |
 
-The verifier may merge supplied candidates, but cannot introduce new code findings.
-Every code decision must cite at least one supplied candidate ID.
-It checks conceptual feedback separately from code findings. Supported concept
-objections can be edited without code findings; an independently verified
-optional alternative is rendered directly.
-The second verifier must account for every supplied finding ID exactly once.
-Its publish decisions require exact source excerpts checked against the same
-immutable snapshots. The original Luna decisions remain in its stage record;
-final decisions and finding attribution reflect the second pass. No editing
-runs after Sol verifies the public wording.
+The verifier may merge supplied candidates with the same root cause but cannot
+introduce code findings. Every code decision must account for supplied candidate
+IDs. Its supported findings retain their severity and location through judging.
+The judge accounts for every eligible finding ID exactly once, and every publish
+decision requires exact source excerpts checked against immutable snapshots.
+It may publish and summarize an eligible concept objection without any code
+findings. An independently verified optional alternative is rendered from its
+structured evidence.
 
 Candidate findings are leads, not votes. Agreement between Sol, Claude and focused
 reviewers gives a claim no extra weight. A defect needs a reachable trigger and
 consequence, checked against the strongest code-based reason it might be false.
 Static proof can suffice; running a reproduction is not required. Defect
 discovery before the challenger remains independent of the concept assessment,
-PR discussion and upstream review threads. The challenger receives earlier
-candidates and research results so it can question their assumptions; its
-agreement or disagreement adds no evidence by itself.
+PR discussion and upstream review threads. The challenger tests supplied
+candidates against source; its verdict adds no evidence beyond the inspected
+source and explained counterexample.
 
 Review includes tests, CI, build tooling, contrib utilities, and non-security
 defects. Security guidance draws on the
@@ -584,17 +602,18 @@ excerpt. A final newline is optional. Evidence may cite unchanged files; a claim
 about an actual triggering call must include that caller. Python checks the excerpts
 against immutable snapshot blobs and withholds mismatches. Matching source text
 does not prove the claim or its consequence; the verifier must check those.
-Malformed discovery rejects the entire stage result. A malformed published
+Malformed discovery rejects the entire stage result. A malformed supported
 finding becomes unresolved while other valid findings survive. Malformed
 verifier envelopes or decision structures reject the entire verifier response.
 Unknown or repeated candidate IDs withhold affected decisions while preserving
 independently valid findings. Affected and omitted candidates become unresolved.
 
 Partial coverage does not discard otherwise valid findings. An unresolved
-candidate or failed stage adds a limitation. The collator cannot add, merge or
-remove accepted IDs, or change their kind, severity, security assessment or
-location. Python enforces those metadata constraints; preservation of meaning
-is a prompt requirement.
+candidate or failed stage adds a limitation. The judge may withhold eligible
+findings but cannot add or merge IDs, change their kind, severity, security
+assessment or location, or publish without exact source evidence. Python
+enforces those constraints; whether the evidence establishes the claim still
+requires review judgment.
 
 Comments show at most six current verified findings, ordered by critical, major,
 minor, then suggestion. Within each severity they retain the verifier's impact
@@ -623,7 +642,7 @@ reported separately from reviews. These checks are not a causal claim.
 Profiles within one adversarial call get no separate causal credit.
 
 Sources: [protocol.py](ralph/protocol.py),
-[verifier prompt](agents/verifier/prompt.md), [collator prompt](agents/collator/prompt.md),
+[verifier prompt](agents/verifier/prompt.md), [judge prompt](agents/judge/prompt.md),
 [companion report.py](../ralph-service/ralph_service/report.py),
 [companion stats.py](../ralph-service/ralph_service/stats.py).
 
@@ -656,8 +675,8 @@ ACK/NACK labels.
 
 After a valid concept candidate, blind alternatives are enabled by default. This
 uses the existing archaeologist model with base-only code tools and neutral
-problem, goal and baseline inputs. Its result goes to the challenger and
-verifier. Earlier discovery passes do not receive it. The pipeline still runs
+problem, goal and baseline inputs. Its result goes to the verifier. Discovery
+passes do not receive it. The pipeline still runs
 every selected code stage.
 
 The verifier checks the premises before accepting public conceptual feedback.
@@ -670,14 +689,13 @@ Favorable assessments and rejected or inconclusive alternatives stay in the
 detailed trace.
 
 Conceptual feedback has no finding ID, severity or artificial source location.
-The collator can edit it even when there are no accepted code findings. It edits
-finding wording and any concept objection; the optional alternative is rendered
-from verifier-approved structured fields. The full report groups findings
+The judge can approve and summarize it even when no code findings are eligible.
+The optional alternative is rendered from verifier-approved structured fields. The full report groups findings
 first, then design and concept feedback, then the optional alternative. It omits
 objections already covered by accepted design findings. A question belongs in
 concept feedback only if its answer settles a specific material concern.
-Invalid or unverified assessments are withheld. Failed editing falls back to
-verified wording.
+Invalid or unverified assessments are withheld. A failed judge produces no
+fallback concept wording.
 
 Reports and statistics count published concept assessments separately from
 findings and distinguish them from completed research. They also expose
@@ -693,17 +711,20 @@ its evidence is not a frozen historical replay.
 
 ## Review profiles
 
-The default profile preserves the stage settings listed above. Select the high
-profile with `ralph review ... --profile high`, or set `"profile": "high"` in
-an engine configuration. The CLI option overrides the configuration file.
+The default profile starts with the stage settings listed above. Select high
+explicitly with `ralph review ... --profile high` or `"profile": "high"` in the
+engine configuration. Consensus-domain routing and conservative fallback also
+promote remaining stages to high automatically. The effective profile and reason
+are recorded. Classification follows changed behavior; a consensus filename
+alone does not cause promotion.
 
-High uses gpt-6.1-sol for independent review, concurrency, state, dead code,
-design and challenger. Core analysis stages use at least
-high reasoning effort, retaining xhigh where already configured, and at least
-16,000 output tokens. Router, build, tests, archaeology, alternatives, collator,
-the verifier and the Claude adversarial reviewer retain their default settings.
-The verifier uses Opus 5.5 at `xhigh`; Claude adversarial review uses `xhigh`.
-Both have a 64,000-token output ceiling. Tool limits are unchanged.
+High uses Sol 6.1 for independent review, concurrency, state, dead code, design,
+and tests. Tests receive high reasoning and 16,000 output tokens. Challenger and
+judge use xhigh reasoning. Public-contract uses high reasoning. The verifier and
+Claude adversarial reviewer retain Opus 5.5 at xhigh and a 64,000-token ceiling.
+Both adversarial passes get 128 tool calls under high instead of 72. Other tool
+limits remain unchanged. These larger allowances are bounded configuration,
+not a measured guarantee of better review.
 
 Profiles change agent settings without a shared monetary allowance.
 

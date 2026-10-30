@@ -71,7 +71,7 @@ def summarize(debug):
             issues.append(item)
 
     for name, stage in stages.items():
-        if name in {"router", "collator"} or stage.get("status") == "skipped":
+        if name == "router" or stage.get("status") == "skipped":
             continue
         if name == "write_verifier":
             state = stage.get("status")
@@ -88,7 +88,7 @@ def summarize(debug):
             "context"
             if name in CONTEXT_STAGES
             else "verification"
-            if name in {"verifier", "major_verifier"}
+            if name in {"verifier", "judge"}
             else "inspection"
         )
         for error in stage.get("reconciliation_validation_errors", []):
@@ -154,9 +154,7 @@ def summarize(debug):
                             for item in issues
                             if item["stage"] == name and item["category"] == category
                         ):
-                            kind = (
-                                "finding" if name == "major_verifier" else "candidate"
-                            )
+                            kind = "finding" if name == "judge" else "candidate"
                             issue(
                                 name,
                                 category,

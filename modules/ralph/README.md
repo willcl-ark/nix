@@ -17,11 +17,13 @@ the current engine only.
 ralph fetches the base branch and PR head into its own state directory,
 reviews the PR title, description, commit messages, and diff, and gives the
 model read-only tools for path discovery, numbered head and merge-base file
-reads, per-file diff reads, and literal code search. Large patches are replaced
-by a changed-file list so the model can read relevant diffs on demand. Near the
-end, a write-verifier can build and test isolated copies to investigate Major
-findings. A failed build or impractical experiment leaves a finding eligible
-for the final source-based Major check.
+reads, per-file and PR-commit diff reads, and literal code search. Large patches
+include a complete file inventory with change sizes, commit-to-path mapping,
+and excerpts shared across files. Deferred reads have explicit continuation
+lines. Near the end, a write-verifier can build and test isolated copies to
+investigate supported Major findings. The final judge decides publication and
+writes approved wording from source, rebuttal, and optional experiment evidence.
+A failed build or impractical experiment does not invalidate a static proof.
 
 The flake packages include a build environment taken from the pinned
 [Bix default devShell](https://github.com/bitcoin-dev-tools/bix). Dependencies
@@ -74,7 +76,9 @@ changes can be standard. Sensitive decisions identify a changed boundary or
 invariant; lower-tier critical refactors need evidence of preserved behavior.
 Incomplete input, failed routing or unresolved material context requests the
 general sensitive set, excluding the script specialist. Reviewers can still
-escalate when their inspection reveals sensitive behavior.
+escalate when their inspection reveals sensitive behavior. Consensus-domain
+routing and conservative fallback promote the remaining review to high settings,
+including a stronger tests reviewer. Explicit stage overrides remain effective.
 See the [routing contracts](../../pkgs/ralph/README.md#audit-selection).
 The `script` specialist is selected by the router only for substantive changes
 to script execution/flags, signatures, witness/annex rules, spend-type acceptance,
@@ -99,7 +103,20 @@ behavior. Independent reviewers never receive each other's candidates. They also
 never receive the archaeology output or current PR discussion.
 
 The tests audit starts with changed production behavior and existing coverage,
-even when no tests changed. It then judges assertions, fixtures and runtime.
+even when no tests changed. It groups required paths by behavior and returns
+`test_coverage` with paths, status, exact source evidence, a distinguishing
+regression, and a reason. Checked means assertions and implementation were
+inspected, including a confirmed missing assertion. Deferred means unfinished
+inspection. Not-applicable needs a concrete explanation. A production-only
+review cannot establish test coverage.
+
+When required paths remain omitted or deferred, one bounded `tests_followup`
+runs immediately after tests and reuses its prompt and resolved settings to
+inspect those remaining groups, before later discovery audits.
+Prior assessments and candidates prevent repeating the whole review. Checked
+assignments from both passes are combined; original model replies and limitations
+remain in the trace. Unfinished work remains visible after that pass; receiving
+an excerpt does not complete a coverage assignment.
 Design owns architecture, simplicity and applicable merge-base developer notes;
 there is no separate developer-notes stage. Pure test changes can take the
 routine route when the router establishes that deeper checks are unnecessary.
@@ -135,9 +152,10 @@ Separately, an "Alternatives" section may contain at most one independently
 verified suggestion that improves a meaningful dimension under the PR's actual
 requirements, with its tradeoffs stated. It can appear even when the PR's overall
 approach is sound. Favorable assessments and rejected or inconclusive alternatives
-stay in the detailed trace. Unsupported assessments are withheld; editor failure
-retains the verified wording. Alternatives use verifier-approved structured
-fields directly.
+stay in the detailed trace. Unsupported assessments are withheld. Eligible
+concept objections go to the final judge for publication and final wording;
+there is no fallback wording on judge failure. Alternatives use
+verifier-approved structured fields directly.
 
 After a valid concept candidate, blind alternatives are enabled by default. This
 uses the existing archaeologist model with base-only code tools and neutral
@@ -152,42 +170,48 @@ including Claude, record request attempts and reported usage.
 
 The public review presents findings first, then accepted design and concept
 concerns under "Design and approach", then optional "Alternatives". Empty
-sections are omitted. The Luna writing pass edits wording but cannot remove
-accepted findings or change their classification. It retains its 6,000-token
-output limit; an incomplete or invalid edit falls back to the verifier's wording
-without truncating findings.
-After editing, surviving findings with severity exactly `major` receive a
-second verification by `gpt-6.1-sol` at medium effort, including Major design
-findings. It checks the exact public wording using code and base-history tools,
-with 48 inspections and a 25,000-token response ceiling. Only explicit approval
-allows a Major into the mirror review and GitHub export. Rejected or unresolved
-Majors are withheld; a failed or invalid second pass withholds all pending
-Majors while preserving other severities and concept results. No model edits
-the wording after this pass.
+sections are omitted.
+
+After discovery and any test follow-up, the challenger attempts to refute every
+supplied candidate. It returns `refuted`, `not_refuted`, or `unresolved`, with
+exact source evidence for refutations. It cannot add candidates, suppress them,
+or decide publication. Every original candidate reaches the verifier with its
+challenge evidence.
+
+The verifier assesses code claims as `supported`, `refuted`, or `unresolved`.
+Supported findings become eligible for the judge, with validated source
+excerpts, severity, security assessment, and location. Optional write-verifier
+experiments investigate eligible findings whose severity is exactly `major`.
+The judge uses Sol 6.1 with high reasoning, 25,000 output tokens, and 72 source
+inspections to decide publication and write the final wording. High settings
+raise judge reasoning to xhigh.
+
+The judge is skipped when no supported finding or eligible concept objection
+remains. Otherwise it accounts for every eligible ID and returns `publish`, `drop`, or
+`unresolved`. Each publication requires exact source evidence. It cannot add or
+merge findings, restore ineligible candidates, promote severity, or change kind,
+security assessment, or location. No model edits its approved wording afterward.
+A failed or invalid judge response withholds pending findings and concept
+feedback. Earlier verifier wording is never used as fallback.
 
 Routine discovery stages get up to 12 tool inspections, standard stages 24,
-and sensitive stages 48. The adversarial passes and verifier each get
-72. Archaeology gets twelve total inspections, including hosted web actions.
-The configured two hosted actions per response is advisory; a provider may
-return more. The concept stage never stops later code stages. With an allowance
-of N inspections, the model can make up to N tool calls across at most N + 1
-responses, leaving a final response without tools. The router has up to eight
-code inspections; the writing pass has no tools. At the inspection limit,
-further reads are refused. The model returns supported findings and names
-material unanswered evidence. Debug output records limit hits.
+and sensitive stages 48. The adversarial passes get 72 under default settings
+and 128 under high; the verifier and judge each get 72. The test follow-up reuses
+the tests allowance once. Archaeology gets twelve total inspections, including
+hosted web actions. The configured two hosted actions per response is advisory;
+a provider may return more. The concept stage never stops selected code stages.
+With N inspections, the model can use at most N tool calls across N + 1 responses,
+leaving a final response without tools. At the inspection limit, further reads
+are refused. Supported findings remain eligible and material unanswered evidence
+remains visible. Debug output records the settings, reads, and limit hits.
 
-Discovery stages return structured candidates. The verifier accounts for each
-candidate as published, dropped or unresolved, and the writing pass receives
-accepted findings and a separately verified conceptual assessment. Python checks
-finding IDs and preserves verified
-locations and severity. A bad verifier finding is withheld without discarding
-other valid findings, and debug output identifies the validation error. Partial
-coverage alone does not discard findings. Neither verifier may invent code
-findings. Empty, unknown or repeated candidate IDs
-withhold affected decisions while preserving independently valid findings;
-affected and omitted candidates become unresolved. A malformed verifier envelope
-or decision structure rejects the entire response. If only editing fails, the
-verified wording is used.
+Python validates candidate accounting, required text, locations, and exact
+source excerpts. Unknown, repeated, or omitted candidate IDs withhold affected
+verifier decisions while retaining independently valid findings. Malformed
+verifier envelopes reject the response. Partial coverage alone does not discard
+supported findings, but neither challenge nor verification can invent code
+findings. The final judge must independently approve eligible findings before
+publication.
 
 Each verified finding also carries a security classification and reason in
 structured results and report diagnostics. `potential_vulnerability`,
@@ -200,8 +224,8 @@ and cached tokens when available. Missing usage stays unknown, including after
 transport failures. It does not calculate prices, reserve funds or block work
 against per-review or monthly monetary allowances. Tool limits, request
 timeouts, worker concurrency and upstream subscription limits still apply.
-Failed verification withholds unverified findings; failed editing falls back
-to verified wording.
+Failed verification withholds unsupported findings. Failed final judging
+withholds pending findings, with no wording fallback.
 
 Jobs are persisted before the webhook receives a 202 response. Pending PR
 updates are coalesced, stale work stops between model requests, and completed
@@ -215,9 +239,10 @@ does not include a collapsed debug section, finding-attribution table, or
 clipped preliminary stage replies.
 
 Finding attribution is still recorded with the final title, discovering agents
-and their models, verifier and editor. Merged candidates retain all their
-source agents. Surviving Majors name the second verifier and its model; all
-findings must originate in discovery. Editing never earns discovery credit. Per-stage summaries record
+and their models, source verifier and final judge. Merged candidates retain all
+their source agents. Approved findings name the judge and its model; all
+findings must originate in discovery. Challenge, verification and wording do
+not earn discovery credit. Per-stage summaries record
 candidate dispositions, accepted findings found solely or jointly, concept
 recommendations, reported tokens and incomplete usage. Joint credit is not
 evidence that each agent was necessary, and verifier acceptance is not a human
@@ -696,22 +721,22 @@ mirror must use matching PR numbers. Public reports must also be enabled through
 Set `githubPostMajorFindings = false` to stop GitHub posting while retaining
 the repository and token configuration. Ralph still uses the token for
 authenticated upstream reads, including backport evidence and author feedback.
-Credentials alone never enable GitHub writes. Forgejo reviews and the second Sol
-verification of Major findings still run. Existing GitHub comments remain.
+Credentials alone never enable GitHub writes. Forgejo reviews and the final
+judge still run. Existing GitHub comments remain.
 
 Ralph keeps one GitHub comment per PR, containing only findings whose severity
-is exactly `major`, using their final edited wording, plus a full-report link.
+is exactly `major`, using their judge-approved wording, plus a full-report link.
 A later review updates that comment or deletes it when no major findings remain.
 Skipped reviews and engines without a findings export leave it alone. Updates
 and deletion require an open upstream PR at the reviewed head. The Forgejo
 comment is unchanged. Publication failures use the existing saved-result retry
 queue without repeating the model review.
-Every exported Major must record `verified_by = "major_verifier"`. If any lacks
-that approval, the GitHub operation returns `unverified` before making requests
-and leaves any existing comment alone. This also blocks unchecked Majors from
-saved publication retries created before the second verifier was introduced.
-Historical mirror reports remain unchanged; rerun their review to apply the new
-verification policy.
+Every exported Major must record `verified_by = "judge"`. If any lacks that
+approval, the GitHub operation returns `unverified` before making requests and
+leaves any existing comment alone. Old saved publication retries cannot bypass
+this requirement. Historical mirror reports remain unchanged; rerun their review
+to apply the new pipeline. Custom agent directories must replace `collator` and
+`major_verifier` with `judge`, and old frozen evaluations require recapture.
 
 Use a token for Ralph's GitHub account that can read the upstream PR and create,
 edit and delete its own issue comments. See [GitHub's token permission notes](https://docs.github.com/en/rest/issues/comments).
@@ -756,13 +781,16 @@ the configured repository, even if its current head was already reviewed.
 The reviewer checks that the PR is open before queuing it. These commands
 cannot restart services.
 
-The `default` profile preserves the existing review settings. `high` increases
-model capability and reasoning for core analysis and verification while keeping
-routine stages and Claude Opus 5.5 at `xhigh` unchanged. Stage settings
-include model, reasoning effort, response token ceiling and tool-call limits.
+The `default` profile starts with the ordinary review settings. `high`
+strengthens core analysis, including Sol 6.1 high for tests with 16,000 output
+tokens, and allows both adversarial passes 128 tool calls. Challenger and judge
+use xhigh reasoning. The verifier and Claude adversarial reviewer retain Opus
+5.5 at xhigh. Other tool allowances remain unchanged.
 See the [core profile documentation](../../pkgs/ralph/README.md) for details.
-Normal webhook reviews use `default` unless `engineConfig.profile` selects
-`high`. Profile selection is explicit; routing does not automatically escalate.
+Normal webhook reviews start with `default` unless configured otherwise.
+Consensus-domain routing or conservative fallback automatically promotes the
+remaining review to high and records the reason. Stage overrides apply after
+both explicit and automatic profile selection.
 
 `ralph-telegram.service` runs separately from `ralph.service`, so it can answer
 when the reviewer is stopped or failing. It starts on boot with its own

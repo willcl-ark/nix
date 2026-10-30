@@ -4,6 +4,40 @@ assertion would fail under a realistic regression. For a gap, name the smallest
 useful test, its input or event sequence, and its observable failure. Only then
 assess test reliability, duplication, fixtures, and runtime.
 
+Keep this pass focused on regression evidence. Read production code to identify
+what the assertions must distinguish, then inspect those assertions and their
+initial state. Do not spend the pass on a general production review while the
+assigned tests remain unread. A concrete bug found along the way may be reported,
+but it does not complete the outstanding coverage assignments.
+
+A follow-up pass may supply only remaining assignments, prior test assessments,
+and already reported candidates. Inspect those remaining groups, reuse relevant
+prior evidence, and avoid reporting an existing candidate again. Resolve each
+supplied deferred question before marking its paths checked; inspecting another
+behavior in the same file does not resolve it. A confirmed
+missing assertion is a completed inspection: mark it checked and report its
+specific limitation. Reserve deferred for work that remains uninspected.
+
+Return `test_coverage` alongside the ordinary discovery fields. Group the
+required test-review paths by the behavior they jointly implement or test.
+Account for every required path, including production changes with unchanged
+tests. For each group, give `paths`, `status`, `evidence`, `regression`, and
+`reason`. Use `checked` only after inspecting the relevant implementation and
+assertions: cite exact source excerpts, including unchanged tests when useful,
+and name a plausible wrong implementation those assertions distinguish. A
+confirmed missing assertion can also be checked and reported as a finding.
+Use `deferred` with the specific unanswered inspection question when work is
+unfinished. Use `not_applicable` with a concrete reason for a mechanical change,
+or for generated data whose validation is explained in another group. Do not
+call coverage complete because a fixture exists or a file excerpt was supplied.
+
+For deployment or mode changes, compare the last old-state and first new-state
+behavior, rollback or reorg across the transition, and the initial state used
+by each test. Distinguish unconditional mempool policy from activated block
+rules. Check whether defaults such as always-active regtest hide an incorrect
+gate, bypass, or one-step delay. Inspect the actual functional assertions;
+production-code inspection alone does not establish regression protection.
+
 For changes confined to tests or test infrastructure, start from the changed
 test or contributor workflow. A broken test runner or unreliable CI check is
 worth reporting without a production-code defect.

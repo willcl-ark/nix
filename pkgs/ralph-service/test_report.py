@@ -7,6 +7,47 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    def test_automatic_high_profile_reports_effective_settings(self):
+        result = {
+            "schema_version": 1,
+            "engine": {
+                "name": "current",
+                "config": {
+                    "profile": {
+                        "name": "default",
+                        "stages": {"tests": {"model": "cheap"}},
+                    },
+                    "high_profile": {
+                        "name": "high",
+                        "stages": {"tests": {"model": "strong"}},
+                    },
+                },
+            },
+            "output": {
+                "schema_version": 2,
+                "data": {
+                    "schema_version": 2,
+                    "profile_selection": {
+                        "requested": "default",
+                        "effective": "high",
+                        "reason": "Consensus review requires high settings.",
+                    },
+                    "stages": {
+                        "router": {"model": "router-choice", "status": "completed"}
+                    },
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, result, "auto-high")
+            public = json.loads((root / "auto-high.json").read_text())
+            self.assertEqual(public["profile"], "high")
+            self.assertEqual(
+                public["models"], {"tests": "strong", "router": "router-choice"}
+            )
+            self.assertIn("Requested profile: default", (root / name).read_text())
+
     def test_retry_preserves_snapshot_and_recovers_missing_html(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -88,6 +129,12 @@ if (value < 1) return;
             "summary": "A zero divisor crashes the operation.",
             "body": "Reject zero before dividing the supplied value.",
         }
+        source = {
+            "path": "src/example.cpp",
+            "line": 12,
+            "side": "head",
+            "excerpt": "return value / divisor;",
+        }
         for engine_name in ("current", "external"):
             with (
                 self.subTest(engine=engine_name),
@@ -101,7 +148,20 @@ if (value < 1) return;
                         "data": {
                             "schema_version": 2,
                             "decisions": [
-                                {"disposition": "publish", "finding": finding}
+                                {
+                                    "disposition": "publish",
+                                    "finding": finding,
+                                    "source_evidence": [{**source, "private": "omit"}],
+                                }
+                            ],
+                            "finding_attribution": [
+                                {
+                                    "finding_id": "finding:1",
+                                    "verified_by": "verifier",
+                                    "judged_by": "judge",
+                                    "judged_by_model": "judge-model",
+                                    "edited_by": "judge",
+                                }
                             ],
                         },
                         "exports": {"findings": [finding]},
@@ -114,6 +174,17 @@ if (value < 1) return;
                 for field in ("summary", "body"):
                     self.assertIn(finding[field], rendered)
                     self.assertEqual(public["findings"][0][field], finding[field])
+                if engine_name == "current":
+                    self.assertEqual(
+                        public["decisions"][0]["source_evidence"], [source]
+                    )
+                    self.assertEqual(
+                        public["finding_attribution"][0]["judged_by"], "judge"
+                    )
+                    self.assertEqual(
+                        public["finding_attribution"][0]["judged_by_model"],
+                        "judge-model",
+                    )
 
     def test_experiment_artifacts_are_visible_without_exposing_runner_internals(self):
         command = {

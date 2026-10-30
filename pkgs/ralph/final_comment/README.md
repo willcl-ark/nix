@@ -92,8 +92,9 @@ placeholders. Failed verification retains earlier titles and statuses in the
 report without republishing their unverified bodies.
 
 For the wording of findings and concept summaries, edit the
-[collator prompt](../agents/collator/prompt.md). That prompt edits accepted
-findings before these templates format them.
+[judge prompt](../agents/judge/prompt.md). The judge decides publication and
+writes the final approved wording. These templates format that wording without
+another model edit or a fallback to unapproved text.
 
 ## Renderer changes
 

@@ -19,12 +19,11 @@ class StageConfigurationTests(unittest.TestCase):
             instruction = "A changed instruction for public findings."
             format_file.write_text(instruction + "\n", encoding="utf-8")
             changed = engine.load(config={"agents_dir": str(agents_dir)})
-            for stage in ("verifier", "collator"):
-                self.assertTrue(
-                    changed.config["prompts"]["audit_prompts"][stage].endswith(
-                        "\n\n" + instruction
-                    )
+            self.assertTrue(
+                changed.config["prompts"]["audit_prompts"]["judge"].endswith(
+                    "\n\n" + instruction
                 )
+            )
             self.assertNotEqual(
                 baseline.identity["config_sha256"], changed.identity["config_sha256"]
             )
@@ -62,12 +61,66 @@ class StageConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(current_engine.configure(changed.config), changed.config)
 
+    def test_high_escalation_settings_are_frozen_and_overrideable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agents_dir = Path(directory) / "agents"
+            shutil.copytree(config.DEFAULT_AGENTS_DIR, agents_dir)
+            settings = {
+                "agents_dir": str(agents_dir),
+                "stages": {"public_contract": {"model": "operator-choice"}},
+            }
+            baseline = engine.load(config=settings)
+            test_settings = agents_dir / "tests/config.toml"
+            test_settings.write_text(
+                test_settings.read_text().split("[profiles.high]", 1)[0]
+                + '[profiles.high]\nmodel = "custom-high-tests"\n'
+            )
+            changed = engine.load(config=settings)
+            self.assertEqual(baseline.config["profile"], changed.config["profile"])
+            self.assertNotEqual(
+                baseline.identity["config_sha256"], changed.identity["config_sha256"]
+            )
+            for name in ("profile", "high_profile"):
+                self.assertEqual(
+                    changed.config[name]["stages"]["public_contract"]["model"],
+                    "operator-choice",
+                )
+            self.assertEqual(
+                changed.config["high_profile"]["stages"]["tests"]["model"],
+                "custom-high-tests",
+            )
+            shutil.rmtree(agents_dir)
+            self.assertEqual(current_engine.configure(changed.config), changed.config)
+            requested_high = current_engine.configure(
+                {**changed.config, "profile": "high"}
+            )
+            self.assertEqual(requested_high["profile"], changed.config["high_profile"])
+            self.assertEqual(requested_high["profile"], requested_high["high_profile"])
+
+    def test_saved_configuration_without_high_profile_requires_recapture(self):
+        settings = engine.load().config
+        del settings["high_profile"]
+        with self.assertRaisesRegex(ValueError, "requeue.*recapture"):
+            current_engine.configure(settings)
+        saved = engine.load(config=settings, configured=True)
+        with self.assertRaisesRegex(ValueError, "requeue.*recapture"):
+            saved.run(None, None)
+
+    def test_saved_retired_stages_require_recapture_before_running(self):
+        settings = engine.load().config
+        for name in ("profile", "high_profile"):
+            stages = settings[name]["stages"]
+            stages["collator"] = stages.pop("judge")
+        saved = engine.load(config=settings, configured=True)
+        with self.assertRaisesRegex(ValueError, "requeue.*recapture"):
+            saved.run(None, None)
+
     def test_invalid_stage_override_fails_configuration(self):
         for stages, message in (
             ({"verifer": {}}, "Unknown review stage: verifer"),
             ({"verifier": {"effort": "high"}}, "Unknown settings for verifier: effort"),
             ({"verifier": {"timeout": 0}}, "verifier.*timeouts"),
-            ({"collator": {"tool_set": "full"}}, "collator does not support tools"),
+            ({"feedback": {"tool_set": "full"}}, "feedback does not support tools"),
         ):
             with (
                 self.subTest(stages=stages),

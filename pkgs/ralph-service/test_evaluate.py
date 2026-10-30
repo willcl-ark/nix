@@ -132,6 +132,7 @@ class EvaluateTests(unittest.TestCase):
                     "audit_prompts": self.prompt_config.audit_prompts,
                 },
                 "profile": self.prompt_config.profile.to_dict(),
+                "high_profile": self.prompt_config.high_profile.to_dict(),
             },
         )
 

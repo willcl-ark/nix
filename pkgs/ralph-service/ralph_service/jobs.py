@@ -479,6 +479,8 @@ def _pre_engine_exports(debug):
                         "raised_by_models",
                         "verified_by",
                         "verified_by_model",
+                        "judged_by",
+                        "judged_by_model",
                         "edited_by",
                         "edited_by_model",
                     )

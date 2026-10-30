@@ -34,8 +34,8 @@ or severity.
 
 Keep investigation history, exhaustive case lists, and repeated proof in the
 verifier's decision reason and source evidence. The public explanation should
-give the author enough evidence to assess and act on the finding. The collator
-may only edit supplied claims, qualifications, and corrections.
+give the author enough evidence to assess and act on the finding. The judge
+may only publish supplied claims with their qualifications and corrections.
 
 For example, when source inspection establishes the missing coverage:
 

@@ -1,5 +1,6 @@
 import json
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from threading import Barrier
 from unittest.mock import Mock, patch
@@ -9,14 +10,15 @@ from ralph import config, engine, model, pipeline, protocol, repository, runner
 COMPLETE = {"status": "complete", "limitations": []}
 
 
-def discovery(findings=(), sensitive=False):
-    return json.dumps(
-        {
-            "coverage": COMPLETE,
-            "findings": list(findings),
-            "requires_sensitive_review": sensitive,
-        }
-    )
+def discovery(findings=(), sensitive=False, test_coverage=None):
+    result = {
+        "coverage": COMPLETE,
+        "findings": list(findings),
+        "requires_sensitive_review": sensitive,
+    }
+    if test_coverage is not None:
+        result["test_coverage"] = test_coverage
+    return json.dumps(result)
 
 
 def assessment():
@@ -85,6 +87,195 @@ def candidate(title="Simplify fixture"):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_test_coverage_followup_is_targeted_and_keeps_supported_findings(self):
+        self.tier, self.audits = "standard", ["tests"]
+        assessment = {
+            "paths": ["src/example.cpp"],
+            "status": "deferred",
+            "reason": "The preactivation caller and its assertion remain unread.",
+            "regression": "",
+            "evidence": [],
+        }
+
+        stages = []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            stages.append(stage)
+            if stage == "tests":
+                return discovery([candidate()], test_coverage=[assessment])
+            if stage == "tests_followup":
+                payload = json.loads(args[1].split("Test coverage follow-up:\n")[1])
+                self.assertEqual(payload["previous_test_coverage"], [assessment])
+                self.assertEqual(payload["paths"], ["src/example.cpp"])
+                self.assertEqual(kwargs["model"], self.prompts.models["tests"])
+                return discovery(
+                    [candidate("Follow-up lead")], test_coverage=[assessment]
+                )
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            if stage == "verifier":
+                return verification(
+                    [
+                        {
+                            "candidate_ids": ["tests:1", "tests_followup:1"],
+                            "disposition": "supported",
+                            "reason": "Supported independently of the unfinished assignment.",
+                            "finding": self.published,
+                        }
+                    ]
+                )
+            return discovery()
+
+        self.run_review(review)
+        self.assertEqual(stages.count("tests_followup"), 1)
+        self.assertLess(stages.index("tests_followup"), stages.index("challenger"))
+        self.assertEqual(len(self.result.findings), 1)
+        self.assertEqual(
+            self.debug["finding_attribution"][0]["candidate_ids"],
+            ["tests:1", "tests_followup:1"],
+        )
+        self.assertEqual(self.debug["coverage"]["status"], "partial")
+        self.assertTrue(
+            any(
+                assessment["reason"] in reason
+                for reason in self.debug["coverage"]["limitations"]
+            )
+        )
+
+    def test_consensus_routing_selects_frozen_high_settings(self):
+        for domains in ([], ["consensus"]):
+            with self.subTest(domains=domains):
+                self.debug = {}
+                self.tier, self.audits, self.profiles = "sensitive", ["tests"], domains
+                calls = {}
+
+                def review(*args, **kwargs):
+                    calls[kwargs["stage_name"]] = kwargs
+                    if kwargs["stage_name"] == "challenger":
+                        return self.challenge(*args, **kwargs)
+                    return (
+                        verification()
+                        if kwargs["stage_name"] == "verifier"
+                        else discovery()
+                    )
+
+                self.run_review(review)
+                expected = (
+                    self.prompts.high_profile if domains else self.prompts.profile
+                )
+                for name in ("independent", "tests", "adversarial", "verifier"):
+                    settings = expected.stages[name]
+                    self.assertEqual(calls[name]["model"], settings.model)
+                    self.assertEqual(
+                        calls[name]["reasoning_effort"], settings.reasoning_effort
+                    )
+                    self.assertEqual(
+                        calls[name]["max_tool_calls"],
+                        settings.max_tool_calls["sensitive"],
+                    )
+                self.assertEqual(
+                    self.debug["profile_selection"]["effective"], expected.name
+                )
+
+    def test_followup_completes_only_missing_test_assignments(self):
+        self.tier, self.audits = "standard", ["tests"]
+        self.snapshot = replace(
+            self.snapshot,
+            head_files={"src/example.cpp": "blob", "src/other.cpp": "other"},
+            changed_paths=frozenset({"src/example.cpp", "src/other.cpp"}),
+        )
+        calls = []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            calls.append(stage)
+            if stage in {"tests", "tests_followup"}:
+                if stage == "tests_followup":
+                    payload = json.loads(args[1].split("Test coverage follow-up:\n")[1])
+                    self.assertEqual(payload["paths"], ["src/other.cpp"])
+                    self.assertEqual(
+                        kwargs["model"], self.prompts.high_profile.stages["tests"].model
+                    )
+                return discovery(
+                    sensitive=stage == "tests",
+                    test_coverage=[
+                        {
+                            "paths": [
+                                "src/example.cpp"
+                                if stage == "tests"
+                                else "src/other.cpp"
+                            ],
+                            "status": "not_applicable",
+                            "reason": "Only identical fixture setup moves.",
+                            "regression": "",
+                            "evidence": [],
+                        }
+                    ],
+                )
+            if stage == "verifier":
+                return verification()
+            return discovery()
+
+        self.run_review(review)
+        self.assertEqual(calls.count("tests"), 1)
+        self.assertEqual(calls.count("tests_followup"), 1)
+        self.assertEqual(self.debug["coverage"]["status"], "complete")
+
+    def test_checked_behavior_does_not_hide_deferred_behavior_in_the_same_file(self):
+        self.tier, self.audits = "standard", ["tests"]
+        self.snapshot = replace(
+            self.snapshot,
+            head_files={"src/example.cpp": "blob", "src/other.cpp": "other"},
+            changed_paths=frozenset({"src/example.cpp", "src/other.cpp"}),
+        )
+        deferred = {
+            "paths": ["src/example.cpp"],
+            "status": "deferred",
+            "reason": "The failure-path assertion has not been inspected.",
+            "regression": "",
+            "evidence": [],
+        }
+        followup_paths = []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "tests":
+                return discovery(
+                    test_coverage=[
+                        {
+                            "paths": ["src/example.cpp"],
+                            "status": "checked",
+                            "reason": "The successful setup is covered.",
+                            "regression": "Removing setup would fail the fixture assertion.",
+                            "evidence": self.published["source_evidence"],
+                        },
+                        deferred,
+                    ]
+                )
+            if stage == "tests_followup":
+                payload = json.loads(args[1].split("Test coverage follow-up:\n")[1])
+                followup_paths.extend(payload["paths"])
+                return discovery(
+                    test_coverage=[
+                        {
+                            "paths": ["src/other.cpp"],
+                            "status": "not_applicable",
+                            "reason": "Only identical fixture setup moves.",
+                            "regression": "",
+                            "evidence": [],
+                        }
+                    ]
+                )
+            if stage == "verifier":
+                return verification()
+            return discovery()
+
+        self.run_review(review)
+        self.assertEqual(followup_paths, ["src/example.cpp", "src/other.cpp"])
+        self.assertEqual(self.debug["coverage"]["status"], "partial")
+        self.assertIn(deferred, self.debug["stages"]["tests"]["test_coverage"])
+
     def test_comment_reports_final_tier_after_overview_escalation(self):
         self.tier, self.audits = "standard", []
         stages = []
@@ -92,6 +283,8 @@ class PipelineTests(unittest.TestCase):
         def review(*args, **kwargs):
             stage = kwargs["stage_name"]
             stages.append(stage)
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
             if stage == "verifier":
                 return verification()
             return discovery(sensitive=stage == "independent")
@@ -104,8 +297,10 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("adversarial_claude", stages)
         self.assertIn("Review tier: sensitive", result)
         self.assertNotIn("Review tier: standard", result)
+        self.assertEqual(self.debug["profile_selection"]["effective"], "high")
+        self.assertEqual(stages.count("independent"), 1)
 
-    def test_major_verifier_checks_only_major_final_wording(self):
+    def test_challenge_verification_experiments_and_judgment_preserve_evidence(self):
         self.tier, self.audits = "routine", []
         findings = [
             {**self.published, "severity": severity, "kind": kind}
@@ -124,14 +319,28 @@ class PipelineTests(unittest.TestCase):
             if stage == "independent":
                 return discovery([candidate() for _ in findings])
             if stage == "challenger":
-                return discovery()
+                result = json.loads(self.challenge(*args, **kwargs))
+                result["challenges"][0].update(
+                    outcome="refuted",
+                    reason="The caller may already share the fixture.",
+                    source_evidence=self.published["source_evidence"],
+                )
+                result["challenges"][1]["outcome"] = "unresolved"
+                return json.dumps(result)
             if stage == "verifier":
+                payload = json.loads(args[1].split("Verification input:\n")[1])
+                self.assertEqual(
+                    [item["id"] for item in payload["candidate_findings"]],
+                    [f"independent:{i}" for i in range(1, 5)],
+                )
+                self.assertIn("The caller may already share the fixture.", args[1])
+                self.assertIn("setup();", args[1])
                 return verification(
                     [
                         {
                             "candidate_ids": [f"independent:{i}"],
-                            "disposition": "publish",
-                            "reason": "Supported",
+                            "disposition": "supported",
+                            "reason": "The source supports the finding despite the objection.",
                             "finding": finding,
                         }
                         for i, finding in enumerate(findings, 1)
@@ -144,10 +353,9 @@ class PipelineTests(unittest.TestCase):
                 )
                 self.assertTrue(
                     all(
-                        f["body"] == "Final public wording" for f in payload["findings"]
+                        f["body"] == self.published["body"] for f in payload["findings"]
                     )
                 )
-                self.assertEqual(kwargs["reasoning_effort"], "high")
                 self.assertIn(
                     "experiment_run", [tool.get("name") for tool in kwargs["tools"]]
                 )
@@ -157,84 +365,54 @@ class PipelineTests(unittest.TestCase):
                             {
                                 "finding_id": finding["id"],
                                 "outcome": "inconclusive",
-                                "reason": "Risk cannot be reproduced practically",
+                                "reason": "No practical reproduction",
                                 "command_ids": [],
                             }
                             for finding in payload["findings"]
                         ]
                     }
                 )
-            self.assertEqual(stage, "major_verifier")
-            payload = json.loads(args[1].split("Major verification input:\n")[1])
+            self.assertEqual(stage, "judge")
+            payload = json.loads(args[1].split("Judgment input:\n")[1])
             self.assertEqual(
-                [f["id"] for f in payload["findings"]], ["finding:1", "finding:2"]
-            )
-            self.assertTrue(
-                all(f["body"] == "Final public wording" for f in payload["findings"])
+                [f["id"] for f in payload["findings"]],
+                [f"finding:{i}" for i in range(1, 5)],
             )
             self.assertIn("inconclusive", payload["experiment_evidence"])
+            self.assertIn("setup();", args[1])
+            self.assertIn("The caller may already share the fixture.", args[1])
+            self.assertTrue(kwargs["first_tool_required"])
             self.assertNotIn(
                 "experiment_run", [tool.get("name") for tool in kwargs["tools"]]
             )
-            return json.dumps(
-                {
-                    "coverage": COMPLETE,
-                    "decisions": [
-                        {
-                            "finding_id": "finding:1",
-                            "disposition": "publish",
-                            "reason": "Independently confirmed",
-                            "source_evidence": self.published["source_evidence"],
-                        },
-                        {
-                            "finding_id": "finding:2",
-                            "disposition": "drop",
-                            "reason": "Fixture disproves the premise",
-                            "source_evidence": [],
-                        },
-                    ],
-                }
+            result = json.loads(self.judge(*args, **kwargs))
+            result["decisions"][0].update(
+                summary="Final impact summary", body="Final public wording"
             )
+            result["decisions"][1].update(
+                disposition="drop", reason="The fixture disproves the premise"
+            )
+            return json.dumps(result)
 
-        def edit(*args, **kwargs):
-            order.append("collator")
-            text, response = self.edit(*args, **kwargs)
-            result = json.loads(text)
-            for finding in result["findings"]:
-                finding["summary"] = "Final impact summary"
-                finding["body"] = "Final public wording"
-            return json.dumps(result), response
-
-        usage = Mock()
-        self.run_review(review, edit, usage=usage, writer=review)
+        self.run_review(review, writer=review, judge=review)
         self.assertEqual(
-            order,
-            [
-                "independent",
-                "challenger",
-                "verifier",
-                "collator",
-                "write_verifier",
-                "major_verifier",
-            ],
+            order, ["independent", "challenger", "verifier", "write_verifier", "judge"]
         )
-        self.assertEqual(self.debug["coverage"]["verification"]["status"], "complete")
-        self.assertEqual(self.debug["coverage"]["experiments"]["status"], "partial")
         self.assertEqual(
             [f["id"] for f in self.result.findings],
             ["finding:1", "finding:3", "finding:4"],
         )
-        self.assertEqual(self.result.findings[0]["verified_by"], "major_verifier")
-        self.assertEqual(self.result.findings[0]["summary"], self.published["summary"])
-        self.assertEqual(
-            self.result.findings[0]["presented_summary"], "Final impact summary"
-        )
+        finding = self.result.findings[0]
+        self.assertEqual(finding["verified_by"], "verifier")
+        self.assertEqual(finding["judged_by"], "judge")
+        self.assertEqual(finding["edited_by"], "judge")
+        self.assertEqual(finding["summary"], self.published["summary"])
+        self.assertEqual(finding["presented_summary"], "Final impact summary")
         self.assertIn("Final impact summary", self.result.content)
-        self.assertEqual(self.result.findings[0]["raised_by"], ["independent"])
-        self.assertEqual(self.result.findings[1]["verified_by"], "verifier")
+        self.assertEqual(finding["raised_by"], ["independent"])
         self.assertEqual(self.debug["decisions"][1]["disposition"], "drop")
         self.assertEqual(
-            self.debug["stages"]["verifier"]["decisions"][1]["disposition"], "publish"
+            self.debug["stages"]["verifier"]["decisions"][1]["disposition"], "supported"
         )
 
     def major_review(self, *args, **kwargs):
@@ -242,35 +420,21 @@ class PipelineTests(unittest.TestCase):
         if stage == "independent":
             return discovery([candidate()])
         if stage == "challenger":
-            return discovery()
-        if stage == "verifier":
-            return verification(
-                [
-                    {
-                        "candidate_ids": ["independent:1"],
-                        "disposition": "publish",
-                        "reason": "Supported by source",
-                        "finding": {
-                            **self.published,
-                            "severity": "major",
-                            "kind": "defect",
-                        },
-                    }
-                ]
-            )
-        self.assertEqual(stage, "major_verifier")
-        return json.dumps(
-            {
-                "coverage": COMPLETE,
-                "decisions": [
-                    {
-                        "finding_id": "finding:1",
-                        "disposition": "publish",
-                        "reason": "Independent source evidence supports Major",
-                        "source_evidence": self.published["source_evidence"],
-                    }
-                ],
-            }
+            return self.challenge(*args, **kwargs)
+        self.assertEqual(stage, "verifier")
+        return verification(
+            [
+                {
+                    "candidate_ids": ["independent:1"],
+                    "disposition": "supported",
+                    "reason": "Supported by source",
+                    "finding": {
+                        **self.published,
+                        "severity": "major",
+                        "kind": "defect",
+                    },
+                }
+            ]
         )
 
     def test_optional_writer_failures_preserve_static_publication(self):
@@ -282,14 +446,12 @@ class PipelineTests(unittest.TestCase):
             with self.subTest(failure=type(failure).__name__):
                 self.debug = {}
                 self.run_review(self.major_review, writer=Mock(side_effect=failure))
-                self.assertEqual(
-                    self.result.findings[0]["verified_by"], "major_verifier"
-                )
+                self.assertEqual(self.result.findings[0]["judged_by"], "judge")
                 self.assertEqual(self.debug["coverage"]["status"], "complete")
                 self.assertEqual(self.debug["coverage"]["limitations"], [])
                 self.assertTrue(self.debug["coverage"]["experiments"]["limitations"])
 
-    def test_writer_evidence_reaches_final_verifier_without_deciding_publication(self):
+    def test_writer_evidence_reaches_judge_without_deciding_publication(self):
         self.tier, self.audits = "routine", []
         for outcome in ("reproduced", "refuted"):
             with self.subTest(outcome=outcome):
@@ -323,23 +485,18 @@ class PipelineTests(unittest.TestCase):
                         }
                     )
 
-                def reviewer(*args, outcome=outcome, **kwargs):
-                    if kwargs["stage_name"] == "major_verifier":
-                        payload = json.loads(
-                            args[1].split("Major verification input:\n")[1]
-                        )
-                        evidence = json.loads(payload["experiment_evidence"])
-                        self.assertEqual(evidence["results"][0]["outcome"], outcome)
-                        self.assertEqual(
-                            evidence["execution"]["commands"][0]["output"],
-                            "AssertionError",
-                        )
-                    return self.major_review(*args, **kwargs)
+                def judge(*args, outcome=outcome, **kwargs):
+                    payload = json.loads(args[1].split("Judgment input:\n")[1])
+                    evidence = json.loads(payload["experiment_evidence"])
+                    self.assertEqual(evidence["results"][0]["outcome"], outcome)
+                    self.assertEqual(
+                        evidence["execution"]["commands"][0]["output"],
+                        "AssertionError",
+                    )
+                    return self.judge(*args, **kwargs)
 
-                self.run_review(reviewer, writer=writer)
-                self.assertEqual(
-                    self.result.findings[0]["verified_by"], "major_verifier"
-                )
+                self.run_review(self.major_review, writer=writer, judge=judge)
+                self.assertEqual(self.result.findings[0]["judged_by"], "judge")
 
     def test_stale_write_verification_aborts_review(self):
         self.tier, self.audits = "routine", []
@@ -348,10 +505,9 @@ class PipelineTests(unittest.TestCase):
                 self.major_review, writer=Mock(side_effect=model.StaleReview())
             )
         self.assertEqual(self.debug["stages"]["write_verifier"]["status"], "stale")
-        self.assertNotIn("major_verifier", self.debug["stages"])
+        self.assertNotIn("judge", self.debug["stages"])
 
-    def test_major_verifier_failures_withhold_only_majors(self):
-        self.debug = {}
+    def test_judge_failure_withholds_all_supported_findings(self):
         self.tier, self.audits = "routine", []
 
         def review(*args, **kwargs):
@@ -359,77 +515,46 @@ class PipelineTests(unittest.TestCase):
             if stage == "independent":
                 return discovery([candidate(), candidate()])
             if stage == "challenger":
-                return discovery()
-            if stage == "verifier":
-                return verification(
-                    [
-                        {
-                            "candidate_ids": [f"independent:{i}"],
-                            "disposition": "publish",
-                            "reason": "Supported",
-                            "finding": {**self.published, "severity": severity},
-                        }
-                        for i, severity in enumerate(("major", "minor"), 1)
-                    ]
-                )
-            self.assertEqual(stage, "major_verifier")
-            raise TimeoutError()
-
-        self.run_review(review)
-        self.assertEqual([f["severity"] for f in self.result.findings], ["minor"])
-        self.assertEqual(self.debug["decisions"][0]["disposition"], "unresolved")
-        self.assertIsNone(self.debug["decisions"][0]["finding"])
-        self.assertTrue(
-            any(
-                "major_verifier" in item
-                for item in self.debug["coverage"]["limitations"]
-            )
-        )
-        self.assertTrue(self.result.content.startswith("Review failed"))
-        self.assertEqual(self.debug["coverage"]["verification"]["status"], "failed")
-
-    def test_failed_editor_cannot_restore_major_rejected_by_second_verifier(self):
-        self.tier, self.audits = "routine", []
-
-        def review(*args, **kwargs):
-            stage = kwargs["stage_name"]
-            if stage == "independent":
-                return discovery([candidate()])
-            if stage == "challenger":
-                return discovery()
-            if stage == "verifier":
-                return verification(
-                    [
-                        {
-                            "candidate_ids": ["independent:1"],
-                            "disposition": "publish",
-                            "reason": "Supported",
-                            "finding": {**self.published, "severity": "major"},
-                        }
-                    ]
-                )
-            self.assertEqual(stage, "major_verifier")
-            payload = json.loads(args[1].split("Major verification input:\n")[1])
-            self.assertEqual(payload["findings"][0]["body"], self.published["body"])
-            return json.dumps(
-                {
-                    "coverage": COMPLETE,
-                    "decisions": [
-                        {
-                            "finding_id": "finding:1",
-                            "disposition": "drop",
-                            "reason": "The fixture disproves it",
-                            "source_evidence": [],
-                        }
-                    ],
-                }
+                return self.challenge(*args, **kwargs)
+            self.assertEqual(stage, "verifier")
+            return verification(
+                [
+                    {
+                        "candidate_ids": [f"independent:{i}"],
+                        "disposition": "supported",
+                        "reason": "Supported",
+                        "finding": {**self.published, "severity": severity},
+                    }
+                    for i, severity in enumerate(("major", "minor"), 1)
+                ]
             )
 
-        self.run_review(review, editor=Mock(side_effect=TimeoutError))
-        self.assertEqual(self.result.findings, [])
-        self.assertNotIn(self.published["body"], self.result.content)
-        self.assertEqual(self.debug["decisions"][0]["disposition"], "drop")
-        self.assertTrue(self.debug["stages"]["collator"]["used_verified_wording"])
+        for failure in (TimeoutError("Judge unavailable"), "{}"):
+            with self.subTest(failure=failure):
+                self.debug = {}
+                judge = (
+                    Mock(side_effect=failure)
+                    if isinstance(failure, Exception)
+                    else Mock(return_value=failure)
+                )
+                self.run_review(review, judge=judge)
+                self.assertEqual(self.result.findings, [])
+                self.assertTrue(
+                    all(
+                        d["disposition"] == "unresolved" and d["finding"] is None
+                        for d in self.debug["decisions"]
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        "judge" in issue
+                        for issue in self.debug["coverage"]["limitations"]
+                    )
+                )
+                self.assertTrue(self.result.content.startswith("Review failed"))
+                self.assertEqual(
+                    self.debug["coverage"]["verification"]["status"], "failed"
+                )
 
     def setUp(self):
         self.source = {
@@ -484,44 +609,67 @@ class PipelineTests(unittest.TestCase):
         args[4]["routing"] = {"selected": result}
         return result
 
-    def edit(self, api_key, name, prompt, input_text, **kwargs):
-        self.assertEqual(name, "collator")
-        payload = json.loads(input_text)
-        findings = payload["findings"]
-        self.assertNotIn("Rejected claim", input_text)
-        concept_summary = None
-        if payload.get("concept_assessment") is not None:
-            concept_summary = (
-                payload["concept_assessment"]["recommendation"]
-                + " https://example.invalid/o/r/pulls/42"
-            )
+    def challenge(self, *args, **kwargs):
+        payload = json.loads(args[1].split("Challenge input:\n")[1])
         return json.dumps(
             {
-                "concept_summary": concept_summary,
-                "findings": [
+                "coverage": COMPLETE,
+                "challenges": [
                     {
-                        "id": item["id"],
+                        "candidate_id": item["id"],
+                        "outcome": "not_refuted",
+                        "reason": "No source-backed counterexample found",
+                        "source_evidence": [],
+                    }
+                    for item in payload["candidates"]
+                ],
+            }
+        )
+
+    def judge(self, *args, **kwargs):
+        payload = json.loads(args[1].split("Judgment input:\n")[1])
+        concept = payload.get("concept_assessment")
+        return json.dumps(
+            {
+                "coverage": COMPLETE,
+                "decisions": [
+                    {
+                        "finding_id": item["id"],
+                        "disposition": "publish",
+                        "reason": "Verified evidence supports publication",
                         "title": item["title"],
                         "summary": item["summary"],
                         "body": item["body"],
+                        "source_evidence": item["source_evidence"],
                     }
-                    for item in findings
+                    for item in payload["findings"]
                 ],
+                "concept": None
+                if concept is None
+                else {
+                    "disposition": "publish",
+                    "reason": "Verified concern remains material",
+                    "summary": concept["recommendation"]
+                    + " https://example.invalid/o/r/pulls/42",
+                },
             }
-        ), {"status": "completed"}
+        )
 
     def run_review(
         self,
         reviewer,
-        editor=None,
+        audit=None,
         usage=None,
         api_base=None,
         archaeology_enabled=False,
         backport_evidence=None,
         review_feedback=None,
         writer=None,
+        judge=None,
     ):
         def review_with_experiments(*args, **kwargs):
+            if kwargs["stage_name"] == "judge":
+                return (judge or self.judge)(*args, **kwargs)
             if kwargs["stage_name"] == "write_verifier":
                 if writer is not None:
                     return writer(*args, **kwargs)
@@ -539,12 +687,34 @@ class PipelineTests(unittest.TestCase):
                         ]
                     }
                 )
-            return reviewer(*args, **kwargs)
+            answer = reviewer(*args, **kwargs)
+            if kwargs["stage_name"] == "tests":
+                # Ordinary pipeline fixtures contain only a mechanical setup
+                # refactor. Coverage-specific tests supply their own assessment.
+                value = json.loads(answer)
+                value.setdefault(
+                    "test_coverage",
+                    [
+                        {
+                            "paths": ["src/example.cpp"],
+                            "status": "not_applicable",
+                            "reason": "The fixture only moves identical setup calls.",
+                            "regression": "",
+                            "evidence": [],
+                        }
+                    ],
+                )
+                answer = json.dumps(value)
+            return answer
 
         with (
             patch.object(pipeline.routing, "plan_review", side_effect=self.plan),
             patch.object(model, "openai_review", side_effect=review_with_experiments),
-            patch.object(model, "run_audit", side_effect=editor or self.edit),
+            patch.object(
+                model,
+                "run_audit",
+                side_effect=audit or AssertionError("Unexpected tool-less audit"),
+            ),
             patch.object(
                 protocol,
                 "read_file",
@@ -594,7 +764,7 @@ class PipelineTests(unittest.TestCase):
 
         def reviewer(*args, **kwargs):
             stage = kwargs["stage_name"]
-            if stage in {"independent", "challenger"}:
+            if stage == "independent":
                 self.assertNotIn("SECRET_AUTHOR_REPLY", args[1])
                 self.assertNotIn("previous:1", args[1])
                 return discovery()
@@ -613,7 +783,7 @@ class PipelineTests(unittest.TestCase):
             self.assertLessEqual(kwargs["max_output_tokens"], 4000)
             raise ValueError("Invalid or unavailable feedback agent")
 
-        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(calls, ["feedback"])
         entry = self.debug["review_memory"][0]
         self.assertEqual(entry["key"], "previous:1")
@@ -642,13 +812,13 @@ class PipelineTests(unittest.TestCase):
             if stage == "independent":
                 return discovery([candidate()])
             if stage == "challenger":
-                return discovery()
+                return self.challenge(*args, **kwargs)
             result = json.loads(
                 verification(
                     [
                         {
                             "candidate_ids": ["independent:1"],
-                            "disposition": "publish",
+                            "disposition": "supported",
                             "reason": "Supported",
                             "finding": self.published,
                         }
@@ -682,8 +852,7 @@ class PipelineTests(unittest.TestCase):
             return json.dumps(result)
 
         def audit(api_key, name, prompt, input_text, **kwargs):
-            if name != "feedback":
-                return self.edit(api_key, name, prompt, input_text, **kwargs)
+            self.assertEqual(name, "feedback")
             order.append(name)
             return json.dumps(
                 {
@@ -699,7 +868,7 @@ class PipelineTests(unittest.TestCase):
                 }
             ), {"status": "completed"}
 
-        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(
             order[:4], ["independent", "challenger", "feedback", "verifier"]
         )
@@ -713,20 +882,20 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(entry["current_finding_ids"], ["finding:1"])
 
         self.published["severity"] = "minor"
-        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertFalse(self.debug["review_memory"][0]["collapsed"])
         self.assertFalse(self.debug["review_memory"][0]["unchanged_since_report"])
         self.assertEqual(self.result.findings[0]["severity"], "minor")
 
         packet["findings"][0]["last_presented_findings"] = [dict(self.published)]
-        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertTrue(self.debug["review_memory"][0]["unchanged_since_report"])
         self.assertFalse(self.debug["review_memory"][0]["collapsed"])
         self.assertNotIn("##### Findings", self.result.content)
 
         for reconciliation_status in ("fixed", "invalid"):
             with self.subTest(reconciliation_status=reconciliation_status):
-                self.run_review(reviewer, editor=audit, review_feedback=packet)
+                self.run_review(reviewer, audit=audit, review_feedback=packet)
                 entry = self.debug["review_memory"][0]
                 self.assertEqual(entry["status"], "unclear")
                 self.assertFalse(entry["collapsed"])
@@ -740,7 +909,7 @@ class PipelineTests(unittest.TestCase):
         self.published["severity"] = "suggestion"
         duplicate_history = True
         packet["findings"].append({**packet["findings"][0], "key": "previous:2"})
-        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertTrue(all(not e["collapsed"] for e in self.debug["review_memory"]))
         self.assertEqual(self.debug["review_memory"][1]["duplicate_of"], "previous:1")
         self.assertTrue(
@@ -762,13 +931,13 @@ class PipelineTests(unittest.TestCase):
             if kwargs["stage_name"] == "independent":
                 return discovery([candidate()])
             if kwargs["stage_name"] == "challenger":
-                return discovery()
+                return self.challenge(*args, **kwargs)
             result = json.loads(
                 verification(
                     [
                         {
                             "candidate_ids": ["independent:1"],
-                            "disposition": "publish",
+                            "disposition": "supported",
                             "reason": "Supported",
                             "finding": self.published,
                         }
@@ -779,11 +948,10 @@ class PipelineTests(unittest.TestCase):
             return json.dumps(result)
 
         def audit(api_key, name, prompt, input_text, **kwargs):
-            if name == "feedback":
-                return json.dumps({"mappings": []}), {"status": "completed"}
-            raise TimeoutError("Collator unavailable")
+            self.assertEqual(name, "feedback")
+            return json.dumps({"mappings": []}), {"status": "completed"}
 
-        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(len(self.result.findings), 1)
         self.assertEqual(self.debug["review_memory"][0]["status"], "unclear")
         self.assertEqual(
@@ -815,7 +983,7 @@ class PipelineTests(unittest.TestCase):
                 ],
             }
         )
-        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(len(self.result.findings), 1)
         self.assertEqual(
             [entry["status"] for entry in self.debug["review_memory"]],
@@ -859,7 +1027,7 @@ class PipelineTests(unittest.TestCase):
         def reviewer(*args, **kwargs):
             stage = kwargs["stage_name"]
             seen[stage] = (args[1], kwargs)
-            if stage in {"independent", "challenger"}:
+            if stage == "independent":
                 return discovery()
             self.assertNotIn(
                 "review_reconciliation", kwargs["response_schema"]["properties"]
@@ -867,18 +1035,7 @@ class PipelineTests(unittest.TestCase):
             return verification()
 
         self.run_review(reviewer)
-        self.assertEqual(list(seen), ["independent", "challenger", "verifier"])
-        challenge_input, settings = seen["challenger"]
-        challenge = json.loads(challenge_input.split("Challenge input:\n")[1])
-        self.assertEqual(challenge["candidate_findings"], [])
-        self.assertEqual(
-            challenge["discovery_reviews"]["independent"],
-            {"status": "completed", "coverage": COMPLETE},
-        )
-        self.assertIsNone(challenge["concept_candidate"])
-        self.assertIsNone(challenge["blind_alternatives"])
-        self.assertTrue(settings["first_tool_required"])
-        self.assertEqual(settings["tools"], seen["independent"][1]["tools"])
+        self.assertEqual(list(seen), ["independent", "verifier"])
         self.assertEqual(self.debug["coverage"]["status"], "complete")
         self.assertNotIn("feedback", self.debug["stages"])
         self.assertNotIn("review_memory", self.debug)
@@ -911,40 +1068,6 @@ class PipelineTests(unittest.TestCase):
                     )
                 )
 
-    def test_challenger_escalation_runs_only_missing_sensitive_reviews(self):
-        self.tier, self.audits = "routine", ["state"]
-        order = []
-
-        def reviewer(*args, **kwargs):
-            stage = kwargs["stage_name"]
-            order.append(stage)
-            if stage == "verifier":
-                return verification()
-            return discovery(sensitive=stage == "challenger")
-
-        with patch.object(
-            pipeline, "focused_review_input", return_value="Focused diff"
-        ):
-            self.run_review(reviewer)
-        self.assertCountEqual(
-            order,
-            [
-                "independent",
-                "state",
-                "challenger",
-                *pipeline.ADVERSARIAL_STAGES,
-                "concurrency",
-                "verifier",
-            ],
-        )
-        self.assertLess(order.index("state"), order.index("challenger"))
-        for stage in (*pipeline.ADVERSARIAL_STAGES, "concurrency"):
-            self.assertLess(order.index("challenger"), order.index(stage))
-            self.assertLess(order.index(stage), order.index("verifier"))
-        self.assertEqual(self.debug["routing"]["selected"]["tier"], "sensitive")
-        self.assertEqual(self.debug["routing"]["escalated_by"], "challenger")
-        self.assertEqual(self.debug["coverage"]["status"], "complete")
-
     def test_failed_verifier_retains_compact_history_and_fails_run(self):
         self.tier, self.audits = "routine", []
         packet = {
@@ -959,7 +1082,7 @@ class PipelineTests(unittest.TestCase):
             if kwargs["stage_name"] == "independent":
                 return discovery([candidate()])
             if kwargs["stage_name"] == "challenger":
-                return discovery()
+                return self.challenge(*args, **kwargs)
             self.assertEqual(kwargs["stage_name"], "verifier")
             raise TimeoutError("Provider unavailable")
 
@@ -967,7 +1090,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(args[1], "feedback")
             return json.dumps({"mappings": []}), {"status": "completed"}
 
-        self.run_review(reviewer, editor=audit, review_feedback=packet)
+        self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(self.result.findings, [])
         self.assertTrue(self.result.content.startswith("Review failed"))
         self.assertIn(self.published["title"], self.result.content)
@@ -1002,8 +1125,6 @@ class PipelineTests(unittest.TestCase):
                         if failure == "discovery":
                             raise TimeoutError()
                         return discovery()
-                    if kwargs["stage_name"] == "challenger":
-                        return discovery()
                     result = json.loads(verification())
                     result["backport_assessment"] = {
                         "verdict": "Faithful",
@@ -1026,7 +1147,7 @@ class PipelineTests(unittest.TestCase):
                     "Faithful" if failure is None else "Needs clarification",
                 )
 
-    def test_backport_context_reaches_reviewers_and_both_verifiers(self):
+    def test_backport_context_reaches_discovery_challenge_verification_and_judge(self):
         self.tier, self.audits = "routine", ["build"]
         seen = {}
         packet = {
@@ -1043,7 +1164,9 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("target release branch", kwargs["prompt"])
             if stage == "archaeologist":
                 return archaeology()
-            if stage in {"independent", "build", "challenger"}:
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            if stage in {"independent", "build"}:
                 return discovery([candidate()] if stage == "independent" else [])
             if stage == "verifier":
                 self.assertIn(
@@ -1054,7 +1177,7 @@ class PipelineTests(unittest.TestCase):
                         [
                             {
                                 "candidate_ids": ["independent:1"],
-                                "disposition": "publish",
+                                "disposition": "supported",
                                 "reason": "Supported",
                                 "finding": {
                                     **self.published,
@@ -1073,26 +1196,14 @@ class PipelineTests(unittest.TestCase):
                     "limitations": [],
                 }
                 return json.dumps(result)
-            self.assertEqual(stage, "major_verifier")
-            return json.dumps(
-                {
-                    "coverage": COMPLETE,
-                    "decisions": [
-                        {
-                            "finding_id": "finding:1",
-                            "disposition": "publish",
-                            "reason": "Supported",
-                            "source_evidence": self.published["source_evidence"],
-                        }
-                    ],
-                }
-            )
+            self.assertEqual(stage, "judge")
+            return self.judge(*args, **kwargs)
 
         with patch.object(
             pipeline, "focused_review_input", return_value="Focused diff"
         ):
             content = self.run_review(
-                review, archaeology_enabled=True, backport_evidence=packet
+                review, archaeology_enabled=True, backport_evidence=packet, judge=review
             )
         self.assertEqual(
             set(seen),
@@ -1102,7 +1213,7 @@ class PipelineTests(unittest.TestCase):
                 "build",
                 "challenger",
                 "verifier",
-                "major_verifier",
+                "judge",
             },
         )
         self.assertEqual(self.debug["stages"]["alternatives"]["status"], "skipped")
@@ -1118,10 +1229,6 @@ class PipelineTests(unittest.TestCase):
         self.tier, self.audits = "sensitive", []
         self.profiles = ["consensus", "wallet"]
         high_prompts = config.PromptConfig.load(profile="high")
-        self.assertEqual(
-            high_prompts.profile.stages["adversarial_claude"],
-            self.prompts.profile.stages["adversarial_claude"],
-        )
         self.prompts = high_prompts
         usage = Mock()
         usage.summary.return_value = {"request_count": 3}
@@ -1131,6 +1238,8 @@ class PipelineTests(unittest.TestCase):
 
         def review(*args, **kwargs):
             stage = kwargs["stage_name"]
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
             if stage in pipeline.ADVERSARIAL_STAGES:
                 inputs[stage] = (
                     args[1],
@@ -1159,7 +1268,7 @@ class PipelineTests(unittest.TestCase):
                     [
                         {
                             "candidate_ids": candidate_ids,
-                            "disposition": "publish",
+                            "disposition": "supported",
                             "reason": "Shared finding",
                             "finding": self.published,
                         }
@@ -1188,13 +1297,13 @@ class PipelineTests(unittest.TestCase):
 
         def review(*args, **kwargs):
             if kwargs["stage_name"] == "challenger":
-                return discovery()
+                return self.challenge(*args, **kwargs)
             if kwargs["stage_name"] == "verifier":
                 return verification(
                     [
                         {
                             "candidate_ids": ["independent:1"],
-                            "disposition": "publish",
+                            "disposition": "supported",
                             "reason": "Checked against the caller",
                             "finding": self.published,
                         }
@@ -1216,78 +1325,64 @@ class PipelineTests(unittest.TestCase):
         ]
         self.assertEqual(unresolved[0]["candidate_ids"], ["independent:2"])
 
-    def test_invalid_editor_preserves_verified_wording(self):
+    def test_judge_cannot_publish_unverified_candidates(self):
         self.tier, self.audits = "routine", []
-        design = {
-            **self.published,
-            "kind": "design",
-            "title": "Design concern",
-            "body": "Prefer the existing approach for this interface.",
-        }
-        verifier_candidates = []
 
         def review(*args, **kwargs):
             stage = kwargs["stage_name"]
-            if stage == "challenger":
+            if stage == "independent":
                 return discovery(
                     [
-                        {**candidate(), "kind": "design"},
-                        {**candidate("Rejected claim"), "kind": "defect"},
+                        candidate(),
+                        candidate("Refuted lead"),
+                        candidate("Unresolved lead"),
                     ]
                 )
-            if stage == "verifier":
-                verifier_candidates.extend(
-                    json.loads(args[1].split("Verification input:\n")[1])[
-                        "candidate_findings"
-                    ]
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            return verification(
+                [
+                    {
+                        "candidate_ids": [f"independent:{i}"],
+                        "disposition": disposition,
+                        "reason": "Checked against current source",
+                        "finding": self.published
+                        if disposition == "supported"
+                        else None,
+                    }
+                    for i, disposition in enumerate(
+                        ("supported", "refuted", "unresolved"), 1
+                    )
+                ]
+            )
+
+        def judge(*args, **kwargs):
+            payload = json.loads(args[1].split("Judgment input:\n")[1])
+            self.assertEqual(
+                [finding["id"] for finding in payload["findings"]], ["finding:1"]
+            )
+            result = json.loads(self.judge(*args, **kwargs))
+            for identifier in ("independent:2", "independent:3", "finding:999"):
+                result["decisions"].append(
+                    {
+                        **result["decisions"][0],
+                        "finding_id": identifier,
+                        "body": "Invented finding",
+                    }
                 )
-                return verification(
-                    [
-                        {
-                            "candidate_ids": ["challenger:1"],
-                            "disposition": "publish",
-                            "reason": "Verified",
-                            "finding": design,
-                        },
-                        {
-                            "candidate_ids": ["challenger:2"],
-                            "disposition": "drop",
-                            "reason": "The caller already checks the precondition",
-                            "finding": None,
-                        },
-                    ]
-                )
-            return discovery()
+            return json.dumps(result)
 
-        self.debug = {}
-
-        def edit(*args, **kwargs):
-            return '{"concept_summary":null,"findings":[]}', {"status": "completed"}
-
-        content = self.run_review(review, edit)
-        self.assertEqual(
-            [(item["id"], item["kind"]) for item in verifier_candidates],
-            [("challenger:1", "design"), ("challenger:2", "defect")],
-        )
+        self.run_review(review, judge=judge)
         self.assertEqual(len(self.result.findings), 1)
-        self.assertNotIn("Rejected claim", content)
-        self.assertIn(design["body"], content)
-        self.assertTrue(self.debug["stages"]["collator"]["used_verified_wording"])
-        self.assertIsNone(self.debug["finding_attribution"][0]["edited_by"])
-        finding = self.result.findings[0]
-        self.assertEqual(finding["kind"], "design")
         self.assertEqual(
-            self.debug["finding_attribution"][0]["candidate_ids"], ["challenger:1"]
+            self.debug["finding_attribution"][0]["candidate_ids"], ["independent:1"]
         )
-        self.assertEqual(finding["raised_by"], ["challenger"])
+        self.assertNotIn("Invented finding", self.result.content)
         self.assertEqual(
-            finding["raised_by_models"], [self.prompts.models["challenger"]]
+            [decision["disposition"] for decision in self.debug["decisions"]],
+            ["publish", "drop", "unresolved"],
         )
-        self.assertEqual(finding["verified_by"], "verifier")
-        self.assertEqual(finding["body"], design["body"])
-        self.assertEqual(finding["presented_body"], design["body"])
-        self.assertIsNone(finding["edited_by"])
-        self.assertEqual(self.debug["coverage"]["status"], "complete")
+        self.assertEqual(self.debug["coverage"]["verification"]["status"], "partial")
 
     def test_verified_material_concept_concern_gets_public_paragraph(self):
         self.tier, self.audits = "routine", ["dead_code"]
@@ -1312,13 +1407,13 @@ class PipelineTests(unittest.TestCase):
                 return discovery([candidate()])
             if stage == "challenger":
                 challenge.update(json.loads(args[1].split("Challenge input:\n")[1]))
-                return discovery()
+                return self.challenge(*args, **kwargs)
             if stage == "verifier":
                 return verification(
                     decisions=[
                         {
                             "candidate_ids": [f"{source}:1"],
-                            "disposition": "drop",
+                            "disposition": "refuted",
                             "reason": "The fixtures exercise different paths",
                             "finding": None,
                         }
@@ -1337,16 +1432,9 @@ class PipelineTests(unittest.TestCase):
         content = self.run_review(review, archaeology_enabled=True)
 
         self.assertEqual(
-            [item["id"] for item in challenge["candidate_findings"]],
+            [item["id"] for item in challenge["candidates"]],
             ["independent:1", "dead_code:1"],
         )
-        for stage in ("independent", "dead_code"):
-            self.assertEqual(
-                challenge["discovery_reviews"][stage],
-                {"status": "completed", "coverage": COMPLETE},
-            )
-        self.assertEqual(challenge["concept_candidate"], concern)
-        self.assertEqual(challenge["blind_alternatives"], concern["alternatives"])
         self.assertEqual(self.debug["coverage"]["status"], "complete")
         self.assertIn("Concept and approach", content)
         self.assertIn("process cost", content)
@@ -1355,6 +1443,16 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("**Do nothing**", content)
         self.assertEqual(self.debug["concept_assessment"]["status"], "verified")
         self.assertTrue(self.result.concept_concern)
+
+        self.debug = {}
+        self.run_review(
+            review,
+            archaeology_enabled=True,
+            judge=Mock(side_effect=TimeoutError("Judge unavailable")),
+        )
+        self.assertFalse(self.result.concept_concern)
+        self.assertNotIn(concern["recommendation"], self.result.content)
+        self.assertEqual(self.result.findings, [])
 
 
 if __name__ == "__main__":

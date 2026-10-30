@@ -87,6 +87,43 @@ DISCOVERY_SCHEMA = object_schema(
         "findings": {"type": "array", "items": CANDIDATE},
     }
 )
+TEST_COVERAGE = object_schema(
+    {
+        "paths": {"type": "array", "items": STRING, "minItems": 1},
+        "status": {
+            "type": "string",
+            "enum": ["checked", "deferred", "not_applicable"],
+        },
+        "evidence": {"type": "array", "items": SOURCE_EVIDENCE},
+        "regression": STRING,
+        "reason": STRING,
+    }
+)
+TESTS_DISCOVERY_SCHEMA = object_schema(
+    {
+        **DISCOVERY_SCHEMA["properties"],
+        "test_coverage": {"type": "array", "items": TEST_COVERAGE},
+    }
+)
+CHALLENGER_SCHEMA = object_schema(
+    {
+        "coverage": COVERAGE,
+        "challenges": {
+            "type": "array",
+            "items": object_schema(
+                {
+                    "candidate_id": STRING,
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["refuted", "not_refuted", "unresolved"],
+                    },
+                    "reason": STRING,
+                    "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE},
+                }
+            ),
+        },
+    }
+)
 CONCEPT_ALTERNATIVE = object_schema(
     {
         "name": STRING,
@@ -166,7 +203,7 @@ VERIFIER_SCHEMA = object_schema(
                     },
                     "disposition": {
                         "type": "string",
-                        "enum": ["publish", "drop", "unresolved"],
+                        "enum": ["supported", "refuted", "unresolved"],
                     },
                     "reason": STRING,
                     "finding": {"anyOf": [FINDING, {"type": "null"}]},
@@ -249,7 +286,7 @@ WRITE_VERIFIER_SCHEMA = object_schema(
     }
 )
 
-MAJOR_VERIFIER_SCHEMA = object_schema(
+JUDGE_SCHEMA = object_schema(
     {
         "coverage": COVERAGE,
         "decisions": {
@@ -263,24 +300,26 @@ MAJOR_VERIFIER_SCHEMA = object_schema(
                     },
                     "reason": STRING,
                     "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE},
-                }
-            ),
-        },
-    }
-)
-COLLATOR_SCHEMA = object_schema(
-    {
-        "concept_summary": {"anyOf": [STRING, {"type": "null"}]},
-        "findings": {
-            "type": "array",
-            "items": object_schema(
-                {
-                    "id": STRING,
                     "title": STRING,
-                    "summary": {"type": "string", "minLength": 1},
+                    "summary": STRING,
                     "body": STRING,
                 }
             ),
+        },
+        "concept": {
+            "anyOf": [
+                object_schema(
+                    {
+                        "disposition": {
+                            "type": "string",
+                            "enum": ["publish", "drop", "unresolved"],
+                        },
+                        "reason": STRING,
+                        "summary": STRING,
+                    }
+                ),
+                {"type": "null"},
+            ]
         },
     }
 )
@@ -386,6 +425,59 @@ def discovery(text, stage, snapshot):
             empty=("correction", "uncertainty"),
         )
         finding["id"] = f"{stage}:{index}"
+    return result
+
+
+def tests_discovery(text, snapshot, required_paths, *, stage="tests"):
+    value = json.loads(text)
+    _object(value, TESTS_DISCOVERY_SCHEMA["properties"])
+    assessments = value.pop("test_coverage")
+    result = discovery(json.dumps(value), stage, snapshot)
+    result["test_coverage"] = []
+    limitations = result["coverage"]["limitations"]
+    accounted = set()
+    if not isinstance(assessments, list):
+        limitations.append("Test coverage assessments must be a list.")
+        assessments = []
+    for index, assessment in enumerate(assessments, 1):
+        try:
+            _object(assessment, TEST_COVERAGE["properties"])
+            paths = assessment["paths"]
+            _strings(paths)
+            if not paths or any(path not in snapshot.changed_paths for path in paths):
+                raise InvalidReview("Test coverage must identify changed paths")
+            status = assessment["status"]
+            if status not in ("checked", "deferred", "not_applicable"):
+                raise InvalidReview("Invalid test coverage status")
+            for field in ("regression", "reason"):
+                if not isinstance(assessment[field], str):
+                    raise InvalidReview(f"Test coverage {field} must be text")
+            if status == "checked" and not assessment["regression"].strip():
+                raise InvalidReview("Checked test coverage must describe a regression")
+            if status != "checked" and not assessment["reason"].strip():
+                raise InvalidReview(
+                    "Deferred or inapplicable test coverage needs a reason"
+                )
+            evidence = assessment["evidence"]
+            if not isinstance(evidence, list):
+                raise InvalidReview("Test coverage evidence must be a list")
+            if evidence or status == "checked":
+                _source_evidence(evidence, snapshot)
+        except InvalidReview as exc:
+            # An unsupported coverage claim must not erase separately valid leads.
+            limitations.append(f"Test coverage assessment {index}: {exc}")
+            continue
+        result["test_coverage"].append(assessment)
+        accounted.update(paths)
+        if status == "deferred":
+            limitations.append(
+                f"Deferred test inspection for {', '.join(paths)}: {assessment['reason']}"
+            )
+    missing = sorted(set(required_paths) - accounted)
+    if missing:
+        limitations.append("Test coverage was not assessed for: " + ", ".join(missing))
+    if limitations:
+        result["coverage"]["status"] = "partial"
     return result
 
 
@@ -538,7 +630,7 @@ def _concept_decision(concept, concept_assessment):
     )
 
 
-def _published_finding(finding, snapshot):
+def _verified_finding(finding, snapshot):
     _object(finding, FINDING["properties"])
     _location(finding, snapshot)
     if finding["severity"] not in FINDING["properties"]["severity"]["enum"]:
@@ -594,10 +686,10 @@ def verification(text, candidates, snapshot, concept_assessment=None):
     unsafe_indexes = set()
     validation_errors = []
     for index, decision in enumerate(result["decisions"]):
-        # Non-publishing decisions cannot contain a finding, so an omitted null
+        # Unsupported decisions cannot contain a finding, so an omitted null
         # is unambiguous. Keep all other fields subject to strict validation.
         if isinstance(decision, dict) and decision.get("disposition") in (
-            "drop",
+            "refuted",
             "unresolved",
         ):
             decision.setdefault("finding", None)
@@ -654,12 +746,12 @@ def verification(text, candidates, snapshot, concept_assessment=None):
             continue
         _text(decision, ("reason",))
         disposition = decision["disposition"]
-        if disposition not in {"publish", "drop", "unresolved"}:
+        if disposition not in {"supported", "refuted", "unresolved"}:
             raise InvalidReview("Invalid verifier disposition")
         finding = decision["finding"]
-        if disposition == "publish":
+        if disposition == "supported":
             try:
-                _published_finding(finding, snapshot)
+                _verified_finding(finding, snapshot)
             except InvalidReview as exc:
                 error = str(exc)
                 decision.update(
@@ -673,7 +765,7 @@ def verification(text, candidates, snapshot, concept_assessment=None):
             else:
                 accepted.append({**finding, "id": f"finding:{len(accepted) + 1}"})
         elif finding is not None:
-            raise InvalidReview("Only publish decisions may introduce a finding")
+            raise InvalidReview("Only supported decisions may introduce a finding")
         normalized_decisions.append(decision)
 
     def candidate_key(candidate_id):
@@ -784,77 +876,166 @@ def write_verification(text, findings, execution):
     return result
 
 
-def major_verification(text, findings, snapshot):
-    try:
-        result = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise InvalidReview("Invalid Major verifier JSON") from exc
-    _object(result, MAJOR_VERIFIER_SCHEMA["properties"])
+def _decision_records(items, expected, field, label):
+    if not isinstance(items, list):
+        raise InvalidReview(f"Invalid {label} decisions")
+    records = {}
+    errors = []
+    for item in items:
+        identifier = item.get(field) if isinstance(item, dict) else None
+        if not isinstance(identifier, str) or identifier not in expected:
+            errors.append({field: identifier, "error": f"Unknown {label} ID"})
+            continue
+        records.setdefault(identifier, []).append(item)
+    return records, errors
+
+
+def challenge(text, candidates, snapshot):
+    result = json.loads(text)
+    _object(result, CHALLENGER_SCHEMA["properties"])
     _coverage(result["coverage"])
-    if not isinstance(result["decisions"], list):
-        raise InvalidReview("Invalid Major verifier decisions")
-    expected = {finding["id"] for finding in findings}
-    seen = set()
-    for decision in result["decisions"]:
-        _object(
-            decision,
-            MAJOR_VERIFIER_SCHEMA["properties"]["decisions"]["items"]["properties"],
-        )
-        _text(decision, ("finding_id", "reason"))
-        finding_id = decision["finding_id"]
-        if finding_id not in expected or finding_id in seen:
-            raise InvalidReview("Unknown or repeated Major finding ID")
-        seen.add(finding_id)
-        disposition = decision["disposition"]
-        if disposition not in ("publish", "drop", "unresolved"):
-            raise InvalidReview("Invalid Major verifier disposition")
-        evidence = decision["source_evidence"]
-        if not isinstance(evidence, list):
-            raise InvalidReview("Expected a source evidence list")
-        if disposition == "publish" or evidence:
-            _source_evidence(evidence, snapshot)
-        if disposition == "unresolved":
-            result["coverage"]["status"] = "partial"
-            result["coverage"]["limitations"].append(
-                f"Major finding {finding_id} remains unresolved: {decision['reason']}"
+    expected = [candidate["id"] for candidate in candidates]
+    records, errors = _decision_records(
+        result["challenges"], set(expected), "candidate_id", "challenger"
+    )
+    normalized = []
+    for identifier in expected:
+        matches = records.get(identifier, [])
+        try:
+            if len(matches) != 1:
+                raise InvalidReview(
+                    "Challenger must assess each candidate exactly once"
+                )
+            item = matches[0]
+            _object(
+                item,
+                CHALLENGER_SCHEMA["properties"]["challenges"]["items"]["properties"],
             )
-    if seen != expected:
-        raise InvalidReview("Major verifier omitted finding decisions")
+            _text(item, ("candidate_id", "reason"))
+            if item["outcome"] not in ("refuted", "not_refuted", "unresolved"):
+                raise InvalidReview("Invalid challenger outcome")
+            evidence = item["source_evidence"]
+            if not isinstance(evidence, list):
+                raise InvalidReview("Expected challenger source evidence")
+            if evidence or item["outcome"] == "refuted":
+                _source_evidence(evidence, snapshot)
+        except InvalidReview as exc:
+            errors.append({"candidate_id": identifier, "error": str(exc)})
+            item = {
+                "candidate_id": identifier,
+                "outcome": "unresolved",
+                "reason": f"Challenge unresolved: {exc}",
+                "source_evidence": [],
+            }
+        if item["outcome"] == "unresolved":
+            result["coverage"]["limitations"].append(
+                f"Challenge for {identifier} remains unresolved: {item['reason']}"
+            )
+        normalized.append(item)
+    if errors:
+        result["coverage"]["limitations"].append(
+            "Some challenger decisions failed validation."
+        )
+    if result["coverage"]["limitations"]:
+        result["coverage"]["status"] = "partial"
+    result["challenges"] = normalized
+    result["validation_errors"] = errors
     return result
 
 
-def collation(text, accepted, concept_assessment=None):
+def judgment(text, verified_findings, verified_concept, snapshot):
     result = json.loads(text)
-    _object(result, COLLATOR_SCHEMA["properties"])
-    if not isinstance(result["findings"], list):
-        raise InvalidReview("Invalid collator findings")
-    concept_summary = result["concept_summary"]
-    if concept_summary is not None and (
-        not isinstance(concept_summary, str) or not concept_summary.strip()
-    ):
-        raise InvalidReview("Invalid concept summary")
-    if concept_assessment is None and concept_summary is not None:
-        raise InvalidReview("Collator invented a concept summary")
-    if concept_assessment is not None and concept_summary is None:
-        raise InvalidReview("Collator omitted the accepted concept assessment")
-    if concept_summary is not None:
-        summary_urls = _summary_urls(concept_summary)
-        citations = set(_concept_citations(concept_assessment))
-        if citations - summary_urls:
-            raise InvalidReview("Collator omitted a concept citation")
-        if summary_urls - citations:
-            raise InvalidReview("Collator added an unverified concept citation")
-    originals = {finding["id"]: finding for finding in accepted}
-    seen = set()
-    edited = []
-    for finding in result["findings"]:
-        _object(finding, ("id", "title", "summary", "body"))
-        _text(finding, ("id", "title", "summary", "body"))
-        identifier = finding["id"]
-        if identifier not in originals or identifier in seen:
-            raise InvalidReview("Collator added or repeated a finding")
-        seen.add(identifier)
-        edited.append({**originals[identifier], **finding})
-    if seen != set(originals):
-        raise InvalidReview("Collator omitted an accepted finding")
-    return edited, concept_summary
+    _object(result, JUDGE_SCHEMA["properties"])
+    _coverage(result["coverage"])
+    originals = {finding["id"]: finding for finding in verified_findings}
+    records, errors = _decision_records(
+        result["decisions"], originals, "finding_id", "judge"
+    )
+    normalized = []
+    published = []
+    for identifier, original in originals.items():
+        matches = records.get(identifier, [])
+        try:
+            if len(matches) != 1:
+                raise InvalidReview(
+                    "Judge must decide each supported finding exactly once"
+                )
+            item = matches[0]
+            _object(
+                item, JUDGE_SCHEMA["properties"]["decisions"]["items"]["properties"]
+            )
+            _text(item, ("finding_id", "reason"))
+            disposition = item["disposition"]
+            if disposition not in ("publish", "drop", "unresolved"):
+                raise InvalidReview("Invalid judge disposition")
+            wording = ("title", "summary", "body")
+            _text(item, wording, empty=wording if disposition != "publish" else ())
+            evidence = item["source_evidence"]
+            if not isinstance(evidence, list):
+                raise InvalidReview("Expected judge source evidence")
+            if evidence or disposition == "publish":
+                _source_evidence(evidence, snapshot)
+        except InvalidReview as exc:
+            errors.append({"finding_id": identifier, "error": str(exc)})
+            item = {
+                "finding_id": identifier,
+                "disposition": "unresolved",
+                "reason": f"Publication withheld: {exc}",
+                "source_evidence": [],
+                "title": "",
+                "summary": "",
+                "body": "",
+            }
+        if item["disposition"] == "publish":
+            published.append(
+                {
+                    **original,
+                    **{field: item[field] for field in ("title", "summary", "body")},
+                }
+            )
+        elif item["disposition"] == "unresolved":
+            result["coverage"]["limitations"].append(
+                f"Finding {identifier} remains unpublished: {item['reason']}"
+            )
+        normalized.append(item)
+
+    concept = result["concept"]
+    concept_summary = None
+    try:
+        if concept is not None:
+            if verified_concept is None:
+                raise InvalidReview("Judge introduced an unverified concept")
+            _object(concept, ("disposition", "reason", "summary"))
+            _text(concept, ("reason", "summary"), empty=("summary",))
+            if concept["disposition"] not in ("publish", "drop", "unresolved"):
+                raise InvalidReview("Invalid judge concept disposition")
+            if concept["disposition"] == "publish":
+                _text(concept, ("summary",))
+                urls = _summary_urls(concept["summary"])
+                citations = set(_concept_citations(verified_concept))
+                if citations - urls:
+                    raise InvalidReview("Judge omitted a concept citation")
+                if urls - citations:
+                    raise InvalidReview("Judge added an unverified concept citation")
+                concept_summary = concept["summary"]
+        elif verified_concept is not None:
+            raise InvalidReview("Judge omitted the verified concept decision")
+    except InvalidReview as exc:
+        errors.append({"finding_id": None, "error": str(exc)})
+        concept = {
+            "disposition": "unresolved",
+            "reason": f"Concept publication withheld: {exc}",
+            "summary": "",
+        }
+    if concept is not None and concept["disposition"] == "unresolved":
+        result["coverage"]["limitations"].append(concept["reason"])
+    if errors:
+        result["coverage"]["limitations"].append(
+            "Some judge decisions failed validation."
+        )
+    if result["coverage"]["limitations"]:
+        result["coverage"]["status"] = "partial"
+    result["decisions"] = normalized
+    result["concept"] = concept
+    result["validation_errors"] = errors
+    return result, published, concept_summary

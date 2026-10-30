@@ -104,6 +104,107 @@ class ProtocolTests(unittest.TestCase):
             }
         )
 
+    def coverage_response(self, assessments, findings=()):
+        return json.dumps(
+            {
+                "coverage": self.coverage,
+                "requires_sensitive_review": False,
+                "findings": list(findings),
+                "test_coverage": assessments,
+            }
+        )
+
+    def checked_test(self):
+        return {
+            "paths": ["src/example.cpp"],
+            "status": "checked",
+            "evidence": self.finding["source_evidence"],
+            "regression": "Removing setup would leave the fixture uninitialized.",
+            "reason": "The existing assertion requires the initialized fixture.",
+        }
+
+    def test_tests_coverage_cannot_omit_a_changed_functional_test(self):
+        self.snapshot.changed_paths.add("test/functional/activation.py")
+        result = protocol.tests_discovery(
+            self.coverage_response([self.checked_test()]),
+            self.snapshot,
+            self.snapshot.changed_paths,
+        )
+        self.assertEqual(result["coverage"]["status"], "partial")
+        self.assertIn(
+            "test/functional/activation.py", " ".join(result["coverage"]["limitations"])
+        )
+        self.assertEqual(len(result["test_coverage"]), 1)
+
+    def test_tests_coverage_can_use_unchanged_tests_and_confirm_a_gap(self):
+        path = "test/functional/existing.py"
+        self.snapshot.head_files[path] = "unchanged-test-blob"
+        assessment = self.checked_test()
+        assessment["evidence"] = [{**self.finding["source_evidence"][0], "path": path}]
+        assessment["regression"] = (
+            "Activating one block late would still pass the existing assertion."
+        )
+        assessment["reason"] = "The test only checks blocks after activation."
+        result = protocol.tests_discovery(
+            self.coverage_response([assessment]),
+            self.snapshot,
+            self.snapshot.changed_paths,
+        )
+        self.assertEqual(result["coverage"], self.coverage)
+        self.assertEqual(result["test_coverage"], [assessment])
+
+    def test_deferred_tests_force_partial_but_explained_mechanical_changes_do_not(self):
+        assessment = {
+            "paths": ["src/example.cpp"],
+            "status": "deferred",
+            "evidence": [],
+            "regression": "",
+            "reason": "The activation fixture and its boundary assertion remain unread.",
+        }
+        result = protocol.tests_discovery(
+            self.coverage_response([assessment]),
+            self.snapshot,
+            self.snapshot.changed_paths,
+        )
+        self.assertEqual(result["coverage"]["status"], "partial")
+        self.assertIn(assessment["reason"], " ".join(result["coverage"]["limitations"]))
+        assessment.update(
+            status="not_applicable", reason="Only the local variable name changes."
+        )
+        result = protocol.tests_discovery(
+            self.coverage_response([assessment]),
+            self.snapshot,
+            self.snapshot.changed_paths,
+        )
+        self.assertEqual(result["coverage"], self.coverage)
+
+    def test_invalid_test_evidence_does_not_discard_a_supported_candidate(self):
+        assessment = self.checked_test()
+        assessment["evidence"] = [
+            {**self.finding["source_evidence"][0], "excerpt": "invented_assertion();"}
+        ]
+        candidate = {
+            "kind": "suggestion",
+            "path": "src/example.cpp",
+            "line": 5,
+            "side": "head",
+            "title": "Add an activation-boundary assertion",
+            "claim": "The first active block is not checked.",
+            "consequence": "A delayed activation would pass the test.",
+            "evidence": "The test advances beyond activation before checking violations.",
+            "correction": "Check a violation in the first active block.",
+            "uncertainty": "",
+        }
+        result = protocol.tests_discovery(
+            self.coverage_response([assessment], [candidate]),
+            self.snapshot,
+            self.snapshot.changed_paths,
+        )
+        self.assertEqual(result["findings"], [{**candidate, "id": "tests:1"}])
+        self.assertEqual(result["test_coverage"], [])
+        self.assertEqual(result["coverage"]["status"], "partial")
+        self.assertIn("does not match", " ".join(result["coverage"]["limitations"]))
+
     def test_backport_verdict_requires_complete_evidence(self):
         assessment = {
             "verdict": "Faithful",
@@ -126,8 +227,21 @@ class ProtocolTests(unittest.TestCase):
                 {**assessment, "evidence": "invented"}, {"complete": True}
             )
 
-    def collation(self, findings, concept_summary=None):
-        return json.dumps({"concept_summary": concept_summary, "findings": findings})
+    def judgment_response(self, decisions, concept=None):
+        return json.dumps(
+            {"coverage": self.coverage, "decisions": decisions, "concept": concept}
+        )
+
+    def judge_decision(self, identifier, disposition="publish"):
+        return {
+            "finding_id": identifier,
+            "disposition": disposition,
+            "reason": "The source supports the finding and its severity.",
+            "source_evidence": self.finding["source_evidence"],
+            "title": "Short title",
+            "summary": "Edited impact",
+            "body": "Edited wording",
+        }
 
     def concept_assessment(self, citations=None):
         return {
@@ -156,58 +270,142 @@ class ProtocolTests(unittest.TestCase):
             "citations": citations or ["https://code.example.org/org/repo/pulls/1"],
         }
 
-    def test_collator_cannot_add_remove_or_duplicate_accepted_ids(self):
-        accepted = [
+    def test_judge_withholds_missing_duplicate_and_invented_finding_decisions(self):
+        verified = [
+            {**self.finding, "id": "finding:1"},
+            {**self.finding, "id": "finding:2"},
+        ]
+        result, published, summary = protocol.judgment(
+            self.judgment_response(
+                [self.judge_decision("finding:1")] * 2
+                + [self.judge_decision("invented")]
+            ),
+            verified,
+            None,
+            self.snapshot,
+        )
+        self.assertEqual(published, [])
+        self.assertIsNone(summary)
+        self.assertEqual(result["coverage"]["status"], "partial")
+        self.assertEqual(
+            [decision["finding_id"] for decision in result["decisions"]],
+            ["finding:1", "finding:2"],
+        )
+        self.assertTrue(
+            all(item["disposition"] == "unresolved" for item in result["decisions"])
+        )
+
+    def test_judge_controls_publication_and_only_changes_wording(self):
+        verified = [
             {**self.finding, "id": "finding:1"},
             {**self.finding, "kind": "design", "id": "finding:2"},
         ]
-        for edits in (
-            [],
-            [{"id": "invented", "title": "New", "summary": "Impact", "body": "Claim"}],
-            [{"id": "finding:1", "title": "A", "summary": "Impact", "body": "B"}] * 2,
-        ):
-            with self.subTest(edits=edits), self.assertRaises(protocol.InvalidReview):
-                protocol.collation(self.collation(edits), accepted)
-        edited, concept_summary = protocol.collation(
-            self.collation(
-                [
-                    {
-                        "id": "finding:1",
-                        "title": "Short title",
-                        "summary": "Edited impact",
-                        "body": "Edited wording",
+        decision = self.judge_decision("finding:1")
+        drop = self.judge_decision("finding:2", "drop")
+        drop.update(title="", summary="", body="", source_evidence=[])
+        result, published, summary = protocol.judgment(
+            self.judgment_response([decision, drop]), verified, None, self.snapshot
+        )
+        self.assertEqual(result["coverage"], self.coverage)
+        self.assertIsNone(summary)
+        self.assertEqual(
+            published,
+            [
+                {
+                    **verified[0],
+                    **{
+                        field: decision[field] for field in ("title", "summary", "body")
                     },
-                    {
-                        "id": "finding:2",
-                        "title": "Design title",
-                        "summary": "Design impact",
-                        "body": "Design wording",
-                    },
-                ]
+                }
+            ],
+        )
+
+    def test_judge_requires_exact_evidence_for_publication(self):
+        verified = [
+            {**self.finding, "id": "finding:1"},
+            {**self.finding, "id": "finding:2"},
+        ]
+        invalid = self.judge_decision("finding:2")
+        invalid["source_evidence"] = [
+            {**self.finding["source_evidence"][0], "excerpt": "invented();"}
+        ]
+        result, published, _ = protocol.judgment(
+            self.judgment_response([self.judge_decision("finding:1"), invalid]),
+            verified,
+            None,
+            self.snapshot,
+        )
+        self.assertEqual([finding["id"] for finding in published], ["finding:1"])
+        self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
+        self.assertIn("does not match", result["decisions"][1]["reason"])
+
+    def test_challenger_preserves_valid_counterevidence_and_accounts_for_every_candidate(
+        self,
+    ):
+        good = {
+            "candidate_id": "tests:1",
+            "outcome": "refuted",
+            "reason": "The caller already initializes the fixture.",
+            "source_evidence": self.finding["source_evidence"],
+        }
+        duplicate = {**good, "candidate_id": "tests:2", "outcome": "not_refuted"}
+        result = protocol.challenge(
+            json.dumps(
+                {
+                    "coverage": self.coverage,
+                    "challenges": [
+                        good,
+                        duplicate,
+                        duplicate,
+                        {**good, "candidate_id": "invented"},
+                    ],
+                }
             ),
-            accepted,
+            [{"id": f"tests:{i}"} for i in range(1, 4)],
+            self.snapshot,
         )
-        self.assertIsNone(concept_summary)
-        self.assertEqual(edited[0]["path"], self.finding["path"])
-        self.assertEqual(edited[0]["severity"], "suggestion")
-        self.assertEqual(edited[0]["summary"], "Edited impact")
-        self.assertEqual(edited[1]["kind"], "design")
-        self.assertIn(
-            "incomplete",
-            final_comment.render_report(edited, ["A selected audit was unavailable."]),
+        self.assertEqual(result["challenges"][0], good)
+        self.assertEqual(
+            [item["outcome"] for item in result["challenges"]],
+            ["refuted", "unresolved", "unresolved"],
         )
+        self.assertEqual(result["coverage"]["status"], "partial")
+
+    def test_challenger_refutation_requires_matching_source(self):
+        item = {
+            "candidate_id": "tests:1",
+            "outcome": "refuted",
+            "reason": "The caller initializes the fixture.",
+            "source_evidence": [
+                {**self.finding["source_evidence"][0], "excerpt": "invented();"}
+            ],
+        }
+        result = protocol.challenge(
+            json.dumps({"coverage": self.coverage, "challenges": [item]}),
+            [{"id": "tests:1"}],
+            self.snapshot,
+        )
+        self.assertEqual(result["challenges"][0]["outcome"], "unresolved")
+        self.assertEqual(result["challenges"][0]["source_evidence"], [])
+        item.update(outcome="not_refuted", source_evidence=[])
+        result = protocol.challenge(
+            json.dumps({"coverage": self.coverage, "challenges": [item]}),
+            [{"id": "tests:1"}],
+            self.snapshot,
+        )
+        self.assertEqual(result["coverage"], self.coverage)
 
     def test_omitted_null_finding_preserves_verified_findings(self):
         decisions = [
             {
                 "candidate_ids": ["tests:1"],
-                "disposition": "publish",
+                "disposition": "supported",
                 "reason": "Verified",
                 "finding": self.finding,
             },
             {
                 "candidate_ids": ["tests:2"],
-                "disposition": "drop",
+                "disposition": "refuted",
                 "reason": "Duplicate suggestion",
             },
             {
@@ -223,18 +421,18 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
         self.assertEqual(
             [decision["disposition"] for decision in result["decisions"]],
-            ["publish", "drop", "unresolved"],
+            ["supported", "refuted", "unresolved"],
         )
         self.assertIsNone(result["decisions"][1]["finding"])
         self.assertIsNone(result["decisions"][2]["finding"])
 
-        decisions[1]["disposition"] = "publish"
+        decisions[1]["disposition"] = "supported"
         with self.assertRaisesRegex(protocol.InvalidReview, "missing.*finding"):
             protocol.verification(
                 self.verification(decisions), candidates, self.snapshot
             )
 
-        decisions[1]["disposition"] = "drop"
+        decisions[1]["disposition"] = "refuted"
         decisions[1]["findings"] = []
         with self.assertRaisesRegex(protocol.InvalidReview, "unexpected.*findings"):
             protocol.verification(
@@ -244,7 +442,7 @@ class ProtocolTests(unittest.TestCase):
     def test_public_findings_require_explicit_nonempty_summary(self):
         decision = {
             "candidate_ids": ["tests:1"],
-            "disposition": "publish",
+            "disposition": "supported",
             "reason": "Verified",
             "finding": self.finding,
         }
@@ -267,22 +465,24 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(accepted, [])
                 self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
 
-                edit = {
-                    "id": "finding:1",
-                    "title": finding["title"],
-                    "body": finding["body"],
-                }
-                if summary is not None:
-                    edit["summary"] = summary
-                with self.assertRaises(protocol.InvalidReview):
-                    protocol.collation(
-                        self.collation([edit]), [{**self.finding, "id": "finding:1"}]
-                    )
+                publication = self.judge_decision("finding:1")
+                if summary is None:
+                    del publication["summary"]
+                else:
+                    publication["summary"] = summary
+                result, published, _ = protocol.judgment(
+                    self.judgment_response([publication]),
+                    [{**self.finding, "id": "finding:1"}],
+                    None,
+                    self.snapshot,
+                )
+                self.assertEqual(published, [])
+                self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
 
     def test_finding_must_refer_to_changed_file_on_correct_side(self):
         decision = {
             "candidate_ids": ["tests:1"],
-            "disposition": "publish",
+            "disposition": "supported",
             "reason": "Verified",
             "finding": {**self.finding, "path": "missing.cpp"},
         }
@@ -297,10 +497,10 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result["validation_errors"][0]["candidate_ids"], ["tests:1"])
         self.assertIn("missing.cpp", result["validation_errors"][0]["error"])
 
-    def test_publish_without_candidate_ids_withholds_new_verifier_finding(self):
+    def test_support_without_candidate_ids_withholds_new_verifier_finding(self):
         decision = {
             "candidate_ids": [],
-            "disposition": "publish",
+            "disposition": "supported",
             "reason": "New issue",
             "finding": self.finding,
         }
@@ -315,14 +515,32 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(result["decisions"][0]["finding"])
         self.assertEqual(result["validation_errors"][0]["candidate_ids"], [])
 
-    def test_collator_cannot_add_unverified_concept_sources(self):
+    def test_judge_cannot_add_unverified_concept_sources(self):
         concept = self.concept_assessment()
         summary = protocol.concept_summary(concept, "The cost outweighs the benefit.")
-        response = self.collation([], summary + " https://example.invalid/invented")
-        with self.assertRaisesRegex(
-            protocol.InvalidReview, "unverified concept citation"
-        ):
-            protocol.collation(response, [], concept)
+        decision = {
+            "disposition": "publish",
+            "reason": "The verified objection remains material.",
+            "summary": summary + " https://example.invalid/invented",
+        }
+        result, published, rendered_summary = protocol.judgment(
+            self.judgment_response([], decision), [], concept, self.snapshot
+        )
+        self.assertEqual(published, [])
+        self.assertIsNone(rendered_summary)
+        self.assertEqual(result["concept"]["disposition"], "unresolved")
+        self.assertIn("unverified concept citation", result["concept"]["reason"])
+        decision["summary"] = summary
+        result, _, rendered_summary = protocol.judgment(
+            self.judgment_response([], decision), [], concept, self.snapshot
+        )
+        self.assertEqual(result["concept"]["disposition"], "publish")
+        self.assertEqual(rendered_summary, summary)
+        decision.update(disposition="drop", summary="")
+        _, _, rendered_summary = protocol.judgment(
+            self.judgment_response([], decision), [], concept, self.snapshot
+        )
+        self.assertIsNone(rendered_summary)
 
 
 class ReviewMemoryRenderingTests(unittest.TestCase):

@@ -28,6 +28,8 @@ ATTRIBUTION_FIELDS = (
     "raised_by_models",
     "verified_by",
     "verified_by_model",
+    "judged_by",
+    "judged_by_model",
     "edited_by",
     "edited_by_model",
 )
@@ -274,6 +276,8 @@ def _public_stages(debug):
             record["http_status"] = stage["http_status"]
         if isinstance(stage.get("used_verified_wording"), bool):
             record["used_verified_wording"] = stage["used_verified_wording"]
+        if isinstance(stage.get("required"), bool):
+            record["required"] = stage["required"]
         if "limits" in stage:
             record["limits"] = public_limits(stage)
         profiles = _strings(stage.get("profiles"))
@@ -373,6 +377,16 @@ def _public_finding(finding):
     return record
 
 
+def _public_source_evidence(value):
+    if not isinstance(value, list):
+        return []
+    return [
+        _filtered(item, ("path", "line", "side", "excerpt"))
+        for item in value
+        if isinstance(item, dict)
+    ]
+
+
 def _public_decisions(debug):
     decisions = []
     for decision in debug.get("decisions", []):
@@ -384,6 +398,9 @@ def _public_decisions(debug):
             if isinstance(decision.get(key), str):
                 record[key] = decision[key]
         record["finding"] = _public_finding(decision.get("finding"))
+        record["source_evidence"] = _public_source_evidence(
+            decision.get("source_evidence")
+        )
         decisions.append(record)
     return decisions
 
@@ -528,6 +545,14 @@ def _public_record(number, result, report_id):
     if debug:
         config = engine.get("config")
         profile = config.get("profile") if isinstance(config, dict) else None
+        selection = debug.get("profile_selection") or {}
+        record["profile_selection"] = {
+            key: selection[key]
+            for key in ("requested", "effective", "reason")
+            if isinstance(selection.get(key), str)
+        }
+        if selection.get("effective") == "high" and isinstance(config, dict):
+            profile = config.get("high_profile")
         stages = profile.get("stages") if isinstance(profile, dict) else None
         record["profile"] = profile.get("name") if isinstance(profile, dict) else None
         record["models"] = (
@@ -539,6 +564,12 @@ def _public_record(number, result, report_id):
             if isinstance(stages, dict)
             else None
         )
+        if record["models"] is not None:
+            record["models"].update(
+                (name, stage["model"])
+                for name, stage in (debug.get("stages") or {}).items()
+                if isinstance(stage, dict) and isinstance(stage.get("model"), str)
+            )
         record["metrics"] = core_trace.review_metrics(debug)
         record["metrics"].update(metrics or {})
         record["coverage"] = (
@@ -618,13 +649,14 @@ def _findings_html(attribution):
             f"<td>{_escape(', '.join(finding.get('raised_by') or []))}</td>"
             f"<td>{_escape(', '.join(finding.get('candidate_ids') or []))}</td>"
             f"<td>{_escape(finding.get('verified_by'))}</td>"
+            f"<td>{_escape(finding.get('judged_by'))}</td>"
             f"<td>{_escape(finding.get('edited_by'))}</td>"
             "</tr>"
         )
     return (
         "<table>"
         "<thead><tr><th>ID</th><th>Finding</th><th>Location</th>"
-        "<th>Raised by</th><th>Candidates</th><th>Verified</th><th>Edited</th>"
+        "<th>Raised by</th><th>Candidates</th><th>Verified</th><th>Judged</th><th>Edited</th>"
         "</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
@@ -825,7 +857,7 @@ def _reply_html(text):
 
 def _decisions_html(decisions):
     if not decisions:
-        return "<p>No verifier decisions were recorded.</p>"
+        return "<p>No final decisions were recorded.</p>"
     sections = []
     for index, decision in enumerate(decisions, 1):
         finding = decision.get("finding") or {}
@@ -845,7 +877,15 @@ def _decisions_html(decisions):
             f"{_escape(decision.get('disposition'))}</summary>"
             f"<p>Candidates: {_escape(', '.join(decision.get('candidate_ids') or []))}</p>"
             f"<p>{_escape(decision.get('reason'))}</p>"
-            f"{finding_html}</details>"
+            f"{finding_html}"
+            + (
+                "<details><summary>Source evidence</summary>"
+                + _json_html(decision["source_evidence"])
+                + "</details>"
+                if decision.get("source_evidence")
+                else ""
+            )
+            + "</details>"
         )
     return "".join(sections)
 
@@ -911,6 +951,12 @@ def _html_report(record, json_name):
         if record.get("profile")
         else ""
     )
+    selection = record.get("profile_selection") or {}
+    if selection.get("requested") != selection.get("effective"):
+        profile += (
+            f"<p>Requested profile: {_escape(selection.get('requested', ''))}. "
+            f"{_escape(selection.get('reason', ''))}</p>"
+        )
     stages = record.get("stages", {})
     stage_outputs = record.get("stage_outputs", {})
     stage_sections = "".join(
@@ -931,7 +977,7 @@ def _html_report(record, json_name):
 {_coverage_html(record.get("coverage"), detailed=True)}</section>
 <section><h2>Findings</h2>
 {_findings_html(record.get("finding_attribution") or [])}</section>
-<section><h2>Verifier Decisions</h2>
+<section><h2>Final Decisions</h2>
 {_decisions_html(record.get("decisions") or [])}</section>
 <section><h2>Agent Outputs</h2>{stage_sections}{orphan_outputs}</section>
 """

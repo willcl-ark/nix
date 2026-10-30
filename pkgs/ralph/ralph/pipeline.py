@@ -1,8 +1,8 @@
-"""Discover and challenge review findings, verify evidence, then edit findings."""
+"""Discover candidates, challenge their claims, verify evidence, then judge."""
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from final_comment import render_report as render
 
@@ -23,7 +23,6 @@ DISCOVERY_ORDER = (
     "tests",
     "dead_code",
     "design",
-    "challenger",
 )
 ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude")
 FULL_CONTEXT_STAGES = {
@@ -34,7 +33,7 @@ FULL_CONTEXT_STAGES = {
     *ADVERSARIAL_STAGES,
     "verifier",
     "write_verifier",
-    "major_verifier",
+    "judge",
 }
 
 
@@ -62,7 +61,7 @@ def _stage_tools(name, runtime, settings):
     return model.available_tools(
         tools,
         discussion_lookup
-        if name not in {"script", "dead_code", "write_verifier", "major_verifier"}
+        if name not in {"script", "dead_code", "write_verifier", "challenger", "judge"}
         else None,
         evidence,
         allow_web_search,
@@ -86,7 +85,9 @@ def _run_stage(
     outputs = debug["stage_outputs"]
     if name not in ADVERSARIAL_STAGES:
         debug["pipeline_stage"] = name
-    settings = prompt_config.profile.stages[name]
+    settings = prompt_config.profile.stages[
+        "tests" if name == "tests_followup" else name
+    ]
     stage_model = settings.model
     record = {"model": stage_model, "status": "running", "turns": [], "tools": []}
     stages[name] = record
@@ -294,7 +295,7 @@ def _verify_candidates(
         published = [
             decision
             for decision in result["decisions"]
-            if decision["disposition"] == "publish"
+            if decision["disposition"] == "supported"
         ]
         finding_candidates = {
             finding["id"]: decision["candidate_ids"]
@@ -311,77 +312,145 @@ def _verify_candidates(
     )
 
 
-def _edit_findings(run_stage, prompt_config, verified, debug):
+def _challenge_candidates(
+    run_stage, prompt_config, review, candidates, snapshot, debug
+):
+    if not candidates:
+        debug["stages"]["challenger"] = {
+            "model": prompt_config.models["challenger"],
+            "status": "skipped",
+            "reason": "No candidates to challenge.",
+            "turns": [],
+            "tools": [],
+        }
+        debug["challenges"] = []
+        return
+    try:
+        answer = run_stage(
+            "challenger",
+            review + "\n\nChallenge input:\n" + json.dumps({"candidates": candidates}),
+            prompt_config.audit_prompts["challenger"],
+            protocol.CHALLENGER_SCHEMA,
+        )
+        result = protocol.challenge(answer, candidates, snapshot)
+        debug["stages"]["challenger"].update(result)
+        debug["challenges"] = result["challenges"]
+    except model.StaleReview:
+        raise
+    except Exception as exc:
+        _record_validation_failure(debug["stages"]["challenger"], exc)
+        debug["challenges"] = [
+            {
+                "candidate_id": candidate["id"],
+                "outcome": "unresolved",
+                "reason": "Challenge did not complete; verify the candidate independently.",
+                "source_evidence": [],
+            }
+            for candidate in candidates
+        ]
+
+
+def _judge_findings(run_stage, prompt_config, review, snapshot, verified, debug):
     stages = debug["stages"]
-    accepted = verified.findings
-    verified_concept = verified.concept
+    findings = []
     concept_summary = None
-    # The editor sees only accepted findings. A failed editor can use the
-    # verifier's own wording, without discarding paid verification work.
-    findings = accepted
-    if accepted or verified_concept is not None:
+    decisions = []
+    concept = None
+    if verified.findings or verified.concept is not None:
         try:
-            edited = run_stage(
-                "collator",
-                json.dumps(
+            answer = run_stage(
+                "judge",
+                review
+                + "\n\nJudgment input:\n"
+                + json.dumps(
                     {
-                        "findings": accepted,
-                        "concept_assessment": verified_concept,
+                        "findings": verified.findings,
+                        "finding_candidates": verified.candidate_ids,
+                        "concept_assessment": verified.concept,
+                        "challenges": debug.get("challenges", []),
+                        "verification": stages["verifier"]["decisions"],
+                        "experiment_evidence": _experiment_evidence(
+                            stages["write_verifier"]
+                        ),
+                        "inspection_gaps": [
+                            issue
+                            for issue in coverage.summarize(debug)["issues"]
+                            if issue["category"] == "inspection"
+                        ],
                     }
                 ),
-                prompt_config.audit_prompts["collator"],
-                protocol.COLLATOR_SCHEMA,
-                tools=False,
+                prompt_config.audit_prompts["judge"],
+                protocol.JUDGE_SCHEMA,
             )
-            findings, concept_summary = protocol.collation(
-                edited, accepted, verified_concept
+            result, findings, concept_summary = protocol.judgment(
+                answer, verified.findings, verified.concept, snapshot
             )
-            if concept_summary is not None:
-                debug["concept_assessment"] = {
-                    **debug.get("concept_assessment", {}),
-                    "status": "verified",
-                    "summary": concept_summary,
-                    "edited_by": "collator",
-                }
+            stages["judge"].update(result)
+            decisions = result["decisions"]
+            concept = result["concept"]
         except model.StaleReview:
             raise
         except Exception as exc:
-            _record_validation_failure(stages["collator"], exc)
-            stages["collator"]["used_verified_wording"] = True
-            concept_summary = protocol.concept_summary(
-                verified_concept, debug["concept_assessment"]["verification"]["reason"]
-            )
-            if concept_summary is not None:
-                debug["concept_assessment"] = {
-                    **debug.get("concept_assessment", {}),
-                    "status": "verified",
-                    "summary": concept_summary,
-                    "used_verified_wording": True,
+            _record_validation_failure(stages["judge"], exc)
+            decisions = [
+                {
+                    "finding_id": finding["id"],
+                    "disposition": "unresolved",
+                    "reason": "Publication withheld because judging did not complete.",
+                }
+                for finding in verified.findings
+            ]
+            if verified.concept is not None:
+                concept = {
+                    "disposition": "unresolved",
+                    "reason": "Concept publication withheld because judging did not complete.",
                 }
     else:
-        stages["collator"] = {
-            "model": prompt_config.models["collator"],
+        stages["judge"] = {
+            "model": prompt_config.models["judge"],
             "status": "skipped",
+            "required": False,
+            "reason": "No supported findings or concept to judge.",
             "turns": [],
             "tools": [],
-            "reason": "No accepted findings to edit",
         }
+    if concept is not None:
+        debug["concept_assessment"].update(
+            status="verified"
+            if concept["disposition"] == "publish"
+            else concept["disposition"],
+            judgment=concept,
+            summary=concept_summary,
+            edited_by="judge",
+        )
+    by_candidates = {
+        tuple(verified.candidate_ids[decision["finding_id"]]): decision
+        for decision in decisions
+    }
+    presented = {finding["id"]: finding for finding in findings}
+    final_decisions = []
+    for decision in stages.get("verifier", {}).get("decisions", []):
+        verdict = by_candidates.get(tuple(decision["candidate_ids"]))
+        if verdict is not None:
+            decision = {
+                **decision,
+                "disposition": verdict["disposition"],
+                "reason": verdict["reason"],
+                "finding": presented.get(verdict["finding_id"]),
+                "source_evidence": verdict.get("source_evidence", []),
+            }
+        elif decision["disposition"] == "refuted":
+            decision = {**decision, "disposition": "drop"}
+        final_decisions.append(decision)
+    debug["decisions"] = final_decisions
     return findings, concept_summary
 
 
 EXPERIMENT_EVIDENCE_CHARS = 48000
 
 
-def _major_input(review, majors, evidence):
-    return (
-        review
-        + "\n\nMajor verification input:\n"
-        + json.dumps({"findings": majors, "experiment_evidence": evidence})
-    )
-
-
 def _experiment_evidence(record):
-    # Keep the runner's complete artifacts in the trace. The final verifier gets
+    # Keep the runner's complete artifacts in the trace. The judge gets
     # a bounded excerpt and must not infer anything from omitted evidence.
     evidence = json.dumps(
         {
@@ -451,82 +520,11 @@ def _write_majors(run_stage, runtime, prompt_config, review, snapshot, findings)
             record["execution"] = session.record
 
 
-def _verify_majors(
-    run_stage, prompt_config, review, snapshot, verified, findings, debug
-):
-    majors = [finding for finding in findings if finding["severity"] == "major"]
-    stages = debug["stages"]
-    if not majors:
-        stages["major_verifier"] = {
-            "model": prompt_config.models["major_verifier"],
-            "status": "skipped",
-            "reason": "No major findings to verify",
-            "turns": [],
-            "tools": [],
-        }
-        return findings
-
-    try:
-        answer = run_stage(
-            "major_verifier",
-            _major_input(
-                review, majors, _experiment_evidence(stages["write_verifier"])
-            ),
-            prompt_config.audit_prompts["major_verifier"],
-            protocol.MAJOR_VERIFIER_SCHEMA,
-        )
-        result = protocol.major_verification(answer, majors, snapshot)
-        stages["major_verifier"]["coverage"] = result["coverage"]
-        stages["major_verifier"]["decisions"] = result["decisions"]
-        decisions = result["decisions"]
-    except model.StaleReview:
-        raise
-    except Exception as exc:
-        _record_validation_failure(stages["major_verifier"], exc)
-        decisions = [
-            {
-                "finding_id": finding["id"],
-                "disposition": "unresolved",
-                "reason": "Major finding withheld because second verification did not complete.",
-            }
-            for finding in majors
-        ]
-
-    by_candidates = {
-        tuple(verified.candidate_ids[decision["finding_id"]]): decision
-        for decision in decisions
-    }
-    # Keep Luna's decisions in its stage record; public diagnostics use final verdicts.
-    final_decisions = []
-    for decision in debug["decisions"]:
-        verdict = by_candidates.get(tuple(decision["candidate_ids"]))
-        if verdict is not None and verdict["disposition"] != "publish":
-            decision = {
-                **decision,
-                "disposition": verdict["disposition"],
-                "reason": "Major verification: " + verdict["reason"],
-                "finding": None,
-            }
-        final_decisions.append(decision)
-    debug["decisions"] = final_decisions
-    withheld = {
-        decision["finding_id"]
-        for decision in decisions
-        if decision["disposition"] != "publish"
-    }
-    verified.findings = [
-        finding for finding in verified.findings if finding["id"] not in withheld
-    ]
-    return [finding for finding in findings if finding["id"] not in withheld]
-
-
-def _published_findings(verified, edited, candidate_sources, models, was_edited):
-    presented = {finding["id"]: finding for finding in edited}
+def _published_findings(verified, findings, candidate_sources, stages):
+    originals = {finding["id"]: finding for finding in verified.findings}
     published = []
-    # Exports retain verification order even when the editor reorders prose.
-    for finding in verified.findings:
+    for finding in findings:
         identifier = finding["id"]
-        verifier = "major_verifier" if finding["severity"] == "major" else "verifier"
         sources = sorted(
             {
                 candidate_sources[candidate_id]
@@ -535,16 +533,20 @@ def _published_findings(verified, edited, candidate_sources, models, was_edited)
         )
         published.append(
             {
-                **finding,
-                "presented_title": presented[identifier]["title"],
-                "presented_summary": presented[identifier]["summary"],
-                "presented_body": presented[identifier]["body"],
+                **originals[identifier],
+                "presented_title": finding["title"],
+                "presented_summary": finding["summary"],
+                "presented_body": finding["body"],
                 "raised_by": sources,
-                "raised_by_models": sorted({models[stage] for stage in sources}),
-                "verified_by": verifier,
-                "verified_by_model": models[verifier],
-                "edited_by": "collator" if was_edited else None,
-                "edited_by_model": models["collator"] if was_edited else None,
+                "raised_by_models": sorted(
+                    {stages[stage]["model"] for stage in sources}
+                ),
+                "verified_by": "verifier",
+                "verified_by_model": stages["verifier"]["model"],
+                "judged_by": "judge",
+                "judged_by_model": stages["judge"]["model"],
+                "edited_by": "judge",
+                "edited_by_model": stages["judge"]["model"],
             }
         )
     return published
@@ -611,6 +613,7 @@ def review_with_independent_passes(
             + json.dumps(
                 {
                     "candidate_findings": candidates,
+                    "challenges": debug.get("challenges", []),
                     "inspection_gaps": [
                         issue
                         for issue in coverage.summarize(debug)["issues"]
@@ -638,12 +641,36 @@ def review_with_independent_passes(
     plan = routing.plan_review(
         runtime, review, snapshot, prompt_config, debug, routing_mode
     )
+    debug["profile_selection"] = {
+        "requested": prompt_config.profile.name,
+        "effective": prompt_config.profile.name,
+        "reason": "Requested settings.",
+    }
+
+    def select_profile():
+        nonlocal prompt_config
+        if "consensus" in plan["profiles"] and prompt_config.profile.name != "high":
+            if prompt_config.high_profile is None:
+                raise ValueError(
+                    "Consensus review requires frozen high-profile settings"
+                )
+            prompt_config = replace(prompt_config, profile=prompt_config.high_profile)
+            debug["profile_selection"].update(
+                effective="high", reason="Consensus review requires high settings."
+            )
+
+    select_profile()
     notes = None
+    test_paths = sorted(
+        path
+        for path in snapshot.changed_paths
+        if "tests" in routing.domain_audits([path])
+    )
 
     def run_stage(
         name, input_text, prompt, schema, *, tools=True, experiment_session=None
     ):
-        if backport_evidence is not None and name != "collator":
+        if backport_evidence is not None:
             input_text = _backport_input(input_text, backport_evidence)
             prompt += "\n\n" + prompt_config.audit_prompts["backport"]
         # Read the current plan after any discovery-driven escalation.
@@ -659,12 +686,16 @@ def review_with_independent_passes(
             experiment_session=experiment_session,
         )
 
-    def discover(name):
+    def discover(name, required_test_paths=None):
         nonlocal notes
+        prompt_name = "tests" if name == "tests_followup" else name
+        required_test_paths = (
+            test_paths if required_test_paths is None else required_test_paths
+        )
         prompt = (
             prompt_config.instructions
             if name == "independent"
-            else prompt_config.audit_prompts[name]
+            else prompt_config.audit_prompts[prompt_name]
         )
         if name in ADVERSARIAL_STAGES:
             prompt += "\n\n" + "\n\n".join(
@@ -674,32 +705,40 @@ def review_with_independent_passes(
         input_text = (
             review
             if name in FULL_CONTEXT_STAGES
-            else focused_review_input(review, snapshot, name)
+            else focused_review_input(review, snapshot, prompt_name)
         )
         if name == "design":
             if notes is None:
                 notes = audit_developer_notes(snapshot)
             input_text += "\n\nComparison-base developer notes:\n" + notes
-        if name == "challenger":
-            input_text += "\n\nChallenge input:\n" + json.dumps(
+        if prompt_name == "tests":
+            input_text += "\n\nRequired test-review paths:\n" + json.dumps(
+                required_test_paths
+            )
+        if name == "tests_followup":
+            input_text += "\n\nTest coverage follow-up:\n" + json.dumps(
                 {
-                    "candidate_findings": candidates,
-                    "discovery_reviews": {
-                        stage: {
-                            "status": record["status"],
-                            "coverage": record.get("coverage"),
-                        }
-                        for stage, record in stages.items()
-                        if stage
-                        in {"independent", *DISCOVERY_ORDER, *ADVERSARIAL_STAGES}
-                    },
-                    "concept_candidate": concept_candidate,
-                    "blind_alternatives": alternatives_candidate,
+                    "paths": required_test_paths,
+                    "previous_test_coverage": stages.get("tests", {}).get(
+                        "test_coverage", []
+                    ),
+                    "candidates": candidates,
                 }
             )
         try:
-            answer = run_stage(name, input_text, prompt, protocol.DISCOVERY_SCHEMA)
-            result = protocol.discovery(answer, name, snapshot)
+            schema = (
+                protocol.TESTS_DISCOVERY_SCHEMA
+                if prompt_name == "tests"
+                else protocol.DISCOVERY_SCHEMA
+            )
+            answer = run_stage(name, input_text, prompt, schema)
+            if prompt_name == "tests":
+                result = protocol.tests_discovery(
+                    answer, snapshot, required_test_paths, stage=name
+                )
+                stages[name]["test_coverage"] = result["test_coverage"]
+            else:
+                result = protocol.discovery(answer, name, snapshot)
             stages[name]["coverage"] = result["coverage"]
             return result
         except model.StaleReview:
@@ -820,9 +859,25 @@ def review_with_independent_passes(
             "evidence": plan["evidence"] + ["Overview requested sensitive review"],
         }
         debug["routing"]["selected"] = plan
+        select_profile()
     if plan["tier"] == "sensitive":
         selected.add("adversarial")
-    selected.add("challenger")
+
+    def escalate_review(name, requested):
+        nonlocal plan
+        if requested and plan["tier"] != "sensitive":
+            selected.update(("adversarial", "state", "concurrency"))
+            plan = {
+                **plan,
+                "tier": "sensitive",
+                "profiles": plan["profiles"] or list(ADVERSARIAL_PROFILES),
+                "audits": [audit for audit in AUDIT_NAMES if audit in selected],
+                "evidence": plan["evidence"] + [f"{name} requested sensitive review"],
+            }
+            debug["routing"]["selected"] = plan
+            debug["routing"]["escalated_by"] = name
+            select_profile()
+
     while pending := [name for name in DISCOVERY_ORDER if name in selected - completed]:
         name = pending[0]
         if name == "adversarial":
@@ -840,17 +895,64 @@ def review_with_independent_passes(
         else:
             escalate = collect(name, discover(name))
             completed.add(name)
-        if escalate and plan["tier"] != "sensitive":
-            selected.update(("adversarial", "state", "concurrency"))
-            plan = {
-                **plan,
-                "tier": "sensitive",
-                "profiles": plan["profiles"] or list(ADVERSARIAL_PROFILES),
-                "audits": [audit for audit in AUDIT_NAMES if audit in selected],
-                "evidence": plan["evidence"] + [f"{name} requested sensitive review"],
+        escalate_review(name, escalate)
+        if name == "tests":
+            assessments = stages[name].get("test_coverage", [])
+            checked = {
+                path
+                for assessment in assessments
+                if assessment["status"] != "deferred"
+                for path in assessment["paths"]
             }
-            debug["routing"]["selected"] = plan
-            debug["routing"]["escalated_by"] = name
+            deferred = {
+                path
+                for assessment in assessments
+                if assessment["status"] == "deferred"
+                for path in assessment["paths"]
+            }
+            remaining = sorted((set(test_paths) - checked) | deferred)
+            if remaining:
+                followup = discover("tests_followup", remaining)
+                escalate_review("tests_followup", collect("tests_followup", followup))
+                if followup is not None and stages[name]["status"] == "completed":
+                    # Keep the initial output and model's stated limitations.
+                    # Recompute only the assignment coverage repaired by this pass.
+                    record = stages[name]
+                    record["coverage_before_followup"] = record["coverage"]
+                    record["initial_test_coverage"] = assessments
+                    resolved = {
+                        path
+                        for assessment in followup["test_coverage"]
+                        if assessment["status"] != "deferred"
+                        for path in assessment["paths"]
+                    } - {
+                        path
+                        for assessment in followup["test_coverage"]
+                        if assessment["status"] == "deferred"
+                        for path in assessment["paths"]
+                    }
+                    combined = [
+                        assessment
+                        for assessment in assessments
+                        if assessment["status"] != "deferred"
+                        or not set(assessment["paths"]) <= resolved
+                    ] + followup["test_coverage"]
+                    result = protocol.tests_discovery(
+                        json.dumps(
+                            {
+                                "coverage": json.loads(record["raw_output"])[
+                                    "coverage"
+                                ],
+                                "findings": [],
+                                "requires_sensitive_review": False,
+                                "test_coverage": combined,
+                            }
+                        ),
+                        snapshot,
+                        test_paths,
+                    )
+                    record["coverage"] = result["coverage"]
+                    record["test_coverage"] = result["test_coverage"]
     for name in (*DISCOVERY_ORDER, "adversarial_claude"):
         if name not in completed:
             stages[name] = {
@@ -859,6 +961,8 @@ def review_with_independent_passes(
                 "turns": [],
                 "tools": [],
             }
+
+    _challenge_candidates(run_stage, prompt_config, review, candidates, snapshot, debug)
 
     if feedback_packet is not None:
         settings = prompt_config.profile.stages["feedback"]
@@ -918,12 +1022,11 @@ def review_with_independent_passes(
         feedback_packet,
         feedback_mappings,
     )
-    findings, concept_summary = _edit_findings(
-        run_stage, prompt_config, verified, debug
+    _write_majors(
+        run_stage, runtime, prompt_config, review, snapshot, verified.findings
     )
-    _write_majors(run_stage, runtime, prompt_config, review, snapshot, findings)
-    findings = _verify_majors(
-        run_stage, prompt_config, review, snapshot, verified, findings, debug
+    findings, concept_summary = _judge_findings(
+        run_stage, prompt_config, review, snapshot, verified, debug
     )
     finding_candidates = verified.candidate_ids
     verified_alternatives = verified.alternatives
@@ -951,12 +1054,7 @@ def review_with_independent_passes(
             )
             debug["coverage"] = coverage.summarize(debug)
     debug["alternatives"] = verified_alternatives
-    was_edited = stages["collator"]["status"] == "completed" and not stages[
-        "collator"
-    ].get("used_verified_wording")
-    published = _published_findings(
-        verified, findings, candidate_sources, prompt_config.models, was_edited
-    )
+    published = _published_findings(verified, findings, candidate_sources, stages)
     for entry in debug.get("review_memory", []):
         candidate_ids = set(entry.get("current_candidate_ids", []))
         entry["current_finding_ids"] = [
@@ -1025,6 +1123,8 @@ def review_with_independent_passes(
                     "raised_by_models",
                     "verified_by",
                     "verified_by_model",
+                    "judged_by",
+                    "judged_by_model",
                     "edited_by",
                     "edited_by_model",
                 )

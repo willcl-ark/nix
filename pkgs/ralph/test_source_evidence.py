@@ -83,7 +83,7 @@ class SourceEvidenceTests(unittest.TestCase):
             "decisions": [
                 {
                     "candidate_ids": ["independent:1"],
-                    "disposition": "publish",
+                    "disposition": "supported",
                     "reason": "Checked caller",
                     "finding": finding,
                 }

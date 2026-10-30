@@ -689,10 +689,10 @@ def _stage_findings_details(stage, repository_url, report_base_url):
         )
         rows.append(row.replace("<tr>", f'<tr data-filter="{_escape(group)}">', 1))
     return (
-        '<p class="note">Candidate rows can merge into one accepted finding. Publish is the verifier '
+        '<p class="note">Candidate rows can merge into one accepted finding. Publish is the judge '
         "decision; accepted attribution is recorded separately.</p>"
         + _interactive_table(
-            ["PR", "Finding", "Verifier decision", "Attribution", "Report"],
+            ["PR", "Finding", "Judge decision", "Attribution", "Report"],
             rows,
             "findings",
             [
@@ -798,7 +798,7 @@ def _leaderboard_section(summary):
         )
     return (
         '<section id="leaderboard"><h2>Agent leaderboard</h2>'
-        '<p class="note">Ranked by verifier-accepted findings across saved reviews. Unique means '
+        '<p class="note">Ranked by judge-accepted findings across saved reviews. Unique means '
         "one contributing agent; shared findings count for each contributor. Different agents "
         "may review different PRs.</p>"
         + (
@@ -1211,7 +1211,7 @@ def _charts_section(summary):
         (
             "verified-reviews",
             "Current-engine verified reviews",
-            "Current-engine reviews whose verifier pass completed",
+            "Current-engine reviews whose verifier and judge passes completed",
             "verified_reviews",
         ),
         (

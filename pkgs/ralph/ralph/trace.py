@@ -297,7 +297,8 @@ def review_metrics(debug):
     stages = debug.get("stages", {})
     metrics = request_metrics(stages)
     metrics["audit_calls"] = sum(
-        name in AUDIT_NAMES and stage.get("status") != "skipped"
+        (name in AUDIT_NAMES or name == "tests_followup")
+        and stage.get("status") != "skipped"
         for name, stage in stages.items()
     )
     return metrics

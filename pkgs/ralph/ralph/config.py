@@ -44,6 +44,7 @@ class PromptConfig:
     instructions: str
     audit_prompts: dict[str, str]
     profile: ReviewProfile
+    high_profile: ReviewProfile | None = None
 
     @property
     def models(self):
@@ -58,6 +59,7 @@ class PromptConfig:
         agents_dir = Path(agents_dir).resolve()
         configs = load_agent_configs(agents_dir)
         selected = get_profile(profile, agents_dir, agent_configs=configs)
+        high = get_profile("high", agents_dir, agent_configs=configs)
         prompts = {}
         for name, values in configs.items():
             path = (agents_dir / name / values.get("prompt", "prompt.md")).resolve()
@@ -77,6 +79,5 @@ class PromptConfig:
         finding_format = load_prompt_file(agents_dir / "shared/finding-format.md")
         if not finding_format.strip():
             raise ValueError("shared finding format must not be empty")
-        for name in ("verifier", "collator"):
-            prompts[name] += f"\n\n{finding_format}"
-        return cls(prompts.pop("independent"), prompts, selected)
+        prompts["judge"] += f"\n\n{finding_format}"
+        return cls(prompts.pop("independent"), prompts, selected, high)

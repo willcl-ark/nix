@@ -571,17 +571,19 @@ def _review_id(row):
 
 def _verifier_completed(debug):
     stages = debug.get("stages") if isinstance(debug, dict) else None
-    verifier = stages.get("verifier") if isinstance(stages, dict) else None
+    if not isinstance(stages, dict):
+        return False
+    verifier = stages.get("verifier")
+    judge = stages.get("judge")
     if not isinstance(verifier, dict) or verifier.get("status") != "completed":
         return False
-    major_verifier = stages.get("major_verifier")
-    if major_verifier is None:
-        return True
-    if not isinstance(major_verifier, dict):
+    if not isinstance(judge, dict):
         return False
-    if major_verifier.get("status") == "skipped":
-        return True
-    coverage = core_coverage.summarize({"stages": {"major_verifier": major_verifier}})
+    if judge.get("status") == "skipped":
+        return judge.get("required") is False
+    if judge.get("status") != "completed":
+        return False
+    coverage = core_coverage.summarize({"stages": {"judge": judge}})
     return coverage["verification"]["status"] == "complete"
 
 
@@ -1041,6 +1043,7 @@ def _has_attribution(result, findings):
     return all(
         isinstance(item.get("raised_by"), list)
         and isinstance(item.get("verified_by"), str)
+        and isinstance(item.get("judged_by"), str)
         for item in findings
     )
 

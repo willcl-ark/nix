@@ -10,10 +10,10 @@ prompt, model, reasoning effort or tool limit.
 | General first-pass review | [independent/prompt.md](agents/independent/prompt.md) |
 | Instructions shared by discovery agents | [shared/discovery.md](agents/shared/discovery.md) |
 | A specialist's review | `<agent>/prompt.md`, such as [design/prompt.md](agents/design/prompt.md) |
-| Challenge prior discovery and the proposed approach | [challenger/prompt.md](agents/challenger/prompt.md) |
-| Which leads survive verification | [verifier/prompt.md](agents/verifier/prompt.md) |
+| Attempt to refute candidate findings | [challenger/prompt.md](agents/challenger/prompt.md) |
+| Assess which claims source supports | [verifier/prompt.md](agents/verifier/prompt.md) |
 | Public finding structure and writing guidance | [shared/finding-format.md](agents/shared/finding-format.md) |
-| Wording of accepted findings | [collator/prompt.md](agents/collator/prompt.md) |
+| Decide publication and final wording | [judge/prompt.md](agents/judge/prompt.md) |
 | Comment headings, order and finding layout | [final_comment](final_comment/README.md) |
 | An agent's model, reasoning or limits | `<agent>/config.toml` |
 
@@ -64,7 +64,7 @@ The supported tool sets are:
 
 | Tool set | Access requested |
 | --- | --- |
-| `none` | No tools, used by the feedback mapper and collator |
+| `none` | No tools, used by the feedback mapper |
 | `focused` | Find paths, read files and diffs, search current code |
 | `full` | Code, comparison-base history and other discussion lookup |
 | `base` | Find, read and search files at the comparison base |
@@ -77,14 +77,18 @@ experiment commands for an isolated disposable copy. A new tool implementation
 or a new pipeline stage requires Python changes. Model IDs must be nonempty;
 model availability and supported parameters are checked by the provider.
 
-Per-run `engineConfig.stages` overrides apply after agent settings.
-Resolved prompts, settings and comment templates are saved with each review.
+Consensus-domain routing and conservative fallback automatically select high
+settings for the remaining review. High strengthens tests and allows both
+adversarial reviewers 128 inspections. Per-run `engineConfig.stages` overrides
+apply after agent settings, including automatic promotion.
+Resolved prompts, both profile settings and comment templates are saved with
+each review.
 Frozen evaluations keep those saved values until explicitly given new settings.
 
 ## Shared prompts and special cases
 
 - [shared/finding-format.md](agents/shared/finding-format.md) is automatically
-  appended to verifier and collator prompts when loading an agent directory.
+  appended to verifier and judge prompts when loading an agent directory.
   Saved reviews retain the loaded text for replay.
 - Both adversarial reviewers use [adversarial/prompt.md](agents/adversarial/prompt.md).
   Claude's config points to that file; its model and limits remain independent.
@@ -92,16 +96,22 @@ Frozen evaluations keep those saved values until explicitly given new settings.
 - [shared/backport.md](agents/shared/backport.md) supplements stages reviewing backports.
 - [verifier/reconciliation.md](agents/verifier/reconciliation.md) covers earlier findings.
 - [feedback](agents/feedback) maps earlier findings to author replies before verification.
-- [challenger](agents/challenger) sees prior discovery candidates and any concept
-  assessment or blind alternatives. Its candidates use the shared discovery
-  instructions and the normal verifier; it has no separate public section.
+- [challenger](agents/challenger) returns attempted refutations of supplied
+  candidates. It cannot add or suppress findings. Every original candidate and
+  its challenge evidence go to the verifier.
+- `tests_followup` reuses the tests prompt and resolved settings once when
+  required coverage remains omitted or deferred. It has no agent directory.
+- [judge](agents/judge) makes publication decisions and writes final wording
+  after source verification and optional Major reproduction. It cannot change
+  supplied metadata or publish without exact source evidence.
 - The service's later addressed-finding checks remain in the companion package's
   [follow-up prompt](../ralph-service/audits/addressed_findings.md).
 
 To try a complete copied agent directory, pass `--agents-dir DIR` to
 `check-agents` or `review`. The service uses `services.ralph.agentsDir` or
-`engineConfig.agents_dir`. Custom directories must include `challenger` with
-its prompt and config. Frozen configurations and evaluations from before this
-stage need fresh configuration and recapture; no migration is provided.
+`engineConfig.agents_dir`. Custom directories must include `judge`, with its
+prompt and config, and remove `collator` and `major_verifier`. Frozen
+configurations and evaluations from before this pipeline require fresh
+configuration and recapture; no migration is provided.
 This replaces the old separate prompt-file,
 audit-prompt-directory and model-map overrides.

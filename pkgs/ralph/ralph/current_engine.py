@@ -27,6 +27,7 @@ def configure(value):
             else selected_profile["name"],
         )
         profile = loaded.profile
+        high_profile = loaded.high_profile
         if isinstance(selected_profile, dict) and "agents_dir" not in value:
             profile = profiles.ReviewProfile.from_dict(selected_profile)
         prompts = {
@@ -34,11 +35,18 @@ def configure(value):
             "audit_prompts": loaded.audit_prompts,
         }
     else:
-        profile = (
-            profiles.get_profile(selected_profile, agents_dir)
-            if isinstance(selected_profile, str)
-            else profiles.ReviewProfile.from_dict(selected_profile)
-        )
+        if "high_profile" not in value:
+            raise ValueError(
+                "Saved engine configuration has no high profile; "
+                "requeue the review or recapture the evaluation"
+            )
+        high_profile = profiles.ReviewProfile.from_dict(value["high_profile"])
+        if selected_profile == "high":
+            profile = high_profile
+        elif isinstance(selected_profile, str):
+            profile = profiles.get_profile(selected_profile, agents_dir)
+        else:
+            profile = profiles.ReviewProfile.from_dict(selected_profile)
         prompts = dict(prompts)
         if set(prompts) != {"instructions", "audit_prompts"}:
             raise ValueError("prompts must contain only instructions and audit_prompts")
@@ -47,8 +55,16 @@ def configure(value):
         ):
             raise ValueError("prompts must contain instructions and audit_prompts")
         if set(prompts["audit_prompts"]) != set(config.PROMPT_NAMES):
-            raise ValueError("prompt config must name each review prompt")
+            raise ValueError(
+                "Saved prompts do not match the current review stages; "
+                "requeue the review or recapture the evaluation"
+            )
     profile = profile.with_stages(value.get("stages", {}))
+    high_profile = high_profile.with_stages(value.get("stages", {}))
+    if high_profile.name != "high":
+        raise ValueError("high_profile must contain the high review settings")
+    if profile.name == "high":
+        high_profile = profile
     if any(
         not isinstance(prompt, str) or not prompt.strip()
         for prompt in (prompts["instructions"], *prompts["audit_prompts"].values())
@@ -57,6 +73,7 @@ def configure(value):
     normalized = {
         "prompts": prompts,
         "profile": profile.to_dict(),
+        "high_profile": high_profile.to_dict(),
         "comment_format": validate_format(value["comment_format"])
         if "comment_format" in value
         else load_format(),
@@ -88,6 +105,11 @@ def configure(value):
 
 
 def run(case, runtime, configured):
+    if "high_profile" not in configured:
+        raise ValueError(
+            "Saved engine configuration has no high profile; "
+            "requeue the review or recapture the evaluation"
+        )
     if "openai_api_base" not in configured:
         raise ValueError(
             "Saved engine configuration has no OpenAI endpoint; "
@@ -98,6 +120,19 @@ def run(case, runtime, configured):
     except ValueError as exc:
         raise ValueError(
             "Saved comment format is incompatible; "
+            "requeue the review or recapture the evaluation"
+        ) from exc
+    try:
+        prompt_config = config.PromptConfig(
+            **configured["prompts"],
+            profile=profiles.ReviewProfile.from_dict(configured["profile"]),
+            high_profile=profiles.ReviewProfile.from_dict(configured["high_profile"]),
+        )
+        if set(prompt_config.audit_prompts) != set(config.PROMPT_NAMES):
+            raise ValueError("Saved prompts do not match the current review stages")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Saved review stages are incompatible; "
             "requeue the review or recapture the evaluation"
         ) from exc
     runtime.openai_api_base = configured["openai_api_base"]
@@ -112,10 +147,6 @@ def run(case, runtime, configured):
                 "archaeology requires PR context and discussion evidence or a reader"
             )
     runtime.debug["schema_version"] = 2
-    prompt_config = config.PromptConfig(
-        **configured["prompts"],
-        profile=profiles.ReviewProfile.from_dict(configured["profile"]),
-    )
     result = pipeline.review_with_independent_passes(
         case,
         runtime,

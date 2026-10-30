@@ -1,7 +1,7 @@
 prompt = "prompt.md"
 tool_set = "full"
 model = "gpt-6.1-sol"
-reasoning_effort = "medium"
+reasoning_effort = "high"
 max_output_tokens = 25000
 max_tool_calls = { routine = 72, standard = 72, sensitive = 72 }
 max_context_calls = 8
@@ -11,4 +11,4 @@ timeout = 1800
 final_timeout = 1800
 
 [profiles.high]
-reasoning_effort = "high"
+reasoning_effort = "xhigh"

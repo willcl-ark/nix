@@ -9,6 +9,29 @@ from ralph_service import stats
 
 
 class ProductionTrendTests(unittest.TestCase):
+    def test_verified_review_requires_source_verification_and_final_judgment(self):
+        stages = {
+            "verifier": {"status": "completed"},
+            "major_verifier": {"status": "completed"},
+        }
+        self.assertFalse(stats._verifier_completed({"stages": stages}))
+        stages["judge"] = {"status": "skipped"}
+        self.assertFalse(stats._verifier_completed({"stages": stages}))
+        stages["judge"]["required"] = False
+        self.assertTrue(stats._verifier_completed({"stages": stages}))
+        stages["judge"] = {
+            "status": "completed",
+            "coverage": {"status": "complete", "limitations": []},
+        }
+        self.assertTrue(stats._verifier_completed({"stages": stages}))
+        stages["judge"]["decisions"] = [
+            {"disposition": "unresolved", "reason": "The caller remains unchecked."}
+        ]
+        self.assertFalse(stats._verifier_completed({"stages": stages}))
+        stages["judge"]["decisions"] = []
+        stages["verifier"] = {"status": "failed"}
+        self.assertFalse(stats._verifier_completed({"stages": stages}))
+
     def test_daily_events_use_utc_fill_gaps_and_preserve_unknowns(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

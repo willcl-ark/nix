@@ -28,7 +28,8 @@ class GitHubTests(unittest.TestCase):
                             "presented_title": "Edited title",
                             "presented_summary": "Edited summary",
                             "presented_body": "Edited body",
-                            "verified_by": "major_verifier",
+                            "verified_by": "verifier",
+                            "judged_by": "judge",
                             "path": "src/test.cpp",
                             "line": 5,
                             "side": "head",
@@ -137,6 +138,20 @@ class GitHubTests(unittest.TestCase):
                     self.assertEqual(self.publish(result), "failed")
                 request.assert_not_called()
 
+    def test_major_publication_requires_source_verification_and_judgment(self):
+        for verified_by, judged_by in (
+            ("major_verifier", "judge"),
+            ("verifier", None),
+            (None, "judge"),
+        ):
+            with self.subTest(verified_by=verified_by, judged_by=judged_by):
+                result = self.result()
+                finding = result["output"]["exports"]["findings"][0]
+                finding.update(verified_by=verified_by, judged_by=judged_by)
+                with patch.object(github, "github_request") as request:
+                    self.assertEqual(self.publish(result), "unverified")
+                request.assert_not_called()
+
     def test_retained_major_updates_previous_comment_instead_of_deleting(self):
         result = self.result()
         exports = result["output"]["exports"]
@@ -172,11 +187,11 @@ class GitHubTests(unittest.TestCase):
                 "current_finding_ids": ["finding:1"],
             }
         ]
-        exports["findings"][0]["verified_by"] = "verifier"
+        exports["findings"][0]["judged_by"] = None
         with patch.object(github, "github_request") as request:
             self.assertEqual(self.publish(result), "unverified")
         request.assert_not_called()
-        exports["findings"][0]["verified_by"] = "major_verifier"
+        exports["findings"][0]["judged_by"] = "judge"
         with patch.object(
             github,
             "github_request",
