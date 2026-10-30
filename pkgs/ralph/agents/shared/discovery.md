@@ -24,6 +24,15 @@ Review scope includes production code, tests, CI, build tooling, and contrib
 utilities. A supported correctness, design, or maintenance finding need not be
 a vulnerability. Security relevance does not decide whether it merits review.
 
+For a large PR, use the complete commit/file inventory to divide your assigned
+responsibility into behavior-sized groups. Inspect each relevant group and
+record specific unfinished work as a coverage limitation. Initial excerpts are
+starting points, not evidence that the remaining changes were reviewed. Use
+the continuation locations and `read_pr_commit` for related commits; finish
+against the combined head and its callers. Give generated data and mechanical
+changes a concrete validation strategy instead of letting them displace code
+and assertions. Account for substantive changes rather than counting lines read.
+
 For changed node or wallet behavior, identify the property being protected.
 For example, check agreement on valid blocks, authorized spending, progress
 toward the most-work valid chain, transaction relay, valid block templates,

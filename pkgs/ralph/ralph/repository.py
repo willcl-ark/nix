@@ -313,14 +313,30 @@ def read_diff(checkout, changed_paths, base, head, path, start_line):
         "--",
         path,
     )
-    with object_git_command(checkout, args, head) as (command, env):
+    return _diff_page(checkout, args, head, path, start_line)
+
+
+def _diff_page(
+    checkout,
+    args,
+    revision,
+    label,
+    start_line,
+    *,
+    max_bytes=MAX_TOOL_BYTES,
+    tool="read_diff",
+):
+    # Reserve room for the continuation marker instead of dropping the first
+    # line that does not fit on a page.
+    content_limit = max_bytes - 120
+    with object_git_command(checkout, args, revision) as (command, env):
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             env=env,
         )
-        result = f"{path} (diff lines from {start_line}):\n"
+        result = f"{label} (diff lines from {start_line}):\n"
         found = False
         stopped_early = False
         number, pending = 1, b""
@@ -346,15 +362,27 @@ def read_diff(checkout, changed_paths, base, head, path, start_line):
                     if number >= start_line:
                         found = True
                         item = f"{number}: " + pending.decode(errors="replace")
-                        if oversized or len((result + item).encode()) > MAX_TOOL_BYTES:
-                            result += (
-                                f"[Diff line {number} exceeds output limit; "
-                                f"continue at {number + 1}]\n"
-                            )
+                        if oversized or len((result + item).encode()) > content_limit:
+                            if max_bytes == MAX_TOOL_BYTES and (
+                                oversized
+                                or len(
+                                    (
+                                        f"{label} (diff lines from {number}):\n" + item
+                                    ).encode()
+                                )
+                                > content_limit
+                            ):
+                                result += (
+                                    f"[Diff line {number} exceeds output limit; "
+                                    f"continue at {number + 1} with {tool}]\n"
+                                )
+                            else:
+                                result += f"[Diff continues; continue at {number} with {tool}]\n"
                             stopped_early = True
                             break
                         result += item
                         if number >= start_line + 149:
+                            result += f"[Diff continues; continue at {number + 1} with {tool}]\n"
                             stopped_early = True
                             break
                     number += 1
@@ -491,6 +519,72 @@ def read_commit(checkout, base_files, base, commit, path):
     )
 
 
+def read_pr_commit(checkout, base, head, commit, path, start_line):
+    """Inspect one pinned PR commit, including changes later reverted by the PR."""
+    if (
+        not isinstance(commit, str)
+        or not SHA.fullmatch(commit)
+        or not isinstance(path, str)
+        or not path
+        or "\x00" in path
+        or type(start_line) is not int
+        or not 1 <= start_line <= 100_000
+    ):
+        return "Invalid PR commit, path, or diff line."
+    if not has_commit(checkout, commit):
+        return "Commit is not in the review range."
+    for endpoint, must_be_ancestor in ((head, True), (base, False)):
+        result = subprocess.run(
+            git_command(checkout, "merge-base", "--is-ancestor", commit, endpoint),
+            capture_output=True,
+            check=False,
+            timeout=30,
+            env=git_environment(),
+        )
+        if result.returncode not in {0, 1}:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
+        if (result.returncode == 0) != must_be_ancestor:
+            return "Commit is not in the review range."
+    changed = bounded_git(
+        checkout,
+        "diff-tree",
+        "--root",
+        "--diff-merges=first-parent",
+        "-r",
+        "--no-commit-id",
+        "--no-renames",
+        "--name-only",
+        "-z",
+        commit,
+        "--",
+        path,
+        max_bytes=MAX_TOOL_BYTES,
+        attr_source=commit,
+    )
+    if path.encode() not in changed.split(b"\x00"):
+        return "Path was not changed by this PR commit."
+    args = (
+        "show",
+        "--format=",
+        "--diff-merges=first-parent",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        commit,
+        "--",
+        path,
+    )
+    return _diff_page(
+        checkout,
+        args,
+        commit,
+        f"{path} at {commit}",
+        start_line,
+        tool="read_pr_commit",
+    )
+
+
 def audit_developer_notes(snapshot):
     checkout, base = snapshot.checkout, snapshot.diff_base_sha
     try:
@@ -527,11 +621,20 @@ def focused_review_input(review, snapshot, name):
         paths.sort(key=lambda path: not is_test_path(path))
     elif name == "design":
         paths.sort(key=lambda path: is_test_path(path) or path.startswith("doc/"))
-    excerpt = []
-    size = 0
+    if not paths:
+        return review
+    # Share the excerpt across paths. A large unit test or generated fixture
+    # must not consume all the space before later functional tests are visible.
+    allowance = MAX_FOCUSED_DIFF_BYTES // len(paths)
+    if allowance < 400 or any(len(path.encode()) + 160 > allowance for path in paths):
+        return review + (
+            "\nToo many changed paths for useful excerpts. Assign the changed-file "
+            "inventory before inspection; use read_diff from line 1 for each "
+            "assigned path.\n"
+        )
+    excerpts = []
     for path in paths:
-        patch = bounded_git(
-            checkout,
+        args = (
             "diff",
             "--no-ext-diff",
             "--no-textconv",
@@ -539,21 +642,9 @@ def focused_review_input(review, snapshot, name):
             f"{base}..{head}",
             "--",
             path,
-            max_bytes=MAX_FOCUSED_DIFF_BYTES,
-            attr_source=head,
-        ).decode(errors="replace")
-        if size + len(patch.encode()) > MAX_FOCUSED_DIFF_BYTES:
-            excerpt.append(
-                patch.encode()[: MAX_FOCUSED_DIFF_BYTES - size].decode(errors="replace")
-            )
-            excerpt.append(
-                "\n[Diff excerpt incomplete. Use read_diff for the remaining "
-                "content of this file and later paths.]\n"
-            )
-            break
-        excerpt.append(patch)
-        size += len(patch.encode())
-    return review + "\nRelevant diff excerpt:\n" + "".join(excerpt)
+        )
+        excerpts.append(_diff_page(checkout, args, head, path, 1, max_bytes=allowance))
+    return review + "\nRelevant diff excerpts by path:\n" + "".join(excerpts)
 
 
 @dataclass(frozen=True)
@@ -735,6 +826,8 @@ def build_review_input(snapshot, title="", description=""):
         "log",
         "--reverse",
         "--format=%H%n%B%n%x00",
+        "--name-status",
+        "--no-renames",
         f"{base}..{head}",
         max_bytes=MAX_REVIEW_BYTES,
     ).decode(errors="replace")
@@ -758,7 +851,8 @@ def build_review_input(snapshot, title="", description=""):
             "diff",
             "--no-ext-diff",
             "--no-textconv",
-            "--name-status",
+            "--numstat",
+            "--no-renames",
             base,
             head,
             "--",
@@ -767,7 +861,9 @@ def build_review_input(snapshot, title="", description=""):
         ).decode(errors="replace")
         review = (
             f"{prelude}Patch exceeds {MAX_REVIEW_BYTES} input bytes. "
-            "Use read_diff to inspect changed files.\nChanged files:\n" + changed
+            "Use read_diff to inspect changed files.\n"
+            "Changed files (added lines, removed lines, path; - means binary):\n"
+            + changed
         )
         if len(review.encode()) > MAX_REVIEW_BYTES:
             return None, f"Review input exceeds {MAX_REVIEW_BYTES} bytes"

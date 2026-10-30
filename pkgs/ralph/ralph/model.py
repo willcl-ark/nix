@@ -16,6 +16,7 @@ from .repository import (
     search_code,
     blame_base,
     read_commit,
+    read_pr_commit,
 )
 from .usage import web_search_calls
 
@@ -331,7 +332,29 @@ PR_DISCUSSION_TOOLS = [
         },
     },
 ]
-FOCUSED_TOOLS = TOOLS[:5]
+PR_COMMIT_TOOL = {
+    "type": "function",
+    "name": "read_pr_commit",
+    "strict": True,
+    "description": "Read a numbered, paginated patch for one file in a commit "
+    "from the pinned PR range. Use the commit inventory to inspect related "
+    "changes separately, then check their combined behavior at the PR head.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "commit": {"type": "string", "description": "Full commit SHA in the PR"},
+            "path": {"type": "string", "description": "Path changed by this commit"},
+            "start_line": {
+                "type": "integer",
+                "description": "First diff line, starting at 1",
+            },
+        },
+        "required": ["commit", "path", "start_line"],
+        "additionalProperties": False,
+    },
+}
+FOCUSED_TOOLS = [*TOOLS[:5], PR_COMMIT_TOOL]
+TOOLS.append(PR_COMMIT_TOOL)
 BASE_TOOLS = [
     tool
     for tool in TOOLS
@@ -991,6 +1014,15 @@ def openai_review(
                                 snapshot.changed_paths,
                                 snapshot.diff_base_sha,
                                 snapshot.head_sha,
+                                args.get("path"),
+                                args.get("start_line"),
+                            )
+                        elif call["name"] == "read_pr_commit":
+                            answer = read_pr_commit(
+                                checkout,
+                                snapshot.diff_base_sha,
+                                snapshot.head_sha,
+                                args.get("commit"),
                                 args.get("path"),
                                 args.get("start_line"),
                             )

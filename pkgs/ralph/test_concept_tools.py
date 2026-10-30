@@ -7,6 +7,19 @@ from ralph import model
 
 
 class ConceptToolTests(unittest.TestCase):
+    def test_focused_pr_commit_reads_use_pinned_endpoints(self):
+        arguments = {"commit": "c" * 40, "path": "new.cpp", "start_line": 25}
+        with patch.object(
+            model, "read_pr_commit", create=True, return_value="Pinned patch"
+        ) as read:
+            requests = self.run_tools(
+                [("read_pr_commit", arguments)], tools=model.FOCUSED_TOOLS
+            )
+        read.assert_called_once_with(
+            "checkout", "base-sha", "head-sha", "c" * 40, "new.cpp", 25
+        )
+        self.assertEqual(requests[-1]["input"][-1]["output"], "Pinned patch")
+
     def setUp(self):
         self.snapshot = SimpleNamespace(
             checkout="checkout",

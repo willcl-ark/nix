@@ -410,11 +410,21 @@ Ralph still makes at most three attempts per request, so three stalled attempts
 can take about 90 minutes.
 
 The initial review input allows 300,000 UTF-8 bytes. Larger patches are replaced
-by a changed-file inventory so stages can inspect them with `read_diff`.
+by a complete changed-file inventory with line counts. Commit messages include
+their changed paths. Focused stages share an 80,000-byte excerpt allowance
+across the paths, so a large fixture cannot displace later functional tests.
+Each incomplete excerpt names the next diff line to read. When the path count
+leaves too little room for useful excerpts, stages receive the inventory and
+must inspect their assigned paths with `read_diff`. Excerpts do not establish
+review coverage.
 File reads return up to 300 lines and 12,000 UTF-8 bytes per call. Published
 source evidence retains the smaller excerpt limit described below.
 
-Code tools find paths, read head/base files, read diffs and search code. The full
+Code tools find paths, read head/base files, read diffs and search code.
+`read_pr_commit` pages through a changed file in a commit from the pinned review
+range, including intermediate changes absent from the final net diff. A merge
+commit is compared with its first parent. Reviewers finish against the combined
+head, since separately sound commits can interact. The full
 tool set also reads base history and, when a live discussion reader is supplied,
 other PR discussions. Current PR discussion is excluded from code discovery.
 In frozen runs, discussion tools are available only to the archaeologist and

@@ -1,6 +1,7 @@
 """Committed local comparisons never depend on a checkout or a remote."""
 
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -167,6 +168,101 @@ class LocalRepositoryTests(unittest.TestCase):
                 1,
             )
         self.assertFalse(marker.exists())
+
+    def test_large_review_excerpts_do_not_hide_later_functional_tests(self):
+        self.git("checkout", "-q", "topic")
+        changes = {
+            "src/test/aaa_vectors.cpp": "vector();\n" * 15_000,
+            "src/test/data/vectors.json": '"vector",\n' * 40_000,
+            "src/validation.cpp": "enforce_new_rule();\n",
+            "test/functional/feature_activation.py": "assert_activation_boundary()\n",
+        }
+        for path, content in changes.items():
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        self.git("add", ".")
+        self.git("commit", "-qm", "test activation")
+        with repository.local_snapshot(self.repo, "topic", base="target") as snapshot:
+            review, skip = repository.build_review_input(snapshot)
+            self.assertIsNone(skip)
+            focused = repository.focused_review_input(review, snapshot, "tests")
+            excerpt = focused[len(review) :]
+            self.assertTrue("assert_activation_boundary()" in excerpt)
+            self.assertTrue("enforce_new_rule();" in excerpt)
+            self.assertLessEqual(
+                len(excerpt.encode()), repository.MAX_FOCUSED_DIFF_BYTES + 100
+            )
+            self.assertIn("read_diff", excerpt)
+            self.assertIn("src/test/aaa_vectors.cpp", review)
+            self.assertIn("test/functional/feature_activation.py", review)
+
+    def test_diff_paging_does_not_skip_a_line_when_page_is_full(self):
+        self.git("checkout", "-q", "topic")
+        (self.repo / "code.txt").write_text(
+            "".join(f"value_{i}: {'x' * 200}\n" for i in range(120))
+        )
+        self.git("commit", "-qam", "long patch")
+        with repository.local_snapshot(self.repo, "topic", base="target") as snapshot:
+            start = 1
+            numbers = []
+            while True:
+                page = repository.read_diff(
+                    self.repo,
+                    snapshot.changed_paths,
+                    snapshot.diff_base_sha,
+                    snapshot.head_sha,
+                    "code.txt",
+                    start,
+                )
+                self.assertLessEqual(len(page.encode()), repository.MAX_TOOL_BYTES)
+                numbers.extend(
+                    int(n) for n in re.findall(r"^(\d+):", page, re.MULTILINE)
+                )
+                next_line = re.search(r"continue at (\d+)", page)
+                if not next_line:
+                    break
+                self.assertGreater(int(next_line[1]), start)
+                start = int(next_line[1])
+            self.assertEqual(numbers, list(range(1, max(numbers) + 1)))
+            self.assertGreater(len(numbers), 120)
+
+    def test_pr_commit_reader_is_pinned_to_the_review_range(self):
+        self.git("checkout", "-q", "topic")
+        (self.repo / "new.cpp").write_text("new_behavior();\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "new behavior")
+        commit = self.git("rev-parse", "HEAD").strip()
+        with repository.local_snapshot(self.repo, "topic", base="target") as snapshot:
+
+            def read(revision, path):
+                return repository.read_pr_commit(
+                    self.repo,
+                    snapshot.diff_base_sha,
+                    snapshot.head_sha,
+                    revision,
+                    path,
+                    1,
+                )
+
+            self.assertIn("+new_behavior();", read(commit, "new.cpp"))
+            self.assertIn("+head", read(self.head, "code.txt"))
+            self.assertIn("not in the review range", read(self.base, "target.txt"))
+            self.assertIn("not in the review range", read(self.ancestor, "code.txt"))
+            self.assertIn("Invalid", read("HEAD", "new.cpp"))
+            self.assertIn("not changed", read(commit, "code.txt"))
+            self.git("checkout", "-q", "target")
+            self.git("branch", "-f", "topic", self.ancestor)
+            self.assertIn("+new_behavior();", read(commit, "new.cpp"))
+        self.git("checkout", "-q", "-B", "topic", commit)
+        self.git("merge", "-q", "--no-ff", "target", "-m", "merge target")
+        merge = self.git("rev-parse", "HEAD").strip()
+        self.assertIn(
+            "+target only",
+            repository.read_pr_commit(
+                self.repo, self.ancestor, merge, merge, "target.txt", 1
+            ),
+        )
 
 
 if __name__ == "__main__":

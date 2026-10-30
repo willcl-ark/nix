@@ -129,7 +129,14 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(options["reasoning_effort"], settings.reasoning_effort)
         self.assertEqual(
             {tool["name"] for tool in options["tools"]},
-            {"find_paths", "read_file", "read_base_file", "read_diff", "search_code"},
+            {
+                "find_paths",
+                "read_file",
+                "read_base_file",
+                "read_diff",
+                "search_code",
+                "read_pr_commit",
+            },
         )
         self.assertFalse(options["first_tool_required"])
         self.assertEqual(debug["routing"]["selected"], plan)
