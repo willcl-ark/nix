@@ -8,6 +8,10 @@ import urllib.error
 import aiohttp
 
 
+class RequestCancelled(Exception):
+    """Local cancellation stopped an attempt with unknown remote execution."""
+
+
 class StreamError(Exception):
     """A provider error delivered after the HTTP response started."""
 
@@ -99,8 +103,26 @@ async def _request(url, payload, api_key, timeout):
             raise ConnectionError("Model stream ended before a terminal response")
 
 
-def request(url, payload, api_key, timeout):
+async def _cancellable_request(url, payload, api_key, timeout, is_cancelled):
+    if is_cancelled is None:
+        return await _request(url, payload, api_key, timeout)
+    task = asyncio.create_task(_request(url, payload, api_key, timeout))
     try:
-        return asyncio.run(_request(url, payload, api_key, timeout))
+        while not task.done():
+            if is_cancelled():
+                raise RequestCancelled("Model request cancelled locally")
+            await asyncio.wait({task}, timeout=0.1)
+        return task.result()
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def request(url, payload, api_key, timeout, *, is_cancelled=None):
+    try:
+        return asyncio.run(
+            _cancellable_request(url, payload, api_key, timeout, is_cancelled)
+        )
     except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError) as error:
         raise ConnectionError("Model stream connection failed") from error

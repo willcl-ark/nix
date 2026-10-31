@@ -216,6 +216,29 @@ class TransportTests(unittest.TestCase):
         with raised.exception as error:
             self.assertEqual(error.code, 400)
 
+    def test_local_cancellation_closes_pending_headers_and_active_streams(self):
+        for mode in ("headers", "silent", "heartbeat"):
+            with self.subTest(mode=mode):
+                cancelled = threading.Event()
+                closed = threading.Event()
+
+                def respond(handler):
+                    if mode != "headers":
+                        start_stream(handler)
+                    cancelled.set()
+                    heartbeat = b": keep-alive\n\n" if mode == "heartbeat" else None
+                    if observe_close(handler, heartbeat):
+                        closed.set()
+
+                with self.server(respond) as (url, _server):
+                    started = time.monotonic()
+                    with self.assertRaises(transport.RequestCancelled):
+                        transport.request(
+                            url, b"{}", "key", 10, is_cancelled=cancelled.is_set
+                        )
+                    self.assertLess(time.monotonic() - started, 1.5)
+                    self.assertTrue(closed.wait(1), "request socket remained open")
+
     def test_total_deadline_closes_continuous_heartbeat_and_byte_trickle(self):
         for heartbeat in (b": keep-alive\n\n", b":"):
             with self.subTest(heartbeat=heartbeat):

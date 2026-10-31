@@ -82,11 +82,38 @@ class ModelUsageTests(unittest.TestCase):
             self.assertEqual(usage.events[-1], ("fail", "token", expected_unknown))
             self.assertEqual(usage.http_statuses[-1], code)
 
+    def test_stream_cancellation_is_stale_without_retry_and_retains_unknown_usage(self):
+        usage = FakeUsage()
+        cancelled = Mock(return_value=False)
+        current = Mock(return_value=True)
+        with (
+            patch.object(
+                model.transport,
+                "request",
+                side_effect=model.transport.RequestCancelled(),
+            ) as send,
+            self.assertRaises(model.StaleReview),
+        ):
+            model.request_response(
+                "secret",
+                {"model": "test"},
+                "tests",
+                usage=usage,
+                is_cancelled=cancelled,
+                is_current=current,
+            )
+        send.assert_called_once()
+        self.assertIs(send.call_args.kwargs["is_cancelled"], cancelled)
+        current.assert_called_once()
+        self.assertEqual(
+            usage.events, [("start", "tests", "test"), ("fail", "token", True)]
+        )
+
     def test_stage_deadline_bounds_request_retries_without_new_attempts(self):
         usage = FakeUsage()
         clock = [100.0]
 
-        def request(_url, _payload, _key, timeout):
+        def request(_url, _payload, _key, timeout, *, is_cancelled=None):
             self.assertEqual(timeout, 2.0)
             clock[0] += timeout
             raise TimeoutError("request deadline")

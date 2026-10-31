@@ -474,7 +474,12 @@ def request_response(
         token = usage.start(stage_name, data) if usage is not None else None
         attempt_started = time.monotonic()
         try:
-            result = transport.request(url, payload, api_key, request_timeout)
+            try:
+                result = transport.request(
+                    url, payload, api_key, request_timeout, is_cancelled=is_cancelled
+                )
+            except transport.RequestCancelled as exc:
+                raise StaleReview("review cancelled during model request") from exc
             if not isinstance(result, dict):
                 raise ValueError("OpenAI response was not a JSON object")
         except Exception as exc:
