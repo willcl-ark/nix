@@ -57,6 +57,8 @@ CANDIDATE_FIELDS = (
 )
 TOOL_FIELDS = (
     "name",
+    "outcome",
+    "evidence",
     "output_bytes",
     "output_sha256",
     "skipped",

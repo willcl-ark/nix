@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 
 from ralph.repository import MAX_TOOL_BYTES
+from ralph.evidence import ToolFailure
 from .repository import current_head
 
 MAX_DISCUSSION_RESPONSE_BYTES = 500_000
@@ -120,14 +121,19 @@ def search_discussions(bot_config, query, current_pr, cutoff=None):
         or not 3 <= len(query) <= 100
         or any(char in query for char in "\r\n\x00")
     ):
-        return "Search query must be 3 to 100 characters on one line."
+        raise ToolFailure(
+            "invalid_request", "Search query must be 3 to 100 characters on one line."
+        )
     path = "/issues?state=all&limit=10&q=" + urllib.parse.quote(query)
     try:
         issues = public_discussion_request(bot_config, path)
     except ValueError:
-        return "Public search response is unavailable or exceeds the context limit."
+        raise ToolFailure(
+            "unavailable",
+            "Public search response is unavailable or exceeds the context limit.",
+        )
     if not isinstance(issues, list):
-        return "Forgejo returned invalid search results."
+        raise ToolFailure("unavailable", "Forgejo returned invalid search results.")
     result = "Public issue and PR matches in this repository:\n"
     for issue in issues[:10]:
         if (
@@ -159,15 +165,21 @@ def read_discussion(bot_config, number, current_pr, cutoff=None):
         or isinstance(number, bool)
         or not 1 <= number <= 10_000_000
     ):
-        return "Invalid issue or PR number."
+        raise ToolFailure("invalid_request", "Invalid issue or PR number.")
     if number == current_pr:
-        return "The current PR's discussion is excluded from this review."
+        raise ToolFailure(
+            "invalid_request",
+            "The current PR's discussion is excluded from this review.",
+        )
     try:
         issue = public_discussion_request(bot_config, f"/issues/{number}")
     except ValueError:
-        return "Public discussion is unavailable or exceeds the context limit."
+        raise ToolFailure(
+            "unavailable",
+            "Public discussion is unavailable or exceeds the context limit.",
+        )
     if not isinstance(issue, dict) or issue.get("number") != number:
-        return "Forgejo returned an invalid discussion."
+        raise ToolFailure("unavailable", "Forgejo returned an invalid discussion.")
     kind = "PR" if issue.get("pull_request") else "Issue"
     url_kind = "pulls" if kind == "PR" else "issues"
     title, body = _discussion_title_body(issue, cutoff, 3000)
@@ -187,7 +199,9 @@ def read_discussion(bot_config, number, current_pr, cutoff=None):
             bot_config, f"/issues/{number}/comments?limit=20&page=1"
         )
     except ValueError:
-        return result + "Comments exceed the public context response limit."
+        raise ToolFailure(
+            "unavailable", result + "Comments exceed the public context response limit."
+        )
     if not isinstance(comments, list):
         return result + "Forgejo returned invalid comments."
     human = [
@@ -311,25 +325,35 @@ def read_current_pr_discussion(
         or isinstance(number, bool)
         or not 1 <= number <= 10_000_000
     ):
-        return "Invalid pull request number."
+        raise ToolFailure("invalid_request", "Invalid pull request number.")
     if (
         not isinstance(page, int)
         or isinstance(page, bool)
         or not 1 <= page <= MAX_COMMENT_PAGES
     ):
-        return f"Page must be 1 to {MAX_COMMENT_PAGES}."
+        raise ToolFailure("invalid_request", f"Page must be 1 to {MAX_COMMENT_PAGES}.")
     if kind not in {"comments", "inline", "reviews"}:
-        return "Kind must be comments, inline, or reviews."
+        raise ToolFailure(
+            "invalid_request", "Kind must be comments, inline, or reviews."
+        )
     if not isinstance(review_id, int) or isinstance(review_id, bool) or review_id < 0:
-        return "review_id must be a nonnegative integer."
+        raise ToolFailure("invalid_request", "review_id must be a nonnegative integer.")
     if kind == "inline" and review_id < 1:
-        return "Use kind=reviews first, then pass a positive review_id for inline comments."
+        raise ToolFailure(
+            "invalid_request",
+            "Use kind=reviews first, then pass a positive review_id for inline comments.",
+        )
     try:
         issue = public_discussion_request(bot_config, f"/issues/{number}")
     except ValueError:
-        return "Current PR discussion is unavailable or exceeds the context limit."
+        raise ToolFailure(
+            "unavailable",
+            "Current PR discussion is unavailable or exceeds the context limit.",
+        )
     if not isinstance(issue, dict) or issue.get("number") != number:
-        return "Forgejo returned an invalid current PR discussion."
+        raise ToolFailure(
+            "unavailable", "Forgejo returned an invalid current PR discussion."
+        )
     title, body = _discussion_title_body(issue, cutoff, 4000)
     result = (
         f"Current PR #{number}: {title}\n"
@@ -443,22 +467,29 @@ def _github_fragment_comment(base, fragment):
 def read_github_discussion(bot_config, url, kind="comments", page=1, cutoff=None):
     parsed = _parse_github_issue_url(url)
     if parsed is None:
-        return "URL must be a public GitHub pull or issue URL."
+        raise ToolFailure(
+            "invalid_request", "URL must be a public GitHub pull or issue URL."
+        )
     if (
         not isinstance(page, int)
         or isinstance(page, bool)
         or not 1 <= page <= MAX_COMMENT_PAGES
     ):
-        return f"Page must be 1 to {MAX_COMMENT_PAGES}."
+        raise ToolFailure("invalid_request", f"Page must be 1 to {MAX_COMMENT_PAGES}.")
     if kind not in {"comments", "inline", "reviews"}:
-        return "Kind must be comments, inline, or reviews."
+        raise ToolFailure(
+            "invalid_request", "Kind must be comments, inline, or reviews."
+        )
     owner, repo, number = parsed
     base = f"/repos/{owner}/{repo}"
     fragment = urllib.parse.urlsplit(url).fragment
     try:
         issue = _github_api(f"{base}/issues/{number}")
     except (ValueError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
-        return "GitHub discussion is unavailable or exceeds the context limit."
+        raise ToolFailure(
+            "unavailable",
+            "GitHub discussion is unavailable or exceeds the context limit.",
+        )
     if not isinstance(issue, dict):
         issue = {}
     issue.setdefault("number", number)

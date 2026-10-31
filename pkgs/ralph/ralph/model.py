@@ -10,6 +10,7 @@ import urllib.error
 from email.utils import parsedate_to_datetime
 
 from . import research, transport, upstream
+from .evidence import ToolFailure
 from .repository import (
     find_paths,
     read_file,
@@ -976,6 +977,14 @@ def openai_review(
                 )
                 tool_record = {
                     "name": "web_search",
+                    "outcome": (
+                        "success"
+                        if item.get("status") == "completed"
+                        else "unavailable"
+                        if item.get("status") == "failed"
+                        else "unknown"
+                    ),
+                    "evidence": "context",
                     "arguments": json.dumps(action, sort_keys=True)[:160],
                     "arguments_sha256": hashlib.sha256(
                         json.dumps(action, sort_keys=True).encode()
@@ -1007,9 +1016,23 @@ def openai_review(
         if calls:
             inputs.extend(output)
             for call in calls:
+                outcome = "success"
+                evidence = (
+                    "experiment"
+                    if call.get("name") == "experiment_run"
+                    else "context"
+                    if call.get("name")
+                    in LIVE_RESEARCH_TOOL_NAMES | {"blame_base", "read_commit"}
+                    else "source"
+                )
                 skipped = calls_used >= max_tool_calls
                 if skipped:
                     limits["tool_calls"]["hit"] = True
+                    outcome = (
+                        "unavailable"
+                        if call.get("name") in allowed_tools
+                        else "invalid_request"
+                    )
                     answer = "Inspection limit reached. Finish with evidence already available."
                 else:
                     calls_used += 1
@@ -1017,10 +1040,15 @@ def openai_review(
                     try:
                         args = json.loads(call["arguments"])
                         if call.get("name") not in allowed_tools:
-                            answer = "Unknown or unavailable tool."
+                            raise ToolFailure(
+                                "invalid_request", "Unknown or unavailable tool."
+                            )
                         elif call["name"] == "experiment_run":
                             if experiment_session is None:
-                                answer = "Experiment execution is unavailable."
+                                raise ToolFailure(
+                                    "unavailable",
+                                    "Experiment execution is unavailable.",
+                                )
                             else:
                                 answer = experiment_session.dispatch(call["name"], args)
                         elif call["name"] == "find_paths":
@@ -1078,7 +1106,9 @@ def openai_review(
                         elif call["name"] in LIVE_RESEARCH_TOOL_NAMES:
                             if context_calls >= max_context_calls:
                                 limits["context_calls"]["hit"] = True
-                                answer = "Discussion lookup limit reached."
+                                raise ToolFailure(
+                                    "unavailable", "Discussion lookup limit reached."
+                                )
                             else:
                                 context_calls += 1
                                 limits["context_calls"]["used"] = context_calls
@@ -1089,11 +1119,15 @@ def openai_review(
                                 elif discussion_lookup is not None:
                                     answer = discussion_lookup(call["name"], args)
                                 else:
-                                    answer = "Discussion lookup unavailable."
+                                    raise ToolFailure(
+                                        "unavailable", "Discussion lookup unavailable."
+                                    )
                         elif call["name"] in {"blame_base", "read_commit"}:
                             if history_calls >= max_history_calls:
                                 limits["history_calls"]["hit"] = True
-                                answer = "History lookup limit reached."
+                                raise ToolFailure(
+                                    "unavailable", "History lookup limit reached."
+                                )
                             else:
                                 history_calls += 1
                                 limits["history_calls"]["used"] = history_calls
@@ -1114,16 +1148,22 @@ def openai_review(
                                         args.get("path"),
                                     )
                         else:
-                            answer = "Unknown tool."
+                            raise ToolFailure("invalid_request", "Unknown tool.")
+                    except ToolFailure as exc:
+                        outcome, answer = exc.outcome, str(exc)
                     except (KeyError, TypeError, ValueError):
+                        outcome = "invalid_request"
                         answer = "Invalid tool arguments."
                     except urllib.error.HTTPError as exc:
+                        outcome = "unavailable"
                         answer = f"Discussion lookup returned HTTP {exc.code}."
                     except (
                         urllib.error.URLError,
                         TimeoutError,
                         subprocess.CalledProcessError,
+                        subprocess.TimeoutExpired,
                     ):
+                        outcome = "unavailable"
                         answer = (
                             "Context lookup failed; continue with available evidence."
                         )
@@ -1138,6 +1178,8 @@ def openai_review(
                     arguments = str(call.get("arguments", ""))
                     tool_record = {
                         "name": str(call.get("name", ""))[:100],
+                        "outcome": outcome,
+                        "evidence": evidence,
                         "arguments": arguments[:160],
                         "arguments_sha256": hashlib.sha256(
                             arguments.encode()

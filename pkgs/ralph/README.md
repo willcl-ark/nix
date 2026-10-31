@@ -608,6 +608,19 @@ verifier envelopes or decision structures reject the entire verifier response.
 Unknown or repeated candidate IDs withhold affected decisions while preserving
 independently valid findings. Affected and omitted candidates become unresolved.
 
+Tool traces record success, unavailable evidence and invalid requests separately.
+Unavailable requested source reads reduce coverage even when the model reports
+complete inspection. Discussion and history failures affect optional context;
+experiment failures remain separate. Invalid requests stay diagnostic so a typo
+can be corrected without declaring source unavailable. A later successful retry
+does not erase an earlier unavailable-evidence record. Hosted web calls without
+an explicit outcome remain unknown.
+
+Frozen discussion captures use schema version 2 and retain each lookup's outcome.
+Older captures must be recaptured explicitly; they cannot establish whether a
+saved response was evidence or an unavailable-evidence message. Existing reports
+are not rewritten.
+
 Partial coverage does not discard otherwise valid findings. An unresolved
 candidate or failed stage adds a limitation. The judge may withhold eligible
 findings but cannot add or merge IDs, change their kind, severity, security

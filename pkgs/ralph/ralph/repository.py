@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from pathlib import Path
 
+from .evidence import ToolFailure
+
 MAX_REVIEW_BYTES = 300_000
 MAX_FILE_BYTES = 1_000_000
 MAX_TOOL_BYTES = 12_000
@@ -202,9 +204,11 @@ def file_excerpt_at(checkout, commit, path, line, context=30):
         files = tracked_files_at(checkout, commit)
     except subprocess.CalledProcessError:
         return f"{path} is unavailable at {commit}."
-    return f"{path} at {commit} near line {line}:\n" + read_file(
-        checkout, files, path, max(1, line - context)
-    )
+    try:
+        excerpt = read_file(checkout, files, path, max(1, line - context))
+    except ToolFailure as exc:
+        excerpt = str(exc)
+    return f"{path} at {commit} near line {line}:\n" + excerpt
 
 
 def release_review_refs(checkout, ref_prefix):
@@ -250,7 +254,9 @@ def find_paths(files, query):
         or "\r" in query
         or "\x00" in query
     ):
-        return "Path query must be 1 to 100 characters on one line."
+        raise ToolFailure(
+            "invalid_request", "Path query must be 1 to 100 characters on one line."
+        )
     result = ""
     for path in files:
         if query.casefold() not in path.casefold():
@@ -270,10 +276,13 @@ def read_file(checkout, files, path, start_line):
         or isinstance(start_line, bool)
         or start_line < 1
     ):
-        return "Invalid path or line. Only tracked regular files can be read."
+        raise ToolFailure(
+            "invalid_request",
+            "Invalid path or line. Only tracked regular files can be read.",
+        )
     size = int(git(checkout, "cat-file", "-s", files[path]).strip())
     if size > MAX_FILE_BYTES:
-        return f"File exceeds {MAX_FILE_BYTES} bytes."
+        raise ToolFailure("unavailable", f"File exceeds {MAX_FILE_BYTES} bytes.")
     content = subprocess.run(
         git_command(checkout, "cat-file", "blob", files[path]),
         check=True,
@@ -282,10 +291,10 @@ def read_file(checkout, files, path, start_line):
         env=git_environment(),
     ).stdout.decode(errors="replace")
     if "\x00" in content:
-        return "Binary file cannot be read as text."
+        raise ToolFailure("unavailable", "Binary file cannot be read as text.")
     lines = content.splitlines()
     if start_line > len(lines):
-        return f"{path} has {len(lines)} lines."
+        raise ToolFailure("invalid_request", f"{path} has {len(lines)} lines.")
     result = f"{path} ({len(lines)} lines):\n"
     for number in range(start_line, min(start_line + 300, len(lines) + 1)):
         line = f"{number}: {lines[number - 1]}\n"
@@ -303,7 +312,7 @@ def read_diff(checkout, changed_paths, base, head, path, start_line):
         or isinstance(start_line, bool)
         or not 1 <= start_line <= 100_000
     ):
-        return "Invalid changed path or diff line."
+        raise ToolFailure("invalid_request", "Invalid changed path or diff line.")
     args = (
         "diff",
         "--no-ext-diff",
@@ -413,7 +422,9 @@ def search_code(checkout, head, query):
         or "\r" in query
         or "\x00" in query
     ):
-        return "Search query must be 3 to 100 characters on one line."
+        raise ToolFailure(
+            "invalid_request", "Search query must be 3 to 100 characters on one line."
+        )
     try:
         output = bounded_git(
             checkout,
@@ -447,7 +458,9 @@ def blame_base(checkout, base_files, base, path, start_line):
         or isinstance(start_line, bool)
         or not 1 <= start_line <= 100_000
     ):
-        return "Invalid path or line at the comparison base."
+        raise ToolFailure(
+            "invalid_request", "Invalid path or line at the comparison base."
+        )
     try:
         output = bounded_git(
             checkout,
@@ -464,7 +477,9 @@ def blame_base(checkout, base_files, base, path, start_line):
             attr_source=base,
         ).decode(errors="replace")
     except subprocess.CalledProcessError:
-        return "No lines at that location in the comparison base."
+        raise ToolFailure(
+            "unavailable", "No lines at that location in the comparison base."
+        )
     summaries = {}
     lines = []
     current = None
@@ -492,7 +507,9 @@ def read_commit(checkout, base_files, base, commit, path):
         or not isinstance(path, str)
         or path not in base_files
     ):
-        return "Invalid commit or path at the comparison base."
+        raise ToolFailure(
+            "invalid_request", "Invalid commit or path at the comparison base."
+        )
     ancestor = subprocess.run(
         git_command(checkout, "merge-base", "--is-ancestor", commit, base),
         capture_output=True,
@@ -500,7 +517,9 @@ def read_commit(checkout, base_files, base, commit, path):
         env=git_environment(),
     )
     if ancestor.returncode:
-        return "Commit is not an ancestor of the comparison base."
+        raise ToolFailure(
+            "invalid_request", "Commit is not an ancestor of the comparison base."
+        )
     output = bounded_git(
         checkout,
         "show",
@@ -530,9 +549,9 @@ def read_pr_commit(checkout, base, head, commit, path, start_line):
         or type(start_line) is not int
         or not 1 <= start_line <= 100_000
     ):
-        return "Invalid PR commit, path, or diff line."
+        raise ToolFailure("invalid_request", "Invalid PR commit, path, or diff line.")
     if not has_commit(checkout, commit):
-        return "Commit is not in the review range."
+        raise ToolFailure("invalid_request", "Commit is not in the review range.")
     for endpoint, must_be_ancestor in ((head, True), (base, False)):
         result = subprocess.run(
             git_command(checkout, "merge-base", "--is-ancestor", commit, endpoint),
@@ -544,7 +563,7 @@ def read_pr_commit(checkout, base, head, commit, path, start_line):
         if result.returncode not in {0, 1}:
             raise subprocess.CalledProcessError(result.returncode, result.args)
         if (result.returncode == 0) != must_be_ancestor:
-            return "Commit is not in the review range."
+            raise ToolFailure("invalid_request", "Commit is not in the review range.")
     changed = bounded_git(
         checkout,
         "diff-tree",
@@ -562,7 +581,7 @@ def read_pr_commit(checkout, base, head, commit, path, start_line):
         attr_source=commit,
     )
     if path.encode() not in changed.split(b"\x00"):
-        return "Path was not changed by this PR commit."
+        raise ToolFailure("invalid_request", "Path was not changed by this PR commit.")
     args = (
         "show",
         "--format=",

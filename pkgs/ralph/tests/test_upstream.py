@@ -63,23 +63,19 @@ class UpstreamTests(unittest.TestCase):
             )
             self.assertIn("-before", patch)
             self.assertIn("+after", patch)
+            from ralph.evidence import ToolFailure
+
             for invalid in (base, "HEAD", original[:7], original + "^", "--all"):
-                with self.subTest(commit=invalid):
-                    self.assertIn(
-                        "Invalid",
-                        upstream.lookup(
-                            root,
-                            evidence,
-                            "read_upstream_file",
-                            {**args, "commit": invalid},
-                        ),
+                with self.subTest(commit=invalid), self.assertRaises(ToolFailure):
+                    upstream.lookup(
+                        root,
+                        evidence,
+                        "read_upstream_file",
+                        {**args, "commit": invalid},
                     )
-            self.assertIn(
-                "Invalid", upstream.lookup(root, None, "read_upstream_file", args)
-            )
-            self.assertIn(
-                "Invalid",
+            with self.assertRaises(ToolFailure):
+                upstream.lookup(root, None, "read_upstream_file", args)
+            with self.assertRaises(ToolFailure):
                 upstream.lookup(
                     root, evidence, "read_upstream_file", {**args, "path": "../code"}
-                ),
-            )
+                )

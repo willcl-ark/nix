@@ -161,6 +161,23 @@ def summarize(debug):
                                 f"Unresolved {kind}: " + decision["reason"],
                             )
                         status = "partial"
+        for tool in stage.get("tools", []):
+            # Bad arguments do not prove evidence is unavailable. Keep them in
+            # diagnostics; the model can correct its request on a later turn.
+            if tool.get("outcome") != "unavailable":
+                continue
+            evidence = tool.get("evidence")
+            reason = f"{tool['name']}: requested evidence was unavailable."
+            if evidence == "source":
+                issue(name, category, reason)
+                if status == "complete":
+                    status = "partial"
+            elif evidence == "context":
+                issue(name, "context", reason)
+                contexts.append("partial")
+            elif evidence == "experiment":
+                issue(name, "experiment", reason)
+                experiments.append("partial")
         if category == "context":
             contexts.append(status)
         elif category == "verification":

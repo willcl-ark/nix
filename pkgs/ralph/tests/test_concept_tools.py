@@ -1,12 +1,60 @@
 import json
+from contextlib import nullcontext
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from ralph import model
+from ralph import model, coverage
 
 
 class ConceptToolTests(unittest.TestCase):
+    def test_tool_failures_constrain_coverage_independently_of_model(self):
+        for name, args, outcome, required in (
+            ("read_file", {"path": "new.cpp", "start_line": 1}, "unavailable", True),
+            (
+                "read_file",
+                {"path": "missing.cpp", "start_line": 1},
+                "invalid_request",
+                True,
+            ),
+            ("read_discussion", {"number": 1}, "unavailable", False),
+        ):
+            with self.subTest(name=name, outcome=outcome):
+                debug = {}
+                with (
+                    patch.object(model, "read_file", side_effect=TimeoutError)
+                    if outcome == "unavailable" and required
+                    else nullcontext()
+                ):
+                    self.run_tools(
+                        [(name, args)],
+                        debug=debug,
+                        stage_name="tests",
+                        discussion_lookup=Mock(side_effect=TimeoutError),
+                    )
+                self.assertEqual(debug["tools"][0]["outcome"], outcome)
+                debug.update(
+                    status="completed",
+                    coverage={"status": "complete", "limitations": []},
+                )
+                summary = coverage.summarize(
+                    {
+                        "stages": {
+                            "tests": debug,
+                            "verifier": {
+                                "status": "completed",
+                                "coverage": {"status": "complete"},
+                            },
+                        }
+                    }
+                )
+                self.assertEqual(
+                    summary["status"],
+                    "partial" if required and outcome == "unavailable" else "complete",
+                )
+                if not required:
+                    self.assertEqual(summary["context"]["status"], "partial")
+
     def test_focused_pr_commit_reads_use_pinned_endpoints(self):
         arguments = {"commit": "c" * 40, "path": "new.cpp", "start_line": 25}
         with patch.object(

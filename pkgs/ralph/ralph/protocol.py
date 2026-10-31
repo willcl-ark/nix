@@ -6,6 +6,7 @@ import subprocess
 from urllib.parse import urlsplit
 
 from .repository import MAX_TOOL_BYTES, read_file
+from .evidence import ToolFailure
 
 
 class InvalidReview(ValueError):
@@ -499,7 +500,7 @@ def _source_evidence(evidence, snapshot):
             raise InvalidReview("Source evidence exceeds the file-read limit")
         try:
             actual = read_file(snapshot.checkout, files, source["path"], source["line"])
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, subprocess.SubprocessError, ToolFailure) as exc:
             raise InvalidReview("Source evidence could not be read") from exc
         expected = "".join(
             f"{number}: {line}\n" for number, line in enumerate(lines, source["line"])

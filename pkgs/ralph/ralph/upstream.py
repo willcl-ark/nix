@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 import uuid
 
+from .evidence import ToolFailure
 from .repository import (
     SHA,
     MAX_TOOL_BYTES,
@@ -59,7 +60,10 @@ def lookup(checkout, evidence, name, args):
         or commit not in original_commits(evidence)
         or type(before) is not bool
     ):
-        return "Invalid upstream commit. Use a resolved original SHA from the evidence."
+        raise ToolFailure(
+            "invalid_request",
+            "Invalid upstream commit. Use a resolved original SHA from the evidence.",
+        )
     ref = git(
         checkout, "rev-parse", "--verify", f"{commit}^" if before else commit
     ).strip()
@@ -90,4 +94,4 @@ def lookup(checkout, evidence, name, args):
         )
     if name == "search_upstream_code":
         return search_code(checkout, ref, args.get("query"))
-    return "Invalid upstream tool."
+    raise ToolFailure("invalid_request", "Invalid upstream tool.")

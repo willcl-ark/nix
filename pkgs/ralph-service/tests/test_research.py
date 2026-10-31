@@ -3,10 +3,28 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from ralph import research as frozen_research
+from ralph.evidence import ToolFailure
 from ralph_service import forgejo, research
 
 
 class ResearchEvidenceTests(unittest.TestCase):
+    def test_unavailable_capture_remains_unavailable_on_replay(self):
+        with patch.object(
+            forgejo,
+            "read_current_pr_discussion",
+            side_effect=ToolFailure("unavailable", "Missing discussion"),
+        ):
+            evidence = research.capture(self.bot_config, 42)
+        for entry in evidence["entries"]:
+            self.assertEqual(entry["outcome"], "unavailable")
+            with self.assertRaises(ToolFailure) as failure:
+                frozen_research.lookup(evidence, entry["name"], entry["arguments"])
+            self.assertEqual(failure.exception.outcome, "unavailable")
+            self.assertEqual(str(failure.exception), "Missing discussion")
+        with self.assertRaises(ToolFailure) as missing:
+            frozen_research.lookup(evidence, "read_discussion", {"number": 99})
+        self.assertEqual(missing.exception.outcome, "unavailable")
+
     def setUp(self):
         self.bot_config = SimpleNamespace(
             repository_url="https://git.example.org/owner/repo",

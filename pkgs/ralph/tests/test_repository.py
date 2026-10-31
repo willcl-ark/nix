@@ -247,10 +247,17 @@ class LocalRepositoryTests(unittest.TestCase):
 
             self.assertIn("+new_behavior();", read(commit, "new.cpp"))
             self.assertIn("+head", read(self.head, "code.txt"))
-            self.assertIn("not in the review range", read(self.base, "target.txt"))
-            self.assertIn("not in the review range", read(self.ancestor, "code.txt"))
-            self.assertIn("Invalid", read("HEAD", "new.cpp"))
-            self.assertIn("not changed", read(commit, "code.txt"))
+            from ralph.evidence import ToolFailure
+
+            for revision, path in (
+                (self.base, "target.txt"),
+                (self.ancestor, "code.txt"),
+                ("HEAD", "new.cpp"),
+                (commit, "code.txt"),
+            ):
+                with self.assertRaises(ToolFailure) as failure:
+                    read(revision, path)
+                self.assertEqual(failure.exception.outcome, "invalid_request")
             self.git("checkout", "-q", "target")
             self.git("branch", "-f", "topic", self.ancestor)
             self.assertIn("+new_behavior();", read(commit, "new.cpp"))

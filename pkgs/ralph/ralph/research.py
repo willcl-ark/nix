@@ -4,8 +4,9 @@ from datetime import datetime
 import hashlib
 import json
 
+from .evidence import ToolFailure
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MISSING_RESEARCH = (
     "Frozen research evidence is unavailable for this tool call. Continue "
     "without live discussion or web lookup."
@@ -88,6 +89,7 @@ def validate(evidence):
             "name",
             "arguments",
             "output",
+            "outcome",
             "captured_at",
             "cutoff",
         }:
@@ -98,6 +100,8 @@ def validate(evidence):
         arguments = _args(name, entry["arguments"])
         if entry["arguments"] != arguments:
             raise ValueError("Frozen research evidence arguments are not canonical")
+        if entry["outcome"] not in {"success", "unavailable", "invalid_request"}:
+            raise ValueError("Invalid frozen evidence outcome")
         if not isinstance(entry["output"], str):
             raise ValueError("Frozen research evidence output must be text")
         if (
@@ -117,16 +121,18 @@ def validate(evidence):
 def lookup(evidence, name, args):
     evidence = validate(evidence)
     if evidence is None:
-        return MISSING_RESEARCH
+        raise ToolFailure("unavailable", MISSING_RESEARCH)
     try:
         arguments = _args(name, args)
-    except ValueError:
-        return MISSING_RESEARCH
+    except ValueError as exc:
+        raise ToolFailure("invalid_request", str(exc)) from exc
     key = _entry_key(name, arguments)
     for entry in evidence["entries"]:
         if entry["key"] == key:
+            if entry["outcome"] != "success":
+                raise ToolFailure(entry["outcome"], entry["output"])
             return entry["output"]
-    return MISSING_RESEARCH
+    raise ToolFailure("unavailable", MISSING_RESEARCH)
 
 
 def inventory(evidence):
