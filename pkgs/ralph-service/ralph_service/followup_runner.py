@@ -9,9 +9,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from . import followup
-from ralph.config import load_prompt_file
+from ralph import stats_changes
 from ralph import usage as usage_tracking
+from ralph.config import load_prompt_file
+
+from . import followup
 
 
 DEFAULT_PROMPT_FILE = (
@@ -105,6 +107,7 @@ def init_assessments(path, jobs):
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         )""")
+        stats_changes.install(db, "assessments", "job_id")
         initialized = db.execute(
             "SELECT 1 FROM metadata WHERE key = 'initialized'"
         ).fetchone()

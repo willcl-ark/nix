@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import stats_changes
 
 TOKEN_FIELDS = (
     "input_tokens",
@@ -76,6 +77,7 @@ class Ledger:
                 completed_at INTEGER,
                 http_status INTEGER
             )""")
+            stats_changes.install(db, "requests", "token")
             db.execute("CREATE INDEX IF NOT EXISTS requests_month ON requests(month)")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS requests_review ON requests(review_id)"

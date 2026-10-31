@@ -76,6 +76,55 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(row[0], "provider-model")
             self.assertLessEqual(row[1], row[2])
 
+    def test_statistics_cursor_tracks_completion_and_deleted_requests(self):
+        with sqlite3.connect(self.path) as db:
+            identity, sequence = db.execute(
+                "SELECT identity,sequence FROM stats_sources WHERE table_name='requests'"
+            ).fetchone()
+        token = self.start()
+        self.requests.complete(token, self.response())
+        with sqlite3.connect(self.path) as db:
+            changed = db.execute(
+                "SELECT record_key,sequence FROM stats_changes "
+                "WHERE table_name='requests' AND sequence>?",
+                (sequence,),
+            ).fetchall()
+            self.assertEqual(len(changed), 1)
+            self.assertEqual(changed[0][0], token)
+            sequence = changed[0][1]
+            # An interrupted maintenance correction must not advance the cursor.
+            db.execute(
+                "UPDATE requests SET model='replacement' WHERE token=?", (token,)
+            )
+            db.rollback()
+            self.assertEqual(
+                db.execute(
+                    "SELECT sequence FROM stats_sources WHERE table_name='requests'"
+                ).fetchone()[0],
+                sequence,
+            )
+            db.execute("DELETE FROM requests WHERE token=?", (token,))
+        Ledger(self.path)
+        with sqlite3.connect(self.path) as db:
+            reopened = db.execute(
+                "SELECT identity,sequence FROM stats_sources WHERE table_name='requests'"
+            ).fetchone()
+            self.assertEqual(reopened[0], identity)
+            self.assertGreater(reopened[1], sequence)
+            self.assertEqual(
+                db.execute(
+                    "SELECT record_key FROM stats_changes "
+                    "WHERE table_name='requests' AND sequence>?",
+                    (sequence,),
+                ).fetchall(),
+                [(token,)],
+            )
+            self.assertIsNone(
+                db.execute(
+                    "SELECT token FROM requests WHERE token=?", (token,)
+                ).fetchone()
+            )
+
     def test_missing_usage_stays_unknown_and_partial_totals_are_reported(self):
         self.requests.complete(self.start(), {"id": "empty"})
         self.requests.complete(

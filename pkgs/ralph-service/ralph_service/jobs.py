@@ -7,6 +7,8 @@ import time
 import uuid
 from contextlib import contextmanager
 
+from ralph import stats_changes
+
 
 def _profile_name(identity):
     if identity and identity.get("name") == "current":
@@ -56,6 +58,7 @@ class JobStore:
                 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_pending_per_pr
                     ON jobs(number) WHERE status = 'pending'
             """)
+            stats_changes.install(db, "jobs", "id")
             # Migrate unfinished reviews before loading their saved configuration.
             for row in db.execute(
                 "SELECT id, engine_identity FROM jobs WHERE review_result IS NULL AND status IN ('pending', 'running', 'retry')"
