@@ -93,6 +93,18 @@ class JobStore:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS review_requests (id TEXT PRIMARY KEY)"
             )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS reconciliation (
+                    number INTEGER PRIMARY KEY,
+                    epoch INTEGER NOT NULL,
+                    base_override TEXT,
+                    action TEXT NOT NULL,
+                    force INTEGER NOT NULL,
+                    engine_identity TEXT NOT NULL,
+                    token TEXT,
+                    next_attempt REAL NOT NULL DEFAULT 0
+                )
+            """)
             db.execute("DROP INDEX IF EXISTS jobs_one_running")
             db.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_running_per_pr
@@ -145,106 +157,214 @@ class JobStore:
         engine_identity,
         request_id=None,
     ):
-        """Store a webhook event before acknowledging it.
-
-        A pending event for this PR is replaced by the latest event. An event
-        with an already queued or finished head is ignored unless forced.
-        """
+        """Enqueue already resolved input, coalescing equivalent desired work."""
         with self._connection(write=True) as db:
-            if request_id is not None:
-                if not db.execute(
-                    "INSERT OR IGNORE INTO review_requests VALUES (?)", (request_id,)
-                ).rowcount:
-                    return False
-            identity = json.dumps(engine_identity, sort_keys=True)
-            pending = db.execute(
-                "SELECT * FROM jobs WHERE number = ? AND status = 'pending'", (number,)
-            ).fetchone()
-            latest = db.execute(
-                "SELECT * FROM jobs WHERE number = ? ORDER BY generation DESC LIMIT 1",
-                (number,),
-            ).fetchone()
-            # An ordinary update must retain an explicitly requested high review.
-            active = pending or latest
-            if active and active["status"] in {"pending", "running", "retry"}:
-                previous = (
-                    (json.loads(active["engine_identity"]) or {})
-                    if active["engine_identity"]
-                    else {}
-                )
-                if (
-                    _profile_name(previous) == "high"
-                    and _profile_name(engine_identity) == "default"
-                ):
-                    identity = active["engine_identity"]
-                    if (
-                        pending
-                        or active["head"] != head
-                        or active["base_ref"] != base_ref
-                    ):
-                        force = force or bool(active["force"])
-            if pending:
-                if (
-                    pending["head"] == head
-                    and pending["base_ref"] == base_ref
-                    and pending["engine_identity"] == identity
-                ):
-                    if force and not pending["force"]:
-                        db.execute(
-                            "UPDATE jobs SET force = 1 WHERE id = ?", (pending["id"],)
-                        )
-                        return True
-                    return False
-                generation = latest["generation"] + 1
-                db.execute(
-                    """
-                    UPDATE jobs SET generation = ?, base_ref = ?, head = ?,
-                        action = ?, force = ?, engine_identity = ?,
-                        attempts = 0, error = NULL
-                    WHERE id = ?
-                """,
-                    (
-                        generation,
-                        base_ref,
-                        head,
-                        action,
-                        int(force),
-                        identity,
-                        pending["id"],
-                    ),
-                )
-                return True
+            return self._enqueue(
+                db, number, base_ref, head, action, force, engine_identity, request_id
+            )
 
-            if (
-                latest
-                and latest["head"] == head
-                and latest["base_ref"] == base_ref
-                and latest["engine_identity"] == identity
-                and not force
-            ):
+    def _enqueue(
+        self,
+        db,
+        number,
+        base_ref,
+        head,
+        action,
+        force,
+        engine_identity,
+        request_id=None,
+    ):
+        if request_id is not None:
+            if not db.execute(
+                "INSERT OR IGNORE INTO review_requests VALUES (?)", (request_id,)
+            ).rowcount:
                 return False
-            if latest and latest["status"] == "retry":
-                db.execute(
-                    """
-                    UPDATE jobs SET status = 'superseded', next_attempt = 0
-                    WHERE id = ?
-                """,
-                    (latest["id"],),
-                )
-            generation = latest["generation"] + 1 if latest else 1
+        identity = json.dumps(engine_identity, sort_keys=True)
+        pending = db.execute(
+            "SELECT * FROM jobs WHERE number = ? AND status = 'pending'", (number,)
+        ).fetchone()
+        latest = db.execute(
+            "SELECT * FROM jobs WHERE number = ? ORDER BY generation DESC LIMIT 1",
+            (number,),
+        ).fetchone()
+        # An ordinary update must retain an explicitly requested high review.
+        active = pending or latest
+        if active and active["status"] in {"pending", "running", "retry"}:
+            previous = (
+                (json.loads(active["engine_identity"]) or {})
+                if active["engine_identity"]
+                else {}
+            )
+            if (
+                _profile_name(previous) == "high"
+                and _profile_name(engine_identity) == "default"
+            ):
+                identity = active["engine_identity"]
+                if pending or active["head"] != head or active["base_ref"] != base_ref:
+                    force = force or bool(active["force"])
+        if pending:
+            if (
+                pending["head"] == head
+                and pending["base_ref"] == base_ref
+                and pending["engine_identity"] == identity
+            ):
+                if force and not pending["force"]:
+                    db.execute(
+                        "UPDATE jobs SET force = 1 WHERE id = ?", (pending["id"],)
+                    )
+                    return True
+                return False
+            generation = latest["generation"] + 1
             db.execute(
                 """
-                INSERT INTO jobs (number, generation, base_ref, head, action,
-                                  force, engine_identity, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+                UPDATE jobs SET generation = ?, base_ref = ?, head = ?,
+                    action = ?, force = ?, engine_identity = ?,
+                    attempts = 0, error = NULL
+                WHERE id = ?
             """,
-                (number, generation, base_ref, head, action, int(force), identity),
+                (
+                    generation,
+                    base_ref,
+                    head,
+                    action,
+                    int(force),
+                    identity,
+                    pending["id"],
+                ),
             )
             return True
+
+        if (
+            latest
+            and latest["head"] == head
+            and latest["base_ref"] == base_ref
+            and latest["engine_identity"] == identity
+            and not force
+        ):
+            return False
+        if latest and latest["status"] == "retry":
+            db.execute(
+                """
+                UPDATE jobs SET status = 'superseded', next_attempt = 0
+                WHERE id = ?
+            """,
+                (latest["id"],),
+            )
+        generation = latest["generation"] + 1 if latest else 1
+        db.execute(
+            """
+            INSERT INTO jobs (number, generation, base_ref, head, action,
+                              force, engine_identity, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+        """,
+            (number, generation, base_ref, head, action, int(force), identity),
+        )
+        return True
+
+    def reconcile_hint(
+        self, number, base_ref, action, force=False, *, engine_identity, request_id=None
+    ):
+        """Durably request an authoritative read without invalidating running work."""
+        with self._connection(write=True) as db:
+            if (
+                request_id is not None
+                and not db.execute(
+                    "INSERT OR IGNORE INTO review_requests VALUES (?)", (request_id,)
+                ).rowcount
+            ):
+                return False
+            previous = db.execute(
+                "SELECT * FROM reconciliation WHERE number = ?", (number,)
+            ).fetchone()
+            override = base_ref if base_ref.startswith("sha:") else None
+            if previous:
+                old_identity = json.loads(previous["engine_identity"])
+                if (
+                    _profile_name(old_identity) == "high"
+                    and _profile_name(engine_identity) == "default"
+                ):
+                    engine_identity = old_identity
+                if not force:
+                    override = previous["base_override"]
+                force = force or bool(previous["force"])
+            identity = json.dumps(engine_identity, sort_keys=True)
+            db.execute(
+                """
+                INSERT INTO reconciliation (number, epoch, base_override, action, force, engine_identity, next_attempt)
+                VALUES (?, 1, ?, ?, ?, ?, ?)
+                ON CONFLICT(number) DO UPDATE SET epoch = epoch + 1,
+                    base_override = excluded.base_override, action = excluded.action,
+                    force = excluded.force, engine_identity = excluded.engine_identity,
+                    next_attempt = excluded.next_attempt
+            """,
+                (number, override, action, int(force), identity, time.time()),
+            )
+            return True
+
+    def claim_reconciliation(self):
+        with self._connection(write=True) as db:
+            row = db.execute(
+                "SELECT * FROM reconciliation WHERE token IS NULL AND next_attempt <= ? ORDER BY next_attempt, number LIMIT 1",
+                (time.time(),),
+            ).fetchone()
+            if row is None:
+                return None
+            hint = dict(row)
+            hint["token"] = uuid.uuid4().hex
+            hint["engine_identity"] = json.loads(hint["engine_identity"])
+            db.execute(
+                "UPDATE reconciliation SET token = ? WHERE number = ?",
+                (hint["token"], hint["number"]),
+            )
+            return hint
+
+    def finish_reconciliation(self, hint, base_ref=None, head=None):
+        with self._connection(write=True) as db:
+            row = db.execute(
+                "SELECT * FROM reconciliation WHERE number = ? AND token = ?",
+                (hint["number"], hint["token"]),
+            ).fetchone()
+            if row is None:
+                return False
+            if row["epoch"] != hint["epoch"]:
+                db.execute(
+                    "UPDATE reconciliation SET token = NULL WHERE number = ?",
+                    (hint["number"],),
+                )
+                return False
+            if head is not None:
+                self._enqueue(
+                    db,
+                    hint["number"],
+                    hint["base_override"] or base_ref,
+                    head,
+                    hint["action"],
+                    bool(hint["force"]),
+                    hint["engine_identity"],
+                )
+            db.execute("DELETE FROM reconciliation WHERE number = ?", (hint["number"],))
+            return True
+
+    def retry_reconciliation(self, hint):
+        with self._connection(write=True) as db:
+            db.execute(
+                """
+                UPDATE reconciliation SET token = NULL,
+                    next_attempt = CASE WHEN epoch = ? THEN ? ELSE next_attempt END
+                WHERE number = ? AND token = ?
+            """,
+                (
+                    hint["epoch"],
+                    time.time() + self.retry_base_seconds,
+                    hint["number"],
+                    hint["token"],
+                ),
+            )
 
     def recover(self):
         """Release claims left by a previous process. Call once at startup."""
         with self._connection(write=True) as db:
+            db.execute("UPDATE reconciliation SET token = NULL")
             running = db.execute(
                 "SELECT * FROM jobs WHERE status = 'running'"
             ).fetchall()

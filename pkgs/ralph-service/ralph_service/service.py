@@ -100,21 +100,9 @@ def parse_event(bot_config, event, payload):
     return number, base_ref, head_sha, payload["action"], force
 
 
-def requeue_latest_head(
-    jobs, bot_config, number, base_ref, expected_head, action, engine_identity, force
-):
-    latest_head = repository.current_head(bot_config, number)
-    if latest_head == expected_head:
-        return
-    logging.info(
-        "review stale head pr=%d expected=%s latest=%s; requeueing",
-        number,
-        short_sha(expected_head),
-        short_sha(latest_head),
-    )
-    jobs.enqueue(
-        number, base_ref, latest_head, action, force, engine_identity=engine_identity
-    )
+def reconcile_stale_review(jobs, number, base_ref, action, engine_identity):
+    # Refresh existing intent without repeating a forced same-head review.
+    jobs.reconcile_hint(number, base_ref, action, engine_identity=engine_identity)
 
 
 def short_sha(sha):
@@ -321,13 +309,8 @@ def process_job(
                     )
                     if head_sha != expected_head:
                         if jobs.is_current(job):
-                            jobs.enqueue(
-                                number,
-                                base_ref,
-                                head_sha,
-                                action,
-                                force,
-                                engine_identity=engine_identity,
+                            reconcile_stale_review(
+                                jobs, number, base_ref, action, engine_identity
                             )
                         raise model.StaleReview("PR head changed during fetch")
                     snapshot = (
@@ -524,15 +507,8 @@ def process_job(
             )
             if result == "stale":
                 if jobs.is_current(job):
-                    requeue_latest_head(
-                        jobs,
-                        bot_config,
-                        number,
-                        base_ref,
-                        head_sha,
-                        action,
-                        engine_identity,
-                        force,
+                    reconcile_stale_review(
+                        jobs, number, base_ref, action, engine_identity
                     )
                 jobs.supersede(job)
             else:
@@ -555,16 +531,7 @@ def process_job(
         except model.StaleReview:
             stage = "stale"
             if jobs.is_current(job):
-                requeue_latest_head(
-                    jobs,
-                    bot_config,
-                    number,
-                    base_ref,
-                    expected_head,
-                    action,
-                    engine_identity,
-                    force,
-                )
+                reconcile_stale_review(jobs, number, base_ref, action, engine_identity)
             jobs.supersede(job)
             outcome = "stale"
             run_status = "cancelled"
@@ -696,10 +663,9 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
             # Use the current base branch, not a historical base commit.
             number, _, head, action, force = event
             base_ref = pr["base"]["ref"]
-            jobs.enqueue(
+            jobs.reconcile_hint(
                 number,
                 base_ref,
-                head,
                 action,
                 force,
                 engine_identity=high_engine.identity,
@@ -732,6 +698,39 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
             )
 
 
+def reconcile_next(jobs, bot_config, token):
+    """Resolve one durable hint outside the queue transaction."""
+    hint = jobs.claim_reconciliation()
+    if hint is None:
+        return False
+    try:
+        number = hint["number"]
+        pr = forgejo.forgejo_request(bot_config, token, f"/pulls/{number}")
+        if pr.get("number") != number or pr.get("state") not in {"open", "closed"}:
+            raise ValueError("invalid pull request state")
+        if pr["state"] == "closed":
+            jobs.finish_reconciliation(hint)
+        else:
+            resolved = parse_event(
+                bot_config,
+                "pull_request",
+                {
+                    "action": "opened",
+                    "repository": {
+                        "full_name": bot_config.repository,
+                        "html_url": bot_config.repository_url or "",
+                    },
+                    "pull_request": pr,
+                },
+            )
+            _, base_ref, head, _, _ = resolved
+            jobs.finish_reconciliation(hint, base_ref, head)
+        return True
+    except Exception:
+        jobs.retry_reconciliation(hint)
+        raise
+
+
 def command_worker(store, jobs, bot_config, token, high_engine, stop_event=None):
     stop_event = stop_event or threading.Event()
     while not stop_event.is_set():
@@ -739,6 +738,10 @@ def command_worker(store, jobs, bot_config, token, high_engine, stop_event=None)
             consume_review_requests(store, jobs, bot_config, token, high_engine)
         except Exception:
             logging.exception("Could not process Telegram review requests")
+        try:
+            reconcile_next(jobs, bot_config, token)
+        except Exception:
+            logging.exception("Could not reconcile pull request")
         stop_event.wait(5)
 
 
@@ -889,10 +892,9 @@ def make_handler(secret, jobs, bot_config, engine_identity=None):
             if job:
                 number, base_ref, head_sha, action, force = job
                 try:
-                    queued = jobs.enqueue(
+                    queued = jobs.reconcile_hint(
                         number,
                         base_ref,
-                        head_sha,
                         action,
                         force,
                         engine_identity=engine_identity,

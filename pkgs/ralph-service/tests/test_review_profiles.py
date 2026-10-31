@@ -61,6 +61,7 @@ class ProfileTests(unittest.TestCase):
             service.consume_review_requests(
                 self.store, self.jobs, self.config, "token", self.high
             )
+            service.reconcile_next(self.jobs, self.config, "token")
             job = self.jobs.claim()
             self.assertEqual(job["engine_identity"], self.high.identity)
             self.assertTrue(job["force"])

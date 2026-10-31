@@ -192,6 +192,15 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNone(self.jobs.claim())
         self.assertEqual(self.post_webhook(), 202)
         restarted = JobStore(self.state_dir / "jobs.sqlite3")
+        self.assertIsNone(restarted.claim())
+        pr = {
+            "number": 42,
+            "state": "open",
+            "base": {"ref": "master"},
+            "head": {"sha": "a" * 40},
+        }
+        with patch.object(forgejo, "forgejo_request", return_value=pr):
+            service.reconcile_next(restarted, self.bot_config, "token")
         job = restarted.claim()
         self.assertEqual(
             (job["number"], job["base_ref"], job["head"], job["action"], job["force"]),
@@ -199,6 +208,8 @@ class ServiceTests(unittest.TestCase):
         )
         restarted.complete(job)
         self.assertEqual(self.post_webhook(force=True), 202)
+        with patch.object(forgejo, "forgejo_request", return_value=pr):
+            service.reconcile_next(restarted, self.bot_config, "token")
         job = restarted.claim()
         self.assertTrue(job["force"])
         restarted.complete(job)
@@ -208,7 +219,9 @@ class ServiceTests(unittest.TestCase):
     def test_webhook_rejects_failed_persistence(self):
         with (
             patch.object(
-                self.jobs, "enqueue", side_effect=sqlite3.OperationalError("full")
+                self.jobs,
+                "reconcile_hint",
+                side_effect=sqlite3.OperationalError("full"),
             ),
             self.assertLogs(level="ERROR"),
         ):
@@ -749,9 +762,14 @@ class ServiceTests(unittest.TestCase):
                             states = db.execute(
                                 "SELECT number,status FROM jobs ORDER BY number"
                             ).fetchall()
-                        self.assertEqual(
-                            states, [(42, "complete"), (43, "pending"), (44, "pending")]
-                        )
+                        self.assertEqual(states, [(42, "complete"), (43, "pending")])
+                        with closing(sqlite3.connect(root / "jobs.sqlite3")) as db:
+                            self.assertEqual(
+                                db.execute(
+                                    "SELECT number FROM reconciliation"
+                                ).fetchall(),
+                                [(44,)],
+                            )
                 finally:
                     if process.poll() is None:
                         process.kill()
