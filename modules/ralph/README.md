@@ -309,7 +309,7 @@ policy must allow `script-src 'self'`, `connect-src 'self'` for the search
 catalog, and same-origin form submissions. Keep the stricter report policy on
 individual report HTML files. History pages are generated static HTML;
 configure the web server to serve directory indexes and redirect `<PR>` to
-`<PR>/`. The stats timer rebuilds history from existing public HTML/JSON pairs,
+`<PR>/`. The stats timer updates history from existing public HTML/JSON pairs,
 so reports already on disk appear automatically. Older reports without a
 recorded completion time use their file modification time. Saved reports may
 include reviews that were never posted. Private traces are never served or
@@ -400,6 +400,30 @@ manually without waiting for the timer:
 ```sh
 systemctl start ralph-stats.service
 ```
+
+Stats updates are incremental by default. A private cache in `stateDir/stats`
+holds compact review summaries and source checkpoints. Database triggers record
+inserts, updates and deletions transactionally, so retries and completed requests
+invalidate their earlier summaries. Stores without change tracking are read in
+full until their writer initializes tracking. Aggregate calculations and live
+subscription usage still refresh each run; the cache never substitutes for the
+authoritative review and usage databases.
+
+To rebuild after a backfill or manual restore, run the same `ralph-evaluate stats`
+command and arguments as the service with `--full` added, as the service user.
+This rebuilds derived summaries and history without making model calls. Missing
+caches and changes to the cache calculation version also cause a full rebuild.
+Developers must bump `stats_cache.VERSION` when changing cached extraction or
+interpretation. Source replacement and sequence regression invalidate checkpoints,
+but an in-place database restore that preserves identity and does not regress the
+sequence requires `--full`.
+
+History checks report file metadata before parsing changed reports. Use `--full`
+after edits that preserve file size and modification time. Unchanged generated
+pages are not replaced; a small freshness document supplies their current update
+time. The full JSON export remains available and is refreshed each run.
+The stats content security policy must allow `connect-src 'self'` for the
+freshness request, in addition to the existing same-origin script permission.
 
 To force a fresh review of the same head, send a signed synthetic pull request
 webhook with `"ralph_force": true`. Normal Forgejo webhooks omit this field.

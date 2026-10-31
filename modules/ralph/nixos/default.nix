@@ -379,9 +379,10 @@ in
       }
     ];
 
-    systemd.tmpfiles.rules = lib.optional (
-      cfg.reportDir != null
-    ) "d ${cfg.reportDir} 0755 ${cfg.user} ${cfg.group} -";
+    systemd.tmpfiles.rules = lib.optionals (cfg.reportDir != null) [
+      "d ${cfg.reportDir} 0755 ${cfg.user} ${cfg.group} -"
+      "d ${cfg.stateDir}/stats 0700 ${cfg.user} ${cfg.group} -"
+    ];
 
     users.users.${cfg.user} = {
       isSystemUser = true;
@@ -424,7 +425,10 @@ in
         ];
         ProtectSystem = "strict";
         ProtectHome = true;
-        ReadWritePaths = [ cfg.reportDir ];
+        ReadWritePaths = [
+          cfg.reportDir
+          "${cfg.stateDir}/stats"
+        ];
         NoNewPrivileges = true;
         PrivateTmp = true;
       };
