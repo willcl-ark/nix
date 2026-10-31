@@ -40,6 +40,7 @@ class Runtime:
         api_key,
         usage=None,
         is_current=None,
+        is_cancelled=None,
         discussion_lookup=None,
         allow_web_search=False,
         attempt=None,
@@ -53,6 +54,7 @@ class Runtime:
         self.openai_api_base = "https://api.openai.com/v1"
         self.usage = usage
         self.is_current = is_current
+        self.is_cancelled = is_cancelled
         self.discussion_lookup = discussion_lookup
         self.allow_web_search = allow_web_search
         self.attempt = attempt if attempt is not None else {}
@@ -66,7 +68,11 @@ class Runtime:
             raise StaleReview()
 
     def check_cancelled(self):
-        self.check_current()
+        """Check local cancellation without consulting the source repository."""
+        if self.is_cancelled is not None and self.is_cancelled():
+            from .model import StaleReview
+
+            raise StaleReview()
 
     def review(
         self,

@@ -10,7 +10,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from ralph import experiments, repository
 from ralph.model import StaleReview
@@ -57,21 +57,71 @@ class ExperimentTests(unittest.TestCase):
             self.assertEqual(result["status"], "unavailable")
             self.assertIsNone(result["exit_code"])
 
-    def test_cancellation_kills_a_running_process(self):
-        session = experiments.ExperimentSession(self.snapshot, ["F1"])
+    def test_cancellation_kills_a_running_process_without_remote_checks(self):
         start = time.monotonic()
-        session.is_current = lambda: time.monotonic() - start < 0.2
+
+        def cancel():
+            if time.monotonic() - start >= 0.2:
+                raise StaleReview("new local generation")
+
+        local = Mock(side_effect=cancel)
+        remote = Mock(side_effect=AssertionError("remote check inside polling loop"))
+        session = experiments.ExperimentSession(
+            self.snapshot, ["F1"], check_cancelled=local, check_current=remote
+        )
         with self.assertRaises(StaleReview):
             session._run(
                 [sys.executable, "-c", "import time; time.sleep(30)"], limit=1024
             )
         self.assertLess(time.monotonic() - start, 3)
-        session.is_current = None
+        self.assertGreater(local.call_count, 1)
+        remote.assert_not_called()
+        session.check_cancelled = None
         session.deadline = time.monotonic() + 0.1
         result = session._run(
             [sys.executable, "-c", "import time; time.sleep(30)"], limit=1024
         )
         self.assertEqual(result[0], "timeout")
+        remote.assert_not_called()
+
+    def test_source_change_without_local_cancellation_aborts_completed_experiment(self):
+        current = True
+
+        def validate():
+            if not current:
+                raise StaleReview("remote head changed")
+
+        remote = Mock(side_effect=validate)
+        local = Mock()
+        session = experiments.ExperimentSession(
+            self.snapshot, ["F1"], check_cancelled=local, check_current=remote
+        )
+        session.prlimit = session.bwrap = session.python = session.launcher = (
+            session.bash
+        ) = "unused"
+
+        def run_isolated(_argv, _entry):
+            nonlocal current
+            result = session._run(
+                [sys.executable, "-c", "import time; time.sleep(0.25)"], limit=1024
+            )
+            self.assertEqual(result[0], "completed")
+            self.assertEqual(remote.call_count, 1)
+            self.assertGreater(local.call_count, 1)
+            current = False
+            return result
+
+        with (
+            patch.object(session, "_prepare"),
+            patch.object(session, "_archive", return_value=self.root / "source.tar"),
+            patch.object(session, "_run_isolated", side_effect=run_isolated),
+            self.assertRaises(StaleReview),
+        ):
+            session.dispatch(
+                "experiment_run",
+                {"finding_id": "F1", "side": "head", "command": "true"},
+            )
+        self.assertEqual(remote.call_count, 2)
 
     def test_bounded_output_stops_unbounded_producer(self):
         session = experiments.ExperimentSession(self.snapshot, ["F1"])

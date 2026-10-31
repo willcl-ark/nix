@@ -483,7 +483,8 @@ def _write_majors(run_stage, runtime, prompt_config, review, snapshot, findings)
         session = experiments.ExperimentSession(
             snapshot,
             [finding["id"] for finding in majors],
-            is_current=runtime.is_current,
+            check_cancelled=runtime.check_cancelled,
+            check_current=runtime.check_current,
         )
         with session:
             answer = run_stage(

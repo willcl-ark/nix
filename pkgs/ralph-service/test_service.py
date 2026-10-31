@@ -431,7 +431,10 @@ class ServiceTests(unittest.TestCase):
     def test_stale_review_keeps_newer_pending_head(self):
         old = self.enqueue()
 
-        def stale_review(*_args, **_kwargs):
+        def stale_review(_case, runtime, *_args, **_kwargs):
+            calls = (remote_head.call_count, remote_context.call_count)
+            runtime.check_cancelled()
+            self.assertEqual((remote_head.call_count, remote_context.call_count), calls)
             self.jobs.enqueue(
                 42,
                 "master",
@@ -439,16 +442,21 @@ class ServiceTests(unittest.TestCase):
                 "synchronize",
                 engine_identity=self.review_engine.identity,
             )
-            raise model.StaleReview("new head")
+            with self.assertRaises(model.StaleReview):
+                runtime.check_cancelled()
+            self.assertEqual((remote_head.call_count, remote_context.call_count), calls)
+            runtime.check_cancelled()
 
         with (
-            patch.object(service.repository, "current_head", return_value="a" * 40),
+            patch.object(
+                service.repository, "current_head", return_value="a" * 40
+            ) as remote_head,
             patch.object(service.forgejo, "find_comment", return_value=None),
             patch.object(
                 service.forgejo,
                 "pull_request_context",
                 return_value={"title": "Title", "body": "Description", "labels": []},
-            ),
+            ) as remote_context,
             patch.object(
                 service.repository,
                 "collect_review",

@@ -387,6 +387,7 @@ def process_job(
                         api_key=api_key,
                         usage=usage,
                         is_current=is_current,
+                        is_cancelled=lambda: not jobs.is_current(job),
                         discussion_lookup=(
                             discussion_lookup(bot_config, number)
                             if allow_discussions

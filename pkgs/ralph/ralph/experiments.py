@@ -67,10 +67,13 @@ def _kill(process):
 
 
 class ExperimentSession:
-    def __init__(self, snapshot, finding_ids, is_current=None):
+    def __init__(
+        self, snapshot, finding_ids, *, check_cancelled=None, check_current=None
+    ):
         self.snapshot = snapshot
         self.finding_ids = set(finding_ids)
-        self.is_current = is_current
+        self.check_cancelled = check_cancelled
+        self.check_current = check_current
         self.deadline = time.monotonic() + STAGE_SECONDS
         self.record = {
             "head_sha": snapshot.head_sha,
@@ -85,10 +88,8 @@ class ExperimentSession:
         self.archives = {}
 
     def _stopped(self):
-        if self.is_current is not None and not self.is_current():
-            from .model import StaleReview
-
-            raise StaleReview("review head changed during write verification")
+        if self.check_cancelled is not None:
+            self.check_cancelled()
         if time.monotonic() >= self.deadline:
             return "timeout"
         return None
@@ -313,6 +314,8 @@ class ExperimentSession:
             if stopped:
                 entry["status"] = stopped
                 raise RuntimeError(stopped)
+            if self.check_current is not None:
+                self.check_current()
             self._prepare()
             archive = self._archive(side)
             # Only immutable inputs cross the namespace boundary. All writes go to
@@ -385,6 +388,8 @@ class ExperimentSession:
                 command,
             ]
             status, code, output, truncated = self._run_isolated(argv, entry)
+            if self.check_current is not None:
+                self.check_current()
             events = entry["resource_events"]
             if (
                 events["memory"].get("oom", 0)
