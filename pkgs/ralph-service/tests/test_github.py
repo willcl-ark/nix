@@ -1,10 +1,12 @@
 """GitHub publication tests, with no network access."""
 
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
 from ralph import engine
-from ralph_service import github
+from ralph_service import delivery, github, jobs
 
 
 class GitHubTests(unittest.TestCase):
@@ -46,9 +48,21 @@ class GitHubTests(unittest.TestCase):
             },
         }
 
+    def session(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        store = jobs.JobStore(Path(directory.name) / "jobs.sqlite3")
+        store.enqueue(42, "master", "a" * 40, "synchronize", engine_identity=None)
+        return delivery.Session(store, store.claim(), "github")
+
     def publish(self, result):
         return github.publish_major_findings(
-            "owner/repo", "github-token", 42, result, is_current=lambda: True
+            "owner/repo",
+            "github-token",
+            42,
+            result,
+            is_current=lambda: True,
+            delivery=self.session(),
         )
 
     def test_local_supersession_during_lookup_prevents_publication(self):
@@ -72,6 +86,7 @@ class GitHubTests(unittest.TestCase):
                     42,
                     self.result(),
                     is_current=lambda: current,
+                    delivery=self.session(),
                 ),
                 "stale",
             )
@@ -288,6 +303,18 @@ class GitHubTests(unittest.TestCase):
             ) as request:
                 self.assertEqual(self.publish(self.result()), "stale")
                 self.assertEqual(request.call_count, 3)
+
+    def test_duplicate_owned_markers_on_later_page_block_publication(self):
+        own = {"id": 1, "user": {"id": 7}, "body": "<!-- ralph-major:owner/repo -->"}
+        unrelated = {"id": 3, "user": {"id": 8}, "body": "Other comment"}
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[{"id": 7}, [own] + [unrelated] * 99, [{**own, "id": 2}]],
+        ) as request:
+            with self.assertRaisesRegex(ValueError, "Multiple bot review comments"):
+                self.publish(self.result())
+        self.assertEqual(request.call_count, 3)
 
     def test_paginate_and_only_edit_authenticated_users_comment(self):
         spoof = {"id": 1, "user": {"id": 8}, "body": "<!-- ralph-major:owner/repo -->"}

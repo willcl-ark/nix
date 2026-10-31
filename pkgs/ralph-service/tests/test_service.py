@@ -228,6 +228,81 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(self.post_webhook(), 503)
         self.assertIsNone(self.jobs.claim())
 
+    def test_uncertain_github_reconciles_after_restart_without_models(self):
+        from ralph_service import delivery
+        from unittest.mock import Mock
+
+        self.bot_config = replace(self.bot_config, github_repository="owner/repo")
+        job = self.enqueue()
+        self.jobs.save_result(job, self.saved_result())
+        pending = delivery.Session(self.jobs, job, "github:owner/repo")
+        with self.assertRaises(delivery.DeliveryHeld):
+            pending.execute(
+                "POST",
+                "/repos/owner/repo/issues/42/comments",
+                "<!-- ralph-major:owner/repo -->\nsaved",
+                None,
+                Mock(side_effect=TimeoutError()),
+                lambda: True,
+            )
+        self.jobs = JobStore(self.jobs.path, retry_base_seconds=0)
+        self.jobs.recover()
+        job = self.jobs.claim()
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(service.runner, "run_review") as run,
+            patch.object(
+                forgejo, "publish_review", return_value="unchanged"
+            ) as publish,
+            patch.object(
+                service.github, "publish_major_findings", return_value="unchanged"
+            ),
+            patch.object(service.github, "github_request", side_effect=[{"id": 7}, []]),
+            self.assertLogs(level="ERROR"),
+        ):
+            self.assertEqual(
+                self.process(
+                    job, github_token="token", github_post_major_findings=True
+                ),
+                "retry",
+            )
+        run.assert_not_called()
+        publish.assert_not_called()
+        job = self.jobs.claim()
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(service.runner, "run_review") as run,
+            patch.object(
+                forgejo, "publish_review", return_value="unchanged"
+            ) as publish,
+            patch.object(
+                service.github, "publish_major_findings", return_value="unchanged"
+            ),
+            patch.object(
+                service.github,
+                "github_request",
+                side_effect=[
+                    {"id": 7},
+                    [
+                        {
+                            "id": 9,
+                            "user": {"id": 7},
+                            "body": "<!-- ralph-major:owner/repo -->\nsaved",
+                        }
+                    ],
+                ],
+            ),
+        ):
+            self.assertEqual(
+                self.process(
+                    job, github_token="token", github_post_major_findings=True
+                ),
+                "unchanged",
+            )
+        run.assert_not_called()
+        publish.assert_called_once()
+        self.assertEqual(delivery.held(self.jobs), [])
+
     def test_publication_retry_reuses_saved_result(self):
         job = self.enqueue()
         with (
@@ -416,7 +491,12 @@ class ServiceTests(unittest.TestCase):
                 "updated",
             )
         publish.assert_called_once_with(
-            "owner/repo", "write-token", 42, job["review_result"], is_current=ANY
+            "owner/repo",
+            "write-token",
+            42,
+            job["review_result"],
+            is_current=ANY,
+            delivery=ANY,
         )
 
     def test_mirror_comment_is_bounded_and_report_keeps_all_findings(self):

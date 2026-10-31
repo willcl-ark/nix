@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ralph import repository as local_repository
-from ralph_service import config, forgejo, repository
+from ralph_service import config, delivery, forgejo, jobs, repository
 
 
 class BotTests(unittest.TestCase):
@@ -17,6 +17,13 @@ class BotTests(unittest.TestCase):
             "bitcoin/bitcoin",
             "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin",
         )
+
+    def session(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        store = jobs.JobStore(Path(directory.name) / "jobs.sqlite3")
+        store.enqueue(42, "master", "a" * 40, "synchronize", engine_identity=None)
+        return delivery.Session(store, store.claim(), "forgejo")
 
     def test_pull_request_context_captures_authoritative_target(self):
         issue = {
@@ -70,6 +77,7 @@ class BotTests(unittest.TestCase):
                 "Review",
                 source_base_sha="c" * 40,
                 is_current=lambda: current,
+                delivery=self.session(),
             )
         self.assertEqual(outcome, "stale")
         request.assert_not_called()
@@ -101,6 +109,7 @@ class BotTests(unittest.TestCase):
                     source_base_sha="c" * 40,
                     expected_context=context,
                     is_current=lambda: True,
+                    delivery=self.session(),
                 ),
                 "stale",
             )
@@ -294,6 +303,100 @@ class BotTests(unittest.TestCase):
         ):
             forgejo.public_discussion_request(self.bot_config, "/issues/42")
 
+    def test_duplicate_owned_markers_block_publication(self):
+        comments = [
+            {
+                "id": number,
+                "user": {"login": "ralph"},
+                "body": self.bot_config.comment_marker,
+            }
+            for number in (1, 2)
+        ]
+        with patch.object(forgejo, "forgejo_request", return_value=comments) as request:
+            with self.assertRaisesRegex(ValueError, "Multiple bot review comments"):
+                forgejo.find_comment(self.bot_config, "token", 42, "ralph")
+        self.assertEqual(request.call_count, 1)
+
+    def test_acknowledgment_loss_reconciles_without_rerendering(self):
+        session = self.session()
+        comments = []
+        writes = []
+
+        def request(bot_config, token, path, method="GET", data=None):
+            if method == "GET":
+                return comments
+            writes.append(data["body"])
+            comments.append({"id": 2, "user": {"login": "ralph"}, "body": data["body"]})
+            raise TimeoutError("acknowledgment lost")
+
+        def publish(content):
+            return forgejo.publish_review(
+                self.bot_config,
+                "token",
+                42,
+                "ralph",
+                "b" * 40,
+                "a" * 40,
+                content,
+                source_base_sha="c" * 40,
+                is_current=lambda: True,
+                delivery=session,
+            )
+
+        with (
+            patch.object(forgejo, "forgejo_request", side_effect=request),
+            patch.object(forgejo, "current_head", return_value="a" * 40),
+        ):
+            with self.assertRaises(delivery.DeliveryHeld):
+                publish("First review")
+            with patch.object(
+                forgejo, "review_body", side_effect=AssertionError("rerendered")
+            ):
+                self.assertEqual(
+                    publish("New rendering must not replace saved bytes"), "unchanged"
+                )
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(comments[0]["body"], writes[0])
+
+    def test_rejected_write_retries_saved_body_after_renderer_changes(self):
+        session = self.session()
+        writes = []
+
+        def request(bot_config, token, path, method="GET", data=None):
+            if method == "GET":
+                return []
+            writes.append(data["body"])
+            if len(writes) == 1:
+                raise urllib.error.HTTPError(path, 429, "retry later", {}, None)
+            return {"id": 2, "user": {"login": "ralph"}, "body": data["body"]}
+
+        def publish(content):
+            return forgejo.publish_review(
+                self.bot_config,
+                "token",
+                42,
+                "ralph",
+                "b" * 40,
+                "a" * 40,
+                content,
+                source_base_sha="c" * 40,
+                is_current=lambda: True,
+                delivery=session,
+            )
+
+        with (
+            patch.object(forgejo, "forgejo_request", side_effect=request),
+            patch.object(forgejo, "current_head", return_value="a" * 40),
+        ):
+            with self.assertRaises(urllib.error.HTTPError):
+                publish("First review")
+            with patch.object(
+                forgejo, "review_body", side_effect=AssertionError("rerendered")
+            ):
+                self.assertEqual(publish("Changed content"), "created")
+        self.assertEqual(len(writes), 2)
+        self.assertEqual(writes[0], writes[1])
+
     def test_publish_creates_then_edits_one_bot_comment(self):
         comments = [
             {"id": 1, "user": {"login": "someone-else"}, "body": "Unrelated comment"}
@@ -326,6 +429,7 @@ class BotTests(unittest.TestCase):
                     "First review.",
                     source_base_sha="c" * 40,
                     is_current=lambda: True,
+                    delivery=self.session(),
                 ),
                 "created",
             )
@@ -336,6 +440,7 @@ class BotTests(unittest.TestCase):
                     "First review.",
                     source_base_sha="c" * 40,
                     is_current=lambda: True,
+                    delivery=self.session(),
                 ),
                 "unchanged",
             )
@@ -346,6 +451,7 @@ class BotTests(unittest.TestCase):
                     "Updated review.",
                     source_base_sha="c" * 40,
                     is_current=lambda: True,
+                    delivery=self.session(),
                 ),
                 "updated",
             )

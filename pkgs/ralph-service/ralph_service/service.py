@@ -23,6 +23,7 @@ from ralph import trace as core_trace
 from . import (
     badge,
     config,
+    delivery,
     forgejo,
     github,
     history,
@@ -438,6 +439,25 @@ def process_job(
                         "saved review lacks target identity; explicit recapture required"
                     )
             result_record = saved
+            forgejo_delivery = delivery.Session(
+                jobs, job, "forgejo:" + bot_config.forgejo_api
+            )
+            github_delivery = delivery.Session(
+                jobs, job, "github:" + (bot_config.github_repository or "")
+            )
+            pending = delivery.held(jobs)
+            destinations = {
+                row["destination"] for row in pending if row["number"] == number
+            }
+            if forgejo_delivery.destination in destinations:
+                forgejo.reconcile_delivery(
+                    bot_config, forgejo_token, number, bot_login, forgejo_delivery
+                )
+            if github_delivery.destination in destinations and github_token:
+                github.reconcile_delivery(
+                    bot_config.github_repository, github_token, number, github_delivery
+                )
+            forgejo_delivery.check_hold()
             if not is_current():
                 raise model.StaleReview("PR head changed before publication")
             if bot_config.report_dir is not None:
@@ -469,7 +489,11 @@ def process_job(
                 if not jobs.save_result(job, result_record):
                     outcome = "superseded"
                     return outcome
-            if engine_identity["name"] == "current" and not saved["run"].get("skipped"):
+            if (
+                not forgejo_delivery.has_intent()
+                and engine_identity["name"] == "current"
+                and not saved["run"].get("skipped")
+            ):
                 diagnostics = core_trace.current_diagnostics(saved)
                 coverage = diagnostics.get("coverage", {})
                 concept = diagnostics.get("concept_assessment", {})
@@ -504,6 +528,7 @@ def process_job(
                 review_fingerprint=review_fingerprint,
                 expected_context=expected_context,
                 is_current=lambda: jobs.is_current(job),
+                delivery=forgejo_delivery,
             )
             if result == "stale":
                 if jobs.is_current(job):
@@ -524,6 +549,7 @@ def process_job(
                         number,
                         result_record,
                         is_current=lambda: jobs.is_current(job),
+                        delivery=github_delivery,
                     )
                 jobs.complete(job)
             outcome = result
@@ -1055,7 +1081,44 @@ def _main(resources):
         help="Directory containing review agent settings and prompts",
     )
     parser.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
+    parser.add_argument(
+        "--list-held-deliveries",
+        action="store_true",
+        help="List uncertain publications; does not contact the forge",
+    )
+    parser.add_argument(
+        "--release-delivery",
+        type=int,
+        metavar="PR",
+        help="Release publication after verifying all outstanding writes can no longer arrive",
+    )
+    parser.add_argument(
+        "--confirm-no-pending-write",
+        action="store_true",
+        help="Operator assertion required to release uncertain publication",
+    )
     args = parser.parse_args()
+    if args.list_held_deliveries or args.release_delivery is not None:
+        if args.state_dir is None:
+            parser.error("--state-dir is required for delivery recovery")
+        if args.release_delivery is not None and (
+            args.release_delivery < 1 or not args.confirm_no_pending_write
+        ):
+            parser.error(
+                "--release-delivery requires a positive PR and --confirm-no-pending-write"
+            )
+        try:
+            resources.enter_context(coordinator_lock(args.state_dir))
+            store = JobStore(args.state_dir / "jobs.sqlite3")
+            if args.release_delivery is not None:
+                print(
+                    f"released {delivery.release(store, args.release_delivery)} uncertain deliveries"
+                )
+            else:
+                print(json.dumps(delivery.held(store), indent=2))
+        except (OSError, sqlite3.Error, RuntimeError) as exc:
+            parser.error(str(exc))
+        return 0
     if args.migrate_state:
         if args.state_dir is None:
             parser.error("--state-dir is required with --migrate-state")

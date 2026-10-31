@@ -8,6 +8,7 @@ import uuid
 from contextlib import contextmanager
 
 from ralph import stats_changes
+from . import delivery
 
 
 def _profile_name(identity):
@@ -48,6 +49,7 @@ class JobStore:
                     UNIQUE(number, generation)
                 )
             """)
+            delivery.initialize(db)
             columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
             if "engine_identity" not in columns:
                 raise RuntimeError(

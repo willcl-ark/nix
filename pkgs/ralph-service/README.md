@@ -27,7 +27,8 @@ core Python root without copying its source. Core has no companion dependency.
 ```mermaid
 flowchart TD
     event["Forgejo PR opened, reopened or synchronized"] --> webhook["Webhook server: validate signature and repository"]
-    webhook --> queue["Durable SQLite queue: coalesce newer heads"]
+    webhook --> hints["Durable reconciliation hints"]
+    hints --> queue["Read authoritative PR state, then coalesce desired work"]
     queue --> workers["Review workers: default 3 concurrent PRs"]
     workers --> collect["Fetch current branch or pinned historical base and collect merge-base/head snapshot"]
     collect --> existing{"Same base and head already reviewed?"}
@@ -43,9 +44,12 @@ flowchart TD
 
 Only one attempt runs per PR. Fetch and snapshot preparation share a Git lock;
 model calls run outside it. Each attempt pins its Git objects with separate refs.
-Head checks prevent stale reviews from being published. Publication retries reuse
-saved results without another model run. Transient transport failures
-have bounded job retries. Oversized inputs use a changed-file manifest and diff
+PR target, head and local generation checks guard publication. Webhooks and
+stale-head refreshes record durable hints; the coordinator resolves current PR
+state before advancing the desired generation. Reconciliation continues while
+review workers are busy. Same-head metadata changes do not automatically request
+another paid review. Publication retries reuse saved results without another
+model run. Transient transport failures have bounded job retries. Oversized inputs use a changed-file manifest and diff
 tools; if the PR prelude and manifest still exceed 200,000 bytes, review is skipped.
 
 Review outcome and delivery status are separate. A failed verifier marks the
@@ -66,6 +70,42 @@ including feedback from partial reviews. All other results are grey. Neither
 colour indicates approval or a pass/fail verdict. Status comes from the existing
 job store without model or Forgejo API calls. See the module documentation for
 proxy setup.
+
+## Uncertain publication recovery
+
+Before sending a comment write, Ralph saves its destination, operation and exact
+body in `jobs.sqlite3`. Delivery retries reuse those bytes. A timeout or restart
+can leave the remote outcome uncertain. Ralph checks bot-owned comments on both
+publication destinations and holds further writes for the PR while an earlier
+write remains unresolved, including writes from newer review generations.
+Duplicate bot markers require operator investigation.
+
+The first startup with delivery tracking quarantines non-complete legacy jobs
+that already have saved results. Missing delivery records cannot establish that
+an old request is no longer pending. This includes old failed and superseded
+saved jobs, so inspect holds for every affected PR. Historical reports are not
+rewritten.
+
+For upgrade, stop the service and back up its state before starting the new
+version. The upgrade adds reconciliation and delivery tables to `jobs.sqlite3`.
+Do not roll back to an older binary against live upgraded state: it ignores
+durable hints and uncertain-write holds. Restoring a backup also loses work
+accepted since that backup and cannot undo remote writes. Any rollback needs
+service downtime and explicit reconciliation of intervening work and writes.
+
+Stop the coordinator before inspecting or releasing holds; these commands acquire
+its state-directory lock and need no provider credentials:
+
+```sh
+ralph-service --state-dir /path/to/state --list-held-deliveries
+ralph-service --state-dir /path/to/state --release-delivery 123 --confirm-no-pending-write
+```
+
+Release only after establishing that outstanding writes can no longer arrive.
+An absent comment alone does not establish this. Release permits delivery retry
+with the saved bytes and can reset the latest saved job's exhausted retry budget;
+it does not rerun analysis. Local model cancellation closes the connection but
+cannot establish that remote inference or billing stopped.
 
 ## Agents, comment formatting and follow-up
 

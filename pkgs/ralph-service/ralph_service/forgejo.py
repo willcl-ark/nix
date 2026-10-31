@@ -564,6 +564,7 @@ def find_comment(bot_config, token, number, bot_login):
     page = 1
     marker_from_other_user = False
     seen_pages = set()
+    found = None
     while True:
         comments = forgejo_request(
             bot_config, token, f"/issues/{number}/comments?limit=50&page={page}"
@@ -577,11 +578,18 @@ def find_comment(bot_config, token, number, bot_login):
         for comment in comments:
             if bot_config.comment_marker in comment.get("body", ""):
                 if comment.get("user", {}).get("login") == bot_login:
-                    return comment
-                marker_from_other_user = True
+                    if found is not None:
+                        raise ValueError(
+                            "Multiple bot review comments require reconciliation"
+                        )
+                    found = comment
+                else:
+                    marker_from_other_user = True
         if len(comments) < 50:
             break
         page += 1
+    if found is not None:
+        return found
     if marker_from_other_user:
         raise ValueError("Review marker belongs to another user")
     return None
@@ -671,6 +679,24 @@ def comment_matches_engine(
     )
 
 
+def reconcile_delivery(bot_config, token, number, bot_login, delivery):
+    comment = find_comment(bot_config, token, number, bot_login)
+
+    def lookup(path):
+        try:
+            item = forgejo_request(bot_config, token, path)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        if item.get("user", {}).get("login") != bot_login:
+            raise ValueError("Delivery target no longer belongs to bot account")
+        return item
+
+    delivery.reconcile(comment, lookup)
+    return comment, lookup
+
+
 def publish_review(
     bot_config,
     token,
@@ -682,27 +708,33 @@ def publish_review(
     *,
     source_base_sha,
     is_current,
+    delivery,
     engine_identity=None,
     report_url=None,
     review_fingerprint=None,
     expected_context=None,
 ):
-    body = review_body(
-        bot_config,
-        base_sha,
-        head_sha,
-        content,
-        source_base_sha=source_base_sha,
-        report_url=report_url,
-        history_url=(
-            f"{bot_config.report_base_url}/{number}/"
-            if report_url and bot_config.report_base_url
-            else None
-        ),
-        engine_identity=engine_identity,
-        review_fingerprint=review_fingerprint,
+    comment, lookup = reconcile_delivery(bot_config, token, number, bot_login, delivery)
+    delivery.check_hold()
+    if delivery.finished():
+        return "unchanged"
+    body = delivery.body(
+        lambda: review_body(
+            bot_config,
+            base_sha,
+            head_sha,
+            content,
+            source_base_sha=source_base_sha,
+            report_url=report_url,
+            history_url=(
+                f"{bot_config.report_base_url}/{number}/"
+                if report_url and bot_config.report_base_url
+                else None
+            ),
+            engine_identity=engine_identity,
+            review_fingerprint=review_fingerprint,
+        )
     )
-    comment = find_comment(bot_config, token, number, bot_login)
     # Check as close as possible to publication, after paginating old comments.
     if (
         expected_context is not None
@@ -713,16 +745,22 @@ def publish_review(
         return "stale"
     if not is_current():
         return "stale"
-    if comment is None:
-        created = forgejo_request(
-            bot_config, token, f"/issues/{number}/comments", "POST", {"body": body}
+
+    def dispatch(method, path, intended_body):
+        response = forgejo_request(
+            bot_config, token, path, method, {"body": intended_body}
         )
-        if created.get("user", {}).get("login") != bot_login:
+        if method == "POST" and response.get("user", {}).get("login") != bot_login:
             raise ValueError("Forgejo token does not belong to bot account")
-        return "created"
-    if comment.get("body") == body:
-        return "unchanged"
-    forgejo_request(
-        bot_config, token, f"/issues/comments/{comment['id']}", "PATCH", {"body": body}
+        return response
+
+    return delivery.execute(
+        "POST" if comment is None else "PATCH",
+        f"/issues/{number}/comments"
+        if comment is None
+        else f"/issues/comments/{comment['id']}",
+        body,
+        comment,
+        dispatch,
+        is_current,
     )
-    return "updated"
