@@ -52,6 +52,10 @@ class GitHubTests(unittest.TestCase):
     def test_only_major_findings_with_report(self):
         result = self.result()
         result["engine"] = engine.load().identity
+        result["output"].update(
+            schema_version=2,
+            data={"schema_version": 2, "coverage": {"status": "partial"}},
+        )
         result["engine"]["config"]["comment_format"]["brief_finding"] = (
             "${summary}\n\n[${severity}] ${title} (${location}, ${side})"
         )
@@ -137,6 +141,46 @@ class GitHubTests(unittest.TestCase):
                 with patch.object(github, "github_request") as request:
                     self.assertEqual(self.publish(result), "failed")
                 request.assert_not_called()
+
+    def test_only_complete_analysis_can_clear_previous_warning(self):
+        own = {"id": 2, "user": {"id": 7}, "body": "<!-- ralph-major:owner/repo -->"}
+        for coverage in (
+            {},
+            {"status": "partial", "verification": {"status": "complete"}},
+            {"status": "complete", "verification": {"status": "unknown"}},
+            {"status": "complete", "verification": {"status": "complete"}},
+        ):
+            with self.subTest(coverage=coverage):
+                result = self.result()
+                result["engine"] = engine.load().identity
+                result["run"]["status"] = "completed"
+                result["output"].update(
+                    schema_version=2, data={"schema_version": 2, "coverage": coverage}
+                )
+                result["output"]["exports"]["findings"] = []
+                complete = (
+                    coverage.get("status") == "complete"
+                    and coverage.get("verification", {}).get("status") == "complete"
+                )
+                with patch.object(
+                    github,
+                    "github_request",
+                    side_effect=[
+                        {"id": 7},
+                        [own],
+                        {"state": "open", "head": {"sha": result["head_sha"]}},
+                        {},
+                    ],
+                ) as request:
+                    self.assertEqual(
+                        self.publish(result), "deleted" if complete else "incomplete"
+                    )
+                mutations = [
+                    call.args[2]
+                    for call in request.call_args_list
+                    if len(call.args) > 2
+                ]
+                self.assertEqual(mutations, ["DELETE"] if complete else [])
 
     def test_major_publication_requires_source_verification_and_judgment(self):
         for verified_by, judged_by in (

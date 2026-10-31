@@ -77,6 +77,12 @@ def publish_major_findings(repository, token, number, result):
     if not findings and not retained:
         if comment is None:
             return "unchanged"
+        coverage = trace.current_diagnostics(result).get("coverage", {})
+        if (
+            coverage.get("status") != "complete"
+            or coverage.get("verification", {}).get("status") != "complete"
+        ):
+            return "incomplete"
         github_request(token, f"{base}/issues/comments/{comment['id']}", "DELETE")
         return "deleted"
     report_url = result["run"].get("report_url")
