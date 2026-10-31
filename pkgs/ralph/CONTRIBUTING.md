@@ -21,7 +21,7 @@ From the repository root, check your changes with Python 3.11 or later:
 
 ```sh
 python3 pkgs/ralph/review.py check-agents
-python3 -m unittest discover -s pkgs/ralph -p 'test_*.py'
+PYTHONPATH=pkgs/ralph python3 -m unittest discover -s pkgs/ralph/tests -p 'test_*.py'
 ```
 
 These commands need no credentials and make no model requests. The first checks

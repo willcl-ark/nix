@@ -31,7 +31,7 @@ stdenvNoCC.mkDerivation {
     runHook preCheck
     export HOME="$TMPDIR"
     export PYTHONDONTWRITEBYTECODE=1
-    ${python.interpreter} -m unittest discover -s . -p 'test_*.py'
+    ${python.interpreter} -m unittest discover -s tests -p 'test_*.py'
     runHook postCheck
   '';
 

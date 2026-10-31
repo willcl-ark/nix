@@ -28,8 +28,8 @@ jobs:
         run: python3 pkgs/ralph/review.py check-agents
       - name: Test Ralph and service integration
         run: |
-          python3 -m unittest discover -s pkgs/ralph -p 'test_*.py'
-          python3 -m unittest discover -s pkgs/ralph-service -p 'test_*.py'
+          python3 -m unittest discover -s pkgs/ralph/tests -p 'test_*.py'
+          python3 -m unittest discover -s pkgs/ralph-service/tests -p 'test_*.py'
       - name: Render comment previews
         run: |
           mkdir -p "$RUNNER_TEMP/ralph-previews"

@@ -34,7 +34,7 @@ From the repository root, using Python with `aiohttp` installed:
 ```sh
 python3 pkgs/ralph/review.py check-agents
 python3 pkgs/ralph/final_comment/preview.py > /tmp/ralph-comment.md
-python3 -m unittest discover -s pkgs/ralph -p 'test_*.py'
+PYTHONPATH=pkgs/ralph python3 -m unittest discover -s pkgs/ralph/tests -p 'test_*.py'
 ```
 
 These checks and previews run without credentials or model requests. A prompt

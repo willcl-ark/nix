@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-PACKAGE = Path(__file__).resolve().parent
+PACKAGE = Path(__file__).resolve().parents[1]
 FAKE_ENGINE = """
 import os
 import signal

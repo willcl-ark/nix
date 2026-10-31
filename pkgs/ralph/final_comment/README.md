@@ -125,6 +125,6 @@ markers, revision checks and publication. `--github` previews only its visible t
 Run the relevant checks from the repository root:
 
 ```sh
-PYTHONPATH=pkgs/ralph python3 -m unittest discover -s pkgs/ralph -p test_comment.py
-PYTHONPATH=pkgs/ralph python3 -m unittest discover -s pkgs/ralph -p test_protocol.py
+PYTHONPATH=pkgs/ralph python3 -m unittest discover -s pkgs/ralph/tests -p test_comment.py
+PYTHONPATH=pkgs/ralph python3 -m unittest discover -s pkgs/ralph/tests -p test_protocol.py
 ```
