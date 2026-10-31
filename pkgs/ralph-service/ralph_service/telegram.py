@@ -1,8 +1,6 @@
 """Plain-text review posts for the Telegram Bot API."""
 
-import html
 import json
-import re
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -55,17 +53,6 @@ def review_message(repository_url, number, result):
         f"\n{repository_url.rstrip('/')}/pulls/{number}"
         f"\nRead full review: {run['report_url']}"
     )
-    content = result["content"]
-    content = re.sub(
-        r"^<summary>(.*?)</summary>$",
-        lambda match: html.unescape(match[1]),
-        content,
-        flags=re.MULTILINE,
-    )
-    content = re.sub(r"^</?details>\n?", "", content, flags=re.MULTILINE)
-    full = f"{heading}{links}\n\n{content}"
-    if message_length(full) <= MESSAGE_LIMIT:
-        return full
     counts = Counter(
         finding.get("severity")
         for finding in findings

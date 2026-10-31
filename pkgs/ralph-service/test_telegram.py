@@ -3,7 +3,6 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-import final_comment
 from ralph_service import telegram
 
 
@@ -54,7 +53,6 @@ class TelegramTests(unittest.TestCase):
         ]
         self.assertIn("Previously reported major concern", self.render(result))
         self.assertNotIn("🚨 Major finding", self.render(result))
-        result["content"] = "x" * 4096
         self.assertIn(
             "Current findings: Major: 0 · Minor: 0 · Suggestions: 0",
             self.render(result),
@@ -68,32 +66,19 @@ class TelegramTests(unittest.TestCase):
         result["output"]["exports"]["review_memory"][0]["status"] = "fixed"
         self.assertNotIn("major concern", self.render(result))
 
-    def test_retained_review_and_coverage_reach_telegram_as_markdown(self):
-        memory = [
-            {
-                "key": "prior:1",
-                "title": "Check height < limit",
-                "body": "Guard `block->nStatus`.",
-                "severity": "major",
-                "status": "unclear",
-                "source_head": "old-head",
-            }
-        ]
+    def test_short_reviews_use_counts_and_links_without_body(self):
         result = self.result(
-            final_comment.render_report(
-                [], ["Verifier unavailable"], review_memory=memory
-            )
+            "A short review body", findings=[{"severity": "suggestion"}]
         )
-        result["output"]["exports"]["review_memory"] = memory
-        text = self.render(result)
-        self.assertIn("Check height < limit", text)
-        self.assertIn("Guard `block->nStatus`.", text)
-        self.assertIn("old-head", text)
-        self.assertIn("Review coverage was incomplete.", text)
-        self.assertNotIn("<h6>", text)
-        self.assertNotIn("<details>", text)
-        self.assertNotIn("<summary>", text)
-        self.assertNotIn("&gt;", text)
+        self.assertEqual(
+            self.render(result),
+            "PR #42: Fix <handling> & parsing\n"
+            "Current findings: Major: 0 · Minor: 0 · Suggestions: 1\n"
+            "https://forge.example/owner/repo/pulls/42\n"
+            "Read full review: https://reports.example/42.html",
+        )
+        result["output"]["exports"] = {}
+        self.assertIn("Current findings: unavailable", self.render(result))
 
     def test_http_rate_limit_is_sanitized_and_preserves_retry_delay(self):
         error = urllib.error.HTTPError(

@@ -164,10 +164,11 @@ The monitor reads review state and recorded usage, publishes completed reviews, 
 grouped terminal failure alerts, and delivers a daily digest at 21:00 UTC.
 It continues running when the review daemon stops.
 
-Each review post contains the PR title and links to the PR and full report.
-The full review is included when the complete post fits 4,096 UTF-16 code
-units; longer reviews use the title and links only. An exported finding with
-severity exactly `major` adds `🚨 Major finding` in either form.
+Each review post contains the PR title, current finding counts by severity,
+and links to the PR and full report. Review bodies are never included. Long
+titles are shortened to fit Telegram's 4,096 UTF-16 code unit limit while
+preserving the counts and links. A new exported finding with severity exactly
+`major` adds `🚨 Major finding`.
 
 Post `/status` in the configured channel to see service states, queue and
 result totals, recorded token usage and the latest subscription quota snapshot. `/high <PR number>` requests a fresh review
