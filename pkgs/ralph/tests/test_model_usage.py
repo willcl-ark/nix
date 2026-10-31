@@ -95,7 +95,7 @@ class ModelUsageTests(unittest.TestCase):
             patch.object(model.time, "monotonic", side_effect=lambda: clock[0]),
             patch.object(model.time, "sleep"),
             patch.object(model.transport, "request", side_effect=request) as send,
-            self.assertRaisesRegex(TimeoutError, "stage deadline expired"),
+            self.assertRaisesRegex(TimeoutError, "stage deadline"),
         ):
             model.request_response(
                 "secret",
@@ -173,18 +173,83 @@ class ModelUsageTests(unittest.TestCase):
         self.assertEqual(debug["turns"][0]["error_message"], "Too many requests")
         self.assertTrue(debug["turns"][0]["retry"])
 
-    def test_retry_after_delay_is_bounded(self):
+    def test_retry_after_beyond_allowed_wait_stops_without_early_retry(self):
+        for retry_after in ("3600", "Thu, 01 Jan 1970 01:00:00 GMT"):
+            with self.subTest(retry_after=retry_after):
+                error = urllib.error.HTTPError(
+                    "url", 429, "rejected", {"Retry-After": retry_after}, None
+                )
+                with (
+                    patch.object(model.time, "time", return_value=0),
+                    patch.object(model.transport, "request", side_effect=error) as send,
+                    patch.object(model.time, "sleep") as sleep,
+                    self.assertRaises(urllib.error.HTTPError),
+                ):
+                    model.request_response("secret", {"model": "gpt-6-luna"}, "tests")
+                self.assertEqual(send.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_retry_after_exceeding_deadline_does_not_dispatch_again(self):
         error = urllib.error.HTTPError(
-            "url", 429, "rejected", {"Retry-After": "3600"}, None
+            "url", 429, "rejected", {"Retry-After": "60"}, None
         )
         with (
+            patch.object(model.time, "monotonic", return_value=100),
             patch.object(model.transport, "request", side_effect=error) as send,
             patch.object(model.time, "sleep") as sleep,
-            self.assertRaises(urllib.error.HTTPError),
+            self.assertRaises(TimeoutError),
         ):
-            model.request_response("secret", {"model": "gpt-6-luna"}, "tests")
-        self.assertEqual(send.call_count, 3)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [300, 300])
+            model.request_response(
+                "secret", {"model": "gpt-6-luna"}, "tests", deadline=110
+            )
+        self.assertEqual(send.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_local_cancellation_interrupts_retry_wait(self):
+        for tool_loop in (False, True):
+            with self.subTest(tool_loop=tool_loop):
+                cancelled = [False]
+                usage = FakeUsage()
+                current = Mock(return_value=True)
+
+                def cancel(delay):
+                    self.assertLessEqual(delay, 0.1)
+                    cancelled[0] = True
+
+                with (
+                    patch.object(
+                        model.transport, "request", side_effect=TimeoutError
+                    ) as send,
+                    patch.object(model.time, "sleep", side_effect=cancel),
+                    self.assertRaises(model.StaleReview),
+                ):
+                    options = dict(
+                        usage=usage,
+                        is_current=current,
+                        is_cancelled=lambda: cancelled[0],
+                        max_output_tokens=100,
+                    )
+                    if tool_loop:
+                        model.openai_review(
+                            "secret",
+                            "input",
+                            self.snapshot,
+                            prompt="Review.",
+                            model="gpt-6-luna",
+                            **options,
+                        )
+                    else:
+                        model.run_audit(
+                            "secret",
+                            "verifier",
+                            "Verify.",
+                            "input",
+                            model_name="gpt-6-luna",
+                            **options,
+                        )
+                self.assertEqual(send.call_count, 1)
+                current.assert_called_once()
+                self.assertEqual(usage.events[-1], ("fail", "token", True))
 
     def test_freshness_failure_preserves_safe_subprocess_diagnostic(self):
         for tool_loop in (False, True):

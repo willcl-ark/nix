@@ -125,6 +125,7 @@ class Runtime:
             discussion_lookup=self.discussion_lookup,
             allow_web_search=self.allow_web_search,
             is_current=self.is_current,
+            is_cancelled=self.is_cancelled,
             **(
                 {"api_base": selected_api_base}
                 if selected_api_base != "https://api.openai.com/v1"
@@ -171,6 +172,7 @@ class Runtime:
             response_schema=response_schema,
             reasoning_effort=reasoning_effort,
             is_current=self.is_current,
+            is_cancelled=self.is_cancelled,
             debug=debug_record,
             model_name=model_name,
             max_output_tokens=max_output_tokens,

@@ -7,6 +7,7 @@ import re
 import subprocess
 import time
 import urllib.error
+from email.utils import parsedate_to_datetime
 
 from . import research, transport, upstream
 from .repository import (
@@ -455,10 +456,13 @@ def request_response(
     timeout=1800,
     on_retry_failure=None,
     deadline=None,
+    is_cancelled=None,
 ):
     payload = _request_payload(data)
     url = f"{api_base.rstrip('/')}/responses"
     for attempt in range(MAX_REQUEST_ATTEMPTS):
+        if is_cancelled is not None and is_cancelled():
+            raise StaleReview("review cancelled before model request")
         if is_current is not None and not is_current():
             raise StaleReview("review head changed before model request")
         request_timeout = timeout
@@ -507,16 +511,36 @@ def request_response(
             delay = attempt + 1
             if http_error:
                 try:
-                    delay = max(delay, min(300, int(exc.headers.get("Retry-After"))))
-                except (TypeError, ValueError, AttributeError):
+                    retry_after = exc.headers.get("Retry-After")
+                    try:
+                        provider_delay = int(retry_after)
+                    except ValueError:
+                        provider_delay = (
+                            parsedate_to_datetime(retry_after).timestamp() - time.time()
+                        )
+                    delay = max(delay, provider_delay)
+                except (TypeError, ValueError, AttributeError, OverflowError):
                     pass
+            # Stop rather than retry before the provider permits it.
+            if delay > 300:
+                raise
+            if deadline is not None and delay >= deadline - time.monotonic():
+                raise TimeoutError("retry wait exceeds stage deadline") from exc
             failure = request_failure_record(data, exc)
             failure.update(retry=True, retry_delay_seconds=delay)
             if on_retry_failure is not None:
                 on_retry_failure(failure)
-            if deadline is not None:
-                delay = min(delay, max(0, deadline - time.monotonic()))
-            time.sleep(delay)
+            if is_cancelled is None:
+                time.sleep(delay)
+            else:
+                retry_at = time.monotonic() + delay
+                while True:
+                    if is_cancelled():
+                        raise StaleReview("review cancelled during retry wait")
+                    remaining = retry_at - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(0.1, remaining))
         else:
             break
     elapsed = round(time.monotonic() - attempt_started, 2)
@@ -669,6 +693,7 @@ def run_audit(
     response_schema=None,
     reasoning_effort="low",
     is_current=None,
+    is_cancelled=None,
     debug=None,
     api_base="https://api.openai.com/v1",
     timeout=1800,
@@ -702,6 +727,7 @@ def run_audit(
             on_response,
             usage,
             is_current,
+            is_cancelled=is_cancelled,
             api_base=api_base,
             timeout=timeout,
             on_retry_failure=(
@@ -787,6 +813,7 @@ def openai_review(
     discussion_lookup=None,
     allow_web_search=False,
     is_current=None,
+    is_cancelled=None,
     api_base="https://api.openai.com/v1",
     research_evidence=None,
     backport_evidence=None,
@@ -888,6 +915,7 @@ def openai_review(
                 on_response,
                 usage,
                 is_current,
+                is_cancelled=is_cancelled,
                 timeout=(final_timeout if tool_choice == "none" else timeout),
                 on_retry_failure=debug["turns"].append if debug is not None else None,
                 **request_options,
