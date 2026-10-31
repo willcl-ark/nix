@@ -139,12 +139,21 @@ def _claude(account, payload):
                 scope = limit.get("scope")
                 model = scope.get("model") if isinstance(scope, dict) else None
                 if isinstance(model, dict):
-                    model_id = model.get("id")
-                    if isinstance(model_id, str):
-                        for family in ("sonnet", "opus", "fable"):
-                            if family in model_id.lower():
-                                name = f"{family.title()}: Weekly"
-                                break
+                    for field in ("display_name", "id"):
+                        model_name = model.get(field)
+                        if not isinstance(model_name, str):
+                            continue
+                        family = next(
+                            (
+                                family
+                                for family in ("sonnet", "opus", "fable")
+                                if family in model_name.lower()
+                            ),
+                            None,
+                        )
+                        if family:
+                            name = f"{family.title()}: Weekly"
+                            break
             if name and _percent(limit.get("percent")) is not None:
                 _window(windows, name, limit["percent"], limit.get("resets_at"))
                 present.add(name)

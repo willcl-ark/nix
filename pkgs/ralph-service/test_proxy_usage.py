@@ -233,7 +233,9 @@ class ProxyUsageTests(unittest.TestCase):
                                 "kind": "weekly_scoped",
                                 "percent": 100,
                                 "is_active": True,
-                                "scope": {"model": {"id": "claude-fable-5-1"}},
+                                "scope": {
+                                    "model": {"id": None, "display_name": "Fable 5"}
+                                },
                             },
                         ]
                     }
