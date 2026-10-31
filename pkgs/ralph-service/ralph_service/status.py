@@ -2,8 +2,10 @@
 
 import json
 import math
+import sqlite3
 import subprocess
 from collections import Counter
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -94,9 +96,16 @@ def _services():
 
 
 def _jobs(state_dir):
-    rows, missing = stats._job_rows(state_dir / "jobs.sqlite3")
-    if missing:
+    try:
+        with closing(stats._connect_readonly(state_dir / "jobs.sqlite3")) as db:
+            db.execute("BEGIN")
+            return _job_status(db)
+    except sqlite3.Error:
         return ["Reviews", "Run history unavailable"]
+
+
+def _job_status(db):
+    rows = list(db.execute("SELECT number, status FROM jobs ORDER BY id"))
     counts = Counter(row["status"] for row in rows)
     lines = ["Reviews"]
     for key, label in (
@@ -120,8 +129,8 @@ def _jobs(state_dir):
     )
     saved = failed = skipped = malformed = unavailable = exported = 0
     severities = Counter()
-    for row in rows:
-        result, invalid = stats._review_result(row)
+    for row in db.execute("SELECT review_result FROM jobs ORDER BY id"):
+        result, invalid = stats._review_result(dict(row))
         malformed += invalid
         if result is None:
             continue

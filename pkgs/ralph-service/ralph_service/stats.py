@@ -7,6 +7,7 @@ import re
 import sqlite3
 import subprocess
 from collections import Counter, defaultdict
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -37,35 +38,37 @@ COVERAGE_STATUSES = ("complete", "partial", "failed", "unknown")
 TOKEN_FIELDS = ("input", "output", "cached", "cache_write", "reasoning")
 
 
-def collect_stats(state_dir: Path, report_dir: Path) -> dict:
+def collect_stats(state_dir: Path, report_dir: Path, *, cache=None) -> dict:
     """Return public JSON-compatible aggregate review statistics."""
     state_dir = Path(state_dir)
     report_dir = Path(report_dir)
     now = datetime.now(timezone.utc)
     current_month = now.strftime("%Y-%m")
-    jobs, jobs_missing = _job_rows(state_dir / "jobs.sqlite3")
+    jobs, jobs_missing = _job_summaries(state_dir / "jobs.sqlite3", cache)
     followup_dir = state_dir / "followup"
     followups, followups_missing, malformed_followups = _followup_rows(
-        followup_dir / "assessments.sqlite3"
+        followup_dir / "assessments.sqlite3", cache
     )
-    requests, ledger_missing = _ledger_rows(state_dir)
+    requests, ledger_missing = _ledger_rows(state_dir, cache)
     followup_requests, followup_ledger_missing = _provider_ledger_rows(
-        "followup", followup_dir / "usage.sqlite3"
+        "followup", followup_dir / "usage.sqlite3", cache
     )
     usage = _usage_summary(requests, current_month)
 
     report_dir_missing = not report_dir.exists()
     inventory = {
         "jobs_total": len(jobs),
-        "jobs_by_status": dict(sorted(Counter(row["status"] for row in jobs).items())),
+        "jobs_by_status": dict(
+            sorted(Counter(item["row"]["status"] for item in jobs).items())
+        ),
         "saved_results": 0,
         "analyzed_reviews": 0,
-        "unique_prs": len({row["number"] for row in jobs}),
+        "unique_prs": len({item["row"]["number"] for item in jobs}),
         "skipped_results": 0,
         "malformed_results": 0,
         "malformed_followups": malformed_followups,
         "recorded_failed_attempts": sum(
-            max(0, int(row["attempts"] or 0)) for row in jobs
+            max(0, int(item["row"]["attempts"] or 0)) for item in jobs
         ),
         "missing_sources": {
             "jobs_db": jobs_missing,
@@ -115,160 +118,41 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
         if request.get("review_id"):
             requests_by_review[request["review_id"]].append(request)
 
-    for row in jobs:
-        result, malformed = _review_result(row)
-        if malformed:
-            inventory["malformed_results"] += 1
-            continue
-        if result is None:
-            continue
-        inventory["saved_results"] += 1
-        debug = core_trace.current_diagnostics(result)
-        exported_findings = core_trace.findings_export(result)
-        skipped = _skipped_result(result)
-        if skipped:
-            inventory["skipped_results"] += 1
-        else:
-            inventory["analyzed_reviews"] += 1
-
-        review_id = _review_id(row)
-        configured_stage_models.update(_configured_stage_models(review_id, debug))
-        review_requests = requests_by_review.get(review_id, [])
-        ledger_totals = _request_totals(review_requests)
-        observed_ledger_totals = _observed_review_totals(
-            ledger_totals, bool(review_requests)
+    for contribution in jobs:
+        row = contribution["row"]
+        _refresh_report_links(contribution, report_dir)
+        _merge_totals(inventory, contribution["inventory"])
+        _merge_totals(overview, contribution["overview"])
+        for stage in contribution["stages"]:
+            _merge_totals(
+                stages[_stage_key(stage["stage"], stage["configured_model"])], stage
+            )
+        limit_runs.extend(contribution["limits"])
+        routing_tiers.update(contribution["routing"])
+        for record in contribution["reviews"]:
+            ledger = _observed_review_totals(
+                _request_totals(requests_by_review.get(_review_id(row), [])),
+                bool(requests_by_review.get(_review_id(row))),
+            )
+            record["ledger"] = ledger
+            record["tokens"] = ledger["tokens"]
+            if record.get("report_name") is None:
+                record.pop("report_name", None)
+            review_records.append(record)
+        review_time_records.extend(contribution["review_times"])
+        for record in contribution["completed"]:
+            completed_reviews[
+                (record["number"], record["job_id"], record["generation"])
+            ] = record
+            completed_reviews_by_job[record["job_id"]] = record
+        tool_values.extend(contribution["tools"])
+        second_values.extend(contribution["seconds"])
+        concept_citation_values.extend(contribution["citations"])
+        concept_alternative_values.extend(contribution["alternatives"])
+        _merge_totals(paired, contribution["paired"])
+        configured_stage_models.update(
+            {(review, stage): model for review, stage, model in contribution["models"]}
         )
-        findings = _published_findings(result) or []
-        concept = _concept_summary(debug)
-        research_completed = _archaeology_research_completed(debug)
-        coverage = _coverage_summary(debug)
-        routing = _routing_summary(debug)
-        metrics = _saved_review_metrics(debug, result)
-        report_name = _report_name(report_dir, row, result)
-        _collect_limit_runs(limit_runs, debug, result, row, report_name)
-
-        if not skipped:
-            overview["saved_reviews"] += 1
-            review_status = (result.get("run") or {}).get("status", "unknown")
-            counts = overview["review_status"]
-            counts[review_status] = counts.get(review_status, 0) + 1
-            overview[
-                "current_diagnostics_reviews"
-                if debug
-                else "diagnostics_unavailable_reviews"
-            ] += 1
-            if exported_findings is None:
-                overview["findings_unavailable_reviews"] += 1
-            else:
-                overview["saved_findings"] += len(findings)
-            overview["coverage"][coverage["status"]] += 1
-            overview["context_coverage"][coverage["context_status"]] += 1
-            overview["verification_status"][coverage["verification_status"]] += 1
-            if exported_findings is not None:
-                overview["attribution_coverage"][
-                    "complete" if _has_attribution(result, findings) else "missing"
-                ] += 1
-            if debug:
-                _add_archaeology_counts(
-                    overview, research_completed, concept, row["status"] == "complete"
-                )
-            if row["status"] == "complete":
-                overview["published_reviews"] += 1
-                if exported_findings is not None:
-                    overview["published_findings"] += len(findings)
-            if exported_findings is not None:
-                _add_finding_counts(overview, findings)
-            if debug:
-                _add_stage_results(stages, debug, row, report_name)
-            if routing.get("selected_tier"):
-                routing_tiers[routing["selected_tier"]] += 1
-            if debug:
-                _add_adversarial_comparison(paired, debug)
-            if metrics["tool_calls"] is not None:
-                tool_values.append(metrics["tool_calls"])
-            if metrics["model_seconds"] is not None:
-                second_values.append(metrics["model_seconds"])
-            if debug and concept["published_concern"]:
-                concept_citation_values.append(concept["citation_count"])
-                concept_alternative_values.append(concept["alternative_count"])
-
-        record = {
-            "job_id": row["id"],
-            "number": row["number"],
-            "generation": row["generation"],
-            "head": result.get("head_sha") or row["head"],
-            "pr_title": _optional_string((result.get("run") or {}).get("pr_title")),
-            "status": row["status"],
-            "review_status": (result.get("run") or {}).get("status", "unknown"),
-            "job_attempts": row["attempts"],
-            "recorded_failed_attempts": max(0, int(row["attempts"] or 0)),
-            "skipped": skipped,
-            "routing": routing,
-            "coverage": coverage["status"],
-            "context_coverage": coverage["context_status"],
-            "verification_status": coverage["verification_status"],
-            "findings": {
-                "export_status": "supported"
-                if exported_findings is not None
-                else "unsupported",
-                "severities": dict(
-                    Counter(
-                        (
-                            finding.get("severity")
-                            if isinstance(finding.get("severity"), str)
-                            else "unknown"
-                        )
-                        for finding in findings
-                    )
-                )
-                if exported_findings is not None and row["status"] == "complete"
-                else None,
-                "saved": len(findings) if exported_findings is not None else None,
-                "published": (len(findings) if row["status"] == "complete" else 0)
-                if exported_findings is not None
-                else None,
-            },
-            "archaeology": (
-                {"research_completed": research_completed, **concept} if debug else None
-            ),
-            "ledger": observed_ledger_totals,
-            "tokens": observed_ledger_totals["tokens"],
-            "runtime_metrics": core_trace.result_metrics(result) or {},
-            "tool_calls": metrics["tool_calls"],
-            "model_seconds": metrics["model_seconds"],
-        }
-        if report_name is not None:
-            record["report_name"] = report_name
-        review_records.append(record)
-        review_time_records.append(
-            {
-                "number": row["number"],
-                "job_id": row["id"],
-                "generation": row["generation"],
-                "head": record["head"],
-                "verified": _verifier_completed(debug) if debug else None,
-                "published_findings": (
-                    (len(findings) if row["status"] == "complete" else 0)
-                    if exported_findings is not None
-                    else None
-                ),
-            }
-        )
-        if row["status"] == "complete":
-            completed_reviews[(row["number"], row["id"], row["generation"])] = {
-                "number": row["number"],
-                "job_id": row["id"],
-                "generation": row["generation"],
-                "head": record["head"],
-                "published_findings": (len(findings) if not skipped else 0)
-                if exported_findings is not None
-                else None,
-                "finding_ids": _published_finding_ids(result),
-                "report_name": report_name,
-            }
-            completed_reviews_by_job[row["id"]] = completed_reviews[
-                (row["number"], row["id"], row["generation"])
-            ]
 
     addressed_records = []
     for followup in followups:
@@ -327,6 +211,245 @@ def collect_stats(state_dir: Path, report_dir: Path) -> dict:
             review_records, key=lambda item: item["job_id"], reverse=True
         ),
     }
+
+
+def _review_summary(row):
+    """Extract only statistics inputs; never cache raw diagnostics or prompts."""
+    inventory = dict.fromkeys(
+        ("malformed_results", "saved_results", "skipped_results", "analyzed_reviews"), 0
+    )
+    overview = {
+        "saved_reviews": 0,
+        "published_reviews": 0,
+        "review_status": {},
+        "saved_findings": 0,
+        "published_findings": 0,
+        "findings_unavailable_reviews": 0,
+        "current_diagnostics_reviews": 0,
+        "diagnostics_unavailable_reviews": 0,
+        "coverage": _new_coverage_counts(),
+        "context_coverage": _new_coverage_counts(),
+        "verification_status": _new_coverage_counts(),
+        "attribution_coverage": {"complete": 0, "missing": 0},
+        "archaeology": {
+            "research_completed": 0,
+            "saved_concerns": 0,
+            "published_concerns": 0,
+            "assessment_status_counts": {},
+        },
+        "finding_kinds": {},
+        "finding_severities": {},
+    }
+    stages = defaultdict(_new_stage)
+    limit_runs = []
+    routing_tiers = Counter()
+    review_records = []
+    review_time_records = []
+    completed_reviews = {}
+    completed_reviews_by_job = {}
+    tool_values = []
+    second_values = []
+    concept_citation_values = []
+    concept_alternative_values = []
+    paired = _new_adversarial_comparison()
+    configured_stage_models = {}
+
+    def finish():
+        return {
+            "row": {
+                key: row[key]
+                for key in ("id", "number", "generation", "status", "attempts")
+            },
+            "inventory": inventory,
+            "overview": overview,
+            "stages": list(stages.values()),
+            "limits": limit_runs,
+            "routing": dict(routing_tiers),
+            "reviews": review_records,
+            "review_times": review_time_records,
+            "completed": list(completed_reviews.values()),
+            "tools": tool_values,
+            "seconds": second_values,
+            "citations": concept_citation_values,
+            "alternatives": concept_alternative_values,
+            "paired": paired,
+            "models": [[*key, value] for key, value in configured_stage_models.items()],
+        }
+
+    result, malformed = _review_result(row)
+    if malformed:
+        inventory["malformed_results"] += 1
+        return finish()
+    if result is None:
+        return finish()
+    inventory["saved_results"] += 1
+    debug = core_trace.current_diagnostics(result)
+    exported_findings = core_trace.findings_export(result)
+    skipped = _skipped_result(result)
+    if skipped:
+        inventory["skipped_results"] += 1
+    else:
+        inventory["analyzed_reviews"] += 1
+
+    review_id = _review_id(row)
+    configured_stage_models.update(_configured_stage_models(review_id, debug))
+    findings = _published_findings(result) or []
+    concept = _concept_summary(debug)
+    research_completed = _archaeology_research_completed(debug)
+    coverage = _coverage_summary(debug)
+    routing = _routing_summary(debug)
+    metrics = _saved_review_metrics(debug, result)
+    report_name = _report_name(None, row, result)
+    _collect_limit_runs(limit_runs, debug, result, row, report_name)
+
+    if not skipped:
+        overview["saved_reviews"] += 1
+        review_status = (result.get("run") or {}).get("status", "unknown")
+        counts = overview["review_status"]
+        counts[review_status] = counts.get(review_status, 0) + 1
+        overview[
+            "current_diagnostics_reviews"
+            if debug
+            else "diagnostics_unavailable_reviews"
+        ] += 1
+        if exported_findings is None:
+            overview["findings_unavailable_reviews"] += 1
+        else:
+            overview["saved_findings"] += len(findings)
+        overview["coverage"][coverage["status"]] += 1
+        overview["context_coverage"][coverage["context_status"]] += 1
+        overview["verification_status"][coverage["verification_status"]] += 1
+        if exported_findings is not None:
+            overview["attribution_coverage"][
+                "complete" if _has_attribution(result, findings) else "missing"
+            ] += 1
+        if debug:
+            _add_archaeology_counts(
+                overview, research_completed, concept, row["status"] == "complete"
+            )
+        if row["status"] == "complete":
+            overview["published_reviews"] += 1
+            if exported_findings is not None:
+                overview["published_findings"] += len(findings)
+        if exported_findings is not None:
+            _add_finding_counts(overview, findings)
+        if debug:
+            _add_stage_results(stages, debug, row, report_name)
+        if routing.get("selected_tier"):
+            routing_tiers[routing["selected_tier"]] += 1
+        if debug:
+            _add_adversarial_comparison(paired, debug)
+        if metrics["tool_calls"] is not None:
+            tool_values.append(metrics["tool_calls"])
+        if metrics["model_seconds"] is not None:
+            second_values.append(metrics["model_seconds"])
+        if debug and concept["published_concern"]:
+            concept_citation_values.append(concept["citation_count"])
+            concept_alternative_values.append(concept["alternative_count"])
+
+    record = {
+        "job_id": row["id"],
+        "number": row["number"],
+        "generation": row["generation"],
+        "head": result.get("head_sha") or row["head"],
+        "pr_title": _optional_string((result.get("run") or {}).get("pr_title")),
+        "status": row["status"],
+        "review_status": (result.get("run") or {}).get("status", "unknown"),
+        "job_attempts": row["attempts"],
+        "recorded_failed_attempts": max(0, int(row["attempts"] or 0)),
+        "skipped": skipped,
+        "routing": routing,
+        "coverage": coverage["status"],
+        "context_coverage": coverage["context_status"],
+        "verification_status": coverage["verification_status"],
+        "findings": {
+            "export_status": "supported"
+            if exported_findings is not None
+            else "unsupported",
+            "severities": dict(
+                Counter(
+                    (
+                        finding.get("severity")
+                        if isinstance(finding.get("severity"), str)
+                        else "unknown"
+                    )
+                    for finding in findings
+                )
+            )
+            if exported_findings is not None and row["status"] == "complete"
+            else None,
+            "saved": len(findings) if exported_findings is not None else None,
+            "published": (len(findings) if row["status"] == "complete" else 0)
+            if exported_findings is not None
+            else None,
+        },
+        "archaeology": (
+            {"research_completed": research_completed, **concept} if debug else None
+        ),
+        "runtime_metrics": core_trace.result_metrics(result) or {},
+        "tool_calls": metrics["tool_calls"],
+        "model_seconds": metrics["model_seconds"],
+    }
+    if report_name is not None:
+        record["report_name"] = report_name
+    review_records.append(record)
+    review_time_records.append(
+        {
+            "number": row["number"],
+            "job_id": row["id"],
+            "generation": row["generation"],
+            "head": record["head"],
+            "verified": _verifier_completed(debug) if debug else None,
+            "published_findings": (
+                (len(findings) if row["status"] == "complete" else 0)
+                if exported_findings is not None
+                else None
+            ),
+        }
+    )
+    if row["status"] == "complete":
+        completed_reviews[(row["number"], row["id"], row["generation"])] = {
+            "number": row["number"],
+            "job_id": row["id"],
+            "generation": row["generation"],
+            "head": record["head"],
+            "published_findings": (len(findings) if not skipped else 0)
+            if exported_findings is not None
+            else None,
+            "finding_ids": sorted(_published_finding_ids(result)),
+            "report_name": report_name,
+        }
+        completed_reviews_by_job[row["id"]] = completed_reviews[
+            (row["number"], row["id"], row["generation"])
+        ]
+    return finish()
+
+
+def _merge_totals(target, source):
+    """Reduce per-review counters and ordered public record lists."""
+    for key, value in source.items():
+        if isinstance(value, dict):
+            if target.get(key) is None:
+                target[key] = {}
+            _merge_totals(target[key], value)
+        elif isinstance(value, list):
+            target.setdefault(key, []).extend(value)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            target[key] = target.get(key, 0) + value
+        elif value is not None:
+            target[key] = value
+
+
+def _refresh_report_links(value, report_dir):
+    if isinstance(value, dict):
+        name = value.get("report_name")
+        if name is not None and not (report_dir / name).is_file():
+            value["report_name"] = None
+        for item in value.values():
+            _refresh_report_links(item, report_dir)
+    elif isinstance(value, list):
+        for item in value:
+            _refresh_report_links(item, report_dir)
 
 
 def _collect_limit_runs(runs, debug, result, row, report_name):
@@ -406,63 +529,65 @@ def _connect_readonly(path):
     return db
 
 
-def _job_rows(path):
+def _job_summaries(path, cache):
     if not path.exists():
         return [], True
-    try:
-        with _connect_readonly(path) as db:
-            return [
-                dict(row)
+    if cache is not None:
+        return cache.rows(path, "jobs", "id", _review_summary), False
+    with closing(_connect_readonly(path)) as db:
+        return [
+            _review_summary(dict(row))
+            for row in db.execute("SELECT * FROM jobs ORDER BY id")
+        ], False
+
+
+def _followup_rows(path, cache=None):
+    if not path.exists():
+        return [], True, 0
+    if cache is not None:
+        records = cache.rows(path, "assessments", "job_id", _assessment_record)
+    else:
+        with closing(_connect_readonly(path)) as db:
+            records = [
+                _assessment_record(row)
                 for row in db.execute(
-                    "SELECT id, number, generation, base_ref, head, action, force, "
-                    "status, attempts, review_result FROM jobs ORDER BY id"
+                    "SELECT job_id, result FROM assessments ORDER BY job_id"
                 )
-            ], False
-    except sqlite3.Error:
-        return [], True
+            ]
+    return (
+        [row for row in records if isinstance(row, dict)],
+        False,
+        sum(row is False for row in records),
+    )
 
 
-def _followup_rows(path):
-    if not path.exists():
-        return [], True, 0
-    rows = []
-    malformed = 0
-    try:
-        with _connect_readonly(path) as db:
-            records = db.execute(
-                "SELECT job_id, result FROM assessments ORDER BY job_id"
-            )
-            for row in records:
-                job_id = _positive_int(row["job_id"])
-                if row["result"] is None:
-                    continue
-                result = _parse_json(row["result"])
-                if job_id is None or not isinstance(result, dict):
-                    malformed += 1
-                    continue
-                rows.append({"job_id": job_id, "result": result})
-            return rows, False, malformed
-    except sqlite3.Error:
-        return [], True, 0
+def _assessment_record(row):
+    if row["result"] is None:
+        return None
+    job_id = _positive_int(row["job_id"])
+    result = _parse_json(row["result"])
+    if job_id is None or result is None:
+        return False
+    return {"job_id": job_id, "result": result}
 
 
-def _ledger_rows(state_dir):
-    rows, missing = _provider_ledger_rows("openai", state_dir / "usage.sqlite3")
+def _ledger_rows(state_dir, cache=None):
+    rows, missing = _provider_ledger_rows("openai", state_dir / "usage.sqlite3", cache)
     return rows, {"openai": missing}
 
 
-def _provider_ledger_rows(provider, path):
+def _provider_ledger_rows(provider, path, cache=None):
     if not path.exists():
         return [], True
-    try:
-        with _connect_readonly(path) as db:
-            rows = db.execute(
-                "SELECT review_id, stage, model, month, status, usage_json, "
-                "requested_at, completed_at, http_status FROM requests ORDER BY rowid"
-            )
-            return [_ledger_record(provider, row) for row in rows], False
-    except sqlite3.Error:
-        return [], True
+    if cache is not None:
+        return cache.rows(
+            path, "requests", "token", lambda row: _ledger_record(provider, row)
+        ), False
+    with closing(_connect_readonly(path)) as db:
+        return [
+            _ledger_record(provider, row)
+            for row in db.execute("SELECT * FROM requests ORDER BY rowid")
+        ], False
 
 
 def _ledger_record(provider, row):
@@ -1167,7 +1292,7 @@ def _report_name(report_dir, row, result):
     if not isinstance(head, str):
         return None
     name = f"{row['number']}-{head}-{row['id']}-{row['generation']}.html"
-    return name if (report_dir / name).is_file() else None
+    return name if report_dir is None or (report_dir / name).is_file() else None
 
 
 def _request_totals(requests):

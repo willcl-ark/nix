@@ -16,9 +16,7 @@ from ralph_service import config, evaluate, forgejo
 
 
 class StatsCliTests(unittest.TestCase):
-    def test_stats_command_writes_a_dashboard_without_credentials_or_state_mutation(
-        self,
-    ):
+    def test_stats_command_writes_only_private_derived_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             state = root / "missing-state"
@@ -27,6 +25,7 @@ class StatsCliTests(unittest.TestCase):
                 evaluate.main(
                     [
                         "stats",
+                        "--full",
                         "--state-dir",
                         str(state),
                         "--report-dir",
@@ -41,7 +40,9 @@ class StatsCliTests(unittest.TestCase):
             )
             self.assertTrue((reports / "stats" / "index.html").is_file())
             json.loads((reports / "stats" / "stats.json").read_text())
-            self.assertFalse(state.exists())
+            self.assertEqual({path.name for path in state.iterdir()}, {"stats"})
+            self.assertEqual(stat.S_IMODE((state / "stats").stat().st_mode), 0o700)
+            self.assertTrue((state / "stats" / "cache.sqlite3").is_file())
 
     def test_stats_publishes_quota_snapshot_without_publishing_management_key(self):
         with tempfile.TemporaryDirectory() as directory:
