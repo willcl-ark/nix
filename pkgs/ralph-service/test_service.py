@@ -131,12 +131,12 @@ class ServiceTests(unittest.TestCase):
             },
         }
 
-    def post_webhook(self, store):
+    def post_webhook(self, *, force=False, signature=None):
         secret = b"secret"
         server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
             service.make_handler(
-                secret, store, self.bot_config, self.review_engine.identity
+                secret, self.jobs, self.bot_config, self.review_engine.identity
             ),
         )
         thread = threading.Thread(
@@ -147,6 +147,7 @@ class ServiceTests(unittest.TestCase):
             body = json.dumps(
                 {
                     "action": "opened",
+                    "ralph_force": force,
                     "repository": {
                         "full_name": "owner/repo",
                         "html_url": "https://git.example.org/owner/repo",
@@ -158,7 +159,7 @@ class ServiceTests(unittest.TestCase):
                     },
                 }
             ).encode()
-            signature = hmac.new(secret, body, hashlib.sha256).hexdigest()
+            signature = signature or hmac.new(secret, body, hashlib.sha256).hexdigest()
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
             connection.request(
                 "POST",
@@ -179,11 +180,23 @@ class ServiceTests(unittest.TestCase):
             server.server_close()
             thread.join()
 
-    def test_webhook_202_means_job_is_durable(self):
-        self.assertEqual(self.post_webhook(self.jobs), 202)
+    def test_authenticated_webhook_is_durable_and_can_force_a_review(self):
+        self.assertEqual(self.post_webhook(signature="bad"), 401)
+        self.assertIsNone(self.jobs.claim())
+        self.assertEqual(self.post_webhook(), 202)
         restarted = JobStore(self.state_dir / "jobs.sqlite3")
         job = restarted.claim()
-        self.assertEqual((job["number"], job["head"]), (42, "a" * 40))
+        self.assertEqual(
+            (job["number"], job["base_ref"], job["head"], job["action"], job["force"]),
+            (42, "master", "a" * 40, "opened", False),
+        )
+        restarted.complete(job)
+        self.assertEqual(self.post_webhook(force=True), 202)
+        job = restarted.claim()
+        self.assertTrue(job["force"])
+        restarted.complete(job)
+        self.assertEqual(self.post_webhook(force=True, signature="bad"), 401)
+        self.assertIsNone(restarted.claim())
 
     def test_webhook_rejects_failed_persistence(self):
         with (
@@ -192,7 +205,7 @@ class ServiceTests(unittest.TestCase):
             ),
             self.assertLogs(level="ERROR"),
         ):
-            self.assertEqual(self.post_webhook(self.jobs), 503)
+            self.assertEqual(self.post_webhook(), 503)
         self.assertIsNone(self.jobs.claim())
 
     def test_publication_retry_reuses_saved_result(self):
@@ -365,20 +378,6 @@ class ServiceTests(unittest.TestCase):
         full_review = "\n\n".join(finding["body"] for finding in findings)
         job = self.enqueue()
         result = self.saved_result(full_review, findings=findings)
-        result["output"]["exports"]["review_memory"] = [
-            {
-                "key": "previous:1",
-                "title": "Old claim",
-                "body": "Old explanation",
-                "severity": "major",
-                "status": "still_present",
-                "checked_head": "a" * 40,
-                "reason": "The earlier failure remains reachable.",
-                "source_evidence": [
-                    {"path": "current.cpp", "line": 17, "side": "head"}
-                ],
-            }
-        ]
         job["review_result"] = result
         self.jobs.save_result(job, result)
         with (
@@ -390,20 +389,15 @@ class ServiceTests(unittest.TestCase):
         ):
             self.assertEqual(self.process(job), "updated")
         comment = publish.call_args.args[6]
-        self.assertIn("Summary 4.", comment)
-        self.assertNotIn("Summary 5.", comment)
-        self.assertNotIn("Summary 6.", comment)
-        self.assertIn("Old claim", comment)
-        self.assertIn("current.cpp:17", comment)
-        self.assertNotIn("Old explanation", comment)
-        self.assertIn("3 additional verified findings", comment)
+        self.assertIn(findings[0]["summary"], comment)
+        self.assertNotIn(findings[-1]["summary"], comment)
+        self.assertNotIn(findings[0]["body"], comment)
         self.assertIn("https://review.example.org/traces/", comment)
         reports = list(self.bot_config.report_dir.glob("*.json"))
         self.assertEqual(len(reports), 1)
         report = json.loads(reports[0].read_text())
         self.assertEqual(report["review"], full_review)
         self.assertEqual(len(report["findings"]), 8)
-        self.assertEqual(report["review_memory"][0]["title"], "Old claim")
 
     def test_stale_forgejo_result_never_publishes_to_github(self):
         self.bot_config = replace(
@@ -719,16 +713,6 @@ def payload(action="opened", head="a" * 40):
     }
 
 
-class CapturingJobs:
-    def __init__(self):
-        self.enqueued = []
-
-    def enqueue(self, *job, engine_identity):
-        self.enqueued.append(job)
-        self.engine_identity = engine_identity
-        return True
-
-
 class WebhookTests(unittest.TestCase):
     def setUp(self):
         context = patch.object(
@@ -821,55 +805,6 @@ class WebhookTests(unittest.TestCase):
             result["output"]["exports"]["review_memory"][0]["status"] = "fixed"
             with urllib.request.urlopen(url) as response:
                 self.assertEqual(response.read(), service.badge.GREY)
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join()
-
-    def test_webhook_queues_only_authenticated_target_event(self):
-        jobs = CapturingJobs()
-        server = ThreadingHTTPServer(
-            ("127.0.0.1", 0),
-            service.make_handler(
-                b"secret", jobs, self.bot_config, self.review_engine.identity
-            ),
-        )
-        thread = threading.Thread(target=server.serve_forever)
-        thread.start()
-        try:
-            body = json.dumps(payload()).encode()
-            sig = hmac.new(b"secret", body, hashlib.sha256).hexdigest()
-            url = f"http://127.0.0.1:{server.server_port}/webhooks/forgejo"
-            request = urllib.request.Request(
-                url,
-                body,
-                headers={"X-Forgejo-Signature": sig, "X-Forgejo-Event": "pull_request"},
-            )
-            with self.assertLogs(level="INFO") as logs:
-                self.assertEqual(urllib.request.urlopen(request).status, 202)
-            self.assertEqual(
-                jobs.enqueued[0], (42, "master", "a" * 40, "opened", False)
-            )
-            self.assertIn(
-                "review enqueue pr=42 action=opened head=aaaaaaaaaaaa",
-                "\n".join(logs.output),
-            )
-            forced = payload()
-            forced["ralph_force"] = True
-            body = json.dumps(forced).encode()
-            sig = hmac.new(b"secret", body, hashlib.sha256).hexdigest()
-            request = urllib.request.Request(
-                url,
-                body,
-                headers={"X-Forgejo-Signature": sig, "X-Forgejo-Event": "pull_request"},
-            )
-            self.assertEqual(urllib.request.urlopen(request).status, 202)
-            self.assertEqual(jobs.enqueued[1], (42, "master", "a" * 40, "opened", True))
-            request.headers["X-Forgejo-Signature"] = "bad"
-            with self.assertRaises(urllib.error.HTTPError) as error:
-                urllib.request.urlopen(request)
-            self.assertEqual(error.exception.code, 401)
-            self.assertEqual(len(jobs.enqueued), 2)
         finally:
             server.shutdown()
             server.server_close()

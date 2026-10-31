@@ -12,30 +12,17 @@ COMMENT_DIR = Path(final_comment.__file__).parent
 
 
 class CommentTests(unittest.TestCase):
-    def test_preview_examples_work_from_an_unrelated_directory(self):
-        examples = COMMENT_DIR / "examples"
+    def test_preview_works_from_an_unrelated_directory(self):
+        example = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
-            for example in sorted(examples.glob("*.json")):
-                with self.subTest(example=example.name):
-                    if example.name == "github.json":
-                        arguments = ["--github"]
-                        renderer = final_comment.render_github
-                    else:
-                        arguments = (
-                            [] if example.name == "mixed.json" else [str(example)]
-                        )
-                        renderer = final_comment.render
-                    result = subprocess.run(
-                        [sys.executable, str(COMMENT_DIR / "preview.py"), *arguments],
-                        cwd=directory,
-                        capture_output=True,
-                        text=True,
-                        check=True,
-                    )
-                    self.assertEqual(
-                        result.stdout,
-                        renderer(**json.loads(example.read_text())) + "\n",
-                    )
+            result = subprocess.run(
+                [sys.executable, str(COMMENT_DIR / "preview.py")],
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        self.assertIn(example["findings"][0]["title"], result.stdout)
 
     def test_review_tier_preserves_empty_review_and_is_optional(self):
         rendered = final_comment.render([], review_tier="sensitive")

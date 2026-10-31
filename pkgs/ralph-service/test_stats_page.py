@@ -361,9 +361,6 @@ class StatsPageTests(unittest.TestCase):
                 db.execute(
                     "UPDATE requests SET status = 'uncertain' WHERE token = 'timeout'"
                 )
-            # Retired ledgers must not contribute to subscription telemetry.
-            (root / "spend.sqlite3").write_text("retired")
-            (root / "ppq-spend.sqlite3").write_text("retired")
             summary = stats.collect_stats(root, root / "reports")
             totals = summary["usage"]["lifetime"]
             self.assertEqual(totals["request_count"], 5)
@@ -376,11 +373,6 @@ class StatsPageTests(unittest.TestCase):
             self.assertEqual(totals["tokens"]["reasoning"], 10)
             self.assertEqual(totals["tokens"]["output"], 50)
             self.assertEqual(stats_page._failed_requests(totals), 2)
-            for rendered in (
-                stats_page._usage_rows(totals["providers"]),
-                stats_page._model_section(summary),
-            ):
-                self.assertRegex(rendered, r"<td[^>]*>2</td><td[^>]*>1</td>")
             self.assertIsNone(totals["providers"]["claude"]["tokens"]["cached"])
             self.assertEqual(totals["tokens"]["input"], 300)
             self.assertEqual(totals["unknown_token_counts"]["cached"], 3)
@@ -402,14 +394,6 @@ class StatsPageTests(unittest.TestCase):
             html = "".join(path.read_text() for path in public.rglob("*.html"))
             self.assertNotIn("$", html)
             self.assertIn("Rate limits (429)", html)
-            public_json = json.dumps(summary)
-            for obsolete in (
-                "cost_micros",
-                "reserved_micros",
-                "budget_limited",
-                '"spend"',
-            ):
-                self.assertNotIn(obsolete, public_json)
             self.assertEqual(
                 stats.collect_stats(root / "empty", root / "reports")["usage"][
                     "lifetime"

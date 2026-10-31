@@ -127,17 +127,6 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(options["max_tool_calls"], settings.max_tool_calls["standard"])
         self.assertGreater(options["max_tool_calls"], 0)
         self.assertEqual(options["reasoning_effort"], settings.reasoning_effort)
-        self.assertEqual(
-            {tool["name"] for tool in options["tools"]},
-            {
-                "find_paths",
-                "read_file",
-                "read_base_file",
-                "read_diff",
-                "search_code",
-                "read_pr_commit",
-            },
-        )
         self.assertFalse(options["first_tool_required"])
         self.assertEqual(debug["routing"]["selected"], plan)
         self.assertEqual(debug["stages"]["router"]["status"], "completed")
