@@ -16,291 +16,163 @@ class Response(io.BytesIO):
         super().__init__(json.dumps(payload).encode())
 
 
-def upstream(payload, status=200):
-    return Response({"status_code": status, "body": json.dumps(payload)})
+def observation(provider, signals, observed_at="2026-10-31T20:00:00Z", **fields):
+    return {
+        "provider": provider,
+        "quota": {"observed_at": observed_at, "signals": signals},
+        **fields,
+    }
 
 
 class ProxyUsageTests(unittest.TestCase):
-    def collect(self, responses):
+    def collect(self, response):
         with patch.object(
-            proxy_usage.urllib.request, "urlopen", side_effect=responses
+            proxy_usage.urllib.request, "urlopen", side_effect=[response]
         ) as request:
             result = proxy_usage.collect_usage(
                 "http://localhost:8317/", "management-secret"
             )
-        return result, request
+        request.assert_called_once()
+        return result, request.call_args.args[0]
 
-    def test_native_management_flow_and_private_fields_are_not_published(self):
+    def test_one_local_read_preserves_observations_and_discards_private_fields(self):
         result, request = self.collect(
-            [
-                Response(
-                    {
-                        "files": [
+            Response(
+                {
+                    "files": [
+                        observation(
+                            "codex",
                             {
-                                "provider": "codex",
-                                "auth_index": "private-codex-index",
-                                "email": "private@example.com",
-                                "path": "/private/credential.json",
-                                "id_token": {"chatgpt_account_id": "private-workspace"},
+                                "X-Codex-Plan-Type": "pro",
+                                "X-Codex-Primary-Used-Percent": "56",
+                                "X-Codex-Primary-Window-Minutes": "10080",
+                                "X-Codex-Primary-Reset-At": "1793774355",
+                                "X-Codex-Secondary-Window-Minutes": "0",
+                                "X-Codex-Secondary-Used-Percent": "0",
+                                "X-Codex-Credits-Has-Credits": "False",
+                                "X-Codex-Credits-Unlimited": "False",
+                                "X-Codex-Credits-Balance": "0",
+                                "X-Codex-Unknown": "private upstream metadata",
                             },
+                            auth_index="private-index",
+                            email="private@example.com",
+                            id_token={"chatgpt_account_id": "private-workspace"},
+                        ),
+                        observation(
+                            "claude",
                             {
-                                "provider": "claude",
-                                "auth_index": "private-claude-index",
+                                "Anthropic-Ratelimit-Unified-5h-Utilization": "0.03",
+                                "Anthropic-Ratelimit-Unified-5h-Reset": "1793487000",
+                                "anthropic-ratelimit-unified-7d-utilization": "0.58",
+                                "anthropic-ratelimit-unified-7d_oi-utilization": "1.02",
                             },
-                            {
-                                "provider": "codex",
-                                "disabled": True,
-                                "auth_index": "disabled-index",
-                            },
-                        ]
-                    }
-                ),
-                upstream(
-                    {
-                        "plan_type": "pro",
-                        "email": "private@example.com",
-                        "rate_limit": {
-                            "primary_window": {
-                                "used_percent": 25,
-                                "limit_window_seconds": 18000,
-                                "reset_at": 1793023200,
-                            },
-                            "secondary_window": {
-                                "used_percent": 40,
-                                "limit_window_seconds": 604800,
-                            },
-                        },
-                        "code_review_rate_limit": {
-                            "primary_window": {"used_percent": 5}
-                        },
-                        "credits": {
-                            "has_credits": True,
-                            "unlimited": False,
-                            "balance": "123.45",
-                        },
-                    }
-                ),
-                upstream(
-                    {
-                        "five_hour": {
-                            "utilization": 9,
-                            "resets_at": "2026-10-26T18:00:00Z",
-                        },
-                        "seven_day": {"utilization": 68},
-                    }
-                ),
-            ]
+                        ),
+                        observation("codex", {}, disabled=True),
+                    ]
+                }
+            )
+        )
+        self.assertEqual(
+            request.full_url, "http://localhost:8317/v8/management/credentials"
+        )
+        self.assertEqual(request.get_method(), "GET")
+        self.assertIsNone(request.data)
+        self.assertEqual(
+            request.get_header("Authorization"), "Bearer management-secret"
         )
         self.assertEqual(result["status"], "ok")
         codex, claude = result["accounts"]
         self.assertEqual(codex["plan"], "pro")
-        self.assertEqual(
-            [w["window_seconds"] for w in codex["windows"]], [18000, 604800, None]
-        )
-        self.assertEqual(
-            [window["name"] for window in codex["windows"]],
-            ["5-hour", "Weekly", "Code review: Primary"],
-        )
-        self.assertEqual(codex["credits"]["balance"], "123.45")
-        self.assertEqual(
-            claude["windows"][0],
-            {
-                "name": "5-hour",
-                "used_percent": 9,
-                "resets_at": "2026-10-26T18:00:00Z",
-                "window_seconds": 18000,
-            },
-        )
-        self.assertTrue(result["checked_at"].endswith("Z"))
-        serialized = json.dumps(result)
-        for private in (
-            "private",
-            "management-secret",
-            "auth_index",
-            "localhost",
-            "https://",
-        ):
-            self.assertNotIn(private, serialized)
-        calls = request.call_args_list
-        self.assertEqual(len(calls), 3)
-        first = calls[0].args[0]
-        self.assertEqual(
-            first.full_url, "http://localhost:8317/v8/management/credentials"
-        )
-        self.assertEqual(first.get_method(), "GET")
-        self.assertEqual(first.get_header("Authorization"), "Bearer management-secret")
-        second = calls[1].args[0]
-        self.assertEqual(
-            second.full_url, "http://localhost:8317/v8/management/requests/api-call"
-        )
-        self.assertEqual(second.get_method(), "POST")
-        self.assertEqual(
-            json.loads(second.data),
-            {
-                "auth_index": "private-codex-index",
-                "method": "GET",
-                "url": "https://chatgpt.com/backend-api/wham/usage",
-                "header": {
-                    "Authorization": "Bearer $TOKEN$",
-                    "User-Agent": "codex-cli/1.0.0",
-                    "Chatgpt-Account-Id": "private-workspace",
-                },
-            },
-        )
-        claude_call = json.loads(calls[2].args[0].data)
-        self.assertEqual(
-            claude_call["url"], "https://api.anthropic.com/api/oauth/usage"
-        )
-        self.assertEqual(claude_call["header"]["anthropic-beta"], "oauth-2025-04-20")
-        self.assertTrue(all(call.kwargs["timeout"] == 10 for call in calls))
+        self.assertEqual(codex["observed_at"], "2026-10-31T20:00:00Z")
+        self.assertEqual(len(codex["windows"]), 1)
+        self.assertEqual(codex["windows"][0]["window_seconds"], 604800)
+        self.assertEqual(codex["windows"][0]["resets_at"], "2026-11-04T06:39:15Z")
+        self.assertEqual(codex["credits"]["has_credits"], False)
+        for window, expected in zip(claude["windows"], [3, 58, 100], strict=True):
+            self.assertAlmostEqual(window["used_percent"], expected)
+        self.assertEqual(claude["windows"][-1]["name"], "Fable: Weekly")
+        self.assertEqual(claude["windows"][0]["resets_at"], "2026-10-31T22:50:00Z")
+        for private in ("private", "management-secret", "auth_index", "signals"):
+            self.assertNotIn(private, json.dumps(result))
 
-    def test_upstream_failure_is_partial_and_error_details_are_discarded(self):
+    def test_relative_reset_uses_observation_time_not_collection_time(self):
         result, _ = self.collect(
-            [
-                Response(
-                    {
-                        "files": [
-                            {"provider": "codex", "auth_index": "one"},
-                            {"provider": "claude", "auth_index": "two"},
-                        ]
-                    }
-                ),
-                upstream({"rate_limit": {"primary_window": {"used_percent": 0}}}),
-                upstream(
-                    {"error": "private credential and billing details"}, status=429
-                ),
-            ]
-        )
-        self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["accounts"][0]["windows"][0]["used_percent"], 0)
-        self.assertEqual(
-            result["accounts"][1],
-            {
-                "provider": "claude",
-                "status": "unavailable",
-                "plan": None,
-                "windows": [],
-            },
-        )
-        self.assertNotIn("private", json.dumps(result))
-
-    def test_missing_usage_is_unknown_and_scoped_windows_take_precedence(self):
-        result, _ = self.collect(
-            [
-                Response(
-                    {
-                        "files": [
-                            {"provider": "claude", "auth_index": "one"},
-                            {"provider": "claude", "auth_index": "two"},
-                        ]
-                    }
-                ),
-                upstream({"five_hour": {"resets_at": "2026-10-26T18:00:00Z"}}),
-                upstream(
-                    {
-                        "limits": [
-                            {"kind": "session", "percent": 0, "resets_at": "invalid"},
+            Response(
+                {
+                    "files": [
+                        observation(
+                            "codex",
                             {
-                                "kind": "weekly_scoped",
-                                "percent": 12,
-                                "scope": {"model": {"id": "claude-sonnet-4-5"}},
+                                "x-codex-primary-used-percent": "25",
+                                "x-codex-primary-window-minutes": "300",
+                                "x-codex-primary-reset-after-seconds": "3600",
                             },
-                        ],
-                        "five_hour": {"utilization": 77},
-                        "seven_day_sonnet": {"utilization": 88},
-                        "seven_day_opus": {"utilization": 100},
-                    }
-                ),
-            ]
+                            observed_at="2020-01-01T01:00:00+01:00",
+                        )
+                    ]
+                }
+            )
+        )
+        account = result["accounts"][0]
+        self.assertEqual(account["observed_at"], "2020-01-01T00:00:00Z")
+        self.assertEqual(account["windows"][0]["resets_at"], "2020-01-01T01:00:00Z")
+        self.assertEqual(account["windows"][0]["window_seconds"], 18000)
+
+    def test_missing_and_malformed_observations_do_not_invent_capacity(self):
+        result, _ = self.collect(
+            Response(
+                {
+                    "files": [
+                        observation(
+                            "claude",
+                            {
+                                "anthropic-ratelimit-unified-5h-utilization": "nan",
+                                "anthropic-ratelimit-unified-7d-utilization": "-0.1",
+                                "anthropic-ratelimit-unified-7d_sonnet-utilization": True,
+                            },
+                        ),
+                        observation(
+                            "codex",
+                            {"x-codex-primary-used-percent": "0"},
+                            observed_at="invalid",
+                        ),
+                        observation(
+                            "codex",
+                            {
+                                "x-codex-primary-used-percent": "0",
+                                "x-codex-primary-window-minutes": "Infinity",
+                                "x-codex-primary-reset-after-seconds": "1e300",
+                                "x-codex-plan-type": "private plan",
+                                "x-codex-credits-has-credits": "invalid",
+                            },
+                        ),
+                    ]
+                }
+            )
         )
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["accounts"][0]["windows"], [])
-        self.assertEqual(
-            result["accounts"][1]["windows"],
-            [
-                {
-                    "name": "5-hour",
-                    "used_percent": 0,
-                    "resets_at": None,
-                    "window_seconds": 18000,
-                },
-                {
-                    "name": "Sonnet: Weekly",
-                    "used_percent": 12,
-                    "resets_at": None,
-                    "window_seconds": 604800,
-                },
-                {
-                    "name": "Opus: Weekly",
-                    "used_percent": 100,
-                    "resets_at": None,
-                    "window_seconds": 604800,
-                },
-            ],
-        )
-
-    def test_claude_inactive_constraints_still_report_usage(self):
-        result, _ = self.collect(
-            [
-                Response({"files": [{"provider": "claude", "auth_index": "one"}]}),
-                upstream(
-                    {
-                        "limits": [
-                            {"kind": "session", "percent": 9, "is_active": False},
-                            {"kind": "weekly_all", "percent": 68, "is_active": False},
-                            {
-                                "kind": "weekly_scoped",
-                                "percent": 100,
-                                "is_active": True,
-                                "scope": {
-                                    "model": {"id": None, "display_name": "Fable 5"}
-                                },
-                            },
-                        ]
-                    }
-                ),
-            ]
-        )
-        self.assertEqual(result["status"], "ok")
-        self.assertEqual(
-            result["accounts"][0]["windows"],
-            [
-                {
-                    "name": "5-hour",
-                    "used_percent": 9,
-                    "resets_at": None,
-                    "window_seconds": 18000,
-                },
-                {
-                    "name": "Weekly",
-                    "used_percent": 68,
-                    "resets_at": None,
-                    "window_seconds": 604800,
-                },
-                {
-                    "name": "Fable: Weekly",
-                    "used_percent": 100,
-                    "resets_at": None,
-                    "window_seconds": 604800,
-                },
-            ],
-        )
+        self.assertEqual(result["accounts"][1]["windows"], [])
+        known = result["accounts"][2]
+        self.assertIsNone(known["plan"])
+        self.assertIsNone(known["windows"][0]["resets_at"])
+        self.assertIsNone(known["windows"][0]["window_seconds"])
+        self.assertEqual(known["windows"][0]["used_percent"], 0)
+        self.assertNotIn("credits", known)
+        self.assertNotIn("private", json.dumps(result))
 
     def test_transport_and_malformed_responses_are_unavailable(self):
         for response in (
             urllib.error.URLError("private upstream error"),
             Response({"files": "not a credentials list"}),
-            Response({"files": [{"provider": "claude", "auth_index": "one"}]}),
+            Response({"files": [{"provider": "claude"}]}),
         ):
             with self.subTest(response=type(response).__name__):
-                responses = [response]
-                if isinstance(response, Response):
-                    responses.append(Response({"status_code": 200, "body": "not json"}))
-                result, _ = self.collect(responses)
+                result, _ = self.collect(response)
                 self.assertEqual(result["status"], "unavailable")
                 self.assertNotIn("private", json.dumps(result))
         with patch.object(proxy_usage, "_MAX_RESPONSE_BYTES", 1):
-            result, _ = self.collect([Response({"files": []})])
+            result, _ = self.collect(Response({"files": []}))
         self.assertEqual(result["status"], "unavailable")
 
 

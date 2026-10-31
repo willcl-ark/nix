@@ -427,6 +427,7 @@ class StatsPageTests(unittest.TestCase):
                         "provider": "codex",
                         "status": "ok",
                         "plan": "Pro <script>",
+                        "observed_at": "2026-10-27T09:00:00Z",
                         "windows": [
                             {
                                 "name": "Weekly",
@@ -448,6 +449,7 @@ class StatsPageTests(unittest.TestCase):
         }
         html = stats_page._usage_html(summary)
         self.assertIn("75.0%", html)
+        self.assertIn("Observed 2026-10-27 09:00 UTC · stale", html)
         self.assertNotIn("100.0%", html)
         self.assertIn("2026-10-27 10:05 UTC", html)
         self.assertIn("2026-11-01 10:00 UTC", html)

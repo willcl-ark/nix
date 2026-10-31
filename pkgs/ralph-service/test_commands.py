@@ -187,11 +187,12 @@ class CommandTests(unittest.TestCase):
                 {
                     "subscriptions": {
                         "status": "ok",
-                        "checked_at": (now - timedelta(hours=1)).isoformat(),
+                        "checked_at": now.isoformat(),
                         "accounts": [
                             {
                                 "provider": "claude",
                                 "status": "ok",
+                                "observed_at": (now - timedelta(hours=1)).isoformat(),
                                 "windows": [
                                     {
                                         "name": "Weekly",

@@ -280,6 +280,12 @@ def _subscriptions(report_dir, now):
         ):
             lines.append(f"{provider}: quota unknown")
             continue
+        observed = _timestamp(account.get("observed_at"))
+        if observed is None:
+            lines.append(f"{provider}: observation time unknown")
+        else:
+            stale = " · stale" if now - observed > timedelta(minutes=15) else ""
+            lines.append(f"{provider}: observed {observed:%d %b, %H:%M UTC}{stale}")
         for window in windows[:4]:
             if not isinstance(window, dict):
                 continue
@@ -297,7 +303,9 @@ def _subscriptions(report_dir, now):
             lines.append(
                 f"{provider} {window.get('name', 'window')}: {remaining}; resets {resets}"
             )
-    lines.append("Quota includes other clients sharing each account.")
+    lines.append(
+        "Quota is from CLIProxy observations and includes other clients sharing each account."
+    )
     return lines
 
 

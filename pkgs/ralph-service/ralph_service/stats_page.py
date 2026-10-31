@@ -1989,7 +1989,7 @@ def _quota_timeline(subscriptions):
         '<div class="quota-timeline"><h3>Quota windows</h3>'
         + "".join(charts)
         + '<p class="note">Each bar spans one quota window. Its shaded portion shows remaining capacity. '
-        "Starts are inferred from the reset time and window duration. The vertical line marks the snapshot "
+        "Starts are inferred from the reset time and window duration. The vertical line marks the proxy check "
         f"at {_escape(_subscription_time(subscriptions.get('checked_at')))}. "
         "Unknown or expired windows are omitted. All dates are UTC.</p></div>"
     )
@@ -1998,6 +1998,7 @@ def _quota_timeline(subscriptions):
 def _subscriptions_section(summary):
     subscriptions = _mapping(summary.get("subscriptions"))
     cards = []
+    checked = _subscription_datetime(subscriptions.get("checked_at"))
     for account in _list(subscriptions.get("accounts")):
         if not isinstance(account, dict):
             continue
@@ -2017,6 +2018,18 @@ def _subscriptions_section(summary):
                 balance = credits.get("balance")
                 balance = "Unknown" if balance is None else str(balance)
             credit_note = f'<p class="note">{provider} credits: {_escape(balance)}.</p>'
+        observed = _subscription_datetime(account.get("observed_at"))
+        stale = (
+            " · stale"
+            if checked and observed and checked - observed > timedelta(minutes=15)
+            else ""
+        )
+        observation = (
+            f'<p class="note">Observed {_escape(_subscription_time(account.get("observed_at")))}{stale}. '
+            "Remaining capacity is from this observation.</p>"
+            if windows or credits
+            else ""
+        )
         quotas = []
         for window in windows:
             if not isinstance(window, dict):
@@ -2040,6 +2053,7 @@ def _subscriptions_section(summary):
         cards.append(
             '<article class="quota-card"><div class="quota-heading">'
             f'<h3>{provider}</h3><span class="plan">{plan}</span></div>'
+            + observation
             + (
                 "".join(quotas)
                 if quotas
@@ -2061,7 +2075,8 @@ def _subscriptions_section(summary):
         + body
         + _quota_timeline(subscriptions)
         + _section_note(
-            "Provider quota is a snapshot and includes all clients using the account. "
+            "Quota is read from CLIProxy observations of provider responses; checking it does not refresh the provider data. "
+            "Observations older than 15 minutes are marked stale. Quota includes all clients using the account. "
             "Unknown capacity is not unused capacity. Token totals below measure Ralph usage, not subscription capacity."
         )
         + "</section>"

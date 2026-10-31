@@ -1,10 +1,10 @@
-"""Collect subscription quota without exposing proxy credentials or making inference calls."""
+"""Read cached subscription observations from CLIProxy without provider requests."""
 
 import json
 import math
 import re
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.client import HTTPException
 
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -20,15 +20,10 @@ _TRANSPORT_ERRORS = (
 _PLANS = {"free", "plus", "pro", "team", "business", "enterprise", "edu"}
 
 
-def _request(base_url, management_key, path, data=None):
+def _request(base_url, management_key):
     request = urllib.request.Request(
-        base_url.rstrip("/") + "/v8/management/" + path,
-        data=json.dumps(data).encode() if data is not None else None,
-        headers={
-            "Authorization": f"Bearer {management_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST" if data is not None else "GET",
+        base_url.rstrip("/") + "/v8/management/credentials",
+        headers={"Authorization": f"Bearer {management_key}"},
     )
     with urllib.request.urlopen(request, timeout=10) as response:
         body = response.read(_MAX_RESPONSE_BYTES + 1)
@@ -40,15 +35,14 @@ def _request(base_url, management_key, path, data=None):
     return result
 
 
-def _percent(value):
-    if (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and 0 <= value <= 100
-    ):
-        return value
-    return None
+def _number(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
 
 
 def _reset(value):
@@ -66,145 +60,91 @@ def _reset(value):
         return None
 
 
-def _window(windows, name, used, resets_at, window_seconds=None):
-    used = _percent(used)
+def _window(windows, name, used, resets_at, window_seconds):
     if used is not None:
         windows.append(
             {
                 "name": name,
-                "used_percent": used,
+                "used_percent": min(used, 100),
                 "resets_at": _reset(resets_at),
                 "window_seconds": window_seconds,
             }
         )
 
 
-def _codex_windows(windows, rate_limit, prefix=""):
-    if not isinstance(rate_limit, dict):
-        return
-    for key, fallback in (
-        ("primary_window", "Primary"),
-        ("secondary_window", "Secondary"),
+def _codex(account, signals):
+    plan = signals.get("x-codex-plan-type")
+    account["plan"] = plan if plan in _PLANS else None
+    for namespace, label in (("", ""), ("code-review-", "Code review: ")):
+        for key in ("primary", "secondary"):
+            prefix = f"x-codex-{namespace}{key}-"
+            minutes = _number(signals.get(prefix + "window-minutes"))
+            duration = minutes * 60 if minutes is not None and minutes > 0 else None
+            if duration is not None and (
+                not math.isfinite(duration) or duration > 604800
+            ):
+                duration = None
+            name = {18000: "5-hour", 604800: "Weekly"}.get(duration, key.title())
+            reset = _number(signals.get(prefix + "reset-at"))
+            if reset is None:
+                after = _number(signals.get(prefix + "reset-after-seconds"))
+                if after is not None:
+                    try:
+                        observed = datetime.fromisoformat(account["observed_at"])
+                        reset = (observed + timedelta(seconds=after)).isoformat()
+                    except OverflowError:
+                        pass
+            # A zero-duration secondary window is an absent limit, not free capacity.
+            if minutes == 0:
+                continue
+            _window(
+                account["windows"],
+                label + name,
+                _number(signals.get(prefix + "used-percent")),
+                reset,
+                duration,
+            )
+    has_credits = signals.get("x-codex-credits-has-credits", "").lower()
+    unlimited = signals.get("x-codex-credits-unlimited", "").lower()
+    if has_credits in ("true", "false") and unlimited in ("true", "false"):
+        balance = signals.get("x-codex-credits-balance", "")
+        account["credits"] = {
+            "has_credits": has_credits == "true",
+            "unlimited": unlimited == "true",
+            "balance": balance
+            if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", balance)
+            else None,
+        }
+
+
+def _claude(account, signals):
+    for key, name, duration in (
+        ("5h", "5-hour", 18000),
+        ("7d", "Weekly", 604800),
+        ("7d_sonnet", "Sonnet: Weekly", 604800),
+        ("7d_opus", "Opus: Weekly", 604800),
+        ("7d_oi", "Fable: Weekly", 604800),
     ):
-        window = rate_limit.get(key)
-        if not isinstance(window, dict):
-            continue
-        name = {18000: "5-hour", 604800: "Weekly"}.get(
-            window.get("limit_window_seconds"), fallback
-        )
-        duration = window.get("limit_window_seconds")
-        if (
-            isinstance(duration, bool)
-            or not isinstance(duration, int)
-            or not 0 < duration <= 604800
-        ):
-            duration = None
+        prefix = f"anthropic-ratelimit-unified-{key}-"
+        utilization = _number(signals.get(prefix + "utilization"))
         _window(
-            windows,
-            prefix + name,
-            window.get("used_percent"),
-            window.get("reset_at"),
+            account["windows"],
+            name,
+            min(utilization, 1) * 100 if utilization is not None else None,
+            _number(signals.get(prefix + "reset")),
             duration,
         )
 
 
-def _codex(account, payload):
-    plan = payload.get("plan_type")
-    account["plan"] = plan if isinstance(plan, str) and plan in _PLANS else None
-    windows = account["windows"]
-    _codex_windows(windows, payload.get("rate_limit"))
-    _codex_windows(windows, payload.get("code_review_rate_limit"), "Code review: ")
-    additional = payload.get("additional_rate_limits")
-    if isinstance(additional, list):
-        for index, limit in enumerate(additional, 1):
-            if isinstance(limit, dict):
-                _codex_windows(
-                    windows, limit.get("rate_limit"), f"Additional quota {index}: "
-                )
-    credits = payload.get("credits")
-    if isinstance(credits, dict) and all(
-        isinstance(credits.get(key), bool) for key in ("has_credits", "unlimited")
-    ):
-        balance = credits.get("balance")
-        if isinstance(balance, bool) or not (
-            isinstance(balance, (int, float))
-            and math.isfinite(balance)
-            or isinstance(balance, str)
-            and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", balance)
-        ):
-            balance = None
-        account["credits"] = {
-            "has_credits": credits["has_credits"],
-            "unlimited": credits["unlimited"],
-            "balance": balance,
-        }
-
-
-def _claude(account, payload):
-    windows = account["windows"]
-    present = set()
-    limits = payload.get("limits")
-    if isinstance(limits, list):
-        for index, limit in enumerate(limits, 1):
-            if not isinstance(limit, dict):
-                continue
-            kind = limit.get("kind")
-            name = {"session": "5-hour", "weekly_all": "Weekly"}.get(kind)
-            if kind == "weekly_scoped":
-                name = f"Model quota {index}: Weekly"
-                scope = limit.get("scope")
-                model = scope.get("model") if isinstance(scope, dict) else None
-                if isinstance(model, dict):
-                    for field in ("display_name", "id"):
-                        model_name = model.get(field)
-                        if not isinstance(model_name, str):
-                            continue
-                        family = next(
-                            (
-                                family
-                                for family in ("sonnet", "opus", "fable")
-                                if family in model_name.lower()
-                            ),
-                            None,
-                        )
-                        if family:
-                            name = f"{family.title()}: Weekly"
-                            break
-            if name and _percent(limit.get("percent")) is not None:
-                _window(
-                    windows,
-                    name,
-                    limit["percent"],
-                    limit.get("resets_at"),
-                    18000 if kind == "session" else 604800,
-                )
-                present.add(name)
-    for key, name in (
-        ("five_hour", "5-hour"),
-        ("seven_day", "Weekly"),
-        ("seven_day_sonnet", "Sonnet: Weekly"),
-        ("seven_day_opus", "Opus: Weekly"),
-    ):
-        window = payload.get(key)
-        if name not in present and isinstance(window, dict):
-            _window(
-                windows,
-                name,
-                window.get("utilization"),
-                window.get("resets_at"),
-                18000 if key == "five_hour" else 604800,
-            )
-
-
 def collect_usage(base_url: str, management_key: str) -> dict:
-    """Return an allowlisted quota snapshot; unavailable values remain unknown."""
+    """Return allowlisted cached observations, retaining their original timestamps."""
     snapshot = {
         "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "status": "unavailable",
         "accounts": [],
     }
     try:
-        credentials = _request(base_url, management_key, "credentials").get("files")
+        credentials = _request(base_url, management_key).get("files")
         if not isinstance(credentials, list):
             return snapshot
     except _TRANSPORT_ERRORS:
@@ -219,60 +159,28 @@ def collect_usage(base_url: str, management_key: str) -> dict:
             "provider": provider,
             "status": "unavailable",
             "plan": None,
+            "observed_at": None,
             "windows": [],
         }
         snapshot["accounts"].append(account)
-        auth_index = credential.get("auth_index")
-        if not isinstance(auth_index, str) or not auth_index:
+        quota = credential.get("quota")
+        if not isinstance(quota, dict):
             continue
-        header = {"Authorization": "Bearer $TOKEN$"}
+        account["observed_at"] = _reset(quota.get("observed_at"))
+        raw_signals = quota.get("signals")
+        if account["observed_at"] is None or not isinstance(raw_signals, dict):
+            continue
+        signals = {
+            key.lower(): value
+            for key, value in raw_signals.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
         if provider == "codex":
-            url = "https://chatgpt.com/backend-api/wham/usage"
-            header["User-Agent"] = "codex-cli/1.0.0"
-            claims = credential.get("id_token")
-            account_id = (
-                claims.get("chatgpt_account_id") if isinstance(claims, dict) else None
-            )
-            if isinstance(account_id, str) and account_id:
-                header["Chatgpt-Account-Id"] = account_id
+            _codex(account, signals)
         else:
-            url = "https://api.anthropic.com/api/oauth/usage"
-            header.update(
-                {
-                    "Accept": "application/json",
-                    "anthropic-version": "2023-06-01",
-                    "anthropic-beta": "oauth-2025-04-20",
-                    "User-Agent": "claude-cli/1.0.83 (external, cli)",
-                }
-            )
-        try:
-            response = _request(
-                base_url,
-                management_key,
-                "requests/api-call",
-                {
-                    "auth_index": auth_index,
-                    "method": "GET",
-                    "url": url,
-                    "header": header,
-                },
-            )
-            status_code = response.get("status_code")
-            if not isinstance(status_code, int) or not 200 <= status_code < 300:
-                continue
-            if not isinstance(response.get("body"), str):
-                continue
-            payload = json.loads(response["body"])
-            if not isinstance(payload, dict):
-                continue
-            if provider == "codex":
-                _codex(account, payload)
-            else:
-                _claude(account, payload)
-            if account["windows"] or "credits" in account:
-                account["status"] = "ok"
-        except (*_TRANSPORT_ERRORS, KeyError):
-            continue
+            _claude(account, signals)
+        if account["windows"] or "credits" in account:
+            account["status"] = "ok"
     available = sum(account["status"] == "ok" for account in snapshot["accounts"])
     if available:
         snapshot["status"] = (
