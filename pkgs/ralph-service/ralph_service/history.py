@@ -1,8 +1,11 @@
 """Static PR history indexes built exclusively from public report pairs."""
 
+import fcntl
 import html
 import json
 import logging
+import os
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,62 +28,143 @@ def _report_time(record, path):
     return path.stat().st_mtime
 
 
-def save_history(report_dir, number=None):
-    """Refresh all PR indexes, or just one PR, without changing report artifacts."""
+# Increment when the compact record or timestamp calculation changes.
+CACHE_VERSION = 1
+
+
+def save_history(report_dir, number=None, *, cache_dir=None, full=False):
+    """Refresh history, optionally reusing compact records from a private cache."""
     report_dir = Path(report_dir)
-    theme.save_assets(report_dir)
     report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
-    report._write_public_file(report_dir / "history.js", _script())
+    # The service and manual backfills use this same lock, including callers
+    # without a private cache. Lock the directory to avoid a public lock file.
+    fd = os.open(report_dir, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return _save_history(report_dir, number, cache_dir, full)
+    finally:
+        os.close(fd)
+
+
+def _save_history(report_dir, number, cache_dir, full):
+    cache_path = Path(cache_dir) / "history.json" if cache_dir is not None else None
+    previous = {}
+    if cache_path is not None:
+        try:
+            saved = json.loads(cache_path.read_text(encoding="utf-8"))
+            if saved.get("version") == CACHE_VERSION and saved.get("report_dir") == str(
+                report_dir.resolve()
+            ):
+                previous = saved["records"]
+        except (OSError, ValueError, KeyError, AttributeError):
+            pass
+    records = {}
     groups = defaultdict(list)
-    for path in report_dir.glob("*.json"):
+    for path in sorted(report_dir.glob("*.json")):
+        if not report.REPORT_ID.fullmatch(path.stem):
+            continue
         if not path.with_suffix(".html").is_file():
             continue
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(record, dict):
+        stat = path.stat()
+        signature = [stat.st_size, stat.st_mtime_ns]
+        cached = previous.get(path.name)
+        if not full and cached is not None and cached["signature"] == signature:
+            record = cached["record"]
+        else:
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except ValueError as exc:
+                logging.warning("Could not index public report %s: %s", path.name, exc)
                 continue
-            pr = record.get("pr")
-            if (
-                type(pr) is not int
-                or pr <= 0
-                or (number is not None and pr != number)
-                or record.get("report_id") != path.stem
-                or not report.REPORT_ID.fullmatch(path.stem)
-            ):
+            if not isinstance(value, dict):
                 continue
-            timestamp = _report_time(record, path)
-            groups[pr].append((timestamp, path.stem, record))
-        except (OSError, ValueError) as exc:
-            logging.warning("Could not index public report %s: %s", path.name, exc)
-    for pr, records in groups.items():
-        records.sort(
+            pr = value.get("pr")
+            if type(pr) is not int or pr <= 0 or value.get("report_id") != path.stem:
+                continue
+            record = {
+                "pr": pr,
+                "head": str(value.get("head") or "unknown"),
+                "status": str(value.get("status") or "unknown"),
+                "findings_count": len(value["findings"])
+                if isinstance(value.get("findings"), list)
+                else "Unknown",
+                "timestamp": _report_time(value, path),
+            }
+        records[path.name] = {"signature": signature, "record": record}
+        if number is None or record["pr"] == number:
+            groups[record["pr"]].append((record["timestamp"], path.stem, record))
+
+    def write(path, content):
+        report._write_public_file(path, content, skip_unchanged=True)
+
+    write(report_dir / "theme.css", theme.STYLE)
+    write(report_dir / "theme.js", theme.SCRIPT)
+    write(report_dir / "history.js", _script())
+    for pr, entries in groups.items():
+        entries.sort(
             key=lambda item: (item[0] is not None, item[0] or 0, item[1]),
             reverse=True,
         )
         target = report_dir / str(pr) / "index.html"
         target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        report._write_public_file(target, _page(pr, records))
+        write(target, _page(pr, entries))
     if number is None:
+        # Full rebuilds also remove obsolete generated pages after cache loss.
+        # Check our title before deleting anything in a numeric directory.
+        for directory in report_dir.iterdir():
+            if not directory.name.isdecimal() or int(directory.name) in groups:
+                continue
+            target = directory / "index.html"
+            if target.is_file() and (
+                f"<title>Ralph reports for PR #{directory.name}</title>"
+                in target.read_text(encoding="utf-8")
+            ):
+                target.unlink()
         catalog = [
             {
                 "pr": pr,
-                "head": str(record.get("head") or "unknown"),
+                "head": record["head"],
                 "report_id": name,
                 "reviewed": _date(timestamp),
                 "timestamp": timestamp,
-                "findings": len(record["findings"])
-                if isinstance(record.get("findings"), list)
-                else "Unknown",
-                "status": str(record.get("status") or "unknown"),
-                "latest": _latest_label(records) if index == 0 else "",
+                "findings": record["findings_count"],
+                "status": record["status"],
+                "latest": _latest_label(entries) if index == 0 else "",
             }
-            for pr, records in groups.items()
-            for index, (timestamp, name, record) in enumerate(records)
+            for pr, entries in groups.items()
+            for index, (timestamp, name, record) in enumerate(entries)
         ]
-        report._write_public_file(
+        write(
             report_dir / "history.json", json.dumps(catalog, ensure_ascii=False) + "\n"
         )
-        report._write_public_file(report_dir / "index.html", _search_page())
+        write(report_dir / "index.html", _search_page())
+        if cache_path is not None:
+            saved = {
+                "version": CACHE_VERSION,
+                "report_dir": str(report_dir.resolve()),
+                "records": records,
+            }
+            # Publish the cache only after all outputs succeed. A failed output
+            # leaves the old manifest in place so deletions are retried too.
+            cache_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            data = json.dumps(saved, sort_keys=True)
+            if (
+                not cache_path.exists()
+                or cache_path.read_text(encoding="utf-8") != data
+            ):
+                tmp = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        mode="w", encoding="utf-8", dir=cache_path.parent, delete=False
+                    ) as file:
+                        tmp = Path(file.name)
+                        file.write(data)
+                        file.flush()
+                        os.fsync(file.fileno())
+                    os.replace(tmp, cache_path)
+                finally:
+                    if tmp is not None:
+                        tmp.unlink(missing_ok=True)
     return len(groups)
 
 
@@ -92,8 +176,7 @@ def _page(number, records):
         date = _date(timestamp)
         if index == 0 and _latest_label(records):
             date += f" {_latest_label(records)}"
-        findings = record.get("findings")
-        count = str(len(findings)) if isinstance(findings, list) else "Unknown"
+        count = str(record["findings_count"])
         rows.append(
             f'<tr data-commit="{escaped_head}"><td>{date}</td>'
             f'<td><a href="?commit={quote(head, safe="")}"><code>'

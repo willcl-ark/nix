@@ -3,6 +3,7 @@
 import hashlib
 import html
 import json
+import re
 from datetime import UTC, datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -1542,6 +1543,16 @@ def _script():
     return (
         theme.SCRIPT
         + """
+const freshness = document.querySelector('[data-stats-freshness]');
+if (freshness) {
+  fetch(freshness.dataset.statsFreshness, {cache: 'no-store'})
+    .then(response => response.ok ? response.json() : Promise.reject())
+    .then(data => {
+      if (typeof data.generated_at === 'string') {
+        freshness.textContent = `Statistics refreshed ${data.generated_at}. `;
+      }
+    }).catch(() => {});
+}
 const trendControls = document.querySelector('.chart-controls');
 if (trendControls) {
   trendControls.hidden = false;
@@ -1684,7 +1695,7 @@ def _page(title, summary, body, page_prefix="", active="Overview"):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_escape(title)} · ralph stats</title><style>{_style()}</style><script src="{page_prefix}stats.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to content</a>{_header(summary, page_prefix, active)}<main id="main">{body}</main>
-<footer>Generated {_escape(_generated_at(summary))}. {_escape(_source_status(summary))}</footer>
+<footer><span data-stats-freshness="{page_prefix}freshness.json">Refresh time unavailable. </span>{_escape(_source_status(summary))}</footer>
 </body></html>
 """)
 
@@ -2096,25 +2107,43 @@ def save_stats(
     """Write the public statistics views, agent details and matching JSON."""
     output_dir = Path(output_dir)
     output_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
-    json_text = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
-    report._write_public_file(output_dir / "stats.json", json_text + "\n")
-    report._write_public_file(output_dir / "stats.js", _script())
-    pages = {
-        "index.html": _html(summary, repository_url, report_base_url),
-        "agents/index.html": _agents_html(summary, repository_url, report_base_url),
-        "reviews/index.html": _reviews_html(summary, repository_url, report_base_url),
-        "addressed/index.html": _addressed_html(
-            summary, repository_url, report_base_url
-        ),
-        "usage/index.html": _usage_html(summary),
-        "limits/index.html": _limits_html(summary, repository_url, report_base_url),
-    }
-    for stage in _list(summary.get("stages")):
-        if isinstance(stage, dict):
-            pages["agents/" + _stage_filename(stage)] = _stage_html(
-                summary, stage, repository_url, report_base_url
-            )
-    for name, content in pages.items():
+
+    def write(name, content):
         target = output_dir / name
         target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        report._write_public_file(target, content)
+        report._write_public_file(target, content, skip_unchanged=True)
+
+    write(
+        "stats.json",
+        json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n",
+    )
+    write("stats.js", _script())
+    for name, render in (
+        ("index.html", _html),
+        ("agents/index.html", _agents_html),
+        ("reviews/index.html", _reviews_html),
+        ("addressed/index.html", _addressed_html),
+        ("limits/index.html", _limits_html),
+    ):
+        write(name, render(summary, repository_url, report_base_url))
+    write("usage/index.html", _usage_html(summary))
+    stage_names = set()
+    for stage in _list(summary.get("stages")):
+        if isinstance(stage, dict):
+            name = _stage_filename(stage)
+            stage_names.add(name)
+            write(
+                "agents/" + name,
+                _stage_html(summary, stage, repository_url, report_base_url),
+            )
+    # Only remove files matching the generated stage-page naming convention.
+    for path in (output_dir / "agents").glob("agent-*.html"):
+        if (
+            re.fullmatch(r"agent-[0-9a-f]{20}\.html", path.name)
+            and path.name not in stage_names
+        ):
+            path.unlink()
+    # A timestamp-only refresh must not rewrite every historical HTML page.
+    # Publish freshness last, after all pages have been successfully saved.
+    write("freshness.json", json.dumps({"generated_at": _generated_at(summary)}) + "\n")

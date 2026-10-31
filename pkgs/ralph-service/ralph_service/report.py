@@ -1185,10 +1185,16 @@ summary { cursor: pointer; font-weight: 600; }
     )
 
 
-def _write_public_file(path, content, *, replace=True):
+def _write_public_file(path, content, *, replace=True, skip_unchanged=False):
     path = Path(path)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
     data = content.encode("utf-8")
+    if skip_unchanged:
+        try:
+            if path.read_bytes() == data:
+                return
+        except FileNotFoundError:
+            pass
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
         with os.fdopen(fd, "wb") as file:

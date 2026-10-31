@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ralph_service import history
 
@@ -63,6 +64,89 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(history.save_history(root, 123), 1)
             self.assertTrue((root / "history.js").is_file())
             self.assertEqual(json.loads((root / "history.json").read_text()), catalog)
+
+    def test_incremental_history_matches_full_and_retries_failed_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "public"
+            root.mkdir()
+            cache = Path(directory) / "private"
+            source = root / "review.json"
+            source.write_text(
+                json.dumps(
+                    {"pr": 123, "report_id": "review", "findings": [], "head": "a" * 40}
+                )
+            )
+            (root / "review.html").touch()
+            history.save_history(root, cache_dir=cache)
+            public_files = [
+                root / "123/index.html",
+                root / "history.json",
+                root / "history.js",
+                root / "theme.js",
+            ]
+            mtimes = {path: path.stat().st_mtime_ns for path in public_files}
+            original_read = Path.read_text
+
+            def read(path, *args, **kwargs):
+                if path == source:
+                    self.fail("unchanged source JSON was read")
+                return original_read(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "read_text", read):
+                history.save_history(root, cache_dir=cache)
+            self.assertEqual(mtimes, {p: p.stat().st_mtime_ns for p in public_files})
+            self.assertEqual((cache / "history.json").stat().st_mode & 0o777, 0o600)
+            page = root / "123/index.html"
+            original_page = page.read_bytes()
+            page.unlink()
+            with mock.patch.object(Path, "read_text", read):
+                history.save_history(root, cache_dir=cache)
+            self.assertEqual(page.read_bytes(), original_page)
+
+            # A report moving between PRs must remove the old generated page.
+            source.write_text(
+                json.dumps(
+                    {
+                        "pr": 456,
+                        "report_id": "review",
+                        "findings": [{}],
+                        "head": "b" * 40,
+                    }
+                )
+            )
+            original_write = history.report._write_public_file
+
+            def fail_catalog(path, content, **kwargs):
+                if path == root / "history.json":
+                    raise OSError("publication interrupted")
+                return original_write(path, content, **kwargs)
+
+            with (
+                mock.patch.object(history.report, "_write_public_file", fail_catalog),
+                self.assertRaises(OSError),
+            ):
+                history.save_history(root, cache_dir=cache)
+            history.save_history(root, cache_dir=cache)
+            self.assertFalse((root / "123/index.html").exists())
+            before = {
+                p.relative_to(root): p.read_bytes()
+                for p in root.rglob("*")
+                if p.is_file()
+            }
+            history.save_history(root, cache_dir=cache, full=True)
+            self.assertEqual(
+                before,
+                {
+                    p.relative_to(root): p.read_bytes()
+                    for p in root.rglob("*")
+                    if p.is_file()
+                },
+            )
+            (root / "review.html").unlink()
+            (cache / "history.json").unlink()
+            history.save_history(root, cache_dir=cache, full=True)
+            self.assertFalse((root / "456/index.html").exists())
+            self.assertEqual(json.loads((root / "history.json").read_text()), [])
 
     def test_recorded_time_and_html_escaping(self):
         with tempfile.TemporaryDirectory() as directory:

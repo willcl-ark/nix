@@ -10,6 +10,61 @@ from ralph_service import jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
+    def test_timestamp_refresh_preserves_pages_and_removes_obsolete_agents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            summary = {
+                "generated_at": "2026-01-01T00:00:00Z",
+                "stages": [{"stage": "tests", "configured_model": "model"}],
+            }
+            stats_page.save_stats(
+                output,
+                summary,
+                "https://example.com/repo",
+                "https://example.com/reports",
+            )
+            pages = list(output.rglob("*.html"))
+            before = {p: p.stat().st_mtime_ns for p in pages}
+            summary["generated_at"] = "2026-01-01T00:01:00Z"
+            stats_page.save_stats(
+                output,
+                summary,
+                "https://example.com/repo",
+                "https://example.com/reports",
+            )
+            self.assertEqual(before, {p: p.stat().st_mtime_ns for p in pages})
+            self.assertEqual(json.loads((output / "stats.json").read_text()), summary)
+            self.assertEqual(
+                json.loads((output / "freshness.json").read_text()),
+                {"generated_at": summary["generated_at"]},
+            )
+            self.assertIn(
+                'data-stats-freshness="freshness.json"',
+                (output / "index.html").read_text(),
+            )
+            self.assertIn(
+                'data-stats-freshness="../freshness.json"',
+                (output / "reviews/index.html").read_text(),
+            )
+            page = output / "reviews/index.html"
+            original_page = page.read_bytes()
+            page.unlink()
+            stats_page.save_stats(
+                output,
+                summary,
+                "https://example.com/repo",
+                "https://example.com/reports",
+            )
+            self.assertEqual(page.read_bytes(), original_page)
+            summary["stages"] = []
+            stats_page.save_stats(
+                output,
+                summary,
+                "https://example.com/repo",
+                "https://example.com/reports",
+            )
+            self.assertEqual(list((output / "agents").glob("agent-*.html")), [])
+
     def test_challenger_tracking_keeps_disagreements_and_unknowns_visible(self):
         title = "<script>candidate</script>"
         originals = [
