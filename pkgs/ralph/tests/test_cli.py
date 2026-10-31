@@ -204,7 +204,7 @@ class CLITest(unittest.TestCase):
         original = engine.load().identity["config_sha256"]
         self.configure(openai_api_base=proxy + "/")
 
-        def respond(url, payload, api_key, timeout):
+        def respond(url, payload, api_key, timeout, *, is_cancelled=None):
             data = json.loads(payload)
             return {
                 "model": data["model"],
