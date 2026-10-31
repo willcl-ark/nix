@@ -1,7 +1,8 @@
 """Webhook server and review worker."""
 
 import argparse
-from contextlib import closing
+from contextlib import closing, contextmanager, ExitStack
+import fcntl
 import hashlib
 import hmac
 import json
@@ -963,7 +964,26 @@ def serve_until_stopped(
                 signal.signal(signum, handler)
 
 
+@contextmanager
+def coordinator_lock(state_dir):
+    """Keep recovery and coordination exclusive for this state directory."""
+    state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (state_dir / "coordinator.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError(
+                "another coordinator already owns this state directory"
+            ) from None
+        yield
+
+
 def main():
+    with ExitStack() as resources:
+        return _main(resources)
+
+
+def _main(resources):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--listen", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
@@ -1035,9 +1055,10 @@ def main():
         from .jobs import migrate_state
 
         try:
+            resources.enter_context(coordinator_lock(args.state_dir))
             jobs_path = args.state_dir / "jobs.sqlite3"
             migrated = jobs_path.exists() and migrate_state(jobs_path)
-        except (OSError, sqlite3.Error, ValueError) as exc:
+        except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
             parser.error(f"could not migrate state databases: {exc}")
         print(
             "state databases migrated"
@@ -1117,9 +1138,9 @@ def main():
         parser.error("GitHub token file must not be empty")
     if not api_key or not secret or not forgejo_token or not args.bot_login:
         parser.error("secret files must not be empty")
-    args.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    args.state_dir.chmod(0o700)
     try:
+        resources.enter_context(coordinator_lock(args.state_dir))
+        args.state_dir.chmod(0o700)
         jobs = JobStore(args.state_dir / "jobs.sqlite3")
     except RuntimeError as exc:
         parser.error(str(exc))
