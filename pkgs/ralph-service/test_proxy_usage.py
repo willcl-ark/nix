@@ -95,6 +95,9 @@ class ProxyUsageTests(unittest.TestCase):
         codex, claude = result["accounts"]
         self.assertEqual(codex["plan"], "pro")
         self.assertEqual(
+            [w["window_seconds"] for w in codex["windows"]], [18000, 604800, None]
+        )
+        self.assertEqual(
             [window["name"] for window in codex["windows"]],
             ["5-hour", "Weekly", "Code review: Primary"],
         )
@@ -105,6 +108,7 @@ class ProxyUsageTests(unittest.TestCase):
                 "name": "5-hour",
                 "used_percent": 9,
                 "resets_at": "2026-10-26T18:00:00Z",
+                "window_seconds": 18000,
             },
         )
         self.assertTrue(result["checked_at"].endswith("Z"))
@@ -214,9 +218,24 @@ class ProxyUsageTests(unittest.TestCase):
         self.assertEqual(
             result["accounts"][1]["windows"],
             [
-                {"name": "5-hour", "used_percent": 0, "resets_at": None},
-                {"name": "Sonnet: Weekly", "used_percent": 12, "resets_at": None},
-                {"name": "Opus: Weekly", "used_percent": 100, "resets_at": None},
+                {
+                    "name": "5-hour",
+                    "used_percent": 0,
+                    "resets_at": None,
+                    "window_seconds": 18000,
+                },
+                {
+                    "name": "Sonnet: Weekly",
+                    "used_percent": 12,
+                    "resets_at": None,
+                    "window_seconds": 604800,
+                },
+                {
+                    "name": "Opus: Weekly",
+                    "used_percent": 100,
+                    "resets_at": None,
+                    "window_seconds": 604800,
+                },
             ],
         )
 
@@ -246,9 +265,24 @@ class ProxyUsageTests(unittest.TestCase):
         self.assertEqual(
             result["accounts"][0]["windows"],
             [
-                {"name": "5-hour", "used_percent": 9, "resets_at": None},
-                {"name": "Weekly", "used_percent": 68, "resets_at": None},
-                {"name": "Fable: Weekly", "used_percent": 100, "resets_at": None},
+                {
+                    "name": "5-hour",
+                    "used_percent": 9,
+                    "resets_at": None,
+                    "window_seconds": 18000,
+                },
+                {
+                    "name": "Weekly",
+                    "used_percent": 68,
+                    "resets_at": None,
+                    "window_seconds": 604800,
+                },
+                {
+                    "name": "Fable: Weekly",
+                    "used_percent": 100,
+                    "resets_at": None,
+                    "window_seconds": 604800,
+                },
             ],
         )
 

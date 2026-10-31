@@ -66,11 +66,16 @@ def _reset(value):
         return None
 
 
-def _window(windows, name, used, resets_at):
+def _window(windows, name, used, resets_at, window_seconds=None):
     used = _percent(used)
     if used is not None:
         windows.append(
-            {"name": name, "used_percent": used, "resets_at": _reset(resets_at)}
+            {
+                "name": name,
+                "used_percent": used,
+                "resets_at": _reset(resets_at),
+                "window_seconds": window_seconds,
+            }
         )
 
 
@@ -87,8 +92,19 @@ def _codex_windows(windows, rate_limit, prefix=""):
         name = {18000: "5-hour", 604800: "Weekly"}.get(
             window.get("limit_window_seconds"), fallback
         )
+        duration = window.get("limit_window_seconds")
+        if (
+            isinstance(duration, bool)
+            or not isinstance(duration, int)
+            or not 0 < duration <= 604800
+        ):
+            duration = None
         _window(
-            windows, prefix + name, window.get("used_percent"), window.get("reset_at")
+            windows,
+            prefix + name,
+            window.get("used_percent"),
+            window.get("reset_at"),
+            duration,
         )
 
 
@@ -155,7 +171,13 @@ def _claude(account, payload):
                             name = f"{family.title()}: Weekly"
                             break
             if name and _percent(limit.get("percent")) is not None:
-                _window(windows, name, limit["percent"], limit.get("resets_at"))
+                _window(
+                    windows,
+                    name,
+                    limit["percent"],
+                    limit.get("resets_at"),
+                    18000 if kind == "session" else 604800,
+                )
                 present.add(name)
     for key, name in (
         ("five_hour", "5-hour"),
@@ -165,7 +187,13 @@ def _claude(account, payload):
     ):
         window = payload.get(key)
         if name not in present and isinstance(window, dict):
-            _window(windows, name, window.get("utilization"), window.get("resets_at"))
+            _window(
+                windows,
+                name,
+                window.get("utilization"),
+                window.get("resets_at"),
+                18000 if key == "five_hour" else 604800,
+            )
 
 
 def collect_usage(base_url: str, management_key: str) -> dict:

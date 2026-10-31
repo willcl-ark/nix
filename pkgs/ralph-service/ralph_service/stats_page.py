@@ -4,7 +4,7 @@ import hashlib
 import html
 import json
 import re
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -1512,6 +1512,23 @@ meter::-moz-meter-bar { background: var(--accent); border-radius: 1rem; }
 .quota-window small { color: var(--muted); font: .7rem ui-monospace, monospace; }
 .quota-window.low meter::-webkit-meter-optimum-value { background: #e7bb7c; }
 .quota-window.low meter::-moz-meter-bar { background: #e7bb7c; }
+.quota-timeline { margin-top: 1.5rem; }
+.quota-timeline details { margin: .75rem 0; }
+.quota-timeline-scroll { overflow-x: auto; }
+.quota-timeline-grid { min-width: 48rem; }
+.quota-timeline-row { display: grid; grid-template-columns: 15rem 1fr; border-bottom: 1px solid var(--border); }
+.quota-timeline-label { padding: .7rem .8rem .7rem 0; font-size: .8rem; }
+.quota-timeline-label small { display: block; color: var(--muted); margin-top: .25rem; }
+.quota-timeline-track { position: relative; min-height: 3.8rem; background: repeating-linear-gradient(to right, var(--border) 0 1px, transparent 1px var(--quota-tick)); }
+.quota-timeline-axis { position: relative; height: 2rem; font: .7rem ui-monospace, monospace; color: var(--muted); }
+.quota-timeline-axis span { position: absolute; transform: translateX(-50%); }
+.quota-timeline-axis span:first-child { transform: none; }
+.quota-timeline-axis span:last-child { transform: translateX(-100%); }
+.quota-timeline-bar { position: absolute; top: 1.15rem; height: 1.4rem; border: 1px solid var(--accent); border-radius: .4rem; background: var(--raised); overflow: hidden; }
+.quota-timeline-bar i { display: block; height: 100%; background: var(--accent); opacity: .55; }
+.quota-timeline-bar.codex { border-color: #b4a2ee; }
+.quota-timeline-bar.codex i { background: #b4a2ee; }
+.quota-timeline-marker { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--text); opacity: .65; }
 .sort-button { padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; }
 .sort-button::after { content: " ↕"; opacity: .55; }
 [aria-sort="ascending"] .sort-button::after { content: " ↑"; opacity: 1; }
@@ -1875,16 +1892,107 @@ def _addressed_html(summary, repository_url, report_base_url):
     return _page("Outcomes", summary, body, "../", "Outcomes")
 
 
-def _subscription_time(value):
+def _subscription_datetime(value):
     if not isinstance(value, str):
-        return "Unknown"
+        return None
     try:
         timestamp = datetime.fromisoformat(value)
     except ValueError:
-        return "Unknown"
-    if timestamp.tzinfo is None:
-        return "Unknown"
-    return timestamp.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+        return None
+    return timestamp.astimezone(UTC) if timestamp.tzinfo is not None else None
+
+
+def _subscription_time(value):
+    timestamp = _subscription_datetime(value)
+    return timestamp.strftime("%Y-%m-%d %H:%M UTC") if timestamp else "Unknown"
+
+
+def _quota_timeline(subscriptions):
+    checked = _subscription_datetime(subscriptions.get("checked_at"))
+    if checked is None:
+        return ""
+    groups = {604800: [], 18000: []}
+    for account in _list(subscriptions.get("accounts")):
+        if not isinstance(account, dict) or account.get("status") != "ok":
+            continue
+        for window in _list(account.get("windows")):
+            if not isinstance(window, dict):
+                continue
+            duration = _number(window.get("window_seconds"))
+            reset = _subscription_datetime(window.get("resets_at"))
+            used = _number(window.get("used_percent"))
+            if (
+                duration not in groups
+                or reset is None
+                or used is None
+                or not 0 <= used <= 100
+            ):
+                continue
+            start = reset - timedelta(seconds=duration)
+            if start <= checked < reset:
+                groups[duration].append((account, window, start, reset, 100 - used))
+    charts = []
+    for duration, windows in groups.items():
+        if not windows:
+            continue
+        weekly = duration == 604800
+        tick_seconds = 86400 if weekly else 3600
+        origin = checked.replace(minute=0, second=0, microsecond=0)
+        if weekly:
+            origin = origin.replace(hour=0)
+        origin -= timedelta(seconds=duration)
+        tick_count = 14 if weekly else 10
+        if max(window[3] for window in windows) > origin + timedelta(
+            seconds=tick_count * tick_seconds
+        ):
+            tick_count += 1
+        span = tick_count * tick_seconds
+        marker = (checked - origin).total_seconds() / span * 100
+        ticks = []
+        for index in range(tick_count + 1):
+            tick = origin + timedelta(seconds=tick_seconds * index)
+            label = tick.strftime("%m/%d" if weekly else "%H:%M")
+            ticks.append(
+                f'<span style="left:{index / tick_count * 100:.4f}%">{label}</span>'
+            )
+        rows = []
+        for account, window, start, reset, remaining in windows:
+            left = (start - origin).total_seconds() / span * 100
+            width = duration / span * 100
+            label = f"{account.get('provider', 'Unknown').title()} · {window.get('name', 'Unknown')}"
+            reset_text = reset.strftime("%b %d %H:%M UTC")
+            tooltip = f"{label}: {remaining:.1f}% remaining. Inferred start {start.isoformat()}; resets {reset.isoformat()}"
+            color = " codex" if account.get("provider") == "codex" else ""
+            rows.append(
+                '<div class="quota-timeline-row"><div class="quota-timeline-label">'
+                f"{_escape(label)}<small>{remaining:.1f}% remaining · resets {_escape(reset_text)}</small></div>"
+                '<div class="quota-timeline-track">'
+                f'<div class="quota-timeline-bar{color}" style="left:{left:.4f}%;width:{width:.4f}%" title="{_escape(tooltip)}">'
+                f'<i style="width:{remaining:.4f}%"></i></div>'
+                f'<span class="quota-timeline-marker" style="left:{marker:.4f}%" aria-hidden="true"></span>'
+                "</div></div>"
+            )
+        title = "Weekly" if weekly else "5-hour"
+        opened = " open" if not charts else ""
+        charts.append(
+            f'<details{opened}><summary>{title}</summary><div class="quota-timeline-scroll">'
+            f'<div class="quota-timeline-grid" style="--quota-tick:{100 / tick_count:.4f}%"><div class="quota-timeline-row"><div></div>'
+            '<div class="quota-timeline-axis">'
+            + "".join(ticks)
+            + "</div></div>"
+            + "".join(rows)
+            + "</div></div></details>"
+        )
+    if not charts:
+        return ""
+    return (
+        '<div class="quota-timeline"><h3>Quota windows</h3>'
+        + "".join(charts)
+        + '<p class="note">Each bar spans one quota window. Its shaded portion shows remaining capacity. '
+        "Starts are inferred from the reset time and window duration. The vertical line marks the snapshot "
+        f"at {_escape(_subscription_time(subscriptions.get('checked_at')))}. "
+        "Unknown or expired windows are omitted. All dates are UTC.</p></div>"
+    )
 
 
 def _subscriptions_section(summary):
@@ -1951,6 +2059,7 @@ def _subscriptions_section(summary):
         '<section id="subscriptions"><h2>Subscription capacity</h2>'
         + f"<p>Status: {_escape(status.replace('_', ' '))}. Checked: {_escape(freshness)}.</p>"
         + body
+        + _quota_timeline(subscriptions)
         + _section_note(
             "Provider quota is a snapshot and includes all clients using the account. "
             "Unknown capacity is not unused capacity. Token totals below measure Ralph usage, not subscription capacity."

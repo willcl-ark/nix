@@ -457,6 +457,52 @@ class StatsPageTests(unittest.TestCase):
         self.assertIn("Remaining capacity is unknown", html)
         self.assertEqual(html.count('aria-label="Remaining quota"'), 1)
 
+    def test_quota_timeline_positions_windows_and_omits_unknown_or_expired_data(self):
+        windows = [
+            {
+                "name": "Fable <5>",
+                "used_percent": 25,
+                "window_seconds": 604800,
+                "resets_at": "2026-11-01T00:00:00Z",
+            },
+            {
+                "name": "5-hour",
+                "used_percent": 60,
+                "window_seconds": 18000,
+                "resets_at": "2026-10-31T14:00:00Z",
+            },
+            {
+                "name": "Missing duration",
+                "used_percent": 0,
+                "resets_at": "2026-11-01T00:00:00Z",
+            },
+            {
+                "name": "Expired",
+                "used_percent": 0,
+                "window_seconds": 604800,
+                "resets_at": "2026-10-30T00:00:00Z",
+            },
+        ]
+        subscriptions = {
+            "checked_at": "2026-10-31T12:00:00Z",
+            "accounts": [{"provider": "claude", "status": "ok", "windows": windows}],
+        }
+        rendered = stats_page._quota_timeline(subscriptions)
+        self.assertIn("Fable &lt;5&gt;", rendered)
+        self.assertNotIn("Fable <5>", rendered)
+        self.assertIn("left:7.1429%;width:50.0000%", rendered)
+        self.assertIn("left:20.0000%;width:50.0000%", rendered)
+        self.assertIn("width:75.0000%", rendered)
+        self.assertIn("width:40.0000%", rendered)
+        self.assertIn("2026-10-25T00:00:00+00:00", rendered)
+        self.assertIn("Nov 01 00:00 UTC", rendered)
+        self.assertNotIn("Missing duration", rendered)
+        self.assertNotIn("Expired", rendered)
+        subscriptions["accounts"][0]["status"] = "unavailable"
+        self.assertEqual(stats_page._quota_timeline(subscriptions), "")
+        subscriptions["checked_at"] = "invalid"
+        self.assertEqual(stats_page._quota_timeline(subscriptions), "")
+
     def test_dashboard_renders_collected_stats_and_escapes_untrusted_findings(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
