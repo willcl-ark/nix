@@ -47,7 +47,34 @@ class GitHubTests(unittest.TestCase):
         }
 
     def publish(self, result):
-        return github.publish_major_findings("owner/repo", "github-token", 42, result)
+        return github.publish_major_findings(
+            "owner/repo", "github-token", 42, result, is_current=lambda: True
+        )
+
+    def test_local_supersession_during_lookup_prevents_publication(self):
+        current = True
+
+        def request(token, path, method="GET", data=None):
+            nonlocal current
+            self.assertEqual(method, "GET")
+            if path == "/user":
+                return {"id": 7}
+            if "/comments?" in path:
+                current = False
+                return []
+            return {"state": "open", "head": {"sha": "a" * 40}}
+
+        with patch.object(github, "github_request", side_effect=request):
+            self.assertEqual(
+                github.publish_major_findings(
+                    "owner/repo",
+                    "token",
+                    42,
+                    self.result(),
+                    is_current=lambda: current,
+                ),
+                "stale",
+            )
 
     def test_only_major_findings_with_report(self):
         result = self.result()

@@ -18,7 +18,7 @@ from dataclasses import replace
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from ralph import config as core_config
 from ralph import engine, model, pipeline, usage
@@ -36,6 +36,7 @@ class ServiceTests(unittest.TestCase):
                 "title": "Title",
                 "body": "Description",
                 "labels": [],
+                "base_ref": "master",
             },
         )
         context.start()
@@ -122,6 +123,12 @@ class ServiceTests(unittest.TestCase):
                 },
             },
             "run": {
+                "review_context": {
+                    "title": "Title",
+                    "body": "Description",
+                    "labels": [],
+                    "base_ref": "master",
+                },
                 "review_id": "pr:42:1:1",
                 "status": "completed",
                 "metrics": {},
@@ -216,7 +223,12 @@ class ServiceTests(unittest.TestCase):
             patch.object(
                 service.forgejo,
                 "pull_request_context",
-                return_value={"title": "Title", "body": "Description", "labels": []},
+                return_value={
+                    "title": "Title",
+                    "body": "Description",
+                    "labels": [],
+                    "base_ref": "master",
+                },
             ),
             patch.object(
                 service.repository,
@@ -286,6 +298,7 @@ class ServiceTests(unittest.TestCase):
             "title": "Title",
             "body": "Description",
             "labels": ["Backport"],
+            "base_ref": "master",
         }
         self.jobs.save_result(job, result)
         job["review_result"] = result
@@ -298,6 +311,43 @@ class ServiceTests(unittest.TestCase):
         run.assert_not_called()
         publish.assert_not_called()
         self.assertIsNone(self.jobs.claim())
+
+    def test_saved_review_without_target_identity_requires_recapture(self):
+        job = self.enqueue()
+        result = self.saved_result()
+        del result["run"]["review_context"]["base_ref"]
+        self.jobs.save_result(job, result)
+        job["review_result"] = result
+        with (
+            patch.object(service.runner, "run_review") as run,
+            patch.object(forgejo, "publish_review") as publish,
+        ):
+            self.assertEqual(self.process(job), "failed")
+        run.assert_not_called()
+        publish.assert_not_called()
+        self.assertIsNone(self.jobs.claim())
+
+    def test_retargeted_pr_is_rejected_before_analysis(self):
+        job = self.enqueue()
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "find_comment", return_value=None),
+            patch.object(
+                forgejo,
+                "pull_request_context",
+                return_value={
+                    "title": "Title",
+                    "body": "Description",
+                    "labels": [],
+                    "base_ref": "other",
+                },
+            ),
+            patch.object(service.runner, "run_review") as run,
+            patch.object(forgejo, "publish_review") as publish,
+        ):
+            self.assertEqual(self.process(job), "stale")
+        run.assert_not_called()
+        publish.assert_not_called()
 
     def test_github_credentials_do_not_enable_publication(self):
         self.bot_config = replace(self.bot_config, github_repository="owner/repo")
@@ -353,7 +403,7 @@ class ServiceTests(unittest.TestCase):
                 "updated",
             )
         publish.assert_called_once_with(
-            "owner/repo", "write-token", 42, job["review_result"]
+            "owner/repo", "write-token", 42, job["review_result"], is_current=ANY
         )
 
     def test_mirror_comment_is_bounded_and_report_keeps_all_findings(self):
@@ -449,7 +499,12 @@ class ServiceTests(unittest.TestCase):
             patch.object(
                 service.forgejo,
                 "pull_request_context",
-                return_value={"title": "Title", "body": "Description", "labels": []},
+                return_value={
+                    "title": "Title",
+                    "body": "Description",
+                    "labels": [],
+                    "base_ref": "master",
+                },
             ) as remote_context,
             patch.object(
                 service.repository,
@@ -506,7 +561,12 @@ class ServiceTests(unittest.TestCase):
             patch.object(
                 service.forgejo,
                 "pull_request_context",
-                return_value={"title": "Title", "body": "Description", "labels": []},
+                return_value={
+                    "title": "Title",
+                    "body": "Description",
+                    "labels": [],
+                    "base_ref": "master",
+                },
             ),
             patch.object(
                 service.repository,
@@ -722,6 +782,7 @@ class WebhookTests(unittest.TestCase):
                 "title": "Title",
                 "body": "Description",
                 "labels": [],
+                "base_ref": "master",
             },
         )
         context.start()
@@ -828,7 +889,12 @@ class WebhookTests(unittest.TestCase):
             patch.object(
                 forgejo,
                 "pull_request_context",
-                return_value={"title": "Title", "body": "Body", "labels": []},
+                return_value={
+                    "title": "Title",
+                    "body": "Body",
+                    "labels": [],
+                    "base_ref": "master",
+                },
             ),
             patch.object(
                 repository,
@@ -928,7 +994,7 @@ class WebhookTests(unittest.TestCase):
             )
         }
         for changed_metadata, evidence in (
-            ({**metadata, "labels": []}, {"complete": False}),
+            ({**metadata, "labels": [], "base_ref": "master"}, {"complete": False}),
             (metadata, {"complete": True}),
         ):
             self.assertFalse(
@@ -970,7 +1036,12 @@ class WebhookTests(unittest.TestCase):
             patch.object(
                 forgejo,
                 "pull_request_context",
-                return_value={"title": "Title", "body": "Body", "labels": []},
+                return_value={
+                    "title": "Title",
+                    "body": "Body",
+                    "labels": [],
+                    "base_ref": "master",
+                },
             ),
             patch.object(
                 repository,

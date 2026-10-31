@@ -501,11 +501,13 @@ def read_github_discussion(bot_config, url, kind="comments", page=1, cutoff=None
 
 
 def pull_request_context(bot_config, token, number):
-    pull = forgejo_request(bot_config, token, f"/issues/{number}")
+    pull = forgejo_request(bot_config, token, f"/pulls/{number}")
     if (
         not isinstance(pull, dict)
         or pull.get("number") != number
-        or not isinstance(pull.get("pull_request"), dict)
+        or not isinstance(pull.get("base"), dict)
+        or not isinstance(pull["base"].get("ref"), str)
+        or not pull["base"]["ref"]
     ):
         raise ValueError("Forgejo returned invalid pull request")
     title, description = pull.get("title"), pull.get("body")
@@ -520,6 +522,7 @@ def pull_request_context(bot_config, token, number):
     ):
         raise ValueError("Forgejo returned invalid pull request labels")
     return {
+        "base_ref": pull["base"]["ref"],
         "title": title,
         "body": description or "",
         "labels": sorted({label["name"] for label in labels}),
@@ -647,6 +650,7 @@ def publish_review(
     content,
     *,
     source_base_sha,
+    is_current,
     engine_identity=None,
     report_url=None,
     review_fingerprint=None,
@@ -675,6 +679,8 @@ def publish_review(
     ):
         return "stale"
     if current_head(bot_config, number) != head_sha:
+        return "stale"
+    if not is_current():
         return "stale"
     if comment is None:
         created = forgejo_request(

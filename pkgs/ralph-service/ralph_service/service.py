@@ -298,8 +298,7 @@ def process_job(
                 )
                 if (
                     not base_ref.startswith("sha:")
-                    and expected_context.get("base_ref")
-                    and expected_context["base_ref"] != base_ref
+                    and expected_context.get("base_ref") != base_ref
                 ):
                     raise model.StaleReview("PR target branch changed")
                 title, description = expected_context["title"], expected_context["body"]
@@ -451,6 +450,10 @@ def process_job(
                 debug = saved["run"]["attempt"]
                 expected_context = saved["run"].get("review_context")
                 review_fingerprint = saved["run"].get("review_fingerprint")
+                if not expected_context or not expected_context.get("base_ref"):
+                    raise ValueError(
+                        "saved review lacks target identity; explicit recapture required"
+                    )
             result_record = saved
             if not is_current():
                 raise model.StaleReview("PR head changed before publication")
@@ -517,6 +520,7 @@ def process_job(
                 report_url=result_record["run"].get("report_url"),
                 review_fingerprint=review_fingerprint,
                 expected_context=expected_context,
+                is_current=lambda: jobs.is_current(job),
             )
             if result == "stale":
                 if jobs.is_current(job):
@@ -543,6 +547,7 @@ def process_job(
                         github_token,
                         number,
                         result_record,
+                        is_current=lambda: jobs.is_current(job),
                     )
                 jobs.complete(job)
             outcome = result

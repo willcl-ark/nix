@@ -18,23 +18,24 @@ class BotTests(unittest.TestCase):
             "https://git.fish.foo/api/v1/repos/bitcoin/bitcoin",
         )
 
-    def test_pull_request_context_uses_mirror_issue_metadata(self):
+    def test_pull_request_context_captures_authoritative_target(self):
         issue = {
             "number": 36670,
             "title": "Fix review context",
             "body": None,
             "labels": [{"name": "Wallet"}, {"name": "Tests"}, {"name": "Wallet"}],
-            "pull_request": {"merged": False, "draft": False},
+            "base": {"ref": "master"},
         }
         with patch.object(forgejo, "forgejo_request", return_value=issue) as request:
             context = forgejo.pull_request_context(self.bot_config, "token", 36670)
-            request.assert_called_once_with(self.bot_config, "token", "/issues/36670")
+            request.assert_called_once_with(self.bot_config, "token", "/pulls/36670")
             self.assertEqual(
                 context,
                 {
                     "title": "Fix review context",
                     "body": "",
                     "labels": ["Tests", "Wallet"],
+                    "base_ref": "master",
                 },
             )
             issue["body"] = "Review the mirrored PR."
@@ -42,9 +43,68 @@ class BotTests(unittest.TestCase):
                 forgejo.pull_request_context(self.bot_config, "token", 36670)["body"],
                 issue["body"],
             )
-            del issue["pull_request"]
+            del issue["base"]
             with self.assertRaisesRegex(ValueError, "invalid pull request$"):
                 forgejo.pull_request_context(self.bot_config, "token", 36670)
+
+    def test_publication_rechecks_generation_after_comment_lookup(self):
+        current = True
+
+        def lookup(*args):
+            nonlocal current
+            current = False
+            return None
+
+        with (
+            patch.object(forgejo, "find_comment", side_effect=lookup),
+            patch.object(forgejo, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "forgejo_request") as request,
+        ):
+            outcome = forgejo.publish_review(
+                self.bot_config,
+                "token",
+                42,
+                "ralph",
+                "b" * 40,
+                "a" * 40,
+                "Review",
+                source_base_sha="c" * 40,
+                is_current=lambda: current,
+            )
+        self.assertEqual(outcome, "stale")
+        request.assert_not_called()
+
+    def test_same_head_retarget_prevents_publication(self):
+        context = {"title": "Title", "body": "", "labels": [], "base_ref": "master"}
+        with (
+            patch.object(forgejo, "find_comment", return_value=None),
+            patch.object(
+                forgejo,
+                "pull_request_context",
+                return_value={
+                    **context,
+                    "base_ref": "other",
+                },
+            ),
+            patch.object(forgejo, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "forgejo_request") as request,
+        ):
+            self.assertEqual(
+                forgejo.publish_review(
+                    self.bot_config,
+                    "token",
+                    42,
+                    "ralph",
+                    "b" * 40,
+                    "a" * 40,
+                    "Review",
+                    source_base_sha="c" * 40,
+                    expected_context=context,
+                    is_current=lambda: True,
+                ),
+                "stale",
+            )
+        request.assert_not_called()
 
     def test_concurrent_review_refs_preserve_pinned_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -261,19 +321,31 @@ class BotTests(unittest.TestCase):
             args = ("token", 42, "ralph", "b" * 40, "a" * 40)
             self.assertEqual(
                 forgejo.publish_review(
-                    self.bot_config, *args, "First review.", source_base_sha="c" * 40
+                    self.bot_config,
+                    *args,
+                    "First review.",
+                    source_base_sha="c" * 40,
+                    is_current=lambda: True,
                 ),
                 "created",
             )
             self.assertEqual(
                 forgejo.publish_review(
-                    self.bot_config, *args, "First review.", source_base_sha="c" * 40
+                    self.bot_config,
+                    *args,
+                    "First review.",
+                    source_base_sha="c" * 40,
+                    is_current=lambda: True,
                 ),
                 "unchanged",
             )
             self.assertEqual(
                 forgejo.publish_review(
-                    self.bot_config, *args, "Updated review.", source_base_sha="c" * 40
+                    self.bot_config,
+                    *args,
+                    "Updated review.",
+                    source_base_sha="c" * 40,
+                    is_current=lambda: True,
                 ),
                 "updated",
             )

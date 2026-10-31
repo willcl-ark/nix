@@ -25,7 +25,7 @@ def github_request(token, path, method="GET", data=None):
         return None if response.status == 204 else json.load(response)
 
 
-def publish_major_findings(repository, token, number, result):
+def publish_major_findings(repository, token, number, result, *, is_current):
     if result["run"].get("status") == "failed":
         return "failed"
     exported = trace.findings_export(result)
@@ -74,6 +74,8 @@ def publish_major_findings(repository, token, number, result):
     pull = github_request(token, f"{base}/pulls/{number}")
     if pull["state"] != "open" or pull["head"]["sha"] != result["head_sha"]:
         return "stale"
+    if not is_current():
+        return "stale"
     if not findings and not retained:
         if comment is None:
             return "unchanged"
@@ -109,6 +111,8 @@ def publish_major_findings(repository, token, number, result):
             .get("tier"),
         )
     )
+    if not is_current():
+        return "stale"
     if comment is None:
         github_request(
             token, f"{base}/issues/{number}/comments", "POST", {"body": body}
