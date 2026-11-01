@@ -146,8 +146,15 @@ def collect_review_feedback(
     historical_cutoff=False,
 ):
     """No discussion calls on first reviews; absent evidence never resolves history."""
+    if job.get("repo_id", bot_config.repo_id) != bot_config.repo_id:
+        raise ValueError("review feedback repository does not match the job")
+    job = {**job, "repo_id": bot_config.repo_id}
     scope = {"repository": bot_config.repository_url, "number": job["number"]}
-    completed = completed_jobs(jobs_db)
+    completed = [
+        row
+        for row in completed_jobs(jobs_db)
+        if row["repo_id"] == bot_config.repo_id and row["number"] == job["number"]
+    ]
     if job.get("generation") is None:
         job = {
             **job,
@@ -247,6 +254,7 @@ def collect_review_feedback(
         return None
     packet = {
         "schema_version": 1,
+        "repository_id": bot_config.repo_id,
         **scope,
         "repository": bot_config.github_repository or bot_config.repository,
         "new_head": head_sha,

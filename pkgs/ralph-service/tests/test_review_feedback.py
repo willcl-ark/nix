@@ -19,6 +19,7 @@ class ReviewFeedbackTests(unittest.TestCase):
         self.job = {"number": 3, "generation": 4}
         self.old = {
             "id": 1,
+            "repo_id": "core",
             "number": 3,
             "generation": 1,
             "head": "a" * 40,
@@ -64,6 +65,23 @@ class ReviewFeedbackTests(unittest.TestCase):
             self.assertIsNone(self.collect([]))
             self.assertIsNone(self.collect([{**self.old, "number": 4}]))
         comments.assert_not_called()
+
+    def test_offline_feedback_generation_and_history_are_repository_scoped(self):
+        self.job = {"number": 3}
+        other = {**self.old, "id": 2, "repo_id": "gui", "generation": 100}
+        with patch.object(review_feedback, "_comments") as comments:
+            self.assertIsNone(self.collect([other]))
+        comments.assert_not_called()
+        with patch.object(
+            review_feedback, "history_before", wraps=review_feedback.history_before
+        ) as history:
+            packet = self.collect([self.old, other], allow_discussions=False)
+        self.assertEqual(history.call_args.args[1]["generation"], 2)
+        self.assertEqual(packet["repository_id"], "core")
+        self.assertEqual([item["source_job_id"] for item in packet["findings"]], [1])
+        self.job = {"repo_id": "gui", "number": 3}
+        with self.assertRaisesRegex(ValueError, "repository does not match"):
+            self.collect([self.old])
 
     def test_memory_survives_no_rediscovery_and_unavailable_discussion(self):
         old = self.collect([self.old], allow_discussions=False)
