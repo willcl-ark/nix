@@ -14,6 +14,8 @@
   qrencode,
   qt6,
   xvfb-run,
+  makeFontsConf,
+  dejavu_fonts,
 }:
 
 let
@@ -61,6 +63,7 @@ in
   export QML2_IMPORT_PATH="$QML_IMPORT_PATH"
   export QT_QPA_PLATFORM=offscreen
   export QT_QUICK_BACKEND=software
+  export FONTCONFIG_FILE=${makeFontsConf { fontDirectories = [ dejavu_fonts ]; }}
   exec "$@"
 '').overrideAttrs
   {
