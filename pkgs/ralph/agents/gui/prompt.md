@@ -24,6 +24,28 @@ When dialogs close or views become inactive, trace focus restoration and deferre
 callbacks through transition completion. Check that keyboard actions cannot
 reactivate stale state after switching wallets.
 
+Where the changed interaction makes them relevant, check these usability
+invariants:
+- One activation causes one operation. Trace Enter, Space, shortcuts, clicks,
+  and repeated activation; busy-state guards must cover every activation path.
+- Distinguish dismissing a dialog from cancelling an operation. Check Escape,
+  Back, outside-click, and window-close behavior against the intended policy;
+  delayed results must not reopen abandoned UI or commit a cancelled action.
+- Actions retain the intended item identity after sorting, filtering, row
+  removal, or delegate reuse. Menus and deferred callbacks must not act on a
+  different wallet, transaction, or recipient through a reused row index.
+- Backend notifications and binding updates preserve unfinished edits unless
+  the interaction deliberately replaces them. Check for lost input, reset
+  cursor or selection, and unexpected changes to the value submitted.
+- Keyboard users can reach confirmation and cancellation, find validation
+  errors, and retry after failure without being trapped in hidden controls or
+  permanently disabled UI.
+
+When assessing or proposing tests, use actual key or control events and wait
+for the relevant signals or transitions to finish. Calling a handler directly
+can bypass the interaction being checked. Prefer source evidence and headless
+Qt tests for behavioral claims; require rendered evidence for visual claims.
+
 A Core submodule gitlink records a commit, not its contents; identify missing
 backend context rather than assuming the referenced implementation was reviewed.
 
