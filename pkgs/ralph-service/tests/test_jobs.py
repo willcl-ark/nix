@@ -41,9 +41,23 @@ class JobStoreTests(unittest.TestCase):
             )
         )
         alternate = {**ENGINE, "name": "narrative", "config_sha256": "c" * 64}
-        self.assertTrue(
+        self.assertFalse(
             reopened.enqueue(
                 42, "master", "a" * 40, "synchronize", engine_identity=alternate
+            )
+        )
+        self.assertFalse(
+            reopened.enqueue(42, "other", "a" * 40, "edited", engine_identity=alternate)
+        )
+        self.assertIsNone(reopened.claim())
+        self.assertTrue(
+            reopened.enqueue(
+                42,
+                "master",
+                "a" * 40,
+                "synchronize",
+                True,
+                engine_identity=alternate,
             )
         )
         alternate_job = reopened.claim()
@@ -51,6 +65,37 @@ class JobStoreTests(unittest.TestCase):
             (alternate_job["generation"], alternate_job["engine_identity"]),
             (2, alternate),
         )
+
+    def test_same_head_hints_preserve_pending_running_and_retry_work(self):
+        self.enqueue()
+        alternate = {**ENGINE, "config_sha256": "c" * 64}
+
+        def reconcile():
+            self.store.reconcile_hint(
+                42, "other", "synchronized", engine_identity=alternate
+            )
+            hint = self.store.claim_reconciliation()
+            self.assertTrue(self.store.finish_reconciliation(hint, "other", "a" * 40))
+
+        reconcile()
+        job = self.store.claim()
+        self.assertEqual(job["generation"], 1)
+        self.assertEqual(job["base_ref"], "master")
+        self.assertEqual(job["engine_identity"], ENGINE)
+        reconcile()
+        self.assertTrue(self.store.is_current(job))
+        self.assertEqual(self.store.retry(job, TimeoutError()), "retry")
+        with self.store._connection() as db:
+            before = dict(
+                db.execute("SELECT * FROM jobs WHERE id = ?", (job["id"],)).fetchone()
+            )
+        reconcile()
+        with self.store._connection() as db:
+            after = dict(
+                db.execute("SELECT * FROM jobs WHERE id = ?", (job["id"],)).fetchone()
+            )
+            self.assertEqual(db.execute("SELECT count(*) FROM jobs").fetchone()[0], 1)
+        self.assertEqual(before, after)
 
     def test_newer_head_is_not_lost_when_older_claim_completes(self):
         self.enqueue()

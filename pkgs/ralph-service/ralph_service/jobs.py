@@ -247,6 +247,10 @@ class JobStore:
             "SELECT * FROM jobs WHERE repo_id = ? AND number = ? ORDER BY generation DESC LIMIT 1",
             (self.repo_id, number),
         ).fetchone()
+        # Ordinary hints only schedule work when the authoritative head changes.
+        # Engine upgrades and base changes require an explicit forced rerun.
+        if latest and latest["head"] == head and not force:
+            return False
         # An ordinary update must retain an explicitly requested high review.
         active = pending or latest
         if active and active["status"] in {"pending", "running", "retry"}:
@@ -295,14 +299,6 @@ class JobStore:
             )
             return True
 
-        if (
-            latest
-            and latest["head"] == head
-            and latest["base_ref"] == base_ref
-            and latest["engine_identity"] == identity
-            and not force
-        ):
-            return False
         if latest and latest["status"] == "retry":
             db.execute(
                 """

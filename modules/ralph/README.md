@@ -451,6 +451,10 @@ time. The full JSON export remains available and is refreshed each run.
 The stats content security policy must allow `connect-src 'self'` for the
 freshness request, in addition to the existing same-origin script permission.
 
+Automatic events schedule a new review only when the authoritative PR head SHA
+changes. Engine upgrades, metadata edits and base-branch changes do not rerun an
+unchanged head or replace its pending, running or retrying job.
+
 To force a fresh review of the same head, send a signed synthetic pull request
 webhook with `"ralph_force": true`. Normal Forgejo webhooks omit this field.
 For a historical review, also supply `pull_request.base.sha` with the recorded
