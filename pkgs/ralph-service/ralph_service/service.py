@@ -1,6 +1,5 @@
 """Webhook server and review worker."""
 
-import argparse
 from contextlib import closing, contextmanager, ExitStack
 import fcntl
 import hashlib
@@ -15,14 +14,12 @@ import threading
 import time
 import urllib.error
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from http.server import BaseHTTPRequestHandler
 
 from final_comment import render
 from ralph import trace as core_trace
 from . import (
     badge,
-    config,
     delivery,
     forgejo,
     github,
@@ -30,14 +27,12 @@ from . import (
     report,
     repository,
     trace,
-    monitor,
 )
 from ralph import repository as local_repository
 from ralph import engine, model, runner
 from ralph import usage as usage_tracking
 from .research import discussion_lookup
 from .review_feedback import collect_review_feedback
-from .jobs import JobStore
 from ralph.repository import BRANCH, SHA
 
 MAX_BODY = 1024 * 1024
@@ -121,18 +116,6 @@ def _usage_summary(usage, attempt, name):
 
 def metric_value(value):
     return "unknown" if value is None else value
-
-
-def _read_engine_config(path, parser):
-    if path is None:
-        return {}
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        parser.error(f"could not read engine configuration: {exc}")
-    if not isinstance(value, dict):
-        parser.error("engine configuration must be a JSON object")
-    return value
 
 
 def log_review_outcome(
@@ -241,7 +224,7 @@ def process_job(
     backport_evidence = None
     usage = usage_tracking.RequestUsage(
         ledger,
-        review_id=f"pr:{number}:{job['id']}:{job['generation']}",
+        review_id=f"pr:{bot_config.repo_id}:{number}:{job['id']}:{job['generation']}",
     )
 
     def is_current():
@@ -318,7 +301,11 @@ def process_job(
                         None
                         if skip
                         else local_repository.snapshot_repository(
-                            checkout, base_sha, head_sha
+                            checkout,
+                            base_sha,
+                            head_sha,
+                            submodules=bot_config.submodules,
+                            experiment_shell=bot_config.experiment_shell,
                         )
                     )
                     merge_base = getattr(snapshot, "merge_base", None)
@@ -407,6 +394,8 @@ def process_job(
                         },
                     }
                 content = saved["content"]
+                saved["run"]["repository_id"] = bot_config.repo_id
+                saved["run"]["repository"] = bot_config.repository
                 saved["run"]["review_completed_at"] = forgejo._retrieved_at()
                 saved["run"]["review_scope"] = {
                     "repository": bot_config.repository_url,
@@ -465,7 +454,13 @@ def process_job(
                 report_id = f"{number}-{head_sha}-{job['id']}-{job['generation']}"
                 try:
                     filename = report.save_report(
-                        bot_config.report_dir, number, result_record, report_id
+                        bot_config.report_dir,
+                        number,
+                        result_record,
+                        report_id,
+                        repository_id=bot_config.repo_id,
+                        repository=bot_config.repository,
+                        repository_url=bot_config.repository_url,
                     )
                     result_record["run"]["report_url"] = (
                         f"{bot_config.report_base_url}/{filename}"
@@ -548,6 +543,7 @@ def process_job(
                         github_token,
                         number,
                         result_record,
+                        expected_context=expected_context,
                         is_current=lambda: jobs.is_current(job),
                         delivery=github_delivery,
                     )
@@ -664,7 +660,8 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
     """Replay durable Telegram requests safely after either process restarts."""
     with closing(store._connect()) as db:
         requests = db.execute(
-            "SELECT id, number FROM review_requests WHERE processed = 0 ORDER BY id"
+            "SELECT id, number FROM review_requests WHERE processed = 0 AND repo_id = ? ORDER BY id",
+            (bot_config.repo_id,),
         ).fetchall()
     for request_id, number in requests:
         try:
@@ -697,7 +694,7 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
                 engine_identity=high_engine.identity,
                 request_id=f"telegram:{request_id}",
             )
-            message = f"Queued high review of PR #{number}."
+            message = f"Queued high review of {bot_config.repo_id}#{number}."
         except ValueError as exc:
             message = f"Could not queue high review of PR #{number}: {exc}."
         except urllib.error.HTTPError as exc:
@@ -757,34 +754,7 @@ def reconcile_next(jobs, bot_config, token):
         raise
 
 
-def command_worker(store, jobs, bot_config, token, high_engine, stop_event=None):
-    stop_event = stop_event or threading.Event()
-    while not stop_event.is_set():
-        try:
-            consume_review_requests(store, jobs, bot_config, token, high_engine)
-        except Exception:
-            logging.exception("Could not process Telegram review requests")
-        try:
-            reconcile_next(jobs, bot_config, token)
-        except Exception:
-            logging.exception("Could not reconcile pull request")
-        stop_event.wait(5)
-
-
-def worker(
-    jobs,
-    state_dir,
-    api_key,
-    forgejo_token,
-    bot_login,
-    bot_config,
-    ledger,
-    review_engine,
-    allow_discussions=True,
-    stop_event=None,
-    github_token=None,
-    github_post_major_findings=False,
-):
+def worker(jobs, api_key, ledger, contexts, stop_event=None, allow_discussions=True):
     stop_event = stop_event or threading.Event()
     while not stop_event.is_set():
         try:
@@ -797,6 +767,17 @@ def worker(
             stop_event.wait(1)
             continue
         try:
+            job_store = jobs.for_repository(job["repo_id"])
+            context = contexts[job["repo_id"]]
+            state_dir = context["state_dir"]
+            forgejo_token = context["forgejo_token"]
+            bot_login = context["entry"]["bot_login"]
+            bot_config = context["bot"]
+            review_engine = context["engine"]
+            github_token = context["github_token"]
+            github_post_major_findings = context["entry"].get(
+                "github_post_major_findings", False
+            )
             if job["review_result"] is None:
                 identity = job["engine_identity"]
                 job_engine = (
@@ -808,13 +789,13 @@ def worker(
                         identity["name"], identity["config"], configured=True
                     )
                 )
-                if not jobs.bind_engine(job, job_engine.identity):
+                if not job_store.bind_engine(job, job_engine.identity):
                     continue
             else:
                 job_engine = None
             process_job(
                 job,
-                jobs,
+                job_store,
                 state_dir,
                 api_key,
                 forgejo_token,
@@ -1017,243 +998,6 @@ def main():
 
 
 def _main(resources):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--listen", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument(
-        "--workers", type=int, default=3, help="Maximum concurrent pull request reviews"
-    )
-    parser.add_argument("--state-dir", type=Path)
-    parser.add_argument(
-        "--migrate-state",
-        action="store_true",
-        help="Back up and upgrade existing state databases once",
-    )
-    parser.add_argument(
-        "--engine", default="current", help="Review engine name (default: current)"
-    )
-    parser.add_argument(
-        "--engine-config",
-        type=Path,
-        help="JSON configuration object for the selected engine",
-    )
-    parser.add_argument(
-        "--report-dir",
-        type=Path,
-        help="Public directory for static HTML and JSON review reports",
-    )
-    parser.add_argument(
-        "--report-base-url", help="Public HTTP URL serving the report directory"
-    )
-    parser.add_argument(
-        "--origin", help="Git remote URL used to fetch the base branch and PR heads"
-    )
-    parser.add_argument(
-        "--repository", help="Forgejo repository full name, such as owner/repo"
-    )
-    parser.add_argument(
-        "--forgejo-api",
-        help="Forgejo repository API URL, ending in /api/v1/repos/owner/repo",
-    )
-    parser.add_argument(
-        "--repository-url", help="Expected repository HTML URL from webhook payloads"
-    )
-    parser.add_argument(
-        "--comment-marker", help="Hidden marker used to find the bot's editable comment"
-    )
-    parser.add_argument("--openai-key-file", type=Path)
-    parser.add_argument("--webhook-secret-file", type=Path)
-    parser.add_argument("--forgejo-token-file", type=Path)
-    parser.add_argument("--bot-login")
-    parser.add_argument(
-        "--github-repository",
-        help="Upstream GitHub owner/repo with matching PR numbers",
-    )
-    parser.add_argument("--github-token-file", type=Path)
-    parser.add_argument(
-        "--github-post-major-findings",
-        action="store_true",
-        help="Publish major findings upstream using the GitHub credentials",
-    )
-    parser.add_argument(
-        "--agents-dir",
-        type=Path,
-        help="Directory containing review agent settings and prompts",
-    )
-    parser.add_argument("--routing-mode", choices=("enabled", "shadow", "full"))
-    parser.add_argument(
-        "--list-held-deliveries",
-        action="store_true",
-        help="List uncertain publications; does not contact the forge",
-    )
-    parser.add_argument(
-        "--release-delivery",
-        type=int,
-        metavar="PR",
-        help="Release publication after verifying all outstanding writes can no longer arrive",
-    )
-    parser.add_argument(
-        "--confirm-no-pending-write",
-        action="store_true",
-        help="Operator assertion required to release uncertain publication",
-    )
-    args = parser.parse_args()
-    if args.list_held_deliveries or args.release_delivery is not None:
-        if args.state_dir is None:
-            parser.error("--state-dir is required for delivery recovery")
-        if args.release_delivery is not None and (
-            args.release_delivery < 1 or not args.confirm_no_pending_write
-        ):
-            parser.error(
-                "--release-delivery requires a positive PR and --confirm-no-pending-write"
-            )
-        try:
-            resources.enter_context(coordinator_lock(args.state_dir))
-            store = JobStore(args.state_dir / "jobs.sqlite3")
-            if args.release_delivery is not None:
-                print(
-                    f"released {delivery.release(store, args.release_delivery)} uncertain deliveries"
-                )
-            else:
-                print(json.dumps(delivery.held(store), indent=2))
-        except (OSError, sqlite3.Error, RuntimeError) as exc:
-            parser.error(str(exc))
-        return 0
-    if args.migrate_state:
-        if args.state_dir is None:
-            parser.error("--state-dir is required with --migrate-state")
-        from .jobs import migrate_state
+    from .coordinator import main as coordinator_main
 
-        try:
-            resources.enter_context(coordinator_lock(args.state_dir))
-            jobs_path = args.state_dir / "jobs.sqlite3"
-            migrated = jobs_path.exists() and migrate_state(jobs_path)
-        except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
-            parser.error(f"could not migrate state databases: {exc}")
-        print(
-            "state databases migrated"
-            if migrated
-            else "state databases already current"
-        )
-        return 0
-    required = (
-        "state_dir",
-        "origin",
-        "repository",
-        "forgejo_api",
-        "openai_key_file",
-        "webhook_secret_file",
-        "forgejo_token_file",
-        "bot_login",
-    )
-    missing = [
-        f"--{name.replace('_', '-')}"
-        for name in required
-        if getattr(args, name) is None
-    ]
-    if missing:
-        parser.error("required options: " + ", ".join(missing))
-    if args.workers < 1:
-        parser.error("workers must be positive")
-    if (args.github_repository is None) != (args.github_token_file is None):
-        parser.error("--github-repository and --github-token-file must be set together")
-    if args.github_post_major_findings:
-        if args.github_repository is None:
-            parser.error("--github-post-major-findings requires GitHub credentials")
-        if args.report_dir is None or args.report_base_url is None:
-            parser.error("GitHub publication requires public reports")
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    bot_config = config.BotConfig(
-        args.origin,
-        args.repository,
-        args.forgejo_api,
-        args.repository_url,
-        args.comment_marker,
-        args.report_dir,
-        args.report_base_url,
-        args.github_repository,
-    )
-    current_only = args.agents_dir is not None or args.routing_mode is not None
-    if args.engine != "current" and current_only:
-        parser.error("agent and routing options apply only to --engine current")
-    engine_config = _read_engine_config(args.engine_config, parser)
-    engine_config.update(
-        {
-            key: value
-            for key, value in {
-                "agents_dir": args.agents_dir,
-                "routing_mode": args.routing_mode,
-            }.items()
-            if value is not None
-        }
-    )
-    if args.engine == "current":
-        engine_config.setdefault("archaeology", True)
-    try:
-        review_engine = engine.load(args.engine, engine_config)
-        high_engine = (
-            engine.load("current", {**engine_config, "profile": "high"})
-            if args.engine == "current"
-            else None
-        )
-    except (ImportError, TypeError, ValueError) as exc:
-        parser.error(f"could not load review engine: {exc}")
-    api_key = args.openai_key_file.read_text().strip()
-    secret = args.webhook_secret_file.read_bytes().strip()
-    forgejo_token = args.forgejo_token_file.read_text().strip()
-    github_token = (
-        args.github_token_file.read_text().strip() if args.github_token_file else None
-    )
-    if github_token == "":
-        parser.error("GitHub token file must not be empty")
-    if not api_key or not secret or not forgejo_token or not args.bot_login:
-        parser.error("secret files must not be empty")
-    try:
-        resources.enter_context(coordinator_lock(args.state_dir))
-        args.state_dir.chmod(0o700)
-        jobs = JobStore(args.state_dir / "jobs.sqlite3")
-    except RuntimeError as exc:
-        parser.error(str(exc))
-    recovered = jobs.recover()
-    command_store = monitor.NotificationStore(args.state_dir / "telegram.sqlite3")
-    ledger = usage_tracking.Ledger(args.state_dir / "usage.sqlite3")
-    logging.info("review queue recovered_claims=%d workers=%d", recovered, args.workers)
-    drain_event = threading.Event()
-    command_stop_event = threading.Event()
-    command_thread = threading.Thread(
-        target=command_worker,
-        name="review-commands",
-        args=(command_store, jobs, bot_config, forgejo_token, high_engine),
-        kwargs={"stop_event": command_stop_event},
-        daemon=True,
-    )
-    workers = [
-        threading.Thread(
-            target=worker,
-            name=f"review-{index + 1}",
-            args=(
-                jobs,
-                args.state_dir,
-                api_key,
-                forgejo_token,
-                args.bot_login,
-                bot_config,
-                ledger,
-                review_engine,
-            ),
-            kwargs={
-                "stop_event": drain_event,
-                "github_token": github_token,
-                "github_post_major_findings": args.github_post_major_findings,
-            },
-            daemon=True,
-        )
-        for index in range(args.workers)
-    ]
-    server = ThreadingHTTPServer(
-        (args.listen, args.port),
-        make_handler(secret, jobs, bot_config, review_engine.identity),
-    )
-    serve_until_stopped(
-        server, workers, command_thread, drain_event, command_stop_event
-    )
+    return coordinator_main(resources)

@@ -350,7 +350,7 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(review.call_count, 1)
             self.assertEqual(
                 review.call_args.args[1].usage.review_id,
-                f"pr:42:{job['id']}:{job['generation']}",
+                f"pr:core:42:{job['id']}:{job['generation']}",
             )
 
         restarted = JobStore(self.state_dir / "jobs.sqlite3", retry_base_seconds=0)
@@ -495,6 +495,7 @@ class ServiceTests(unittest.TestCase):
             "write-token",
             42,
             job["review_result"],
+            expected_context=job["review_result"]["run"]["review_context"],
             is_current=ANY,
             delivery=ANY,
         )
@@ -684,13 +685,18 @@ class ServiceTests(unittest.TestCase):
         ):
             service.worker(
                 self.jobs,
-                self.state_dir,
                 "api-key",
-                "forgejo-token",
-                "ralph",
-                self.bot_config,
                 self.ledger,
-                self.review_engine,
+                {
+                    "core": {
+                        "state_dir": self.state_dir,
+                        "forgejo_token": "forgejo-token",
+                        "entry": {"bot_login": "ralph"},
+                        "bot": self.bot_config,
+                        "engine": self.review_engine,
+                        "github_token": None,
+                    }
+                },
                 stop_event=stop_event,
             )
         reviewed.assert_called_once()
@@ -716,7 +722,7 @@ class ServiceTests(unittest.TestCase):
             from http.server import ThreadingHTTPServer
             from pathlib import Path
             from types import SimpleNamespace
-            from ralph_service import config, service
+            from ralph_service import config, coordinator, service
             from ralph_service.jobs import JobStore
 
             root = Path(sys.argv[1])
@@ -753,14 +759,19 @@ class ServiceTests(unittest.TestCase):
             drain = RecordedEvent("draining")
             commands_stop = RecordedEvent("commands-stopped")
             review_engine = SimpleNamespace(identity={"name": "test"})
+            contexts = {"core": {
+                "state_dir": root, "forgejo_token": "token", "github_token": None,
+                "entry": {"bot_login": "ralph"}, "bot": bot,
+                "engine": review_engine, "high_engine": None,
+            }}
             reviews = [threading.Thread(
                 target=service.worker,
-                args=(jobs, root, "key", "token", "ralph", bot, None, review_engine),
+                args=(jobs, "key", None, contexts),
                 kwargs={"stop_event": drain}, daemon=True,
             )]
             commands = threading.Thread(
-                target=service.command_worker, args=(None, None, None, None, None),
-                kwargs={"stop_event": commands_stop}, daemon=True,
+                target=coordinator.command_worker,
+                args=(None, jobs, contexts, commands_stop), daemon=True,
             )
             server = ReadyServer(
                 ("127.0.0.1", 0),

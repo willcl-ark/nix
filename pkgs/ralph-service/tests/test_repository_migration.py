@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from ralph_service import coordinator
 from ralph_service.jobs import JobStore
 from ralph_service.repository_migration import migrate_repositories
 
@@ -85,6 +86,46 @@ class RepositoryMigrationTests(unittest.TestCase):
             )
             self.assertNotIn(
                 "repo_id", {row[1] for row in backup.execute("PRAGMA table_info(jobs)")}
+            )
+
+    def test_coordinator_resumes_after_notification_migration_interruption(self):
+        with sqlite3.connect(self.path.parent / "telegram.sqlite3") as db:
+            db.execute(
+                "CREATE TABLE review_requests (id INTEGER PRIMARY KEY, number INTEGER NOT NULL, processed INTEGER NOT NULL DEFAULT 0)"
+            )
+            db.execute("INSERT INTO review_requests VALUES (10, 42, 0)")
+        entries = {
+            "core": {
+                "repository": "bitcoin/bitcoin",
+                "repository_url": "https://forge/bitcoin/bitcoin",
+            }
+        }
+        with patch(
+            "ralph_service.monitor.migrate_notification_repositories",
+            side_effect=RuntimeError("interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                coordinator.migrate(self.path.parent, "core", entries)
+        coordinator.migrate(self.path.parent, "core", entries)
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(
+                db.execute("SELECT review_result FROM jobs WHERE id = 17").fetchone()[
+                    0
+                ],
+                self.payload,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT body, state FROM deliveries WHERE job_id = 17"
+                ).fetchone(),
+                ("exact\nbody ", "uncertain"),
+            )
+        with sqlite3.connect(self.path.parent / "telegram.sqlite3") as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT repo_id, processed FROM review_requests WHERE id = 10"
+                ).fetchone(),
+                ("core", 0),
             )
 
     def test_failure_rolls_back_entire_queue_cutover(self):

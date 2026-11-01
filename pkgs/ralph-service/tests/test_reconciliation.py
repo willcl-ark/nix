@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from ralph_service import config, service
+from ralph_service import coordinator, config, service
 from ralph_service.jobs import JobStore
 
 IDENTITY = {"name": "current", "config": {"profile": {"name": "default"}}}
@@ -117,13 +117,24 @@ class ReconciliationTests(unittest.TestCase):
             self.hint()
             self.assertEqual(self.jobs.claim_reconciliation()["number"], 43)
         stop = Mock()
-        stop.is_set.side_effect = [False, True]
+        stop.is_set.side_effect = [False, False, True]
         with (
             patch.object(service, "consume_review_requests", side_effect=OSError()),
             patch.object(service, "reconcile_next") as reconcile,
             self.assertLogs(level="ERROR"),
         ):
-            service.command_worker(None, self.jobs, self.config, "token", None, stop)
+            coordinator.command_worker(
+                None,
+                self.jobs,
+                {
+                    "core": {
+                        "bot": self.config,
+                        "forgejo_token": "token",
+                        "high_engine": None,
+                    }
+                },
+                stop,
+            )
         reconcile.assert_called_once()
 
     def test_stale_forced_refresh_does_not_repeat_same_head_review(self):
