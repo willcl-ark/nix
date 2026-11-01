@@ -6,11 +6,12 @@ from pathlib import Path
 import re
 import sqlite3
 
-from . import report
+from . import config, report
 
 
-def backfill(state_dir, report_dir, *, apply=False):
+def backfill(state_dir, report_dir, *, apply=False, repositories=None):
     """Project published saved results without changing jobs or existing reports."""
+    repositories = repositories or {}
     report_dir = Path(report_dir)
     database = (Path(state_dir) / "jobs.sqlite3").resolve()
     counts = dict(existing=0, eligible=0, written=0, skipped=0, unrecoverable=0)
@@ -18,17 +19,20 @@ def backfill(state_dir, report_dir, *, apply=False):
     # Do not instantiate JobStore: its constructor performs migrations.
     with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as db:
         rows = db.execute(
-            "SELECT id, number, generation, head, review_result FROM jobs "
+            "SELECT id, repo_id, number, generation, head, review_result FROM jobs "
             "WHERE status = 'complete' ORDER BY id"
         )
-        for job_id, number, generation, head, raw in rows:
+        for job_id, repository_id, number, generation, head, raw in rows:
             report_id = f"{number}-{head}-{job_id}-{generation}"
-            if not re.fullmatch(r"[0-9]+-[0-9a-f]{40}-[0-9]+-[0-9]+", report_id):
+            if not re.fullmatch(r"[a-z][a-z0-9_-]*", repository_id) or not re.fullmatch(
+                r"[0-9]+-[0-9a-f]{40}-[0-9]+-[0-9]+", report_id
+            ):
                 counts["unrecoverable"] += 1
                 errors.append(f"Job {job_id}: invalid report identity")
                 continue
-            html_path = report_dir / f"{report_id}.html"
-            json_path = report_dir / f"{report_id}.json"
+            root = report_dir if repository_id == "core" else report_dir / repository_id
+            html_path = root / f"{report_id}.html"
+            json_path = root / f"{report_id}.json"
             if html_path.is_file() and json_path.is_file():
                 counts["existing"] += 1
                 continue
@@ -39,6 +43,18 @@ def backfill(state_dir, report_dir, *, apply=False):
                 run = result.get("run")
                 if not isinstance(run, dict):
                     raise ValueError("unsupported saved result schema")
+                if run.get("repository_id", repository_id) != repository_id:
+                    raise ValueError("saved result belongs to another repository")
+                metadata = repositories.get(repository_id) or {}
+                scope = run.get("review_scope") or {}
+                identity = {
+                    "repository_id": repository_id,
+                    "repository": run.get("repository")
+                    or metadata.get("repository")
+                    or repository_id,
+                    "repository_url": scope.get("repository")
+                    or metadata.get("repository_url"),
+                }
                 if run.get("skipped"):
                     counts["skipped"] += 1
                     continue
@@ -56,11 +72,13 @@ def backfill(state_dir, report_dir, *, apply=False):
                 # A new file mtime is not the date of this historical review.
                 run.setdefault("review_completed_at", "unknown")
                 # Exercise the same allowlisted projection during the dry run.
-                public = report._public_record(number, result, report_id)
+                public = report._public_record(number, result, report_id, **identity)
                 report._html_report(public, json_path.name)
                 counts["eligible"] += 1
                 if apply:
-                    report.save_report(report_dir, number, result, report_id)
+                    report.save_report(
+                        report_dir, number, result, report_id, **identity
+                    )
                     counts["written"] += 1
             except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
                 counts["unrecoverable"] += 1
@@ -76,9 +94,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--report-dir", type=Path, required=True)
+    parser.add_argument(
+        "--repositories", type=Path, help="Repository registry for historical metadata"
+    )
     parser.add_argument("--apply", action="store_true", help="Write missing reports")
     args = parser.parse_args()
-    summary = backfill(args.state_dir, args.report_dir, apply=args.apply)
+    summary = backfill(
+        args.state_dir,
+        args.report_dir,
+        apply=args.apply,
+        repositories=config.load_repositories(args.repositories)
+        if args.repositories
+        else None,
+    )
     print(json.dumps(summary, indent=2))
     return 1 if summary["unrecoverable"] else 0
 

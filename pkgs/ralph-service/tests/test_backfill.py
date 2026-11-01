@@ -24,13 +24,13 @@ class BackfillTests(unittest.TestCase):
             with sqlite3.connect(root / "jobs.sqlite3") as db:
                 db.execute(
                     "CREATE TABLE jobs (id INTEGER, number INTEGER, generation INTEGER, "
-                    "head TEXT, status TEXT, review_result TEXT)"
+                    "head TEXT, status TEXT, review_result TEXT, repo_id TEXT)"
                 )
                 for job_id, status in enumerate(
                     ("complete", "failed", "running", "complete"), 1
                 ):
                     db.execute(
-                        "INSERT INTO jobs VALUES (?, 123, ?, ?, ?, ?)",
+                        "INSERT INTO jobs VALUES (?, 123, ?, ?, ?, ?, 'core')",
                         (job_id, job_id, head, status, json.dumps(result)),
                     )
             old_name = report.save_report(reports, 123, result, f"123-{head}-4-4")
@@ -53,16 +53,80 @@ class BackfillTests(unittest.TestCase):
             self.assertEqual(backfill.backfill(root, reports, apply=True)["written"], 0)
             self.assertEqual(len(list(reports.glob("123-*.html"))), 2)
 
+    def test_backfill_namespaces_gui_and_preserves_saved_source_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "reports"
+            head = "a" * 40
+            result = {
+                "head_sha": head,
+                "content": "Verified review",
+                "engine": {"name": "current"},
+                "output": {"exports": {"findings": []}},
+                "run": {"status": "completed"},
+            }
+            with sqlite3.connect(root / "jobs.sqlite3") as db:
+                db.execute(
+                    "CREATE TABLE jobs (id INTEGER, repo_id TEXT, number INTEGER, generation INTEGER, head TEXT, status TEXT, review_result TEXT)"
+                )
+                for job_id, repo in ((1, "core"), (2, "gui")):
+                    saved = {
+                        **result,
+                        "run": {
+                            **result["run"],
+                            "repository_id": repo,
+                            "repository": "owner/" + repo,
+                            "review_scope": {
+                                "repository": "https://forge.example/owner/" + repo
+                            },
+                        },
+                    }
+                    db.execute(
+                        "INSERT INTO jobs VALUES (?,?,123,1,?,'complete',?)",
+                        (job_id, repo, head, json.dumps(saved)),
+                    )
+            core_name = report.save_report(reports, 123, result, f"123-{head}-1-1")
+            core_bytes = (reports / core_name).read_bytes()
+            self.assertEqual(backfill.backfill(root, reports)["eligible"], 1)
+            self.assertFalse((reports / "gui").exists())
+            recovered = backfill.backfill(
+                root,
+                reports,
+                apply=True,
+                repositories={
+                    "gui": {
+                        "repository": "changed/name",
+                        "repository_url": "https://changed.example/repo",
+                    }
+                },
+            )
+            self.assertEqual(recovered["existing"], 1)
+            self.assertEqual(recovered["written"], 1)
+            gui_name = f"123-{head}-2-1"
+            public = json.loads((reports / "gui" / (gui_name + ".json")).read_text())
+            self.assertEqual(public["repository_id"], "gui")
+            self.assertEqual(public["repository"], "owner/gui")
+            self.assertEqual(
+                public["repository_url"], "https://forge.example/owner/gui"
+            )
+            self.assertFalse((reports / (gui_name + ".html")).exists())
+            self.assertTrue((reports / "gui/123/index.html").is_file())
+            self.assertEqual((reports / core_name).read_bytes(), core_bytes)
+            self.assertEqual(
+                backfill.backfill(root, reports, apply=True)["existing"], 2
+            )
+
     def test_missing_and_unsupported_results_are_reported_without_publication(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with sqlite3.connect(root / "jobs.sqlite3") as db:
                 db.execute(
                     "CREATE TABLE jobs (id INTEGER, number INTEGER, generation INTEGER, "
-                    "head TEXT, status TEXT, review_result TEXT)"
+                    "head TEXT, status TEXT, review_result TEXT, repo_id TEXT)"
                 )
                 db.execute(
-                    "INSERT INTO jobs VALUES (1,123,1,?,'complete',?)", ("a" * 40, "{}")
+                    "INSERT INTO jobs VALUES (1,123,1,?,'complete',?,'core')",
+                    ("a" * 40, "{}"),
                 )
             result = backfill.backfill(root, root / "reports")
             self.assertEqual(result["unrecoverable"], 1)
