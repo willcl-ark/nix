@@ -119,6 +119,7 @@ def metric_value(value):
 
 
 def log_review_outcome(
+    repository,
     number,
     action,
     head_sha,
@@ -134,11 +135,12 @@ def log_review_outcome(
     review_status="unknown",
 ):
     message = (
-        "review outcome pr=%d action=%s head=%s outcome=%s "
+        "review outcome repo=%s pr=%d action=%s head=%s outcome=%s "
         "review_status=%s elapsed_seconds=%.2f model_turns=%s tool_calls=%s "
         "input_tokens=%s output_tokens=%s"
     )
     values = [
+        repository,
         number,
         action,
         short_sha(head_sha),
@@ -241,7 +243,8 @@ def process_job(
     try:
         try:
             logging.info(
-                "review start pr=%d action=%s head=%s force=%s",
+                "review start repo=%s pr=%d action=%s head=%s force=%s",
+                bot_config.repository,
                 number,
                 action,
                 short_sha(expected_head),
@@ -626,6 +629,7 @@ def process_job(
             else None
         )
         log_review_outcome(
+            bot_config.repository,
             number,
             action,
             expected_head,
@@ -915,7 +919,8 @@ def make_handler(secret, jobs, bot_config, engine_identity=None):
                     self.send_error(503)
                     return
                 logging.info(
-                    "review enqueue pr=%d action=%s head=%s force=%s queued=%s",
+                    "review enqueue repo=%s pr=%d action=%s head=%s force=%s queued=%s",
+                    bot_config.repository,
                     number,
                     action,
                     short_sha(head_sha),
