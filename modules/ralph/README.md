@@ -3,7 +3,32 @@
 This module runs `ralph-service`, a webhook receiver that posts a
 first-pass review on Forgejo pull requests.
 
-The default `services.ralph.engine = "current"` selects the existing review
+Configure each repository under `services.ralph.instances.<name>`. Instances
+have separate workers, Git objects, databases, reports, accounts and delegated
+experiment cgroups. Assign distinct listening ports and webhook secrets, and
+budget the sum of their worker counts. GitHub publication defaults to disabled
+for each instance independently.
+
+An instance named `gui` defaults to `ralph-gui.service`, with companions
+`ralph-gui-stats`, `ralph-gui-followup` and, when enabled, `ralph-gui-telegram`.
+Its account and private state directory default to `ralph-gui` and
+`/var/lib/ralph-gui`. The examples below use an instance named `core` with
+`serviceName = "ralph"` to preserve existing service and account names.
+
+To migrate an existing installation, move its settings into `instances.core`
+and set `serviceName = "ralph"`. Retain its existing `stateDir`, `reportDir`,
+public URLs, user/group overrides and comment marker. This keeps queued jobs,
+review comments, Telegram offsets and report links attached to the same state.
+The old top-level service options are removed. Host overrides of existing
+`systemd.services.ralph*` units continue to apply with this service name.
+
+Ports, unit names, system accounts and state/report directories must not collide.
+Telegram polling requires a separate bot token for each enabled monitor. The
+current Telegram status commands target the original `ralph*` units, so keep
+Telegram disabled for additional instances until their monitoring is configured.
+Do not reuse one token through differently named secret files.
+
+The default `services.ralph.instances.core.engine = "current"` selects the existing review
 pipeline. The module defaults to the `ralph-service` companion package, which
 imports the core review runner. The standalone `ralph` binary now reviews local
 committed changes and accepts no daemon flags. Explicit package overrides must
@@ -30,7 +55,7 @@ The flake packages include a build environment taken from the pinned
 are realized when building the package, with no Nix daemon or network needed
 inside an experiment. The environment includes Bix's compiler, libraries,
 Python test dependencies and shell hooks. Bix follows this flake's nixpkgs.
-Override `services.ralph.writeVerifierEnvironment` with a package whose main
+Override `services.ralph.instances.core.writeVerifierEnvironment` with a package whose main
 program sets up the environment and executes its command arguments when
 reviewing projects with different build dependencies.
 
@@ -48,7 +73,7 @@ Without writable cgroup delegation, experiments are unavailable and findings
 continue to the final source-based check.
 
 Three worker threads review different PRs concurrently by default. Set
-`services.ralph.workers` (or `--workers`) to change this limit.
+`services.ralph.instances.core.workers` (or `--workers`) to change this limit.
 Reviews of the same PR run serially; newer heads wait for the active attempt to
 finish. Fetches and snapshot creation share a lock in one Git object store.
 Each active review pins its own base and head refs until it finishes, and tools
@@ -262,8 +287,8 @@ Adversarial records include selected profiles without attributing findings to
 an individual profile within the shared call. Private traces preserve full
 responses and per-request usage, including failures.
 
-For full browser reports, set `services.ralph.reportDir` to a
-separate public directory and `services.ralph.reportBaseUrl` to
+For full browser reports, set `services.ralph.instances.core.reportDir` to a
+separate public directory and `services.ralph.instances.core.reportBaseUrl` to
 the HTTP URL serving it. The module creates the directory with mode `0755`;
 ralph writes readable static HTML and JSON files before publishing a link
 in the review comment. Configure your web server to serve this directory
@@ -357,7 +382,7 @@ spend databases are left untouched and are not read or converted.
 To add Codex and Claude subscription quotas from CLIProxyAPI v8:
 
 ```nix
-services.ralph.subscriptionUsage = {
+services.ralph.instances.core.subscriptionUsage = {
   enable = true;
   managementUrl = "http://127.0.0.1:8317";
   managementKeyFile = "/run/secrets/cli-proxy-management-key";
@@ -473,7 +498,8 @@ listener at `ralph.example.org`:
     inputs.will-nix.nixosModules.ralph
   ];
 
-  services.ralph = {
+  services.ralph.instances.core = {
+    serviceName = "ralph";
     enable = true;
     origin = "https://git.example.org/owner/repo.git";
     repository = "owner/repo";
@@ -504,7 +530,8 @@ services.cli-proxy-api = {
   enable = true;
   configFile = "/run/secrets/cli-proxy-api.yaml";
 };
-services.ralph = {
+services.ralph.instances.core = {
+    serviceName = "ralph";
   openaiApiBase = "http://127.0.0.1:8317/v1";
   openaiKeyFile = "/run/secrets/ralph/proxy-key";
 };
@@ -533,31 +560,31 @@ Ralph records returned usage without estimating charges or remaining quota.
 
 Required deployment options:
 
-- `services.ralph.origin`: Git remote URL used for `git fetch` and
+- `services.ralph.instances.core.origin`: Git remote URL used for `git fetch` and
   stale-head checks.
-- `services.ralph.repository`: Forgejo repository full name, for
+- `services.ralph.instances.core.repository`: Forgejo repository full name, for
   example `owner/repo`.
-- `services.ralph.forgejoApi`: Forgejo repository API URL ending in
+- `services.ralph.instances.core.forgejoApi`: Forgejo repository API URL ending in
   `/api/v1/repos/owner/repo`.
-- `services.ralph.openaiKeyFile`: file containing the OpenAI API
+- `services.ralph.instances.core.openaiKeyFile`: file containing the OpenAI API
   key or the configured proxy's client access key.
-- `services.ralph.webhookSecretFile`: file containing the Forgejo
+- `services.ralph.instances.core.webhookSecretFile`: file containing the Forgejo
   webhook secret.
-- `services.ralph.forgejoTokenFile`: file containing the Forgejo API
+- `services.ralph.instances.core.forgejoTokenFile`: file containing the Forgejo API
   token.
-- `services.ralph.botLogin`: Forgejo login that owns the review
+- `services.ralph.instances.core.botLogin`: Forgejo login that owns the review
   comment.
 
 Useful defaults:
 
-- `services.ralph.listenAddress = "127.0.0.1"`
-- `services.ralph.port = 8765`
-- `services.ralph.stateDir = "/var/lib/ralph"`
-- `services.ralph.commentMarker = null`, which uses
+- `services.ralph.instances.core.listenAddress = "127.0.0.1"`
+- `services.ralph.instances.core.port = 8765`
+- `services.ralph.instances.core.stateDir = "/var/lib/ralph"`
+- `services.ralph.instances.core.commentMarker = null`, which uses
   `<!-- ralph:${repository} -->`
-- `services.ralph.agentsDir = null`
-- `services.ralph.followupPromptFile = null`
-- `services.ralph.followupModel = null`
+- `services.ralph.instances.core.agentsDir = null`
+- `services.ralph.instances.core.followupPromptFile = null`
+- `services.ralph.instances.core.followupModel = null`
 
 Main-review agent settings and prompts resolve inside the imported core package.
 Set `agentsDir` to use a complete alternate agents directory. Each agent has a
@@ -574,11 +601,11 @@ be derived from `forgejoApi`.
 
 ## Review engine
 
-- `services.ralph.engine = "current"`: select the current review pipeline.
+- `services.ralph.instances.core.engine = "current"`: select the current review pipeline.
   Other names load trusted Python engine modules included in the selected
   package. Loading an engine runs its code with the service's permissions, so
   only use package code you trust.
-- `services.ralph.engineConfig = { }`: JSON-serializable object passed to the
+- `services.ralph.instances.core.engineConfig = { }`: JSON-serializable object passed to the
   selected engine. Ralph writes this configuration to the Nix store and pins
   its resolved settings when queuing each run. Do not put secrets in it.
   The current engine accepts resolved `prompts`, or `agents_dir`, plus
@@ -593,7 +620,7 @@ current-only options explicitly with a non-current engine is rejected.
 Engine-produced Markdown is the published review body. Structured data stays
 private unless an engine explicitly provides a supported export.
 
-`services.ralph.openaiApiBase` defaults to `https://api.openai.com/v1`.
+`services.ralph.instances.core.openaiApiBase` defaults to `https://api.openai.com/v1`.
 It sets the current engine's OpenAI-compatible Responses endpoint and the
 follow-up endpoint. An explicit `engineConfig.openai_api_base` takes precedence
 for both. Credentials belong only in `openaiKeyFile`, never in the URL.
@@ -605,7 +632,7 @@ The verifier uses Claude Opus 5.5 with extra-high reasoning in both profiles.
 For example, to reduce verification reasoning to high:
 
 ```nix
-services.ralph.engineConfig.stages.verifier = {
+services.ralph.instances.core.engineConfig.stages.verifier = {
   model = "claude-opus-5-5";
   reasoning_effort = "high";
   max_output_tokens = 64000;
@@ -673,7 +700,7 @@ older cases before replaying them.
   `default` and `high` profiles.
 
 The main-review CLI accepts `--agents-dir` in place of separate prompt and model
-files. Update custom deployments to `services.ralph.agentsDir` or
+files. Update custom deployments to `services.ralph.instances.core.agentsDir` or
 `engineConfig.agents_dir`. Follow-up keeps its separate `followupPromptFile`
 and `followupModel` options.
 
@@ -760,7 +787,7 @@ Incomplete passes are not evidence of model quality.
 
 ### GitHub major findings
 
-Set `services.ralph.githubPostMajorFindings = true` to enable GitHub comments.
+Set `services.ralph.instances.core.githubPostMajorFindings = true` to enable GitHub comments.
 It defaults to `false`. Configure `githubRepository` with the upstream
 `owner/repo` and `githubTokenFile` with a runtime secret file. The upstream and
 mirror must use matching PR numbers. Public reports must also be enabled through
@@ -797,12 +824,12 @@ Never put the token itself in Nix configuration or the Nix store.
 
 ### Telegram publishing and monitoring
 
-Set `services.ralph.telegram.enable = true` to publish completed reviews and
+Set `services.ralph.instances.core.telegram.enable = true` to publish completed reviews and
 monitor Ralph in a Telegram channel. It defaults to `false`. Public reports
 must also be configured through `reportDir` and `reportBaseUrl`.
 
 ```nix
-services.ralph.telegram = {
+services.ralph.instances.core.telegram = {
   enable = true;
   botTokenFile = "/run/secrets/ralph/telegram-token";
   chatId = "@ralph_reviews";

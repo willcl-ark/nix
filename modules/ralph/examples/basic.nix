@@ -1,5 +1,6 @@
 {
-  services.ralph = {
+  services.ralph.instances.core = {
+    serviceName = "ralph";
     enable = true;
     # The default package is ralph-service; main review prompts come from its core.
     # Set followupPromptFile and followupModel separately to customize follow-up.
