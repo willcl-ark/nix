@@ -3,7 +3,12 @@
 import subprocess
 from pathlib import Path
 
+from ralph import model
 from ralph import repository as local
+
+
+class FetchError(Exception):
+    """Required remote acquisition failed before model execution."""
 
 
 def prepare_checkout(checkout, bot_config):
@@ -52,13 +57,19 @@ def collect_review(
     args = ["fetch", "--refetch", "--no-tags", "--no-filter"]
     if local.git(checkout, "rev-parse", "--is-shallow-repository").strip() == "true":
         args.append("--unshallow")
-    local.git(
-        checkout,
-        *args,
-        "origin",
-        f"+{base_source}:{base_fetch_ref}",
-        f"+refs/pull/{number}/head:{head_fetch_ref}",
-    )
+    try:
+        local.git(
+            checkout,
+            *args,
+            "origin",
+            f"+{base_source}:{base_fetch_ref}",
+            f"+refs/pull/{number}/head:{head_fetch_ref}",
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = model._safe_error_message(exc.stderr or "No error output")
+        raise FetchError(
+            f"git fetch failed (exit {exc.returncode}): {detail}"
+        ) from None
     actual_head = local.resolve_commit(checkout, head_fetch_ref)
     base_sha = local.resolve_commit(checkout, base_fetch_ref)
     if actual_head != expected_head:

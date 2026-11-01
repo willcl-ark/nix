@@ -170,7 +170,13 @@ def retryable_error(exc):
                 return True
         return exc.code == 429 or 500 <= exc.code < 600
     return isinstance(
-        exc, (urllib.error.URLError, TimeoutError, subprocess.TimeoutExpired)
+        exc,
+        (
+            urllib.error.URLError,
+            TimeoutError,
+            subprocess.TimeoutExpired,
+            repository.FetchError,
+        ),
     )
 
 
@@ -571,6 +577,14 @@ def process_job(
             return outcome
     except Exception as exc:
         failure = exc
+        if isinstance(exc, repository.FetchError):
+            logging.warning(
+                "review fetch failed repo=%s pr=%d job=%d error=%s",
+                bot_config.repository,
+                number,
+                job["id"],
+                exc,
+            )
         outcome = (
             jobs.retry(job, exc)
             if retryable_error(exc)

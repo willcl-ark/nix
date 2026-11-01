@@ -228,6 +228,47 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(self.post_webhook(), 503)
         self.assertIsNone(self.jobs.claim())
 
+    def test_fetch_failure_retries_without_models_and_stops_at_attempt_cap(self):
+        job = self.enqueue()
+
+        def git(checkout, *args):
+            if args[0] == "fetch":
+                raise subprocess.CalledProcessError(
+                    1,
+                    ["git", *args],
+                    stderr="fatal: unable to access https://user:credential@example.org/repo: HTTP 503",
+                )
+            return "false"
+
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40) as head,
+            patch.object(forgejo, "find_comment", return_value=None),
+            patch.object(repository, "prepare_checkout"),
+            patch.object(repository.local, "git", side_effect=git),
+            patch.object(service.runner, "run_review") as run,
+            self.assertLogs(level="WARNING") as logs,
+        ):
+            for expected in ("retry", "retry", "failed"):
+                self.assertEqual(self.process(job), expected)
+                self.jobs = JobStore(self.jobs.path, retry_base_seconds=0)
+                job = self.jobs.claim()
+            self.assertIsNone(job)
+        run.assert_not_called()
+        self.assertEqual(head.call_count, 3)
+        with self.jobs._connection() as db:
+            row = db.execute(
+                "SELECT attempts, error, review_result FROM jobs"
+            ).fetchone()
+        self.assertEqual(row["attempts"], 3)
+        self.assertIsNone(row["review_result"])
+        self.assertIn("HTTP 503", row["error"])
+        self.assertNotIn("credential", row["error"])
+        self.assertIn("HTTP 503", "\n".join(logs.output))
+        self.assertNotIn("credential", "\n".join(logs.output))
+        self.assertFalse(
+            service.retryable_error(subprocess.CalledProcessError(1, ["git", "diff"]))
+        )
+
     def test_uncertain_github_reconciles_after_restart_without_models(self):
         from ralph_service import delivery
         from unittest.mock import Mock

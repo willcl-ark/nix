@@ -455,6 +455,12 @@ Automatic events schedule a new review only when the authoritative PR head SHA
 changes. Engine upgrades, metadata edits and base-branch changes do not rerun an
 unchanged head or replace its pending, running or retrying job.
 
+Failures fetching the required PR refs retry the existing job up to three total
+attempts, with 30-second and 60-second delays. Each attempt rechecks the PR head
+before collection. These retries precede model execution; sanitized Git errors
+are retained in the job and warning logs. Other Git failures are not automatically
+treated as retryable.
+
 To force a fresh review of the same head, send a signed synthetic pull request
 webhook with `"ralph_force": true`. Normal Forgejo webhooks omit this field.
 For a historical review, also supply `pull_request.base.sha` with the recorded
