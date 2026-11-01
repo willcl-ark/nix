@@ -50,7 +50,10 @@ class ProfileTests(unittest.TestCase):
 
     def test_request_handoff_is_idempotent(self):
         with closing(self.store._connect()) as db, db:
-            db.execute("INSERT INTO review_requests (id, number) VALUES (1, 42)")
+            db.executemany(
+                "INSERT INTO review_requests (id, repo_id, number) VALUES (?, ?, 42)",
+                [(1, "core"), (2, "gui")],
+            )
         pr = {
             "number": 42,
             "state": "open",
@@ -68,7 +71,13 @@ class ProfileTests(unittest.TestCase):
             self.jobs.complete(job)
             # Simulate a crash after jobs commit but before acknowledging the command.
             with closing(self.store._connect()) as db, db:
-                db.execute("UPDATE review_requests SET processed = 0")
+                self.assertEqual(
+                    db.execute(
+                        "SELECT id, processed FROM review_requests ORDER BY id"
+                    ).fetchall(),
+                    [(1, 1), (2, 0)],
+                )
+                db.execute("UPDATE review_requests SET processed = 0 WHERE id = 1")
             service.consume_review_requests(
                 self.store, self.jobs, self.config, "token", self.high
             )
