@@ -190,7 +190,7 @@ def diff_path_between_heads(
     )
 
 
-def file_excerpt_at(checkout, commit, path, line, context=30):
+def file_excerpt_at(checkout, commit, path, line, context=30, *, submodules=None):
     if (
         not isinstance(commit, str)
         or not SHA.fullmatch(commit)
@@ -201,7 +201,13 @@ def file_excerpt_at(checkout, commit, path, line, context=30):
     ):
         return "Invalid file excerpt request."
     try:
-        files = tracked_files_at(checkout, commit)
+        files = (
+            snapshot_repository(
+                checkout, commit, commit, submodules=submodules
+            ).head_files
+            if submodules
+            else tracked_files_at(checkout, commit)
+        )
     except subprocess.CalledProcessError:
         return f"{path} is unavailable at {commit}."
     try:
@@ -246,6 +252,165 @@ def tracked_files_at(checkout, ref):
     return files
 
 
+@dataclass(frozen=True)
+class DependencyFile:
+    checkout: Path
+    revision: str
+    path: str
+    blob: str
+
+
+@dataclass(frozen=True)
+class Gitlink:
+    revision: str
+
+
+@dataclass(frozen=True)
+class DependencySnapshot:
+    path: str
+    checkout: Path
+    remote: str
+    base_sha: str | None
+    head_sha: str | None
+
+
+def validate_submodules(submodules):
+    """Dependency paths and remotes come from operator configuration, never a PR."""
+    if submodules is None:
+        return {}
+    if not isinstance(submodules, dict):
+        raise ValueError("submodules must map paths to trusted remotes")
+    for path, remote in submodules.items():
+        if (
+            not isinstance(path, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", path)
+            or not isinstance(remote, str)
+            or not remote
+            or remote.startswith("-")
+            or any(character.isspace() for character in remote)
+        ):
+            raise ValueError("Invalid trusted submodule path or remote")
+    if any(a != b and b.startswith(a + "/") for a in submodules for b in submodules):
+        raise ValueError("Nested configured submodules are not supported")
+    return submodules
+
+
+def gitlinks_at(checkout, revision):
+    links = {}
+    for entry in git(checkout, "ls-tree", "-r", "-z", revision).split("\x00"):
+        if entry:
+            metadata, path = entry.split("\t", 1)
+            mode, kind, commit = metadata.split()
+            if mode == "160000" and kind == "commit":
+                links[path] = commit
+    return links
+
+
+def _dependency_checkout(checkout, path):
+    root = Path(checkout).resolve()
+    child = root / path
+    # Never follow a worktree symlink when acquiring a configured dependency.
+    if child.resolve() != child or not child.is_relative_to(root):
+        raise ValueError("Submodule checkout escapes its configured path")
+    return child
+
+
+def prepare_submodules(checkout, revisions, submodules):
+    """Acquire and retain configured gitlinks before entering offline review."""
+    submodules = validate_submodules(submodules)
+    revisions = [resolve_commit(checkout, revision) for revision in revisions]
+    if not submodules:
+        return
+    if len(revisions) == 2:
+        try:
+            revisions += git(checkout, "merge-base", "--all", *revisions).splitlines()
+        except subprocess.CalledProcessError as exc:
+            if exc.returncode != 1:
+                raise
+    links = [gitlinks_at(checkout, revision) for revision in revisions]
+    for path, remote in submodules.items():
+        pins = list(dict.fromkeys(link[path] for link in links if path in link))
+        if not pins:
+            raise ValueError(f"Configured submodule {path} has no gitlink")
+        child = _dependency_checkout(checkout, path)
+        if not child.exists():
+            child.mkdir(parents=True)
+            git(child, "init", "--template=", "-q")
+            git(child, "remote", "add", "origin", remote)
+        # rev-parse alone would accept an ordinary directory inside the parent.
+        if Path(git(child, "rev-parse", "--show-toplevel").strip()).resolve() != child:
+            raise ValueError(f"Submodule {path} is not an initialized repository")
+        if git(child, "remote", "get-url", "origin").strip() != remote:
+            raise ValueError(f"Submodule {path} origin does not match configuration")
+        for commit in pins:
+            ref = f"refs/ralph/dependencies/{commit}"
+            try:
+                resolve_commit(child, commit)
+                verify_local_objects(child, commit, commit)
+            except ValueError:
+                git(
+                    child,
+                    "fetch",
+                    "--no-tags",
+                    "--no-filter",
+                    "--refetch",
+                    "--recurse-submodules=no",
+                    remote,
+                    f"+{commit}:{ref}",
+                )
+                verify_local_objects(child, commit, commit)
+            git(child, "update-ref", ref, commit)
+            if gitlinks_at(child, commit):
+                raise ValueError(
+                    f"Submodule {path} contains unsupported nested gitlinks"
+                )
+        # The working checkout is convenient for operators; evidence always reads
+        # immutable objects, including the other endpoint's different pin.
+        head = links[1 if len(links) > 1 else 0].get(path)
+        if head:
+            git(child, "checkout", "--no-recurse-submodules", "--detach", head)
+
+
+def _snapshot_dependencies(checkout, base, head, submodules, base_files, head_files):
+    base_links, head_links = gitlinks_at(checkout, base), gitlinks_at(checkout, head)
+    dependencies = []
+    for path, remote in validate_submodules(submodules).items():
+        child = _dependency_checkout(checkout, path)
+        pins = (base_links.get(path), head_links.get(path))
+        if not any(pins):
+            raise ValueError(f"Configured submodule {path} has no gitlink")
+        if git(child, "remote", "get-url", "origin").strip() != remote:
+            raise ValueError(f"Submodule {path} origin does not match configuration")
+        for commit, files in zip(pins, (base_files, head_files)):
+            if commit is None:
+                continue
+            resolve_commit(child, commit)
+            verify_local_objects(child, commit, commit)
+            if gitlinks_at(child, commit):
+                raise ValueError(
+                    f"Submodule {path} contains unsupported nested gitlinks"
+                )
+            files[path] = Gitlink(commit)
+            for relative, blob in tracked_files_at(child, commit).items():
+                files[f"{path}/{relative}"] = DependencyFile(
+                    child, commit, relative, blob
+                )
+        dependencies.append(DependencySnapshot(path, child, remote, *pins))
+    return tuple(dependencies)
+
+
+def dependency_provenance(snapshot):
+    return [
+        {
+            "path": item.path,
+            "remote": item.remote,
+            "base_sha": item.base_sha,
+            "head_sha": item.head_sha,
+        }
+        for item in snapshot.dependencies
+    ]
+
+
 def find_paths(files, query):
     if (
         not isinstance(query, str)
@@ -280,22 +445,31 @@ def read_file(checkout, files, path, start_line):
             "invalid_request",
             "Invalid path or line. Only tracked regular files can be read.",
         )
-    size = int(git(checkout, "cat-file", "-s", files[path]).strip())
-    if size > MAX_FILE_BYTES:
-        raise ToolFailure("unavailable", f"File exceeds {MAX_FILE_BYTES} bytes.")
-    content = subprocess.run(
-        git_command(checkout, "cat-file", "blob", files[path]),
-        check=True,
-        capture_output=True,
-        timeout=30,
-        env=git_environment(),
-    ).stdout.decode(errors="replace")
+    source = files[path]
+    provenance = ""
+    if isinstance(source, Gitlink):
+        content = f"Subproject commit {source.revision}\n"
+    else:
+        blob = source
+        if isinstance(source, DependencyFile):
+            checkout, blob = source.checkout, source.blob
+            provenance = f", dependency commit {source.revision}"
+        size = int(git(checkout, "cat-file", "-s", blob).strip())
+        if size > MAX_FILE_BYTES:
+            raise ToolFailure("unavailable", f"File exceeds {MAX_FILE_BYTES} bytes.")
+        content = subprocess.run(
+            git_command(checkout, "cat-file", "blob", blob),
+            check=True,
+            capture_output=True,
+            timeout=30,
+            env=git_environment(),
+        ).stdout.decode(errors="replace")
     if "\x00" in content:
         raise ToolFailure("unavailable", "Binary file cannot be read as text.")
     lines = content.splitlines()
     if start_line > len(lines):
         raise ToolFailure("invalid_request", f"{path} has {len(lines)} lines.")
-    result = f"{path} ({len(lines)} lines):\n"
+    result = f"{path} ({len(lines)} lines{provenance}):\n"
     for number in range(start_line, min(start_line + 300, len(lines) + 1)):
         line = f"{number}: {lines[number - 1]}\n"
         if len((result + line).encode()) > MAX_TOOL_BYTES:
@@ -414,7 +588,7 @@ def _diff_page(
         return result if found else result + "No diff lines."
 
 
-def search_code(checkout, head, query):
+def search_code(checkout, head, query, *, dependencies=(), side="head"):
     if (
         not isinstance(query, str)
         or not 3 <= len(query) <= 100
@@ -425,24 +599,38 @@ def search_code(checkout, head, query):
         raise ToolFailure(
             "invalid_request", "Search query must be 3 to 100 characters on one line."
         )
-    try:
-        output = bounded_git(
-            checkout,
-            "grep",
-            "--no-recurse-submodules",
-            "-n",
-            "-I",
-            "-F",
-            "-e",
-            query,
-            head,
-            "--",
-            max_bytes=MAX_TOOL_BYTES,
-        )
-    except subprocess.CalledProcessError as exc:
-        if exc.returncode != 1:
-            raise
-        output = b""
+    output = b""
+    sources = [(checkout, head, "")]
+    for dependency in dependencies:
+        commit = dependency.head_sha if side == "head" else dependency.base_sha
+        if commit:
+            sources.append((dependency.checkout, commit, dependency.path + "/"))
+    for source_checkout, commit, prefix in sources:
+        if len(output) >= MAX_TOOL_BYTES:
+            break
+        try:
+            found = bounded_git(
+                source_checkout,
+                "grep",
+                "--no-recurse-submodules",
+                "-n",
+                "-I",
+                "-F",
+                "-e",
+                query,
+                commit,
+                "--",
+                max_bytes=MAX_TOOL_BYTES - len(output),
+            )
+        except subprocess.CalledProcessError as exc:
+            if exc.returncode != 1:
+                raise
+            continue
+        if prefix:
+            found = found.replace(
+                (commit + ":").encode(), (commit + ":" + prefix).encode()
+            )
+        output += found
     if not output:
         return "No matches in tracked text files."
     return output[:MAX_TOOL_BYTES].decode(errors="replace") + (
@@ -461,6 +649,12 @@ def blame_base(checkout, base_files, base, path, start_line):
         raise ToolFailure(
             "invalid_request", "Invalid path or line at the comparison base."
         )
+    label = path
+    source = base_files[path]
+    if isinstance(source, Gitlink):
+        raise ToolFailure("unavailable", "Gitlink history requires the parent diff.")
+    if isinstance(source, DependencyFile):
+        checkout, base, path = source.checkout, source.revision, source.path
     try:
         output = bounded_git(
             checkout,
@@ -491,7 +685,7 @@ def blame_base(checkout, base_files, base, path, start_line):
             summaries[current[0]] = line[8:]
         elif line.startswith("\t") and current:
             lines.append((current[0], current[1], line[1:]))
-    result = f"{path} at comparison base {base}:\n"
+    result = f"{label} at comparison base {base}:\n"
     for commit, number, content in lines:
         item = f"{number}: {commit} {summaries.get(commit, '')}: {content}\n"
         if len((result + item).encode()) > MAX_TOOL_BYTES:
@@ -510,6 +704,11 @@ def read_commit(checkout, base_files, base, commit, path):
         raise ToolFailure(
             "invalid_request", "Invalid commit or path at the comparison base."
         )
+    source = base_files[path]
+    if isinstance(source, Gitlink):
+        raise ToolFailure("unavailable", "Gitlink history requires the parent diff.")
+    if isinstance(source, DependencyFile):
+        checkout, base, path = source.checkout, source.revision, source.path
     ancestor = subprocess.run(
         git_command(checkout, "merge-base", "--is-ancestor", commit, base),
         capture_output=True,
@@ -676,6 +875,8 @@ class RepositorySnapshot:
     head_files: object
     base_files: object
     changed_paths: frozenset[str]
+    dependencies: tuple[DependencySnapshot, ...] = ()
+    experiment_shell: str | None = None
 
 
 def resolve_commit(checkout, revision):
@@ -735,7 +936,15 @@ def verify_local_objects(checkout, base_sha, head_sha):
         ) from exc
 
 
-def snapshot_repository(checkout, base_sha, head_sha, *, exact_endpoints=False):
+def snapshot_repository(
+    checkout,
+    base_sha,
+    head_sha,
+    *,
+    exact_endpoints=False,
+    submodules=None,
+    experiment_shell=None,
+):
     """Build immutable evidence after the caller has retained the endpoint objects."""
     checkout = Path(checkout).resolve()
     base_sha = resolve_commit(checkout, base_sha)
@@ -751,8 +960,15 @@ def snapshot_repository(checkout, base_sha, head_sha, *, exact_endpoints=False):
     if not exact_endpoints and merge_base is None:
         raise ValueError("Branch comparison requires a unique merge base")
     diff_base = base_sha if exact_endpoints else merge_base
-    head_files = MappingProxyType(tracked_files_at(checkout, head_sha))
-    base_files = MappingProxyType(tracked_files_at(checkout, diff_base))
+    head_files = tracked_files_at(checkout, head_sha)
+    base_files = tracked_files_at(checkout, diff_base)
+    dependencies = (
+        _snapshot_dependencies(
+            checkout, diff_base, head_sha, submodules, base_files, head_files
+        )
+        if submodules
+        else ()
+    )
     changed = git(
         checkout,
         "diff",
@@ -771,9 +987,11 @@ def snapshot_repository(checkout, base_sha, head_sha, *, exact_endpoints=False):
         head_sha,
         merge_base,
         diff_base,
-        head_files,
-        base_files,
+        MappingProxyType(head_files),
+        MappingProxyType(base_files),
         frozenset(path for path in changed.split("\x00") if path),
+        dependencies,
+        experiment_shell,
     )
 
 
@@ -851,6 +1069,30 @@ def build_review_input(snapshot, title="", description=""):
         max_bytes=MAX_REVIEW_BYTES,
     ).decode(errors="replace")
     prelude = f"Title: {title}\nDescription:\n{description}\nCommits:\n{commits}\n"
+    for dependency in snapshot.dependencies:
+        prelude += (
+            f"\nPinned dependency {dependency.path} from {dependency.remote}: "
+            f"base={dependency.base_sha}, head={dependency.head_sha}. "
+            f"Read its files under {dependency.path}/.\n"
+        )
+        if (
+            dependency.base_sha
+            and dependency.head_sha
+            and dependency.base_sha != dependency.head_sha
+        ):
+            summary = bounded_git(
+                dependency.checkout,
+                "log",
+                "--oneline",
+                "--max-count=30",
+                f"{dependency.base_sha}..{dependency.head_sha}",
+                max_bytes=4000,
+            ).decode(errors="replace")
+            prelude += (
+                "Dependency commit summary (at most 30 commits, 4000 bytes):\n"
+                + summary
+                + "\n"
+            )
     patch = bounded_git(
         checkout,
         "diff",

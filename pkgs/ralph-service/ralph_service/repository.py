@@ -63,7 +63,15 @@ def collect_review(
     base_sha = local.resolve_commit(checkout, base_fetch_ref)
     if actual_head != expected_head:
         return base_sha, actual_head, None, "PR head changed before review"
-    snapshot = local.snapshot_repository(checkout, base_sha, actual_head)
+    submodules = getattr(bot_config, "submodules", None)
+    local.prepare_submodules(checkout, (base_sha, actual_head), submodules)
+    snapshot = local.snapshot_repository(
+        checkout,
+        base_sha,
+        actual_head,
+        submodules=submodules,
+        experiment_shell=getattr(bot_config, "experiment_shell", None),
+    )
     review, skip = local.build_review_input(snapshot, title, description)
     if review is not None:
         review = review.replace("Title: ", "PR title: ", 1).replace(

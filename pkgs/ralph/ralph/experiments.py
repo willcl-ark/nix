@@ -36,7 +36,7 @@ TOOLS = [
             "Run a complete experiment in a fresh disposable source copy. All edits, "
             "build steps and tests must be in this single shell script: changes DO NOT "
             "persist between calls. side=head tests the reviewed commit; side=base "
-            "tests its pinned comparison revision. The Bix build environment is ready. "
+            "tests its pinned comparison revision. The configured build environment is ready. "
             "Put build and runtime artifacts under /tmp (e.g. cmake -B /tmp/build), "
             "so source patches contain tests and code rather than build output. "
             "Limits: 8 GiB aggregate memory, 128 processes, two CPUs, and a "
@@ -103,7 +103,10 @@ class ExperimentSession:
                 raise RuntimeError(
                     "experiment cgroup must be delegated under /sys/fs/cgroup"
                 )
-            self.launcher = os.environ["RALPH_WRITE_VERIFIER_SHELL"]
+            self.launcher = (
+                getattr(self.snapshot, "experiment_shell", None)
+                or os.environ["RALPH_WRITE_VERIFIER_SHELL"]
+            )
             Path(self.launcher).resolve(strict=True)
             self.bwrap = os.environ.get("RALPH_WRITE_VERIFIER_BWRAP") or shutil.which(
                 "bwrap"
@@ -252,6 +255,26 @@ class ExperimentSession:
             }
             group.rmdir()
 
+    def _archive_component(
+        self, checkout, revision, target, *, prefix="", limit=SOURCE_BYTES
+    ):
+        with object_git_command(
+            checkout,
+            ["archive", "--format=tar", f"--prefix={prefix}", revision],
+            revision,
+        ) as (command, env):
+            # Export attributes must not omit or rewrite pinned source bytes.
+            (Path(env["GIT_DIR"]) / "info").mkdir(exist_ok=True)
+            (Path(env["GIT_DIR"]) / "info" / "attributes").write_text(
+                "* -export-ignore -export-subst\n"
+            )
+            with target.open("wb") as sink:
+                status, code, _, truncated = self._run(
+                    command, limit=limit, sink=sink, env=env
+                )
+        if status != "completed" or code or truncated:
+            raise RuntimeError(f"source archive failed: {status}, exit {code}")
+
     def _archive(self, side):
         if side not in self.archives:
             revision = (
@@ -260,20 +283,33 @@ class ExperimentSession:
                 else self.snapshot.diff_base_sha
             )
             target = Path(self.directory.name) / f"{side}.tar"
-            with object_git_command(
-                self.snapshot.checkout, ["archive", "--format=tar", revision], revision
-            ) as (command, env):
-                # Export attributes must not omit or rewrite pinned source bytes.
-                (Path(env["GIT_DIR"]) / "info").mkdir(exist_ok=True)
-                (Path(env["GIT_DIR"]) / "info" / "attributes").write_text(
-                    "* -export-ignore -export-subst\n"
+            self._archive_component(self.snapshot.checkout, revision, target)
+            for index, dependency in enumerate(
+                getattr(self.snapshot, "dependencies", ())
+            ):
+                commit = dependency.head_sha if side == "head" else dependency.base_sha
+                if commit is None:
+                    continue
+                component = Path(self.directory.name) / f"{side}-{index}.tar"
+                self._archive_component(
+                    dependency.checkout,
+                    commit,
+                    component,
+                    prefix=dependency.path + "/",
+                    limit=SOURCE_BYTES - target.stat().st_size,
                 )
-                with target.open("wb") as sink:
-                    status, code, _, truncated = self._run(
-                        command, limit=SOURCE_BYTES, sink=sink, env=env
-                    )
-            if status != "completed" or code or truncated:
-                raise RuntimeError(f"source archive failed: {status}, exit {code}")
+                with (
+                    tarfile.open(target, "a") as archive,
+                    tarfile.open(component) as source,
+                ):
+                    for member in source:
+                        archive.addfile(
+                            member,
+                            source.extractfile(member) if member.isfile() else None,
+                        )
+                component.unlink()
+                if target.stat().st_size > SOURCE_BYTES:
+                    raise RuntimeError("combined source archive exceeds size limit")
             self.archives[side] = target
         return self.archives[side]
 

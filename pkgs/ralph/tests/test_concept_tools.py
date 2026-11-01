@@ -144,7 +144,9 @@ class ConceptToolTests(unittest.TestCase):
                 ],
                 tools=model.BASE_TOOLS,
             )
-        search.assert_called_once_with("checkout", "base-sha", "existing facility")
+        search.assert_called_once_with(
+            "checkout", "base-sha", "existing facility", dependencies=(), side="base"
+        )
         read.assert_called_once_with("checkout", self.snapshot.base_files, "old.cpp", 1)
         diff.assert_not_called()
         discussion.assert_not_called()

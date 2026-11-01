@@ -1089,11 +1089,18 @@ def openai_review(
                             )
                         elif call["name"] == "search_code":
                             answer = search_code(
-                                checkout, snapshot.head_sha, args.get("query")
+                                checkout,
+                                snapshot.head_sha,
+                                args.get("query"),
+                                dependencies=getattr(snapshot, "dependencies", ()),
                             )
                         elif call["name"] == "search_base_code":
                             answer = search_code(
-                                checkout, snapshot.diff_base_sha, args.get("query")
+                                checkout,
+                                snapshot.diff_base_sha,
+                                args.get("query"),
+                                dependencies=getattr(snapshot, "dependencies", ()),
+                                side="base",
                             )
                         elif call["name"] in {
                             "read_upstream_commit",
