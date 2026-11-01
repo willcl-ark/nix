@@ -153,7 +153,8 @@ def _link(url, text):
 def _pr_link(review, repository_url):
     number = _pr_number(review)
     base = _valid_http_base(review.get("repository_url") or repository_url)
-    label = f"{review.get('repository_id', 'core')}#{number}"
+    repository_id = review.get("repository_id", "core")
+    label = f"{'bitcoin' if repository_id == 'core' else repository_id}#{number}"
     if number is None or base is None:
         return _escape(label if number is not None else "N/A")
     return _link(f"{base}/pulls/{number}", label)
