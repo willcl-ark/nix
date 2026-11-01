@@ -33,7 +33,7 @@ from ralph import usage as usage_tracking
 from ralph import research as frozen_research
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def private_dir(path):
@@ -267,7 +267,11 @@ def capture_case(
         with offline_git():
             verify_local_objects(checkout, base_sha, head_sha)
             snapshot = local_repository.snapshot_repository(
-                checkout, base_sha, head_sha
+                checkout,
+                base_sha,
+                head_sha,
+                submodules=bot_config.submodules,
+                experiment_shell=bot_config.experiment_shell,
             )
         backport_evidence = repository.collect_backport_evidence(
             snapshot,
@@ -315,6 +319,7 @@ def capture_case(
             "base_pin": base_pin,
             "head_pin": head_pin,
             "merge_base": snapshot.merge_base,
+            "dependencies": local_repository.dependency_provenance(snapshot),
             "title": details["title"],
             "description": details["description"],
             "review_input": review,
@@ -500,8 +505,17 @@ def run_case(
                 checkout, base_sha, head_sha, *manifest["backport_pins"]
             )
             snapshot = local_repository.snapshot_repository(
-                checkout, base_sha, head_sha
+                checkout,
+                base_sha,
+                head_sha,
+                submodules=bot_config.submodules,
+                experiment_shell=bot_config.experiment_shell,
             )
+            if (
+                local_repository.dependency_provenance(snapshot)
+                != manifest["dependencies"]
+            ):
+                raise ValueError("Frozen dependency provenance mismatch")
             if snapshot.merge_base != manifest["merge_base"]:
                 raise ValueError("Frozen merge base mismatch")
             review_id = f"eval:{case_id}:{uuid.uuid4().hex}"
@@ -995,23 +1009,16 @@ def summarize_runs(paths):
     }
 
 
-def add_config_args(parser):
-    parser.add_argument("--origin", required=True)
-    parser.add_argument("--repository", required=True)
-    parser.add_argument("--forgejo-api", required=True)
-    parser.add_argument("--repository-url")
-    parser.add_argument("--comment-marker")
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     capture = commands.add_parser("capture", help="freeze PR inputs and Git objects")
     capture.add_argument("--state-dir", type=Path, required=True)
     capture.add_argument("--output-dir", type=Path, required=True)
-    add_config_args(capture)
+    capture.add_argument("--repositories", type=Path, required=True)
+    capture.add_argument("--repository-id", required=True)
     capture.add_argument("--forgejo-token-file", type=Path)
-    capture.add_argument("--engine", default="current")
+    capture.add_argument("--engine")
     capture.add_argument("--engine-config", type=Path)
     capture.add_argument("--agents-dir", type=Path)
     capture.add_argument(
@@ -1058,7 +1065,8 @@ def main(argv=None):
     )
     dashboard.add_argument("--state-dir", type=Path, required=True)
     dashboard.add_argument("--report-dir", type=Path, required=True)
-    dashboard.add_argument("--repository-url", required=True)
+    dashboard.add_argument("--repository-url")
+    dashboard.add_argument("--repositories", type=Path)
     dashboard.add_argument("--report-base-url", required=True)
     dashboard.add_argument(
         "--full", action="store_true", help="rebuild all cached statistics and history"
@@ -1068,22 +1076,25 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.command == "capture":
-        bot_config = config.BotConfig(
-            args.origin,
-            args.repository,
-            args.forgejo_api,
-            args.repository_url,
-            args.comment_marker,
-        )
-        if args.engine != "current" and args.agents_dir is not None:
-            parser.error("agent options apply only to --engine current")
         try:
-            engine_config = read_engine_config(args.engine_config)
+            entries = config.load_repositories(args.repositories)
+            if args.repository_id not in entries:
+                parser.error("unknown repository ID")
+            entry = entries[args.repository_id]
+            bot_config = config.repository_config(entry)
+            engine_name = args.engine or entry.get("engine", "current")
+            if engine_name != "current" and args.agents_dir is not None:
+                parser.error("agent options apply only to --engine current")
+            engine_config = {
+                **entry.get("engine_config", {}),
+                **read_engine_config(args.engine_config),
+            }
             if args.agents_dir is not None:
                 engine_config["agents_dir"] = args.agents_dir
-            if args.engine == "current":
+            if engine_name == "current":
                 engine_config.setdefault("archaeology", True)
-            review_engine = engine.load(args.engine, engine_config)
+                engine_config["strategy"] = entry.get("strategy", "core")
+            review_engine = engine.load(engine_name, engine_config)
         except (
             OSError,
             json.JSONDecodeError,
@@ -1092,13 +1103,13 @@ def main(argv=None):
             ValueError,
         ) as exc:
             parser.error(f"could not configure review engine: {exc}")
-        token = (
-            read_secret(args.forgejo_token_file, "Forgejo token")
-            if args.forgejo_token_file is not None
-            else None
-        )
+        token_file = args.forgejo_token_file or entry.get("forgejo_token_file")
+        token = read_secret(Path(token_file), "Forgejo token") if token_file else None
         requests = _research_requests(args.research_requests_json)
-        checkout = args.state_dir / "evaluation-checkout"
+        checkout = (
+            config.repository_state_dir(args.state_dir, bot_config.repo_id)
+            / "evaluation-checkout"
+        )
         for number in args.prs:
             print(
                 capture_case(
@@ -1127,7 +1138,14 @@ def main(argv=None):
         if bool(args.proxy_management_url) != bool(args.proxy_management_key_file):
             parser.error("proxy management URL and key file must be supplied together")
         with stats_cache.Cache(args.state_dir / "stats", full=args.full) as cache:
-            summary = stats.collect_stats(args.state_dir, args.report_dir, cache=cache)
+            summary = stats.collect_stats(
+                args.state_dir,
+                args.report_dir,
+                cache=cache,
+                repositories=config.load_repositories(args.repositories)
+                if args.repositories
+                else None,
+            )
             if args.proxy_management_url:
                 try:
                     key = args.proxy_management_key_file.read_text().strip()

@@ -97,6 +97,64 @@ class StatsCliTests(unittest.TestCase):
             self.assertEqual(saved["subscriptions"]["status"], "unavailable")
 
 
+class CaptureCliTests(unittest.TestCase):
+    def test_capture_uses_selected_repository_and_dependency_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            registry = root / "repositories.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "gui": {
+                            "origin": "https://git.example/gui.git",
+                            "repository": "bitcoin-core/gui-qml",
+                            "forgejo_api": "https://git.example/api/v1/repos/bitcoin-core/gui-qml",
+                            "strategy": "gui",
+                            "submodules": {
+                                "bitcoin": "https://github.com/bitcoin/bitcoin"
+                            },
+                            "experiment_shell": "/nix/store/gui-shell/bin/shell",
+                        },
+                    }
+                )
+            )
+            with (
+                patch.object(evaluate.engine, "load") as load,
+                patch.object(
+                    evaluate, "capture_case", return_value=root / "case.json"
+                ) as capture,
+            ):
+                self.assertEqual(
+                    evaluate.main(
+                        [
+                            "capture",
+                            "--state-dir",
+                            str(root / "state"),
+                            "--output-dir",
+                            str(root / "cases"),
+                            "--repositories",
+                            str(registry),
+                            "--repository-id",
+                            "gui",
+                            "1049",
+                        ]
+                    ),
+                    0,
+                )
+            self.assertEqual(load.call_args.args[1]["strategy"], "gui")
+            self.assertEqual(
+                capture.call_args.args[1], root / "state/repos/gui/evaluation-checkout"
+            )
+            selected = capture.call_args.args[4]
+            self.assertEqual(selected.repo_id, "gui")
+            self.assertEqual(
+                selected.submodules, {"bitcoin": "https://github.com/bitcoin/bitcoin"}
+            )
+            self.assertEqual(
+                selected.experiment_shell, "/nix/store/gui-shell/bin/shell"
+            )
+
+
 class EvaluateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
