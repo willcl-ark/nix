@@ -19,6 +19,11 @@ state can alter the transaction after the user confirms it.
 Where affected, inspect keyboard navigation, focus, accessibility, translated
 text, and platform behavior. Tie any issue to a reachable interaction and a
 concrete consequence. Do not report stylistic preferences as correctness bugs.
+
+When dialogs close or views become inactive, trace focus restoration and deferred
+callbacks through transition completion. Check that keyboard actions cannot
+reactivate stale state after switching wallets.
+
 A Core submodule gitlink records a commit, not its contents; identify missing
 backend context rather than assuming the referenced implementation was reviewed.
 
