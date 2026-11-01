@@ -696,7 +696,9 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
             )
             message = f"Queued high review of {bot_config.repo_id}#{number}."
         except ValueError as exc:
-            message = f"Could not queue high review of {bot_config.repo_id}#{number}: {exc}."
+            message = (
+                f"Could not queue high review of {bot_config.repo_id}#{number}: {exc}."
+            )
         except urllib.error.HTTPError as exc:
             if exc.code not in {404, 422}:
                 logging.warning(
