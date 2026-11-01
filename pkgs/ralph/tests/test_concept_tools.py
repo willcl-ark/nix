@@ -64,7 +64,13 @@ class ConceptToolTests(unittest.TestCase):
                 [("read_pr_commit", arguments)], tools=model.FOCUSED_TOOLS
             )
         read.assert_called_once_with(
-            "checkout", "base-sha", "head-sha", "c" * 40, "new.cpp", 25
+            "checkout",
+            "base-sha",
+            "head-sha",
+            "c" * 40,
+            "new.cpp",
+            25,
+            dependencies=(),
         )
         self.assertEqual(requests[-1]["input"][-1]["output"], "Pinned patch")
 

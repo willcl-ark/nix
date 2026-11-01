@@ -335,6 +335,7 @@ def prepare_submodules(checkout, revisions, submodules):
         child = _dependency_checkout(checkout, path)
         if not child.exists():
             child.mkdir(parents=True)
+        if child.is_dir() and not any(child.iterdir()):
             git(child, "init", "--template=", "-q")
             git(child, "remote", "add", "origin", remote)
         # rev-parse alone would accept an ordinary directory inside the parent.
@@ -478,7 +479,31 @@ def read_file(checkout, files, path, start_line):
     return result
 
 
-def read_diff(checkout, changed_paths, base, head, path, start_line):
+def read_diff(
+    checkout, changed_paths, base, head, path, start_line, *, dependencies=()
+):
+    for dependency in dependencies:
+        if isinstance(path, str) and path.startswith(dependency.path + "/"):
+            if not dependency.base_sha or not dependency.head_sha:
+                raise ToolFailure(
+                    "unavailable", "Dependency is absent at one endpoint."
+                )
+            relative = path[len(dependency.path) + 1 :]
+            base_files = tracked_files_at(dependency.checkout, dependency.base_sha)
+            head_files = tracked_files_at(dependency.checkout, dependency.head_sha)
+            changed = (
+                {relative}
+                if base_files.get(relative) != head_files.get(relative)
+                else set()
+            )
+            return f"Dependency {dependency.path}:\n" + read_diff(
+                dependency.checkout,
+                changed,
+                dependency.base_sha,
+                dependency.head_sha,
+                relative,
+                start_line,
+            )
     if (
         not isinstance(path, str)
         or path not in changed_paths
@@ -737,8 +762,22 @@ def read_commit(checkout, base_files, base, commit, path):
     )
 
 
-def read_pr_commit(checkout, base, head, commit, path, start_line):
+def read_pr_commit(checkout, base, head, commit, path, start_line, *, dependencies=()):
     """Inspect one pinned PR commit, including changes later reverted by the PR."""
+    for dependency in dependencies:
+        if isinstance(path, str) and path.startswith(dependency.path + "/"):
+            if not dependency.base_sha or not dependency.head_sha:
+                raise ToolFailure(
+                    "unavailable", "Dependency is absent at one endpoint."
+                )
+            return f"Dependency {dependency.path}:\n" + read_pr_commit(
+                dependency.checkout,
+                dependency.base_sha,
+                dependency.head_sha,
+                commit,
+                path[len(dependency.path) + 1 :],
+                start_line,
+            )
     if (
         not isinstance(commit, str)
         or not SHA.fullmatch(commit)
@@ -1073,7 +1112,8 @@ def build_review_input(snapshot, title="", description=""):
         prelude += (
             f"\nPinned dependency {dependency.path} from {dependency.remote}: "
             f"base={dependency.base_sha}, head={dependency.head_sha}. "
-            f"Read its files under {dependency.path}/.\n"
+            f"Read its files and changed-file diffs under {dependency.path}/. "
+            "read_pr_commit accepts dependency commits in this pinned range.\n"
         )
         if (
             dependency.base_sha

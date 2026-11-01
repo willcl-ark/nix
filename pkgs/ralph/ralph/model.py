@@ -1077,6 +1077,7 @@ def openai_review(
                                 snapshot.head_sha,
                                 args.get("path"),
                                 args.get("start_line"),
+                                dependencies=getattr(snapshot, "dependencies", ()),
                             )
                         elif call["name"] == "read_pr_commit":
                             answer = read_pr_commit(
@@ -1086,6 +1087,7 @@ def openai_review(
                                 args.get("commit"),
                                 args.get("path"),
                                 args.get("start_line"),
+                                dependencies=getattr(snapshot, "dependencies", ()),
                             )
                         elif call["name"] == "search_code":
                             answer = search_code(

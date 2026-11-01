@@ -61,6 +61,8 @@ class SubmoduleTests(unittest.TestCase):
 
     def test_endpoint_evidence_and_archives_ignore_untrusted_gitmodules(self):
         trace = self.root / "trace"
+        # A normal parent checkout creates an empty directory for its gitlink.
+        (self.repo / "bitcoin").mkdir()
         with patch.dict(os.environ, {"GIT_TRACE": str(trace)}):
             snapshot = self.snapshot()
         self.assertNotIn("remote-forbidden", trace.read_text())
@@ -97,6 +99,29 @@ class SubmoduleTests(unittest.TestCase):
             self.repo, snapshot.base_files, self.base, "bitcoin/api.h", 1
         )
         self.assertIn(self.base_pin, blame)
+        delta = repository.read_diff(
+            self.repo,
+            snapshot.changed_paths,
+            self.base,
+            self.head,
+            "bitcoin/api.h",
+            1,
+            dependencies=snapshot.dependencies,
+        )
+        self.assertIn("-old interface", delta)
+        self.assertIn("+new interface", delta)
+        self.assertIn(
+            "+new interface",
+            repository.read_pr_commit(
+                self.repo,
+                self.base,
+                self.head,
+                self.head_pin,
+                "bitcoin/api.h",
+                1,
+                dependencies=snapshot.dependencies,
+            ),
+        )
         self.assertIn(
             "old interface",
             repository.read_commit(
