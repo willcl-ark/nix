@@ -29,7 +29,7 @@ def _report_time(record, path):
 
 
 # Increment when the compact record or timestamp calculation changes.
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 def save_history(report_dir, number=None, *, cache_dir=None, full=False):
@@ -60,14 +60,17 @@ def _save_history(report_dir, number, cache_dir, full):
             pass
     records = {}
     groups = defaultdict(list)
-    for path in sorted(report_dir.glob("*.json")):
+    paths = list(report_dir.glob("*.json")) + list(report_dir.glob("*/*.json"))
+    for path in sorted(paths):
+        relative = path.relative_to(report_dir).as_posix()
+        namespace = "core" if path.parent == report_dir else path.parent.name
         if not report.REPORT_ID.fullmatch(path.stem):
             continue
         if not path.with_suffix(".html").is_file():
             continue
         stat = path.stat()
         signature = [stat.st_size, stat.st_mtime_ns]
-        cached = previous.get(path.name)
+        cached = previous.get(relative)
         if not full and cached is not None and cached["signature"] == signature:
             record = cached["record"]
         else:
@@ -81,7 +84,13 @@ def _save_history(report_dir, number, cache_dir, full):
             pr = value.get("pr")
             if type(pr) is not int or pr <= 0 or value.get("report_id") != path.stem:
                 continue
+            repository_id = value.get("repository_id", namespace)
+            if repository_id != namespace:
+                continue
             record = {
+                "repository_id": repository_id,
+                "repository": str(value.get("repository") or repository_id),
+                "repository_url": report._safe_http_url(value.get("repository_url")),
                 "pr": pr,
                 "head": str(value.get("head") or "unknown"),
                 "status": str(value.get("status") or "unknown"),
@@ -90,9 +99,11 @@ def _save_history(report_dir, number, cache_dir, full):
                 else "Unknown",
                 "timestamp": _report_time(value, path),
             }
-        records[path.name] = {"signature": signature, "record": record}
+        records[relative] = {"signature": signature, "record": record}
         if number is None or record["pr"] == number:
-            groups[record["pr"]].append((record["timestamp"], path.stem, record))
+            groups[(record["repository_id"], record["pr"])].append(
+                (record["timestamp"], path.stem, record)
+            )
 
     def write(path, content):
         report._write_public_file(path, content, skip_unchanged=True)
@@ -100,19 +111,28 @@ def _save_history(report_dir, number, cache_dir, full):
     write(report_dir / "theme.css", theme.STYLE)
     write(report_dir / "theme.js", theme.SCRIPT)
     write(report_dir / "history.js", _script())
-    for pr, entries in groups.items():
+    for (repository_id, pr), entries in groups.items():
         entries.sort(
             key=lambda item: (item[0] is not None, item[0] or 0, item[1]),
             reverse=True,
         )
-        target = report_dir / str(pr) / "index.html"
+        root = report_dir if repository_id == "core" else report_dir / repository_id
+        write(root / "theme.js", theme.SCRIPT)
+        write(root / "history.js", _script())
+        target = root / str(pr) / "index.html"
         target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
         write(target, _page(pr, entries))
     if number is None:
         # Full rebuilds also remove obsolete generated pages after cache loss.
         # Check our title before deleting anything in a numeric directory.
-        for directory in report_dir.iterdir():
-            if not directory.name.isdecimal() or int(directory.name) in groups:
+        directories = list(report_dir.iterdir()) + list(report_dir.glob("*/*"))
+        for directory in directories:
+            if not directory.is_dir() or not directory.name.isdecimal():
+                continue
+            repository_id = (
+                "core" if directory.parent == report_dir else directory.parent.name
+            )
+            if (repository_id, int(directory.name)) in groups:
                 continue
             target = directory / "index.html"
             if target.is_file() and (
@@ -123,6 +143,14 @@ def _save_history(report_dir, number, cache_dir, full):
         catalog = [
             {
                 "pr": pr,
+                "repository_id": repository_id,
+                "repository": record["repository"],
+                "history_path": f"{pr}/"
+                if repository_id == "core"
+                else f"{repository_id}/{pr}/",
+                "report_path": name + ".html"
+                if repository_id == "core"
+                else f"{repository_id}/{name}.html",
                 "head": record["head"],
                 "report_id": name,
                 "reviewed": _date(timestamp),
@@ -131,7 +159,7 @@ def _save_history(report_dir, number, cache_dir, full):
                 "status": record["status"],
                 "latest": _latest_label(entries) if index == 0 else "",
             }
-            for pr, entries in groups.items()
+            for (repository_id, pr), entries in groups.items()
             for index, (timestamp, name, record) in enumerate(entries)
         ]
         write(
@@ -170,6 +198,9 @@ def _save_history(report_dir, number, cache_dir, full):
 
 def _page(number, records):
     rows = []
+    repository = records[0][2]["repository"]
+    repository_id = records[0][2]["repository_id"]
+    search_root = "../" if repository_id == "core" else "../../"
     for index, (timestamp, name, record) in enumerate(records):
         head = str(record.get("head") or "unknown")
         escaped_head = html.escape(head, quote=True)
@@ -191,8 +222,8 @@ def _page(number, records):
 <title>Ralph reports for PR #{number}</title>
 <style>{_style()}</style><script src="../theme.js" defer></script><script src="../history.js" defer></script></head><body>
 {theme.BUTTON}
-<p><a href="../">Search all reports</a></p>
-<h1>Ralph reports for PR #{number}</h1>
+<p><a href="{search_root}">Search all reports</a></p>
+<h1>{html.escape(repository)} PR #{number}</h1>
 <p>Saved review runs, newest first. Multiple reports may review the same commit.
 A saved report does not necessarily mean its review was posted.</p>
 <form><label>Commit <input name="commit" placeholder="Full SHA or prefix" aria-label="Commit hash"></label>
@@ -240,7 +271,7 @@ def _search_page():
 <style>{_style()}</style><script src="theme.js" defer></script><script src="history.js" defer></script></head><body>
 {theme.BUTTON}
 <h1>Search Ralph reports</h1>
-<form><label>PR number <input name="q" placeholder="PR number, e.g. 36688" aria-label="PR number or commit"></label>
+<form><label>PR number <input name="q" placeholder="PR number or gui#1049" aria-label="PR number or commit"></label>
 <button type="submit">Search</button></form>
 <p>You can also search by a commit hash or prefix.</p>
 <p id="search-status" role="status"></p>
@@ -279,7 +310,10 @@ if (searchInput) {
 
 async function searchReports(query) {
     const status = document.getElementById('search-status');
-    const pr = /^#?[0-9]+$/.test(query) ? Number(query.replace('#', '')) : null;
+    const qualified = /^([a-z][a-z0-9_-]*)#([0-9]+)$/.exec(query);
+    const repository = qualified ? qualified[1] : null;
+    const pr = qualified ? Number(qualified[2])
+        : /^#?[0-9]+$/.test(query) ? Number(query.replace('#', '')) : null;
     const commit = /^[0-9a-f]{1,40}$/.test(query) ? query : null;
     if (pr === null && commit === null) {
         status.textContent = 'Enter a PR number or hexadecimal commit hash or prefix.';
@@ -290,8 +324,8 @@ async function searchReports(query) {
         const response = await fetch('history.json');
         if (!response.ok) throw new Error('Report index unavailable');
         const reports = await response.json();
-        const matches = reports.filter(report => report.pr === pr
-            || (commit !== null && report.head.toLowerCase().startsWith(commit)));
+        const matches = reports.filter(report => (!repository || report.repository_id === repository)
+            && (report.pr === pr || (commit !== null && report.head.toLowerCase().startsWith(commit))));
         status.textContent = `${matches.length} report(s) matching ${query}.`;
         const results = document.getElementById('search-results');
         matches.sort((a, b) => (b.timestamp ?? -Infinity) - (a.timestamp ?? -Infinity)
@@ -301,7 +335,7 @@ async function searchReports(query) {
         scroll.className = 'table-scroll';
         const table = document.createElement('table');
         const header = table.createTHead().insertRow();
-        for (const title of ['PR', 'Reviewed', 'Commit', 'Outcome', 'Findings', 'Report']) {
+        for (const title of ['Repository', 'PR', 'Reviewed', 'Commit', 'Outcome', 'Findings', 'Report']) {
             const cell = document.createElement('th');
             cell.textContent = title;
             header.append(cell);
@@ -315,15 +349,16 @@ async function searchReports(query) {
         }
         for (const report of matches) {
             const row = body.insertRow();
-            link(row.insertCell(), `${report.pr}/`, `#${report.pr}`);
+            row.insertCell().textContent = report.repository;
+            link(row.insertCell(), report.history_path, `#${report.pr}`);
             row.insertCell().textContent = `${report.reviewed}${report.latest ? " " + report.latest : ""}`;
             const commitCell = row.insertCell();
             const code = document.createElement('code');
-            link(code, `${report.pr}/?commit=${encodeURIComponent(report.head)}`, report.head);
+            link(code, `${report.history_path}?commit=${encodeURIComponent(report.head)}`, report.head);
             commitCell.append(code);
             row.insertCell().textContent = report.status;
             row.insertCell().textContent = report.findings;
-            link(row.insertCell(), `${encodeURIComponent(report.report_id)}.html`, 'Full report');
+            link(row.insertCell(), report.report_path, 'Full report');
         }
         scroll.append(table);
         results.append(scroll);

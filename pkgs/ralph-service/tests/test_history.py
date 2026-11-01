@@ -5,10 +5,56 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ralph_service import history
+from ralph_service import history, report
 
 
 class HistoryTests(unittest.TestCase):
+    def test_same_pr_number_keeps_repository_reports_and_history_separate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = {
+                "schema_version": 1,
+                "engine": {"name": "current"},
+                "head_sha": "a" * 40,
+                "output": {"schema_version": 2, "data": {}},
+            }
+            for repository_id, repository in (
+                ("core", "bitcoin/bitcoin"),
+                ("gui", "bitcoin-core/gui-qml"),
+            ):
+                name = report.save_report(
+                    root,
+                    123,
+                    result,
+                    "review",
+                    repository_id=repository_id,
+                    repository=repository,
+                    repository_url="https://forge.example/" + repository,
+                )
+                rendered = (root / name).read_text()
+                self.assertIn(repository, rendered)
+                self.assertIn(
+                    "https://forge.example/" + repository + "/pulls/123", rendered
+                )
+            self.assertEqual(history.save_history(root), 2)
+            core = (root / "123/index.html").read_text()
+            gui = (root / "gui/123/index.html").read_text()
+            self.assertIn("bitcoin/bitcoin PR #123", core)
+            self.assertNotIn("gui-qml", core)
+            self.assertIn("bitcoin-core/gui-qml PR #123", gui)
+            self.assertIn('href="../../"', gui)
+            catalog = json.loads((root / "history.json").read_text())
+            self.assertEqual(
+                {
+                    (item["repository_id"], item["history_path"], item["report_path"])
+                    for item in catalog
+                },
+                {
+                    ("core", "123/", "review.html"),
+                    ("gui", "gui/123/", "gui/review.html"),
+                },
+            )
+
     def test_history_preserves_runs_and_only_indexes_complete_public_reports(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

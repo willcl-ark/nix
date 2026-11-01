@@ -530,13 +530,24 @@ def _public_concept_brief(assessment):
     return record or None
 
 
-def _public_record(number, result, report_id):
+def _public_record(
+    number,
+    result,
+    report_id,
+    *,
+    repository_id="core",
+    repository=None,
+    repository_url=None,
+):
     debug = core_trace.current_diagnostics(result)
     engine = core_trace.result_engine(result)
     findings = core_trace.findings_export(result)
     metrics = core_trace.result_metrics(result)
     record = {
         "report_id": report_id,
+        "repository_id": repository_id,
+        "repository": repository or repository_id,
+        "repository_url": _safe_http_url(repository_url),
         "review_completed_at": (result.get("run") or {}).get("review_completed_at"),
         "status": (result.get("run") or {}).get("status", "unknown"),
         "pr": number,
@@ -1033,6 +1044,14 @@ def _stage_html(name, stage, stage_output):
     )
 
 
+def _pr_link(record):
+    label = f"PR #{record['pr']}"
+    base = _safe_http_url(record.get("repository_url"))
+    if base is None:
+        return _escape(label)
+    return f'<a href="{_escape(base.rstrip("/"))}/pulls/{record["pr"]}">{label}</a>'
+
+
 def _html_report(record, json_name):
     status = record.get("status", "unknown")
     outcome = (
@@ -1100,15 +1119,18 @@ def _html_report(record, json_name):
 <body>
 {theme.BUTTON}
 <header>
-<h1>Forgejo Review Report</h1>
+<h1>Review Report</h1>
+<p>Repository: {
+        _escape(record.get("repository") or record.get("repository_id") or "core")
+    }</p>
 {outcome}
-<p>PR #{_escape(record["pr"])} at <code>{_escape(record["head"])}</code><br>
+<p>{_pr_link(record)} at <code>{_escape(record["head"])}</code><br>
 Base: <code>{_escape(record["base"])}</code></p>
 {profile}
 <p><a href="{_escape(json_name)}" download>Download JSON report</a></p>
-<p><a href="{
-        _escape(record["pr"])
-    }/">Previous reports</a> · <a href="stats/">Review statistics</a></p>
+<p><a href="{_escape(record["pr"])}/">Previous reports</a> · <a href="{
+        "../" if record.get("repository_id", "core") != "core" else ""
+    }stats/">Review statistics</a></p>
 </header>
 <p class="notice">{_escape(record["notice"])}</p>
 <section>
@@ -1221,11 +1243,25 @@ def _write_public_file(path, content, *, replace=True, skip_unchanged=False):
         raise
 
 
-def save_report(report_dir, number, result, report_id):
+def save_report(
+    report_dir,
+    number,
+    result,
+    report_id,
+    *,
+    repository_id="core",
+    repository=None,
+    repository_url=None,
+):
     """Write a static HTML report and matching public JSON, returning the HTML name."""
     if not isinstance(report_id, str) or not REPORT_ID.fullmatch(report_id):
         raise ValueError("report_id must be a safe filename stem")
-    report_dir = Path(report_dir)
+    if not isinstance(repository_id, str) or not re.fullmatch(
+        r"[a-z][a-z0-9_-]*", repository_id
+    ):
+        raise ValueError("repository_id must be a safe repository key")
+    prefix = "" if repository_id == "core" else repository_id + "/"
+    report_dir = Path(report_dir) / prefix
     theme.save_assets(report_dir)
     report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
     html_name = f"{report_id}.html"
@@ -1234,13 +1270,20 @@ def save_report(report_dir, number, result, report_id):
     if html_path.exists():
         if not json_path.exists():
             raise OSError(f"Existing report has no JSON snapshot: {html_name}")
-        return html_name
+        return prefix + html_name
     if not json_path.exists():
-        record = _public_record(number, result, report_id)
+        record = _public_record(
+            number,
+            result,
+            report_id,
+            repository_id=repository_id,
+            repository=repository,
+            repository_url=repository_url,
+        )
         json_text = json.dumps(record, ensure_ascii=False, indent=2)
         _write_public_file(json_path, json_text + "\n", replace=False)
     # A retry, including recovery after writing JSON alone, must render the
     # saved snapshot rather than a potentially changed result or projection.
     record = json.loads(json_path.read_text(encoding="utf-8"))
     _write_public_file(html_path, _html_report(record, json_name), replace=False)
-    return html_name
+    return prefix + html_name
