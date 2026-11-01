@@ -18,10 +18,12 @@ def configure(value):
         )
     agents_dir = value.get("agents_dir", config.DEFAULT_AGENTS_DIR)
     selected_profile = value.get("profile", "default")
+    strategy = config.ReviewStrategy.load(value.get("strategy", "core"))
     prompts = value.get("prompts")
     if prompts is None or "agents_dir" in value:
         loaded = config.PromptConfig.load(
             agents_dir,
+            strategy=strategy.to_dict(),
             profile=selected_profile
             if isinstance(selected_profile, str)
             else selected_profile["name"],
@@ -82,6 +84,10 @@ def configure(value):
         "archaeology": value.get("archaeology", False),
         "openai_api_base": value.get("openai_api_base", "https://api.openai.com/v1"),
     }
+    # Historical frozen Core configurations keep their original identity. New
+    # runs and explicitly selected strategies persist the resolved recipe.
+    if "strategy" in value or "prompts" not in value:
+        normalized["strategy"] = strategy.to_dict()
     if normalized["routing_mode"] not in {"enabled", "shadow", "full"}:
         raise ValueError("Unknown routing mode")
     if type(normalized["blind_alternatives"]) is not bool:
@@ -125,6 +131,7 @@ def run(case, runtime, configured):
     try:
         prompt_config = config.PromptConfig(
             **configured["prompts"],
+            strategy=config.ReviewStrategy.load(configured.get("strategy", "core")),
             profile=profiles.ReviewProfile.from_dict(configured["profile"]),
             high_profile=profiles.ReviewProfile.from_dict(configured["high_profile"]),
         )

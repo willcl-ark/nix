@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 from final_comment import render_report as render
 
 from . import coverage, experiments, feedback, model, protocol, routing
-from .config import AUDIT_NAMES, ADVERSARIAL_PROFILES
 from .repository import audit_developer_notes, focused_review_input
 
 # Domain stages run in a predictable order; the two
@@ -640,6 +639,7 @@ def review_with_independent_passes(
         )
 
     debug["pipeline_stage"] = "routing"
+    strategy = prompt_config.strategy
     plan = routing.plan_review(
         runtime, review, snapshot, prompt_config, debug, routing_mode
     )
@@ -666,7 +666,7 @@ def review_with_independent_passes(
     test_paths = sorted(
         path
         for path in snapshot.changed_paths
-        if "tests" in routing.domain_audits([path])
+        if "tests" in routing.domain_audits([path], strategy)
     )
 
     def run_stage(
@@ -852,12 +852,12 @@ def review_with_independent_passes(
     sensitive = collect("independent", discover("independent")) or script_sensitive
     selected = set(plan["audits"])
     if sensitive and plan["tier"] != "sensitive":
-        selected.update(name for name in AUDIT_NAMES if name != "script")
+        selected.update(name for name in strategy.audits if name != "script")
         plan = {
             **plan,
             "tier": "sensitive",
-            "audits": [name for name in AUDIT_NAMES if name in selected],
-            "profiles": list(ADVERSARIAL_PROFILES),
+            "audits": [name for name in strategy.audits if name in selected],
+            "profiles": list(strategy.adversarial_profiles),
             "evidence": plan["evidence"] + ["Overview requested sensitive review"],
         }
         debug["routing"]["selected"] = plan
@@ -872,8 +872,8 @@ def review_with_independent_passes(
             plan = {
                 **plan,
                 "tier": "sensitive",
-                "profiles": plan["profiles"] or list(ADVERSARIAL_PROFILES),
-                "audits": [audit for audit in AUDIT_NAMES if audit in selected],
+                "profiles": plan["profiles"] or list(strategy.adversarial_profiles),
+                "audits": [audit for audit in strategy.audits if audit in selected],
                 "evidence": plan["evidence"] + [f"{name} requested sensitive review"],
             }
             debug["routing"]["selected"] = plan

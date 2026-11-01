@@ -10,6 +10,33 @@ from ralph import config, current_engine, engine, pipeline
 
 
 class StageConfigurationTests(unittest.TestCase):
+    def test_gui_strategy_is_frozen_and_independent_of_compute_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agents_dir = Path(directory) / "agents"
+            shutil.copytree(config.DEFAULT_AGENTS_DIR, agents_dir)
+            selected = engine.load(
+                config={"strategy": "gui", "agents_dir": str(agents_dir)}
+            )
+            saved = selected.config
+            self.assertEqual(saved["profile"]["name"], "default")
+            self.assertEqual(saved["strategy"]["name"], "gui")
+            high = engine.load(config={**saved, "profile": "high"})
+            self.assertEqual(high.config["strategy"], saved["strategy"])
+            self.assertEqual(high.config["prompts"], saved["prompts"])
+            (agents_dir / "shared/gui.md").write_text("Changed GUI instructions.")
+            reloaded = engine.load(config=saved)
+            self.assertEqual(reloaded.identity, selected.identity)
+            changed = engine.load(
+                config={"strategy": "gui", "agents_dir": str(agents_dir)}
+            )
+            self.assertNotEqual(changed.identity, selected.identity)
+            self.assertNotEqual(engine.load().identity, selected.identity)
+
+    def test_historical_core_configuration_keeps_its_identity(self):
+        saved = engine.load().config
+        del saved["strategy"]
+        self.assertEqual(current_engine.configure(saved), saved)
+
     def test_shared_finding_format_is_loaded_and_frozen_with_prompts(self):
         with tempfile.TemporaryDirectory() as directory:
             agents_dir = Path(directory) / "agents"

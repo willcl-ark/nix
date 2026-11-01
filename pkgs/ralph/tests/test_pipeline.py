@@ -307,6 +307,24 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.debug["coverage"]["status"], "partial")
         self.assertIn(deferred, self.debug["stages"]["tests"]["test_coverage"])
 
+    def test_gui_sensitive_escalation_does_not_enable_core_protocol_audits(self):
+        self.prompts = config.PromptConfig.load(strategy="gui")
+        self.tier, self.audits = "standard", ["gui"]
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "verifier":
+                return verification()
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            return discovery(sensitive=stage == "independent")
+
+        self.run_review(review)
+        plan = self.debug["routing"]["selected"]
+        self.assertEqual(plan["profiles"], ["wallet"])
+        self.assertNotIn("script", plan["audits"])
+        self.assertEqual(self.debug["profile_selection"]["effective"], "default")
+
     def test_comment_reports_final_tier_after_overview_escalation(self):
         self.tier, self.audits = "standard", []
         stages = []

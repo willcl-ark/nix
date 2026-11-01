@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ralph import engine, profiles, routing
+from ralph import config, engine, profiles, routing
 from ralph.protocol import InvalidReview
 from ralph.repository import MAX_REVIEW_BYTES
 
@@ -27,6 +27,35 @@ def route(
 
 
 class RoutingTests(unittest.TestCase):
+    def test_gui_fallback_and_explicit_full_review_stay_in_gui_strategy(self):
+        prompts = config.PromptConfig.load(strategy="gui")
+        for mode in ("enabled", "full", "shadow"):
+            with (
+                self.subTest(mode=mode),
+                patch(
+                    "ralph.model.openai_review", side_effect=RuntimeError("unavailable")
+                ),
+            ):
+                plan = routing.plan_review(
+                    self.runtime(),
+                    "Patch",
+                    self.snapshot("qml/models/wallet.cpp"),
+                    prompts,
+                    {},
+                    mode,
+                )
+            self.assertIn("gui", plan["audits"])
+            self.assertNotIn("script", plan["audits"])
+            self.assertEqual(plan["profiles"], ["wallet"])
+        plan = routing.validate_plan(
+            route("standard"), {"qml/models/wallet.cpp", "bitcoin"}, prompts.strategy
+        )
+        self.assertTrue({"gui", "public_contract", "build"} <= set(plan["audits"]))
+        with self.assertRaises(InvalidReview):
+            routing.validate_plan(
+                route(profiles=("consensus",)), {"bitcoin"}, prompts.strategy
+            )
+
     def test_semantic_tier_is_not_raised_by_critical_paths(self):
         plan = routing.validate_plan(
             route(tier="standard"),

@@ -3,7 +3,7 @@
 import json
 import re
 
-from .config import ADVERSARIAL_PROFILES, AUDIT_NAMES
+from .config import ADVERSARIAL_PROFILES, AUDIT_NAMES, ReviewStrategy
 from .model import TOOL_SETS, StaleReview
 from .protocol import STRINGS, InvalidReview, object_schema
 from .repository import MAX_REVIEW_BYTES, is_test_path
@@ -57,7 +57,8 @@ def _production_path(path):
     return not _doc_path(path) and not is_test_path(path) and not BUILD.search(path)
 
 
-def domain_audits(paths):
+def domain_audits(paths, strategy=None):
+    strategy = strategy or ReviewStrategy.load()
     audits = set()
     paths = [path for path in paths if not _doc_path(path)]
     if paths:
@@ -73,6 +74,11 @@ def domain_audits(paths):
             path.startswith("src/qt/") and path.endswith((".cpp", ".h", ".ui", ".ts"))
         ):
             audits.add("gui")
+        if strategy.name == "gui":
+            if path.startswith("qml/") and path.endswith((".qml", ".cpp", ".h")):
+                audits.update(("gui", "public_contract"))
+            if path == "bitcoin" or path == ".gitmodules":
+                audits.update(("build", "public_contract"))
         if is_test_path(path):
             continue
         if CONCURRENCY.search(path):
@@ -81,21 +87,23 @@ def domain_audits(paths):
             audits.add("state")
         if PUBLIC_CONTRACT.search(path):
             audits.add("public_contract")
-    return audits
+    return audits & set(strategy.audits)
 
 
-def full_plan(reason):
+def full_plan(reason, strategy=None):
+    strategy = strategy or ReviewStrategy.load()
     # Expensive script review needs a semantic trigger, not generic uncertainty.
     return {
         "tier": "sensitive",
-        "audits": [name for name in AUDIT_NAMES if name != "script"],
-        "profiles": list(ADVERSARIAL_PROFILES),
+        "audits": [name for name in strategy.audits if name != "script"],
+        "profiles": list(strategy.adversarial_profiles),
         "evidence": [reason],
         "missing_context": [],
     }
 
 
-def validate_plan(text, paths):
+def validate_plan(text, paths, strategy=None):
+    strategy = strategy or ReviewStrategy.load()
     result = json.loads(text)
     if not isinstance(result, dict) or set(result) != set(ROUTER_SCHEMA["properties"]):
         raise InvalidReview("Invalid routing fields")
@@ -106,23 +114,23 @@ def validate_plan(text, paths):
             not isinstance(item, str) for item in result[key]
         ):
             raise InvalidReview("Invalid routing list")
-    if set(result["audits"]) - set(AUDIT_NAMES):
+    if set(result["audits"]) - set(strategy.audits):
         raise InvalidReview("Unknown audit role")
-    if set(result["profiles"]) - set(ADVERSARIAL_PROFILES):
+    if set(result["profiles"]) - set(strategy.adversarial_profiles):
         raise InvalidReview("Unknown adversarial profile")
     if result["missing_context"]:
-        return full_plan("Router reported missing context")
+        return full_plan("Router reported missing context", strategy)
     selected_profiles = set(result["profiles"])
     if selected_profiles:
         result["tier"] = "sensitive"
-    selected = set(result["audits"]) | domain_audits(paths)
+    selected = set(result["audits"]) | domain_audits(paths, strategy)
     if all(_doc_path(path) or is_test_path(path) for path in paths):
         selected.discard("script")
     if "script" in selected:
         result["tier"] = "sensitive"
-    result["audits"] = [name for name in AUDIT_NAMES if name in selected]
+    result["audits"] = [name for name in strategy.audits if name in selected]
     result["profiles"] = [
-        name for name in ADVERSARIAL_PROFILES if name in selected_profiles
+        name for name in strategy.adversarial_profiles if name in selected_profiles
     ]
     return result
 
@@ -130,6 +138,23 @@ def validate_plan(text, paths):
 def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled"):
     if mode not in {"enabled", "shadow", "full"}:
         raise ValueError("Unknown routing mode")
+    strategy = getattr(prompt_config, "strategy", ReviewStrategy.load())
+    schema = object_schema(
+        {
+            **ROUTER_SCHEMA["properties"],
+            "audits": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(strategy.audits)},
+            },
+            "profiles": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": list(strategy.adversarial_profiles),
+                },
+            },
+        }
+    )
     paths = sorted(snapshot.changed_paths)
     settings = prompt_config.profile.stages["router"]
     record = {
@@ -140,10 +165,10 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
     }
     debug.setdefault("stages", {})["router"] = record
     if mode == "full":
-        proposed = full_plan("Full review requested")
-        proposed["audits"] = list(AUDIT_NAMES)
+        proposed = full_plan("Full review requested", strategy)
+        proposed["audits"] = list(strategy.audits)
     elif f"Patch exceeds {MAX_REVIEW_BYTES} input bytes." in review:
-        proposed = full_plan("Initial patch is incomplete")
+        proposed = full_plan("Initial patch is incomplete", strategy)
     else:
         # The complete manifest precedes the patch; a model cannot silently
         # classify only the excerpt it happened to receive.
@@ -162,7 +187,7 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
                 max_web_search_calls_per_response=settings.max_web_search_calls_per_response,
                 max_output_tokens=settings.max_output_tokens,
                 reasoning_effort=settings.reasoning_effort,
-                response_schema=ROUTER_SCHEMA,
+                response_schema=schema,
                 record=record,
                 timeout=settings.timeout,
                 final_timeout=settings.final_timeout,
@@ -170,21 +195,24 @@ def plan_review(runtime, review, snapshot, prompt_config, debug, mode="enabled")
             record["status"] = "completed"
             record["raw_output"] = answer
             debug.setdefault("stage_outputs", {})["router"] = answer
-            proposed = validate_plan(answer, paths)
+            proposed = validate_plan(answer, paths, strategy)
         except StaleReview:
             raise
         except Exception as exc:
             record.update(status="failed", error_type=type(exc).__name__)
-            proposed = full_plan("Routing unavailable; conservative review required")
+            proposed = full_plan(
+                "Routing unavailable; conservative review required", strategy
+            )
     actual = (
-        full_plan("Shadow routing retains full review")
+        full_plan("Shadow routing retains full review", strategy)
         if mode == "shadow"
         else proposed
     )
     if mode == "shadow":
-        actual["audits"] = list(AUDIT_NAMES)
+        actual["audits"] = list(strategy.audits)
     debug["routing"] = {
         "mode": mode,
+        "strategy": strategy.name,
         "proposed": proposed,
         "selected": actual,
     }
