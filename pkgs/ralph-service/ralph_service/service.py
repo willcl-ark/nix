@@ -202,7 +202,7 @@ def process_job(
     review_engine,
     allow_discussions=True,
     github_token=None,
-    github_post_major_findings=False,
+    github_publication="off",
 ):
     number = job["number"]
     base_ref = job["base_ref"]
@@ -549,17 +549,18 @@ def process_job(
                     )
                 jobs.supersede(job)
             else:
-                if github_post_major_findings:
+                if github_publication != "off":
                     if not is_current():
                         raise model.StaleReview(
                             "PR head changed before GitHub publication"
                         )
                     stage = "github"
-                    github.publish_major_findings(
+                    github.publish_review(
                         bot_config.github_repository,
                         github_token,
                         number,
                         result_record,
+                        publication=github_publication,
                         expected_context=expected_context,
                         is_current=lambda: jobs.is_current(job),
                         delivery=github_delivery,
@@ -805,9 +806,7 @@ def worker(jobs, api_key, ledger, contexts, stop_event=None, allow_discussions=T
             bot_config = context["bot"]
             review_engine = context["engine"]
             github_token = context["github_token"]
-            github_post_major_findings = context["entry"].get(
-                "github_post_major_findings", False
-            )
+            github_publication = context["entry"].get("github_publication", "off")
             if job["review_result"] is None:
                 identity = job["engine_identity"]
                 job_engine = (
@@ -835,7 +834,7 @@ def worker(jobs, api_key, ledger, contexts, stop_event=None, allow_discussions=T
                 job_engine,
                 allow_discussions,
                 github_token,
-                github_post_major_findings,
+                github_publication,
             )
         except Exception as exc:
             logging.exception(

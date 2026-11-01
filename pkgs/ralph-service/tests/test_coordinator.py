@@ -60,6 +60,29 @@ class CoordinatorTests(unittest.TestCase):
                 "engine": SimpleNamespace(identity={"name": "test", "config": {}}),
             }
 
+    def test_registry_requires_explicit_valid_publication_mode(self):
+        path = self.root / "repositories.json"
+        entry = {
+            "origin": "https://git.example/owner/repo.git",
+            "repository": "owner/repo",
+            "forgejo_api": "https://git.example/api/v1/repos/owner/repo",
+            "github_repository": "owner/repo",
+            "github_token_file": "/run/secrets/github",
+        }
+        for mode in ("off", "major-only", "full"):
+            path.write_text(json.dumps({"gui": {**entry, "github_publication": mode}}))
+            self.assertEqual(
+                config.load_repositories(path)["gui"]["github_publication"], mode
+            )
+        path.write_text(json.dumps({"gui": {**entry, "github_publication": True}}))
+        with self.assertRaisesRegex(ValueError, "github_publication must be"):
+            config.load_repositories(path)
+        path.write_text(
+            json.dumps({"gui": {**entry, "github_post_major_findings": True}})
+        )
+        with self.assertRaisesRegex(ValueError, "replace github_post_major_findings"):
+            config.load_repositories(path)
+
     def test_webhooks_authenticate_selected_repository_and_isolate_equal_numbers(self):
         server = ThreadingHTTPServer(
             ("127.0.0.1", 0), coordinator.make_handler(self.contexts, self.jobs)
@@ -143,7 +166,7 @@ class CoordinatorTests(unittest.TestCase):
                 "state_dir": config.repository_state_dir(self.root, repo_id),
                 "entry": {
                     "bot_login": repo_id,
-                    "github_post_major_findings": repo_id == "gui",
+                    "github_publication": "full" if repo_id == "gui" else "off",
                 },
                 "forgejo_token": repo_id,
                 "github_token": None,
@@ -167,7 +190,7 @@ class CoordinatorTests(unittest.TestCase):
         ):
             self.assertEqual(job["repo_id"], store.repo_id)
             self.assertEqual(bot.repo_id, store.repo_id)
-            self.assertEqual(publication, bot.repo_id == "gui")
+            self.assertEqual(publication, "full" if bot.repo_id == "gui" else "off")
             seen.append((bot.repo_id, state_dir))
             store.complete(job)
             if len(seen) == 2:

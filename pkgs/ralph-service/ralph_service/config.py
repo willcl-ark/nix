@@ -113,6 +113,12 @@ def load_repositories(path):
             raise ValueError(f"invalid repository ID: {repo_id}")
         if not isinstance(raw, dict):
             raise ValueError(f"invalid repository configuration: {repo_id}")
+        if "github_post_major_findings" in raw:
+            raise ValueError(
+                "replace github_post_major_findings with github_publication"
+            )
+        if raw.get("github_publication", "off") not in ("off", "major-only", "full"):
+            raise ValueError("github_publication must be off, major-only or full")
         entry = {**raw, "repo_id": repo_id}
         bot = repository_config(entry)
         source = bot.forgejo_api
@@ -131,7 +137,7 @@ def load_repositories(path):
             raise ValueError("engine_config must be an object")
         if not isinstance(entry.get("submodules", {}), dict):
             raise ValueError("submodules must map paths to trusted remote URLs")
-        if entry.get("github_post_major_findings", False) and not (
+        if entry.get("github_publication", "off") != "off" and not (
             entry.get("github_repository") and entry.get("github_token_file")
         ):
             raise ValueError("GitHub publication requires a repository and credentials")

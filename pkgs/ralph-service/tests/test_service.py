@@ -295,15 +295,13 @@ class ServiceTests(unittest.TestCase):
             patch.object(
                 forgejo, "publish_review", return_value="unchanged"
             ) as publish,
-            patch.object(
-                service.github, "publish_major_findings", return_value="unchanged"
-            ),
+            patch.object(service.github, "publish_review", return_value="unchanged"),
             patch.object(service.github, "github_request", side_effect=[{"id": 7}, []]),
             self.assertLogs(level="ERROR"),
         ):
             self.assertEqual(
                 self.process(
-                    job, github_token="token", github_post_major_findings=True
+                    job, github_token="token", github_publication="major-only"
                 ),
                 "retry",
             )
@@ -316,9 +314,7 @@ class ServiceTests(unittest.TestCase):
             patch.object(
                 forgejo, "publish_review", return_value="unchanged"
             ) as publish,
-            patch.object(
-                service.github, "publish_major_findings", return_value="unchanged"
-            ),
+            patch.object(service.github, "publish_review", return_value="unchanged"),
             patch.object(
                 service.github,
                 "github_request",
@@ -336,7 +332,7 @@ class ServiceTests(unittest.TestCase):
         ):
             self.assertEqual(
                 self.process(
-                    job, github_token="token", github_post_major_findings=True
+                    job, github_token="token", github_publication="major-only"
                 ),
                 "unchanged",
             )
@@ -486,7 +482,7 @@ class ServiceTests(unittest.TestCase):
         with (
             patch.object(repository, "current_head", return_value="a" * 40),
             patch.object(forgejo, "publish_review", return_value="updated"),
-            patch.object(service.github, "publish_major_findings") as publish,
+            patch.object(service.github, "publish_review") as publish,
         ):
             self.assertEqual(self.process(job, github_token="read-token"), "updated")
         publish.assert_not_called()
@@ -510,7 +506,7 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNone(self.jobs.claim())
         self.assertTrue(any("review_status=failed" in line for line in logs.output))
 
-    def test_github_publication_requires_explicit_flag(self):
+    def test_github_publication_requires_explicit_mode(self):
         self.bot_config = replace(
             self.bot_config,
             github_repository="owner/repo",
@@ -523,11 +519,11 @@ class ServiceTests(unittest.TestCase):
         with (
             patch.object(repository, "current_head", return_value="a" * 40),
             patch.object(forgejo, "publish_review", return_value="updated"),
-            patch.object(service.github, "publish_major_findings") as publish,
+            patch.object(service.github, "publish_review") as publish,
         ):
             self.assertEqual(
                 self.process(
-                    job, github_token="write-token", github_post_major_findings=True
+                    job, github_token="write-token", github_publication="major-only"
                 ),
                 "updated",
             )
@@ -536,6 +532,7 @@ class ServiceTests(unittest.TestCase):
             "write-token",
             42,
             job["review_result"],
+            publication="major-only",
             expected_context=job["review_result"]["run"]["review_context"],
             is_current=ANY,
             delivery=ANY,
@@ -597,11 +594,11 @@ class ServiceTests(unittest.TestCase):
         with (
             patch.object(service.repository, "current_head", return_value="a" * 40),
             patch.object(service.forgejo, "publish_review", return_value="stale"),
-            patch.object(service.github, "publish_major_findings") as publish,
+            patch.object(service.github, "publish_review") as publish,
         ):
             self.assertEqual(
                 self.process(
-                    job, github_token="write-token", github_post_major_findings=True
+                    job, github_token="write-token", github_publication="major-only"
                 ),
                 "stale",
             )

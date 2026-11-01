@@ -191,6 +191,8 @@ def render(
     review_tier=None,
     report_url=None,
     head_sha=None,
+    repository_url=None,
+    base_sha=None,
 ):
     """Render a bounded current review; history and explanations live in the report."""
     comment_format = (
@@ -208,7 +210,14 @@ def render(
     if selected:
         sections["findings"] = Template(comment_format["findings"]).substitute(
             findings="\n\n".join(
-                _brief_finding(finding, comment_format) for finding in selected
+                _brief_finding(
+                    finding,
+                    comment_format,
+                    source_location(finding, repository_url, base_sha, head_sha)
+                    if repository_url
+                    else None,
+                )
+                for finding in selected
             )
         )
     if concept_summary and not verification_failed:
@@ -560,7 +569,7 @@ def render_github(
     comment_format=None,
     review_tier=None,
 ):
-    """Format major findings already selected and checked for publication."""
+    """Format critical and major findings already checked for publication."""
     comment_format = (
         load_format() if comment_format is None else validate_format(comment_format)
     )
@@ -577,7 +586,7 @@ def render_github(
         comment_format["github"],
         {
             "new_findings_notice": (
-                f"{len(selected)} major finding{'s' if len(selected) != 1 else ''}."
+                f"{len(selected)} major or critical finding{'s' if len(selected) != 1 else ''}."
                 + (
                     f" {len(findings) - len(selected)} additional verified findings in the full report."
                     if len(findings) > len(selected)

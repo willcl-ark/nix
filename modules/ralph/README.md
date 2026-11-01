@@ -779,36 +779,49 @@ Compare `adversarial` and `adversarial_claude` in debug stage metrics for
 sole/shared accepted findings and published, dropped or unresolved candidates.
 Incomplete passes are not evidence of model quality.
 
-### GitHub major findings
+### GitHub comments
 
-Set `services.ralph.repositories.gui.githubPostMajorFindings = true` to enable GUI GitHub comments.
-Keep `repositories.core.githubPostMajorFindings = false` for Bitcoin Core.
-It defaults to `false`. Configure `githubRepository` with the upstream
-`owner/repo` and `githubTokenFile` with a runtime secret file. The upstream and
-mirror must use matching PR numbers. Public reports must also be enabled through
-`reportDir` and `reportBaseUrl`.
+Set the publication mode independently for each repository:
 
-Set `githubPostMajorFindings = false` to stop GitHub posting while retaining
-the repository and token configuration. Ralph still uses the token for
-authenticated upstream reads, including backport evidence and author feedback.
-Credentials alone never enable GitHub writes. Forgejo reviews and the final
-judge still run. Existing GitHub comments remain.
+```nix
+services.ralph.repositories.core.githubPublication = "off";
+services.ralph.repositories.gui.githubPublication = "full";
+```
 
-Ralph keeps one GitHub comment per PR, containing only findings whose severity
-is exactly `major`, using their judge-approved wording, plus a full-report link.
-A later review updates that comment or deletes it when no major findings remain.
-Skipped reviews and engines without a findings export leave it alone. Updates
-and deletion require an open, non-draft upstream PR matching the reviewed head,
-base branch, title, body and labels. The Forgejo
-comment is unchanged. Publication failures use the existing saved-result retry
-queue without repeating the model review.
-Every exported Major must record `verified_by = "verifier"` and
-`judged_by = "judge"`. If any lacks those approvals, the GitHub operation returns
-`unverified` before making requests and
-leaves any existing comment alone. Old saved publication retries cannot bypass
-this requirement. Historical mirror reports remain unchanged; rerun their review
-to apply the new pipeline. Custom agent directories must replace `collator` and
-`major_verifier` with `judge`, and old frozen evaluations require recapture.
+`githubPublication` accepts `"off"`, `"major-only"` or `"full"` and defaults to
+`"off"`. The old `githubPostMajorFindings` option is removed. Configure
+`githubRepository` with the upstream `owner/repo` and `githubTokenFile` with a
+runtime secret file. The upstream and mirror must use matching PR numbers.
+Public reports must also be enabled through `reportDir` and `reportBaseUrl`.
+
+`"off"` prevents GitHub writes while retaining authenticated upstream reads,
+including backport evidence and author feedback. Existing comments remain.
+Credentials alone never enable posting. Forgejo reviews and the final judge
+still run. One repository's publication mode does not enable another's.
+
+`"major-only"` keeps one GitHub comment per PR containing verified `critical` and
+`major` findings, using judge-approved wording, plus a full-report link. A
+later review updates that comment; a complete review deletes it when no Critical
+or Major findings remain. Failed or skipped reviews and engines without a
+findings export leave it alone.
+
+`"full"` uses the same review summary as Forgejo, including findings across
+severities, verified design assessments, coverage notices and the
+no-actionable-issues message when appropriate. Source and commit links point to
+GitHub. Both modes show at most six findings and link to the full report for
+additional findings and details. They update the same bot comment rather than
+posting inline reviews or approvals.
+
+Writes require an open, non-draft upstream PR matching the reviewed head, base
+branch, title, body and labels. The Forgejo comment is unchanged. Publication
+failures use the saved-result retry queue without repeating the model review.
+Selected findings must record `verified_by = "verifier"` and
+`judged_by = "judge"`; missing approval leaves the GitHub comment alone. Changing
+publication mode does not schedule a new review of an unchanged head. No database
+migration is needed. Existing exact publication intents remain unchanged until
+reconciled; switching modes does not replace an uncertain write with a new body.
+A saved full-comment intent can still be delivered after switching to
+`"major-only"`; `"off"` prevents dispatch of saved intents too.
 
 Use a token for Ralph's GitHub account that can read the upstream PR and create,
 edit and delete its own issue comments. See [GitHub's token permission notes](https://docs.github.com/en/rest/issues/comments).

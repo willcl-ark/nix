@@ -71,12 +71,13 @@ class GitHubTests(unittest.TestCase):
         store.enqueue(42, "master", "a" * 40, "synchronize", engine_identity=None)
         return delivery.Session(store, store.claim(), "github")
 
-    def publish(self, result):
-        return github.publish_major_findings(
+    def publish(self, result, publication="major-only"):
+        return github.publish_review(
             "owner/repo",
             "github-token",
             42,
             result,
+            publication=publication,
             is_current=lambda: True,
             expected_context=self.context(),
             delivery=self.session(),
@@ -97,11 +98,12 @@ class GitHubTests(unittest.TestCase):
 
         with patch.object(github, "github_request", side_effect=request):
             self.assertEqual(
-                github.publish_major_findings(
+                github.publish_review(
                     "owner/repo",
                     "token",
                     42,
                     self.result(),
+                    publication="major-only",
                     is_current=lambda: current,
                     expected_context=self.context(),
                     delivery=self.session(),
@@ -165,6 +167,162 @@ class GitHubTests(unittest.TestCase):
         body = request.call_args.args[3]["body"]
         self.assertIn(f"/blob/{result['merge_base']}/src/test.cpp#L5", body)
         self.assertNotIn(f"/blob/{result['base_sha']}/", body)
+
+    def test_full_review_updates_same_comment_and_includes_minor_and_design(self):
+        result = self.result("suggestion")
+        result["engine"] = engine.load().identity
+        result["output"].update(
+            schema_version=2,
+            data={
+                "schema_version": 2,
+                "coverage": {"status": "partial"},
+                "concept_assessment": {
+                    "status": "verified",
+                    "summary": "Design concern",
+                },
+            },
+        )
+        minor = result["output"]["exports"]["findings"][1]
+        minor.update(
+            verified_by="verifier",
+            judged_by="judge",
+            path="src/old.cpp",
+            line=9,
+            side="base",
+        )
+        own = {"id": 2, "user": {"id": 7}, "body": "<!-- ralph-major:owner/repo -->"}
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[
+                {"id": 7},
+                [own],
+                self.pull(),
+                self.pull(),
+                {},
+            ],
+        ) as request:
+            self.assertEqual(self.publish(result, "full"), "updated")
+        self.assertEqual(
+            request.call_args.args[1:3],
+            ("/repos/owner/repo/issues/comments/2", "PATCH"),
+        )
+        body = request.call_args.args[3]["body"]
+        for expected in (
+            "Suggestion",
+            "Minor",
+            "Design concern",
+            "coverage was incomplete",
+            f"/blob/{result['merge_base']}/src/old.cpp#L9",
+            f"/blob/{result['head_sha']}/src/test.cpp#L5",
+        ):
+            self.assertIn(expected, body)
+        minor["judged_by"] = None
+        with patch.object(github, "github_request") as request:
+            self.assertEqual(self.publish(result, "full"), "unverified")
+        request.assert_not_called()
+
+    def test_full_empty_review_distinguishes_complete_from_partial(self):
+        result = self.result()
+        result["engine"] = engine.load().identity
+        result["output"]["exports"]["findings"] = []
+        for status in ("complete", "partial"):
+            result["output"].update(
+                schema_version=2,
+                data={
+                    "schema_version": 2,
+                    "coverage": {
+                        "status": status,
+                        "verification": {"status": "complete"},
+                    },
+                },
+            )
+            with patch.object(
+                github,
+                "github_request",
+                side_effect=[
+                    {"id": 7},
+                    [],
+                    self.pull(),
+                    self.pull(),
+                    {},
+                ],
+            ) as request:
+                self.assertEqual(self.publish(result, "full"), "created")
+            body = request.call_args.args[3]["body"]
+            self.assertEqual("no actionable issues" in body, status == "complete")
+            self.assertEqual("coverage was incomplete" in body, status == "partial")
+
+    def test_off_and_invalid_modes_cannot_contact_github(self):
+        with patch.object(github, "github_request") as request:
+            self.assertEqual(self.publish(self.result(), "off"), "disabled")
+            with self.assertRaisesRegex(ValueError, "publication mode"):
+                self.publish(self.result(), "typo")
+        request.assert_not_called()
+
+    def test_mode_change_reconciles_uncertain_body_without_reposting(self):
+        result = self.result()
+        result["output"]["exports"]["findings"][1].update(
+            verified_by="verifier", judged_by="judge"
+        )
+        session = self.session()
+
+        def publish(mode):
+            return github.publish_review(
+                "owner/repo",
+                "token",
+                42,
+                result,
+                publication=mode,
+                expected_context=self.context(),
+                is_current=lambda: True,
+                delivery=session,
+            )
+
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[
+                {"id": 7},
+                [],
+                self.pull(),
+                self.pull(),
+                TimeoutError(),
+            ],
+        ):
+            with self.assertRaises(delivery.DeliveryHeld):
+                publish("major-only")
+        intended = session._record()["body"]
+        with patch.object(
+            github, "github_request", side_effect=[{"id": 7}, []]
+        ) as request:
+            with self.assertRaises(delivery.DeliveryHeld):
+                publish("full")
+        self.assertTrue(all(len(call.args) < 3 for call in request.call_args_list))
+        own = {"id": 2, "user": {"id": 7}, "body": intended}
+        with patch.object(
+            github, "github_request", side_effect=[{"id": 7}, [own]]
+        ) as request:
+            self.assertEqual(publish("full"), "unchanged")
+        self.assertEqual(session._record()["body"], intended)
+        self.assertTrue(all(len(call.args) < 3 for call in request.call_args_list))
+
+    def test_major_only_includes_critical_findings(self):
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[
+                {"id": 7},
+                [],
+                self.pull(),
+                self.pull(),
+                {},
+            ],
+        ) as request:
+            self.assertEqual(self.publish(self.result("critical")), "created")
+        body = request.call_args.args[3]["body"]
+        self.assertIn("Critical", body)
+        self.assertNotIn("Minor summary", body)
 
     def test_comment_uses_final_selected_tier_or_omits_missing_route(self):
         for routing in (
@@ -347,11 +505,12 @@ class GitHubTests(unittest.TestCase):
             ],
         ) as request:
             self.assertEqual(
-                github.publish_major_findings(
+                github.publish_review(
                     "owner/repo",
                     "token",
                     42,
                     self.result(),
+                    publication="major-only",
                     expected_context=self.context(),
                     is_current=lambda: True,
                     delivery=session,

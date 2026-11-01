@@ -29,10 +29,11 @@ runtime file paths, never secret contents. `engine_config` holds prompt/model
 settings; `strategy` selects `core` or `gui` independently of default/high compute
 profiles. `max_workers` caps that repository within the shared `--workers` limit.
 
-Set `core.github_post_major_findings` to `false`. GUI can set
+Set `core.github_publication` to `"off"`. GUI can set
 `github_repository` to `bitcoin-core/gui-qml`, `github_token_file` to its runtime
-credential path, and `github_post_major_findings` to `true`. Only that repository
-then publishes verified major findings upstream.
+credential path, and `github_publication` to `"full"`. Only that repository then
+publishes full review summaries upstream. Each repository independently accepts
+`"off"`, `"major-only"` or `"full"`; the default is `"off"`.
 
 GUI alone sets `submodules` to
 `{"bitcoin": "https://github.com/bitcoin/bitcoin"}` and `experiment_shell` to its
@@ -225,13 +226,19 @@ not undo published comments or recorded model requests.
 
 Repository registry fields `github_repository` and `github_token_file` enable
 authenticated upstream metadata reads independently of posting.
-`github_post_major_findings = true` maintains one upstream GitHub comment with
-exactly `major` findings and a public report link. The same six-finding limit and
-brief format apply after verifier and judge approval checks; the full report
-retains the rest. Posting requires public report configuration and credentials.
-Later complete reviews update or delete the comment when major findings change
-or disappear. Skipped or incomplete reviews cannot remove old findings. Upstream
-PR numbers must match the mirror. Writes require an open, non-draft upstream PR
+`github_publication = "major-only"` maintains one upstream GitHub comment with
+`critical` and `major` findings and a public report link. `"full"` uses the Forgejo
+review summary, including other finding severities, verified design assessments,
+coverage notices and the no-actionable-issues message when appropriate. Source
+links point to GitHub. Both modes use a six-finding limit; the full report retains
+the rest. Posting requires public report configuration and credentials.
+Later reviews update the same comment. In major-only mode, a complete review can
+delete it when no Critical or Major findings remain; incomplete reviews cannot
+delete the comment. Failed or skipped reviews do not post in either mode.
+`"off"` leaves existing comments untouched. No database migration is needed;
+existing exact delivery intents are preserved until reconciled. The old
+`github_post_major_findings` boolean is rejected; replace it with the new mode.
+Upstream PR numbers must match the mirror. Writes require an open, non-draft upstream PR
 matching the reviewed head, base branch and review context. GitHub credentials
 are separate from Forgejo credentials and model tools.
 

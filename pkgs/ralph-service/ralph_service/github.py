@@ -1,10 +1,10 @@
-"""Publish major findings to the upstream GitHub pull request."""
+"""Publish repository-scoped reviews to the upstream GitHub pull request."""
 
 import json
 import urllib.request
 import urllib.error
 
-from final_comment import render_github
+from final_comment import render, render_github
 from ralph import trace
 
 
@@ -63,15 +63,31 @@ def reconcile_delivery(repository, token, number, delivery):
     return comment, lookup
 
 
-def publish_major_findings(
-    repository, token, number, result, *, expected_context, is_current, delivery
+def publish_review(
+    repository,
+    token,
+    number,
+    result,
+    *,
+    publication,
+    expected_context,
+    is_current,
+    delivery,
 ):
+    if publication == "off":
+        return "disabled"
+    if publication not in {"major-only", "full"}:
+        raise ValueError("Invalid GitHub publication mode")
     if result["run"].get("status") == "failed":
         return "failed"
     exported = trace.findings_export(result)
     if exported is None or result["run"].get("skipped"):
         return "skipped"
-    findings = [finding for finding in exported if finding.get("severity") == "major"]
+    findings = [
+        finding
+        for finding in exported
+        if publication == "full" or finding.get("severity") in {"critical", "major"}
+    ]
     if any(
         finding.get("verified_by") != "verifier" or finding.get("judged_by") != "judge"
         for finding in findings
@@ -80,7 +96,7 @@ def publish_major_findings(
     retained = [
         item
         for item in trace.unresolved_memory(result)
-        if item.get("severity") == "major"
+        if item.get("severity") in {"critical", "major"}
     ]
     collapsed = {
         finding_id
@@ -88,7 +104,10 @@ def publish_major_findings(
         if item.get("collapsed")
         for finding_id in item.get("current_finding_ids", [])
     }
-    findings = [finding for finding in findings if finding.get("id") not in collapsed]
+    if publication == "major-only":
+        findings = [
+            finding for finding in findings if finding.get("id") not in collapsed
+        ]
     marker = f"<!-- ralph-major:{repository} -->"
     base = f"/repos/{repository}"
     comment, lookup = reconcile_delivery(repository, token, number, delivery)
@@ -130,7 +149,7 @@ def publish_major_findings(
 
     if not is_current():
         return "stale"
-    if not findings and not retained:
+    if publication == "major-only" and not findings and not retained:
         if comment is None:
             return "unchanged"
         coverage = trace.current_diagnostics(result).get("coverage", {})
@@ -154,25 +173,52 @@ def publish_major_findings(
     comment_format = None
     if identity.get("name") == "current":
         comment_format = identity["config"]["comment_format"]
-    body = delivery.body(
-        lambda: (
-            marker
-            + "\n\n"
-            + render_github(
+
+    def render_body():
+        diagnostics = trace.current_diagnostics(result)
+        tier = diagnostics.get("routing", {}).get("selected", {}).get("tier")
+        repository_url = f"https://github.com/{repository}"
+        if publication == "major-only":
+            content = render_github(
                 findings,
                 head_sha=result["head_sha"],
                 report_url=report_url,
                 has_retained=bool(retained),
                 comment_format=comment_format,
-                repository_url=f"https://github.com/{repository}",
+                repository_url=repository_url,
                 base_sha=result["merge_base"],
-                review_tier=trace.current_diagnostics(result)
-                .get("routing", {})
-                .get("selected", {})
-                .get("tier"),
+                review_tier=tier,
             )
-        )
-    )
+        else:
+            coverage = diagnostics.get("coverage", {})
+            limitations = list(coverage.get("limitations", []))
+            if (
+                coverage.get("status") != "complete"
+                or coverage.get("verification", {}).get("status") != "complete"
+            ):
+                limitations.append("Review coverage was incomplete.")
+            concept = diagnostics.get("concept_assessment", {})
+            content = render(
+                findings,
+                limitations,
+                concept.get("summary") if concept.get("status") == "verified" else None,
+                backport=result["output"]["exports"].get("backport_assessment"),
+                review_memory=trace.review_memory_export(result),
+                comment_format=comment_format,
+                review_tier=tier,
+                report_url=report_url,
+                head_sha=result["head_sha"],
+                repository_url=repository_url,
+                base_sha=result["merge_base"],
+            )
+            content += (
+                f"\n\n---\n\nReviewed: [`{result['head_sha'][:12]}`]"
+                f"(<{repository_url}/commit/{result['head_sha']}>)"
+                f" · [Full review report](<{report_url}>)"
+            )
+        return marker + "\n\n" + content
+
+    body = delivery.body(render_body)
     if not is_current():
         return "stale"
     return delivery.execute(

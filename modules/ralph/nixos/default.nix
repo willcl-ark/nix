@@ -28,7 +28,7 @@ let
     comment_marker =
       if repo.commentMarker != null then repo.commentMarker else "<!-- ralph:${repo.repository} -->";
     github_repository = repo.githubRepository;
-    github_post_major_findings = repo.githubPostMajorFindings;
+    github_publication = repo.githubPublication;
     webhook_secret_file = repo.webhookSecretFile;
     forgejo_token_file = repo.forgejoTokenFile;
     github_token_file = repo.githubTokenFile;
@@ -148,7 +148,15 @@ in
               description = "Forgejo repository API URL.";
             };
 
-            githubPostMajorFindings = lib.mkEnableOption "posting verified Major findings to GitHub";
+            githubPublication = lib.mkOption {
+              type = lib.types.enum [
+                "off"
+                "major-only"
+                "full"
+              ];
+              default = "off";
+              description = "GitHub comment policy for this repository: disabled, verified Critical and Major findings only, or the full review summary.";
+            };
 
             githubTokenFile = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
@@ -360,7 +368,7 @@ in
           }
           {
             assertion =
-              !repo.githubPostMajorFindings || (repo.githubTokenFile != null && cfg.reportDir != null);
+              repo.githubPublication == "off" || (repo.githubTokenFile != null && cfg.reportDir != null);
             message = "Ralph repository ${id} GitHub publication requires credentials and public reports.";
           }
         ]) repositories

@@ -51,7 +51,7 @@ let
       && lib.hasInfix "--repositories" cfg.systemd.services.ralph-followup.serviceConfig.ExecStart;
     publicationRequiresCredentials =
       failures (evaluate {
-        services.ralph.repositories.gui.githubPostMajorFindings = true;
+        services.ralph.repositories.gui.githubPublication = "full";
       }) != [ ];
     duplicateSource =
       failures (evaluate {

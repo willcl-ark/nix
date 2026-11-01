@@ -279,7 +279,10 @@ def main(resources):
             if not entry.get("bot_login"):
                 raise ValueError(f"{repo_id}: bot_login is required")
             bot = config.repository_config(entry, args.report_dir, args.report_base_url)
-            if entry.get("github_post_major_findings") and args.report_dir is None:
+            if (
+                entry.get("github_publication", "off") != "off"
+                and args.report_dir is None
+            ):
                 raise ValueError("GitHub publication requires public reports")
             engine_name = entry.get("engine", "current")
             engine_config = dict(entry.get("engine_config", {}))

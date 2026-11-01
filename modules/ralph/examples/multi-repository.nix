@@ -14,7 +14,7 @@
         botLogin = "ralph";
         webhookSecretFile = "/run/secrets/ralph/core-webhook";
         forgejoTokenFile = "/run/secrets/ralph/forgejo-token";
-        githubPostMajorFindings = false;
+        githubPublication = "off";
         workers = 2;
       };
       gui = {
@@ -26,7 +26,7 @@
         forgejoTokenFile = "/run/secrets/ralph/forgejo-token";
         githubRepository = "bitcoin-core/gui-qml";
         githubTokenFile = "/run/secrets/ralph/gui-github-token";
-        githubPostMajorFindings = true;
+        githubPublication = "full";
         strategy = "gui";
         submodules.bitcoin = "https://github.com/bitcoin/bitcoin";
         writeVerifierEnvironment =
