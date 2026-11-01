@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import logging
 from pathlib import Path
 import tempfile
 import threading
@@ -16,6 +17,23 @@ from ralph_service.jobs import JobStore
 
 
 class CoordinatorTests(unittest.TestCase):
+    def test_journal_priorities_apply_to_every_line(self):
+        formatter = coordinator.JournalFormatter("%(levelname)s %(message)s")
+        for level, prefix in (
+            (logging.DEBUG, "<7>"),
+            (logging.INFO, "<6>"),
+            (logging.ERROR, "<3>"),
+        ):
+            record = logging.LogRecord(
+                "ralph.progress", level, "", 0, "first\nsecond", (), None
+            )
+            self.assertTrue(
+                all(
+                    line.startswith(prefix)
+                    for line in formatter.format(record).splitlines()
+                )
+            )
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

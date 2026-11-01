@@ -369,6 +369,14 @@ def process_job(
                         ),
                         allow_web_search=allow_discussions,
                         attempt=debug,
+                        log_context={
+                            "repo": bot_config.repository,
+                            "repo_id": job["repo_id"],
+                            "pr": number,
+                            "job": job["id"],
+                            "generation": job["generation"],
+                            "attempt": job["attempts"] + 1,
+                        },
                     )
                     saved = runner.run_review(case, runtime, review_engine)
                     if saved.pop("diff_base_sha") != saved["merge_base"]:

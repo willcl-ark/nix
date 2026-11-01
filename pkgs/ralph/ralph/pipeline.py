@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 
 from final_comment import render_report as render
 
-from . import coverage, experiments, feedback, model, protocol, routing
+from . import coverage, experiments, feedback, model, progress, protocol, routing
 from .repository import audit_developer_notes, focused_review_input
 
 # Domain stages run in a predictable order; the two
@@ -661,7 +661,22 @@ def review_with_independent_passes(
                 effective="high", reason="Consensus review requires high settings."
             )
 
+    def log_plan(event, **fields):
+        agents = {"independent", *plan["audits"]}
+        if plan["tier"] == "sensitive":
+            agents.update(ADVERSARIAL_STAGES)
+        progress.emit(
+            event,
+            context=runtime.log_context,
+            tier=plan["tier"],
+            profile=prompt_config.profile.name,
+            agents=sorted(agents),
+            adversarial_profiles=plan["profiles"],
+            **fields,
+        )
+
     select_profile()
+    log_plan("routing", mode=routing_mode, strategy=strategy.name)
     notes = None
     test_paths = sorted(
         path
@@ -849,7 +864,8 @@ def review_with_independent_passes(
             "turns": [],
             "tools": [],
         }
-    sensitive = collect("independent", discover("independent")) or script_sensitive
+    independent_sensitive = collect("independent", discover("independent"))
+    sensitive = independent_sensitive or script_sensitive
     selected = set(plan["audits"])
     if sensitive and plan["tier"] != "sensitive":
         selected.update(name for name in strategy.audits if name != "script")
@@ -862,6 +878,10 @@ def review_with_independent_passes(
         }
         debug["routing"]["selected"] = plan
         select_profile()
+        log_plan(
+            "escalation",
+            source="independent" if independent_sensitive else "script",
+        )
     if plan["tier"] == "sensitive":
         selected.add("adversarial")
 
@@ -879,6 +899,7 @@ def review_with_independent_passes(
             debug["routing"]["selected"] = plan
             debug["routing"]["escalated_by"] = name
             select_profile()
+            log_plan("escalation", source=name)
 
     while pending := [name for name in DISCOVERY_ORDER if name in selected - completed]:
         name = pending[0]

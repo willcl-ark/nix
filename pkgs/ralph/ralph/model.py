@@ -9,7 +9,7 @@ import time
 import urllib.error
 from email.utils import parsedate_to_datetime
 
-from . import research, transport, upstream
+from . import progress, research, transport, upstream
 from .evidence import ToolFailure
 from .repository import (
     find_paths,
@@ -534,6 +534,14 @@ def request_response(
                 raise TimeoutError("retry wait exceeds stage deadline") from exc
             failure = request_failure_record(data, exc)
             failure.update(retry=True, retry_delay_seconds=delay)
+            progress.emit(
+                "request_retry",
+                stage=stage_name,
+                request_attempt=attempt + 1,
+                delay_seconds=delay,
+                error_type=type(exc).__name__,
+                http_status=exc.code if http_error else None,
+            )
             if on_retry_failure is not None:
                 on_retry_failure(failure)
             if is_cancelled is None:

@@ -9,7 +9,7 @@ import time
 import uuid
 from contextlib import contextmanager
 
-from ralph import stats_changes
+from ralph import progress, stats_changes
 from . import delivery
 
 
@@ -682,7 +682,18 @@ class JobStore:
             """,
                 (status, attempts, next_attempt, str(error), row["id"]),
             )
-            return status
+        progress.emit(
+            "job_retry",
+            repo_id=job["repo_id"],
+            pr=job["number"],
+            job=job["id"],
+            generation=job["generation"],
+            attempt=attempts,
+            status=status,
+            delay_seconds=delay if status == "retry" else 0,
+            error_type=type(error).__name__,
+        )
+        return status
 
 
 def _pre_engine_exports(debug):

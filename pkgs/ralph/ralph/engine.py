@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import progress
 from .repository import RepositorySnapshot
 
 _DEFAULT_USAGE = object()
@@ -44,6 +45,7 @@ class Runtime:
         discussion_lookup=None,
         allow_web_search=False,
         attempt=None,
+        log_context=None,
     ):
         from . import feedback, research
 
@@ -60,6 +62,7 @@ class Runtime:
         self.attempt = attempt if attempt is not None else {}
         self.debug = self.attempt
         self._records = []
+        self.log_context = dict(log_context or {})
 
     def check_current(self):
         if self.is_current is not None and not self.is_current():
@@ -104,47 +107,48 @@ class Runtime:
         self._records.append(record)
         selected_usage = self.usage if usage is _DEFAULT_USAGE else usage
         selected_api_base = api_base or self.openai_api_base
-        return openai_review(
-            self.api_key,
-            input_text,
-            self.case.snapshot,
-            record,
-            prompt=prompt,
-            model=model_name,
-            tools=tools,
-            max_tool_calls=max_tool_calls,
-            max_context_calls=max_context_calls,
-            max_history_calls=max_history_calls,
-            max_web_search_calls_per_response=max_web_search_calls_per_response,
-            max_output_tokens=max_output_tokens,
-            reasoning_effort=reasoning_effort,
-            first_tool_required=first_tool_required,
-            stage_name=stage_name,
-            usage=selected_usage,
-            response_schema=response_schema,
-            discussion_lookup=self.discussion_lookup,
-            allow_web_search=self.allow_web_search,
-            is_current=self.is_current,
-            is_cancelled=self.is_cancelled,
-            **(
-                {"api_base": selected_api_base}
-                if selected_api_base != "https://api.openai.com/v1"
-                else {}
-            ),
-            timeout=timeout,
-            final_timeout=final_timeout,
-            **(
-                {"experiment_session": experiment_session}
-                if experiment_session is not None
-                else {}
-            ),
-            backport_evidence=self.case.backport_evidence,
-            research_evidence=(
-                self.case.research_evidence
-                if self.case.research_evidence is not None
-                else research_evidence
-            ),
-        )
+        with progress.stage(self.log_context, stage_name, model_name):
+            return openai_review(
+                self.api_key,
+                input_text,
+                self.case.snapshot,
+                record,
+                prompt=prompt,
+                model=model_name,
+                tools=tools,
+                max_tool_calls=max_tool_calls,
+                max_context_calls=max_context_calls,
+                max_history_calls=max_history_calls,
+                max_web_search_calls_per_response=max_web_search_calls_per_response,
+                max_output_tokens=max_output_tokens,
+                reasoning_effort=reasoning_effort,
+                first_tool_required=first_tool_required,
+                stage_name=stage_name,
+                usage=selected_usage,
+                response_schema=response_schema,
+                discussion_lookup=self.discussion_lookup,
+                allow_web_search=self.allow_web_search,
+                is_current=self.is_current,
+                is_cancelled=self.is_cancelled,
+                **(
+                    {"api_base": selected_api_base}
+                    if selected_api_base != "https://api.openai.com/v1"
+                    else {}
+                ),
+                timeout=timeout,
+                final_timeout=final_timeout,
+                **(
+                    {"experiment_session": experiment_session}
+                    if experiment_session is not None
+                    else {}
+                ),
+                backport_evidence=self.case.backport_evidence,
+                research_evidence=(
+                    self.case.research_evidence
+                    if self.case.research_evidence is not None
+                    else research_evidence
+                ),
+            )
 
     def audit(
         self,
@@ -163,22 +167,23 @@ class Runtime:
 
         debug_record = debug_record if debug_record is not None else {}
         self._records.append(debug_record)
-        return run_audit(
-            self.api_key,
-            stage_name,
-            prompt,
-            input_text,
-            usage=self.usage,
-            response_schema=response_schema,
-            reasoning_effort=reasoning_effort,
-            is_current=self.is_current,
-            is_cancelled=self.is_cancelled,
-            debug=debug_record,
-            model_name=model_name,
-            max_output_tokens=max_output_tokens,
-            api_base=self.openai_api_base,
-            timeout=timeout,
-        )
+        with progress.stage(self.log_context, stage_name, model_name):
+            return run_audit(
+                self.api_key,
+                stage_name,
+                prompt,
+                input_text,
+                usage=self.usage,
+                response_schema=response_schema,
+                reasoning_effort=reasoning_effort,
+                is_current=self.is_current,
+                is_cancelled=self.is_cancelled,
+                debug=debug_record,
+                model_name=model_name,
+                max_output_tokens=max_output_tokens,
+                api_base=self.openai_api_base,
+                timeout=timeout,
+            )
 
     def metrics(self):
         from .trace import request_metrics

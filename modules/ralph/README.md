@@ -903,3 +903,17 @@ It runs without an extra systemd timer.
 The review listing shows estimated severity counts from published findings, with
 severity filtering and sorting. Muted dots mean zero; question marks mean severity
 data is unavailable. Unclassified findings appear separately when present.
+
+### Live review progress
+
+The coordinator records routing decisions, model stage boundaries, escalation,
+and provider/job retries at journal DEBUG priority. Events identify the repository,
+PR, job, generation, and attempt where available. Stage end status `returned`
+means the model call returned; response validation and final review coverage are
+reported in the saved trace. Conditional stages appear when they start.
+Prompts, responses, and tool output are not included in progress events.
+
+Follow normal operational logs with `journalctl -u ralph -p info -f`, or include
+live progress with `journalctl -u ralph -p debug -f`. Without a priority filter,
+journalctl includes both. Progress uses the existing journal retention policy;
+configure disk limits in the consuming host's journald settings.

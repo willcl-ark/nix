@@ -4,15 +4,32 @@ import argparse
 import io
 import json
 import logging
+import os
 from pathlib import Path
 import sqlite3
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from ralph import engine, usage
+from ralph import engine, progress, usage
 from . import config, delivery, monitor
 from .jobs import JobStore
+
+
+class JournalFormatter(logging.Formatter):
+    """Give systemd's stream reader the Python record's actual priority."""
+
+    def format(self, record):
+        priority = {
+            logging.CRITICAL: 2,
+            logging.ERROR: 3,
+            logging.WARNING: 4,
+            logging.INFO: 6,
+            logging.DEBUG: 7,
+        }.get(record.levelno, 6)
+        return "\n".join(
+            f"<{priority}>{line}" for line in super().format(record).splitlines()
+        )
 
 
 def bind_repositories(jobs, entries):
@@ -209,7 +226,13 @@ def main(resources):
     parser.add_argument("--release-delivery", type=int)
     parser.add_argument("--confirm-no-pending-write", action="store_true")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    handler = logging.StreamHandler()
+    formatter = (
+        JournalFormatter if "JOURNAL_STREAM" in os.environ else logging.Formatter
+    )
+    handler.setFormatter(formatter("%(levelname)s %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
+    progress.LOGGER.setLevel(logging.DEBUG)
     try:
         entries = config.load_repositories(args.repositories)
         resources.enter_context(service.coordinator_lock(args.state_dir))
