@@ -48,6 +48,22 @@ class GitHubTests(unittest.TestCase):
             },
         }
 
+    def context(self):
+        return {"base_ref": "qt6", "title": "Review", "body": "", "labels": []}
+
+    def pull(self, **changes):
+        return {
+            "number": 42,
+            "state": "open",
+            "draft": False,
+            "head": {"sha": "a" * 40},
+            "base": {"ref": "qt6", "repo": {"full_name": "owner/repo"}},
+            "title": "Review",
+            "body": None,
+            "labels": [],
+            **changes,
+        }
+
     def session(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -62,6 +78,7 @@ class GitHubTests(unittest.TestCase):
             42,
             result,
             is_current=lambda: True,
+            expected_context=self.context(),
             delivery=self.session(),
         )
 
@@ -76,7 +93,7 @@ class GitHubTests(unittest.TestCase):
             if "/comments?" in path:
                 current = False
                 return []
-            return {"state": "open", "head": {"sha": "a" * 40}}
+            return self.pull()
 
         with patch.object(github, "github_request", side_effect=request):
             self.assertEqual(
@@ -86,6 +103,7 @@ class GitHubTests(unittest.TestCase):
                     42,
                     self.result(),
                     is_current=lambda: current,
+                    expected_context=self.context(),
                     delivery=self.session(),
                 ),
                 "stale",
@@ -107,7 +125,8 @@ class GitHubTests(unittest.TestCase):
             side_effect=[
                 {"id": 7},
                 [],
-                {"state": "open", "head": {"sha": "a" * 40}},
+                self.pull(),
+                self.pull(),
                 {},
             ],
         ) as request:
@@ -137,7 +156,8 @@ class GitHubTests(unittest.TestCase):
             side_effect=[
                 {"id": 7},
                 [],
-                {"state": "open", "head": {"sha": result["head_sha"]}},
+                self.pull(),
+                self.pull(),
                 {},
             ],
         ) as request:
@@ -163,7 +183,8 @@ class GitHubTests(unittest.TestCase):
                     side_effect=[
                         {"id": 7},
                         [],
-                        {"state": "open", "head": {"sha": "a" * 40}},
+                        self.pull(),
+                        self.pull(),
                         {},
                     ],
                 ) as request:
@@ -210,7 +231,8 @@ class GitHubTests(unittest.TestCase):
                     side_effect=[
                         {"id": 7},
                         [own],
-                        {"state": "open", "head": {"sha": result["head_sha"]}},
+                        self.pull(),
+                        self.pull(),
                         {},
                     ],
                 ) as request:
@@ -250,7 +272,8 @@ class GitHubTests(unittest.TestCase):
             side_effect=[
                 {"id": 7},
                 [own],
-                {"state": "open", "head": {"sha": "a" * 40}},
+                self.pull(),
+                self.pull(),
                 {},
             ],
         ) as request:
@@ -284,7 +307,8 @@ class GitHubTests(unittest.TestCase):
             side_effect=[
                 {"id": 7},
                 [],
-                {"state": "open", "head": {"sha": "a" * 40}},
+                self.pull(),
+                self.pull(),
                 {},
             ],
         ) as request:
@@ -297,12 +321,45 @@ class GitHubTests(unittest.TestCase):
         for pull in (
             {"state": "open", "head": {"sha": "b" * 40}},
             {"state": "closed", "head": {"sha": "a" * 40}},
+            self.pull(draft=True),
+            self.pull(base={"ref": "other", "repo": {"full_name": "owner/repo"}}),
+            self.pull(title="Changed after mirror sync"),
+            self.pull(body="Changed instructions"),
+            self.pull(labels=[{"name": "backport"}]),
+            self.pull(base={"ref": "qt6", "repo": {"full_name": "other/repo"}}),
         ):
             with patch.object(
                 github, "github_request", side_effect=[{"id": 7}, [], pull]
             ) as request:
                 self.assertEqual(self.publish(self.result()), "stale")
                 self.assertEqual(request.call_count, 3)
+
+    def test_retarget_after_intent_persistence_does_not_send(self):
+        session = self.session()
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[
+                {"id": 7},
+                [],
+                self.pull(),
+                self.pull(base={"ref": "other", "repo": {"full_name": "owner/repo"}}),
+            ],
+        ) as request:
+            self.assertEqual(
+                github.publish_major_findings(
+                    "owner/repo",
+                    "token",
+                    42,
+                    self.result(),
+                    expected_context=self.context(),
+                    is_current=lambda: True,
+                    delivery=session,
+                ),
+                "stale",
+            )
+        self.assertTrue(all(len(call.args) < 3 for call in request.call_args_list))
+        self.assertEqual(session._record()["state"], "ready")
 
     def test_duplicate_owned_markers_on_later_page_block_publication(self):
         own = {"id": 1, "user": {"id": 7}, "body": "<!-- ralph-major:owner/repo -->"}
@@ -326,7 +383,8 @@ class GitHubTests(unittest.TestCase):
                 {"id": 7},
                 [spoof] * 100,
                 [own],
-                {"state": "open", "head": {"sha": "a" * 40}},
+                self.pull(),
+                self.pull(),
                 {},
             ],
         ) as request:
@@ -344,7 +402,7 @@ class GitHubTests(unittest.TestCase):
             side_effect=[
                 {"id": 7},
                 [own],
-                {"state": "open", "head": {"sha": "a" * 40}},
+                self.pull(),
             ],
         ) as request:
             self.assertEqual(self.publish(self.result()), "unchanged")

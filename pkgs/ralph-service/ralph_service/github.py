@@ -63,7 +63,9 @@ def reconcile_delivery(repository, token, number, delivery):
     return comment, lookup
 
 
-def publish_major_findings(repository, token, number, result, *, is_current, delivery):
+def publish_major_findings(
+    repository, token, number, result, *, expected_context, is_current, delivery
+):
     if result["run"].get("status") == "failed":
         return "failed"
     exported = trace.findings_export(result)
@@ -102,10 +104,30 @@ def publish_major_findings(repository, token, number, result, *, is_current, del
     delivery.check_hold()
     if delivery.finished():
         return "unchanged"
-    # Check upstream itself after pagination; the mirror may lag a push or close.
-    pull = github_request(token, f"{base}/pulls/{number}")
-    if pull["state"] != "open" or pull["head"]["sha"] != result["head_sha"]:
-        return "stale"
+
+    def publication_current():
+        if not is_current():
+            return False
+        # Read upstream immediately before dispatch. A mirror may lag a retarget,
+        # metadata edit, draft conversion, push or close.
+        pull = github_request(token, f"{base}/pulls/{number}")
+        context = {
+            "base_ref": pull.get("base", {}).get("ref"),
+            "title": pull.get("title"),
+            "body": pull.get("body") or "",
+            "labels": sorted({label["name"] for label in pull.get("labels", [])}),
+        }
+        return (
+            pull.get("number") == number
+            and pull.get("state") == "open"
+            and pull.get("draft") is False
+            and pull.get("head", {}).get("sha") == result["head_sha"]
+            and pull.get("base", {}).get("repo", {}).get("full_name") == repository
+            and expected_context is not None
+            and context == expected_context
+            and is_current()
+        )
+
     if not is_current():
         return "stale"
     if not findings and not retained:
@@ -123,7 +145,7 @@ def publish_major_findings(repository, token, number, result, *, is_current, del
             None,
             comment,
             dispatch,
-            is_current,
+            publication_current,
         )
     report_url = result["run"].get("report_url")
     if not report_url:
@@ -161,5 +183,5 @@ def publish_major_findings(repository, token, number, result, *, is_current, del
         body,
         comment,
         dispatch,
-        is_current,
+        publication_current,
     )
