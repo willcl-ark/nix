@@ -104,3 +104,35 @@ class DeliveryTests(unittest.TestCase):
             delivery.Session(reopened, self.job, "forgejo:repo").check_hold()
         delivery.release(reopened, 1)
         self.assertEqual(delivery.held(reopened), [])
+
+
+class RepositoryDeliveryTests(unittest.TestCase):
+    setUp = DeliveryTests.setUp
+    execute = DeliveryTests.execute
+
+    def test_gui_uncertainty_does_not_hold_or_release_core(self):
+        gui = self.jobs.for_repository("gui")
+        gui.enqueue(1, "master", "a" * 40, "opened", engine_identity=None)
+        gui_job = gui.claim()
+        session = delivery.Session(gui, gui_job, "github:owner/gui")
+        with self.assertRaises(delivery.DeliveryHeld):
+            self.execute(session, Mock(side_effect=TimeoutError()))
+        self.assertEqual(delivery.release(self.jobs, 1), 0)
+        self.assertEqual(len(delivery.held(gui)), 1)
+        self.assertEqual(delivery.held(self.jobs), [])
+        self.assertEqual(self.execute(), "created")
+        self.assertEqual(delivery.release(gui, 1), 1)
+
+    def test_saved_rejected_intent_cannot_move_to_new_destination(self):
+        error = urllib.error.HTTPError("url", 429, "limited", {}, None)
+        with self.assertRaises(urllib.error.HTTPError):
+            self.execute(dispatch=Mock(side_effect=error))
+        moved = delivery.Session(self.jobs, self.job, "forgejo:other-repo")
+        dispatch = Mock()
+        with self.assertRaises(delivery.DeliveryHeld):
+            self.execute(moved, dispatch)
+        dispatch.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

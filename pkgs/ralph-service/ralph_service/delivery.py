@@ -14,6 +14,7 @@ def initialize(db):
     db.execute("""
         CREATE TABLE IF NOT EXISTS deliveries (
             job_id INTEGER NOT NULL,
+            repo_id TEXT NOT NULL,
             number INTEGER NOT NULL,
             destination TEXT NOT NULL,
             operation TEXT,
@@ -26,19 +27,20 @@ def initialize(db):
     if not existed:
         # A legacy saved result does not prove that its remote write finished.
         db.execute("""
-            INSERT INTO deliveries (job_id, number, destination, state)
-            SELECT id, number, '*', 'uncertain' FROM jobs
+            INSERT INTO deliveries (job_id, repo_id, number, destination, state)
+            SELECT id, repo_id, number, '*', 'uncertain' FROM jobs
             WHERE review_result IS NOT NULL AND status != 'complete'
         """)
 
 
-def held(jobs):
+def held(jobs, *, all_repositories=False):
     with jobs._connection() as db:
         return [
             dict(row)
             for row in db.execute(
-                "SELECT job_id, number, destination, operation, path FROM deliveries "
-                "WHERE state = 'uncertain' ORDER BY number, job_id, destination"
+                "SELECT job_id, repo_id, number, destination, operation, path FROM deliveries "
+                "WHERE state = 'uncertain' AND (? OR repo_id = ?) ORDER BY repo_id, number, job_id, destination",
+                (all_repositories, jobs.repo_id),
             )
         ]
 
@@ -47,16 +49,17 @@ def release(jobs, number):
     """Operator asserts all outstanding writes for this PR can no longer arrive."""
     with jobs._connection(write=True) as db:
         count = db.execute(
-            "UPDATE deliveries SET state = 'ready' WHERE number = ? AND state = 'uncertain'",
-            (number,),
+            "UPDATE deliveries SET state = 'ready' WHERE repo_id = ? AND number = ? AND state = 'uncertain'",
+            (jobs.repo_id, number),
         ).rowcount
         db.execute(
-            "DELETE FROM deliveries WHERE number = ? AND destination = '*'", (number,)
+            "DELETE FROM deliveries WHERE repo_id = ? AND number = ? AND destination = '*'",
+            (jobs.repo_id, number),
         )
         # Never restart analysis. Only revive the latest saved delivery.
         latest = db.execute(
-            "SELECT * FROM jobs WHERE number = ? ORDER BY generation DESC LIMIT 1",
-            (number,),
+            "SELECT * FROM jobs WHERE repo_id = ? AND number = ? ORDER BY generation DESC LIMIT 1",
+            (jobs.repo_id, number),
         ).fetchone()
         if (
             latest
@@ -72,17 +75,30 @@ def release(jobs, number):
 
 class Session:
     def __init__(self, jobs, job, destination):
+        jobs._check_job(job)
         self.jobs = jobs
         self.job = job
         self.destination = destination
 
     def _record(self):
         with self.jobs._connection() as db:
+            self._check_destination(db)
             row = db.execute(
                 "SELECT * FROM deliveries WHERE job_id = ? AND destination = ?",
                 (self.job["id"], self.destination),
             ).fetchone()
             return dict(row) if row else None
+
+    def _check_destination(self, db):
+        provider = self.destination.partition(":")[0]
+        for row in db.execute(
+            "SELECT destination FROM deliveries WHERE job_id = ?", (self.job["id"],)
+        ):
+            old = row["destination"]
+            if old.partition(":")[0] == provider and old != self.destination:
+                raise DeliveryHeld(
+                    "saved publication belongs to a different destination"
+                )
 
     def finished(self):
         row = self._record()
@@ -97,8 +113,8 @@ class Session:
             unresolved = [
                 dict(row)
                 for row in db.execute(
-                    "SELECT * FROM deliveries WHERE number = ? AND state = 'uncertain'",
-                    (self.job["number"],),
+                    "SELECT * FROM deliveries WHERE repo_id = ? AND number = ? AND state = 'uncertain'",
+                    (self.job["repo_id"], self.job["number"]),
                 )
             ]
         for row in unresolved:
@@ -128,8 +144,8 @@ class Session:
             with self.jobs._connection() as connection:
                 return self._check_hold(connection)
         if db.execute(
-            "SELECT 1 FROM deliveries WHERE number = ? AND state = 'uncertain'",
-            (self.job["number"],),
+            "SELECT 1 FROM deliveries WHERE repo_id = ? AND number = ? AND state = 'uncertain'",
+            (self.job["repo_id"], self.job["number"]),
         ).fetchone():
             raise DeliveryHeld(
                 "publication uncertain; reconcile or explicitly release this PR"
@@ -140,10 +156,12 @@ class Session:
             return "stale"
         with self.jobs._connection(write=True) as db:
             self._check_hold(db)
+            self._check_destination(db)
             db.execute(
-                "INSERT OR IGNORE INTO deliveries VALUES (?, ?, ?, ?, ?, ?, 'ready')",
+                "INSERT OR IGNORE INTO deliveries (job_id, repo_id, number, destination, operation, path, body, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready')",
                 (
                     self.job["id"],
+                    self.job["repo_id"],
                     self.job["number"],
                     self.destination,
                     operation,
