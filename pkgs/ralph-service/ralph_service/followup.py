@@ -295,7 +295,14 @@ def _unclear(candidates, assessed_from_head, new_head, reason, evidence):
 
 
 def _model_input(
-    checkout, previous_job, current_job, candidates, assessed_from_head, new_head
+    checkout,
+    previous_job,
+    current_job,
+    candidates,
+    assessed_from_head,
+    new_head,
+    *,
+    submodules=None,
 ):
     diff = repository.diff_between_heads(checkout, assessed_from_head, new_head)
     finding_inputs = []
@@ -306,7 +313,11 @@ def _model_input(
                 checkout, source_head, new_head, candidate["path"]
             )
             old_file_excerpt = repository.file_excerpt_at(
-                checkout, source_head, candidate["path"], candidate["line"]
+                checkout,
+                source_head,
+                candidate["path"],
+                candidate["line"],
+                submodules=submodules,
             )
         else:
             source_to_new_diff = "Source head is unavailable in the local checkout."
@@ -325,7 +336,11 @@ def _model_input(
                 "source_to_new_path_diff": source_to_new_diff,
                 "old_file_excerpt": old_file_excerpt,
                 "new_file_excerpt": repository.file_excerpt_at(
-                    checkout, new_head, candidate["path"], candidate["line"]
+                    checkout,
+                    new_head,
+                    candidate["path"],
+                    candidate["line"],
+                    submodules=submodules,
                 ),
             }
         )
@@ -407,6 +422,7 @@ def assess_completed_review(
     is_current=None,
     *,
     api_base="https://api.openai.com/v1",
+    submodules=None,
 ):
     record = {"assessed_at": _now(), "model": stage_model, "findings": []}
     if not history:
@@ -461,7 +477,13 @@ def assess_completed_review(
         return record
     try:
         input_text = _model_input(
-            checkout, previous, current_job, assessed, assessed_from_head, new_head
+            checkout,
+            previous,
+            current_job,
+            assessed,
+            assessed_from_head,
+            new_head,
+            submodules=submodules,
         )
         data = {
             "model": stage_model,

@@ -13,6 +13,14 @@ from ralph_service.jobs import JobStore
 
 
 class FollowupIntegrationTests(unittest.TestCase):
+    def test_history_never_crosses_repository_with_the_same_pr_number(self):
+        core = {"id": 1, "repo_id": "core", "number": 42, "generation": 1}
+        gui = {"id": 2, "repo_id": "gui", "number": 42, "generation": 1}
+        current = {"id": 3, "repo_id": "gui", "number": 42, "generation": 2}
+        self.assertEqual(
+            followup_runner.history_before([core, gui, current], current), [gui]
+        )
+
     def test_fetch_heads_hydrates_existing_filtered_checkout_for_offline_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -184,7 +192,9 @@ class FollowupIntegrationTests(unittest.TestCase):
                     "decisions": [{"disposition": "publish", "finding": finding}],
                 },
             )
-            followup_runner.run_once(state, str(origin), "key", *prompts)
+            followup_runner.run_once(
+                state, {"core": {"origin": str(origin)}}, "key", *prompts
+            )
             source.write_text(
                 "if (divisor == 0) return error;\nreturn value / divisor;\n"
             )
@@ -240,7 +250,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                 self.assertEqual(
                     followup_runner.run_once(
                         state,
-                        str(origin),
+                        {"core": {"origin": str(origin)}},
                         "proxy-key",
                         *prompts,
                         api_base="http://127.0.0.1:8317/v1",
@@ -268,7 +278,9 @@ class FollowupIntegrationTests(unittest.TestCase):
             self.assertEqual(addressed["findings"][0]["new_head"], new_head)
             with patch.object(model.transport, "request") as send:
                 self.assertEqual(
-                    followup_runner.run_once(state, str(origin), "key", *prompts),
+                    followup_runner.run_once(
+                        state, {"core": {"origin": str(origin)}}, "key", *prompts
+                    ),
                     0,
                 )
                 send.assert_not_called()

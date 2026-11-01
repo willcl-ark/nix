@@ -9,11 +9,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from ralph import stats_changes
+from ralph import repository, stats_changes
 from ralph import usage as usage_tracking
 from ralph.config import load_prompt_file
 
-from . import followup
+from . import config, followup
 
 
 DEFAULT_PROMPT_FILE = (
@@ -86,7 +86,7 @@ def completed_jobs(jobs_db):
         return []
     with _read_only_db(jobs_db) as db:
         rows = db.execute("""
-            SELECT id, number, generation, base_ref, head, action, force,
+            SELECT id, repo_id, number, generation, base_ref, head, action, force,
                 status, attempts, review_result
             FROM jobs
             WHERE status = 'complete' AND review_result IS NOT NULL
@@ -157,7 +157,8 @@ def history_before(jobs, job):
         candidate
         for candidate in reversed(jobs)
         if (
-            candidate["number"] == job["number"]
+            candidate["repo_id"] == job["repo_id"]
+            and candidate["number"] == job["number"]
             and candidate["generation"] < job["generation"]
         )
     ]
@@ -210,15 +211,23 @@ def assess_job(
     prior_assessments,
     *,
     api_base="https://api.openai.com/v1",
+    submodules=None,
 ):
     history = history_before(jobs, job)
-    checkout = state_dir / FOLLOWUP_DIR / CHECKOUT_DIR
+    followup_dir = state_dir / FOLLOWUP_DIR
+    if job["repo_id"] != "core":
+        followup_dir = followup_dir / "repos" / job["repo_id"]
+    checkout = followup_dir / CHECKOUT_DIR
     if history:
         old_head = followup._head(history[0])
         new_head = followup._head(job)
         if old_head != new_head:
             try:
                 fetch_heads(checkout, origin, job["id"], old_head, new_head)
+                if submodules:
+                    repository.prepare_submodules(
+                        checkout, [old_head, new_head], submodules
+                    )
             except (OSError, subprocess.SubprocessError, ValueError) as exc:
                 logging.warning(
                     "Could not fetch follow-up commits for job %d: %s",
@@ -235,16 +244,17 @@ def assess_job(
         stage_model,
         usage_tracking.RequestUsage(ledger, _review_id(job)),
         api_base=api_base,
+        submodules=submodules,
     )
 
 
 def _review_id(job):
-    return f"pr:{job['number']}:{job['id']}:{job['generation']}"
+    return f"repo:{job['repo_id']}:pr:{job['number']}:{job['id']}:{job['generation']}"
 
 
 def run_once(
     state_dir,
-    origin,
+    repositories,
     api_key,
     prompt,
     stage_model,
@@ -270,6 +280,9 @@ def run_once(
     processed = 0
     assessed = 0
     for job in pending:
+        repository_config = repositories.get(job["repo_id"])
+        if repository_config is None:
+            continue
         if job["action"] not in {"synchronize", "synchronized"}:
             save_assessment(assessments_path, job["id"], None)
             processed += 1
@@ -280,7 +293,7 @@ def run_once(
             result = assess_job(
                 api_key,
                 state_dir,
-                origin,
+                repository_config["origin"],
                 prompt,
                 stage_model,
                 ledger,
@@ -288,6 +301,7 @@ def run_once(
                 job,
                 prior_assessments,
                 api_base=api_base,
+                submodules=repository_config.get("submodules"),
             )
         except Exception as exc:
             logging.warning(
@@ -313,7 +327,7 @@ def main(argv=None):
         description="Assess whether later PR updates addressed Ralph findings"
     )
     parser.add_argument("--state-dir", type=Path, required=True)
-    parser.add_argument("--origin", required=True)
+    parser.add_argument("--repositories", type=Path, required=True)
     parser.add_argument("--openai-key-file", type=Path, required=True)
     parser.add_argument("--openai-api-base", default="https://api.openai.com/v1")
     parser.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT_FILE)
@@ -332,7 +346,7 @@ def main(argv=None):
         parser.error(str(exc))
     run_once(
         args.state_dir,
-        args.origin,
+        config.load_repositories(args.repositories),
         api_key,
         prompt,
         stage_model,
