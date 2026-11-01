@@ -45,16 +45,12 @@
           { lib, pkgs, ... }:
           {
             imports = [ ./modules/ralph/nixos ];
-            options.services.ralph.instances = lib.mkOption {
-              type = lib.types.attrsOf (
-                lib.types.submodule {
-                  package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.ralph-service;
-                  writeVerifierEnvironment =
-                    lib.mkDefault
-                      self.packages.${pkgs.stdenv.hostPlatform.system}.ralph-write-verifier-env;
-                }
-              );
-            };
+            services.ralph.package =
+              lib.mkDefault
+                self.packages.${pkgs.stdenv.hostPlatform.system}.ralph-service;
+            services.ralph.writeVerifierEnvironment =
+              lib.mkDefault
+                self.packages.${pkgs.stdenv.hostPlatform.system}.ralph-write-verifier-env;
           };
         cli-proxy-api =
           { lib, pkgs, ... }:

@@ -3,32 +3,33 @@
 This module runs `ralph-service`, a webhook receiver that posts a
 first-pass review on Forgejo pull requests.
 
-Configure each repository under `services.ralph.instances.<name>`. Instances
-have separate workers, Git objects, databases, reports, accounts and delegated
-experiment cgroups. Assign distinct listening ports and webhook secrets, and
-budget the sum of their worker counts. GitHub publication defaults to disabled
-for each instance independently.
+Configure repositories under `services.ralph.repositories.<id>`. One coordinator,
+worker pool, queue and Telegram consumer serve all repositories. IDs such as
+`core` and `gui` are persistent identities, so do not rename or reuse them for a
+different source. Jobs, cancellation, publication holds, reports and commands
+are scoped by repository and PR number.
 
-An instance named `gui` defaults to `ralph-gui.service`, with companions
-`ralph-gui-stats`, `ralph-gui-followup` and, when enabled, `ralph-gui-telegram`.
-Its account and private state directory default to `ralph-gui` and
-`/var/lib/ralph-gui`. The examples below use an instance named `core` with
-`serviceName = "ralph"` to preserve existing service and account names.
+Global options configure the account, state/report directories, listener,
+provider and worker pool. Each repository selects its source, credentials,
+review strategy, concurrency allowance and optional GitHub publication policy.
+GitHub publication is disabled by default. Both repositories ingest Forgejo
+webhooks; native GitHub ingestion is not required.
 
-To migrate an existing installation, move its settings into `instances.core`
-and set `serviceName = "ralph"`. Retain its existing `stateDir`, `reportDir`,
-public URLs, user/group overrides and comment marker. This keeps queued jobs,
-review comments, Telegram offsets and report links attached to the same state.
-The old top-level service options are removed. Host overrides of existing
-`systemd.services.ralph*` units continue to apply with this service name.
+The previous `instances` configuration is removed. Move shared settings to
+`services.ralph` and repository settings to `repositories.core`. Preserve the
+existing Core state directory, report directory, public URLs and comment marker.
+Stop all state writers and take a verified backup before the explicit database
+migration. The service refuses an unmigrated database; startup does not migrate
+it automatically. Historical Core report URLs remain valid.
 
-Ports, unit names, system accounts and state/report directories must not collide.
-Telegram polling requires a separate bot token for each enabled monitor. The
-current Telegram status commands target the original `ralph*` units, so keep
-Telegram disabled for additional instances until their monitoring is configured.
-Do not reuse one token through differently named secret files.
+A GUI repository can set `strategy = "gui"` and
+`submodules.bitcoin = "https://github.com/bitcoin/bitcoin"`. Only explicitly
+configured submodules are prepared, at the exact commits pinned by the GUI base
+and head. Mirror synchronization needs no submodule commands. Set its
+`writeVerifierEnvironment` to `packages.<system>.ralph-gui-verifier-env` for Qt
+experiments. Other repositories have no submodules by default.
 
-The default `services.ralph.instances.core.engine = "current"` selects the existing review
+The default `services.ralph.repositories.core.engine = "current"` selects the existing review
 pipeline. The module defaults to the `ralph-service` companion package, which
 imports the core review runner. The standalone `ralph` binary now reviews local
 committed changes and accepts no daemon flags. Explicit package overrides must
@@ -55,7 +56,7 @@ The flake packages include a build environment taken from the pinned
 are realized when building the package, with no Nix daemon or network needed
 inside an experiment. The environment includes Bix's compiler, libraries,
 Python test dependencies and shell hooks. Bix follows this flake's nixpkgs.
-Override `services.ralph.instances.core.writeVerifierEnvironment` with a package whose main
+Override `services.ralph.writeVerifierEnvironment` with a package whose main
 program sets up the environment and executes its command arguments when
 reviewing projects with different build dependencies.
 
@@ -73,7 +74,7 @@ Without writable cgroup delegation, experiments are unavailable and findings
 continue to the final source-based check.
 
 Three worker threads review different PRs concurrently by default. Set
-`services.ralph.instances.core.workers` (or `--workers`) to change this limit.
+`services.ralph.workers` (or `--workers`) to change this limit.
 Reviews of the same PR run serially; newer heads wait for the active attempt to
 finish. Fetches and snapshot creation share a lock in one Git object store.
 Each active review pins its own base and head refs until it finishes, and tools
@@ -287,8 +288,8 @@ Adversarial records include selected profiles without attributing findings to
 an individual profile within the shared call. Private traces preserve full
 responses and per-request usage, including failures.
 
-For full browser reports, set `services.ralph.instances.core.reportDir` to a
-separate public directory and `services.ralph.instances.core.reportBaseUrl` to
+For full browser reports, set `services.ralph.reportDir` to a
+separate public directory and `services.ralph.reportBaseUrl` to
 the HTTP URL serving it. The module creates the directory with mode `0755`;
 ralph writes readable static HTML and JSON files before publishing a link
 in the review comment. Configure your web server to serve this directory
@@ -382,7 +383,7 @@ spend databases are left untouched and are not read or converted.
 To add Codex and Claude subscription quotas from CLIProxyAPI v8:
 
 ```nix
-services.ralph.instances.core.subscriptionUsage = {
+services.ralph.subscriptionUsage = {
   enable = true;
   managementUrl = "http://127.0.0.1:8317";
   managementKeyFile = "/run/secrets/cli-proxy-management-key";
@@ -494,22 +495,20 @@ listener at `ralph.example.org`:
 
 ```nix
 {
-  imports = [
-    inputs.will-nix.nixosModules.ralph
-  ];
-
-  services.ralph.instances.core = {
-    serviceName = "ralph";
+  imports = [ inputs.will-nix.nixosModules.ralph ];
+  services.ralph = {
     enable = true;
-    origin = "https://git.example.org/owner/repo.git";
-    repository = "owner/repo";
-    forgejoApi = "https://git.example.org/api/v1/repos/owner/repo";
-    botLogin = "ralph";
-
     openaiApiBase = "http://127.0.0.1:8317/v1";
     openaiKeyFile = "/run/secrets/ralph/proxy-key";
-    webhookSecretFile = "/run/secrets/ralph/webhook-secret";
-    forgejoTokenFile = "/run/secrets/ralph/forgejo-token";
+    repositories.core = {
+      origin = "https://git.example.org/owner/repo.git";
+      repository = "owner/repo";
+      forgejoApi = "https://git.example.org/api/v1/repos/owner/repo";
+      botLogin = "ralph";
+      webhookSecretFile = "/run/secrets/ralph/webhook-secret";
+      forgejoTokenFile = "/run/secrets/ralph/forgejo-token";
+      workers = 3;
+    };
   };
 }
 ```
@@ -530,8 +529,7 @@ services.cli-proxy-api = {
   enable = true;
   configFile = "/run/secrets/cli-proxy-api.yaml";
 };
-services.ralph.instances.core = {
-    serviceName = "ralph";
+services.ralph = {
   openaiApiBase = "http://127.0.0.1:8317/v1";
   openaiKeyFile = "/run/secrets/ralph/proxy-key";
 };
@@ -560,31 +558,31 @@ Ralph records returned usage without estimating charges or remaining quota.
 
 Required deployment options:
 
-- `services.ralph.instances.core.origin`: Git remote URL used for `git fetch` and
+- `services.ralph.repositories.core.origin`: Git remote URL used for `git fetch` and
   stale-head checks.
-- `services.ralph.instances.core.repository`: Forgejo repository full name, for
+- `services.ralph.repositories.core.repository`: Forgejo repository full name, for
   example `owner/repo`.
-- `services.ralph.instances.core.forgejoApi`: Forgejo repository API URL ending in
+- `services.ralph.repositories.core.forgejoApi`: Forgejo repository API URL ending in
   `/api/v1/repos/owner/repo`.
-- `services.ralph.instances.core.openaiKeyFile`: file containing the OpenAI API
+- `services.ralph.openaiKeyFile`: file containing the OpenAI API
   key or the configured proxy's client access key.
-- `services.ralph.instances.core.webhookSecretFile`: file containing the Forgejo
+- `services.ralph.repositories.core.webhookSecretFile`: file containing the Forgejo
   webhook secret.
-- `services.ralph.instances.core.forgejoTokenFile`: file containing the Forgejo API
+- `services.ralph.repositories.core.forgejoTokenFile`: file containing the Forgejo API
   token.
-- `services.ralph.instances.core.botLogin`: Forgejo login that owns the review
+- `services.ralph.repositories.core.botLogin`: Forgejo login that owns the review
   comment.
 
 Useful defaults:
 
-- `services.ralph.instances.core.listenAddress = "127.0.0.1"`
-- `services.ralph.instances.core.port = 8765`
-- `services.ralph.instances.core.stateDir = "/var/lib/ralph"`
-- `services.ralph.instances.core.commentMarker = null`, which uses
+- `services.ralph.listenAddress = "127.0.0.1"`
+- `services.ralph.port = 8765`
+- `services.ralph.stateDir = "/var/lib/ralph"`
+- `services.ralph.repositories.core.commentMarker = null`, which uses
   `<!-- ralph:${repository} -->`
-- `services.ralph.instances.core.agentsDir = null`
-- `services.ralph.instances.core.followupPromptFile = null`
-- `services.ralph.instances.core.followupModel = null`
+- `services.ralph.repositories.core.agentsDir = null`
+- `services.ralph.followupPromptFile = null`
+- `services.ralph.followupModel = null`
 
 Main-review agent settings and prompts resolve inside the imported core package.
 Set `agentsDir` to use a complete alternate agents directory. Each agent has a
@@ -601,11 +599,11 @@ be derived from `forgejoApi`.
 
 ## Review engine
 
-- `services.ralph.instances.core.engine = "current"`: select the current review pipeline.
+- `services.ralph.repositories.core.engine = "current"`: select the current review pipeline.
   Other names load trusted Python engine modules included in the selected
   package. Loading an engine runs its code with the service's permissions, so
   only use package code you trust.
-- `services.ralph.instances.core.engineConfig = { }`: JSON-serializable object passed to the
+- `services.ralph.repositories.core.engineConfig = { }`: JSON-serializable object passed to the
   selected engine. Ralph writes this configuration to the Nix store and pins
   its resolved settings when queuing each run. Do not put secrets in it.
   The current engine accepts resolved `prompts`, or `agents_dir`, plus
@@ -615,12 +613,11 @@ be derived from `forgejoApi`.
 
 The current-engine options `agentsDir` and `routingMode` provide convenience
 defaults for the current engine. Values in `engineConfig` take precedence over
-those defaults. Setting any of these
-current-only options explicitly with a non-current engine is rejected.
+those defaults. These convenience defaults apply only to the current engine.
 Engine-produced Markdown is the published review body. Structured data stays
 private unless an engine explicitly provides a supported export.
 
-`services.ralph.instances.core.openaiApiBase` defaults to `https://api.openai.com/v1`.
+`services.ralph.openaiApiBase` defaults to `https://api.openai.com/v1`.
 It sets the current engine's OpenAI-compatible Responses endpoint and the
 follow-up endpoint. An explicit `engineConfig.openai_api_base` takes precedence
 for both. Credentials belong only in `openaiKeyFile`, never in the URL.
@@ -632,7 +629,7 @@ The verifier uses Claude Opus 5.5 with extra-high reasoning in both profiles.
 For example, to reduce verification reasoning to high:
 
 ```nix
-services.ralph.instances.core.engineConfig.stages.verifier = {
+services.ralph.repositories.core.engineConfig.stages.verifier = {
   model = "claude-opus-5-5";
   reasoning_effort = "high";
   max_output_tokens = 64000;
@@ -659,30 +656,17 @@ Saved results keep their original identity and only retry publication. Frozen
 evaluation captures pin code and resolved settings too; recapture old manifests
 after a schema cutover.
 
-On service startup, Ralph checks for `jobs.sqlite3` and runs the database
-conversion before starting the worker. A fresh state directory has no database
-yet and skips the conversion. An already converted database is a no-op. If
-conversion fails, the service does not start; fix the reported issue and restart
-it. The stats and followup services require Ralph, so their timers wait for this
-startup step to succeed.
+Repository migration is an explicit offline operation. Stop the main service,
+Telegram monitor, stats and followup timers and all other state writers. Back up
+the full state and public report directories, and verify the backup before
+running the migration with the deployed repository registry. Existing records
+must be assigned explicitly to `core`; preserve saved review bodies, job IDs,
+publication intent and uncertain delivery holds. Validate record counts and
+historical report access before restarting.
 
-For a manual conversion, stop Ralph's stats and followup timers and services,
-then stop `ralph.service` and run:
-
-```sh
-ralph-service --migrate-state --state-dir /var/lib/ralph
-```
-
-The conversion creates an exclusive mode-0600 backup at
-`/var/lib/ralph/jobs.sqlite3.pre-engine.bak` before converting saved results.
-Historical results retain their bodies and current-engine diagnostics, but have
-null code/config identity because those values were not recorded. Never-started
-pending jobs without a recorded configuration bind the configured engine when
-claimed. If the backup path already exists,
-the conversion stops rather than overwrite it. A Nix version rollback alone
-does not restore the old database format. This backup covers the jobs database
-at conversion time; after new reviews run, restoring it also requires
-reconciling later jobs, usage and followup records, and published outputs.
+A Nix version rollback alone does not restore the old database format. Restoring
+a backup after new reviews run also requires reconciling later jobs and remote
+publication outcomes. Never clear an uncertain delivery hold as part of migration.
 
 On the profile cutover, unfinished jobs with recorded model maps are converted
 once to resolved `default` profiles with those models. Saved results retain
@@ -700,7 +684,7 @@ older cases before replaying them.
   `default` and `high` profiles.
 
 The main-review CLI accepts `--agents-dir` in place of separate prompt and model
-files. Update custom deployments to `services.ralph.instances.core.agentsDir` or
+files. Update custom deployments to `services.ralph.repositories.core.agentsDir` or
 `engineConfig.agents_dir`. Follow-up keeps its separate `followupPromptFile`
 and `followupModel` options.
 
@@ -787,7 +771,8 @@ Incomplete passes are not evidence of model quality.
 
 ### GitHub major findings
 
-Set `services.ralph.instances.core.githubPostMajorFindings = true` to enable GitHub comments.
+Set `services.ralph.repositories.gui.githubPostMajorFindings = true` to enable GUI GitHub comments.
+Keep `repositories.core.githubPostMajorFindings = false` for Bitcoin Core.
 It defaults to `false`. Configure `githubRepository` with the upstream
 `owner/repo` and `githubTokenFile` with a runtime secret file. The upstream and
 mirror must use matching PR numbers. Public reports must also be enabled through
@@ -803,7 +788,8 @@ Ralph keeps one GitHub comment per PR, containing only findings whose severity
 is exactly `major`, using their judge-approved wording, plus a full-report link.
 A later review updates that comment or deletes it when no major findings remain.
 Skipped reviews and engines without a findings export leave it alone. Updates
-and deletion require an open upstream PR at the reviewed head. The Forgejo
+and deletion require an open, non-draft upstream PR matching the reviewed head,
+base branch, title, body and labels. The Forgejo
 comment is unchanged. Publication failures use the existing saved-result retry
 queue without repeating the model review.
 Every exported Major must record `verified_by = "verifier"` and
@@ -824,12 +810,12 @@ Never put the token itself in Nix configuration or the Nix store.
 
 ### Telegram publishing and monitoring
 
-Set `services.ralph.instances.core.telegram.enable = true` to publish completed reviews and
+Set `services.ralph.telegram.enable = true` to publish completed reviews and
 monitor Ralph in a Telegram channel. It defaults to `false`. Public reports
 must also be configured through `reportDir` and `reportBaseUrl`.
 
 ```nix
-services.ralph.instances.core.telegram = {
+services.ralph.telegram = {
   enable = true;
   botTokenFile = "/run/secrets/ralph/telegram-token";
   chatId = "@ralph_reviews";
@@ -852,8 +838,7 @@ queuing a reply. Displayed author signatures are not used for authorization.
 Post `/status` to see the current states of `ralph.service`,
 `ralph-followup.service`, `ralph-stats.service` and `ralph-telegram.service`,
 plus queue counts, review results, recorded tokens and the latest subscription quotas. `/help` lists the
-commands. Post `/high 123` to request a fresh high-profile review of PR #123 in
-the configured repository, even if its current head was already reviewed.
+commands. Post `/high gui 123` to request a fresh high-profile review of GUI PR #123, even if its current head was already reviewed.
 The reviewer checks that the PR is open before queuing it. These commands
 cannot restart services.
 
@@ -865,7 +850,7 @@ use xhigh reasoning. The verifier and Claude adversarial reviewer retain Opus
 See the [core profile documentation](../../pkgs/ralph/README.md) for details.
 Normal webhook reviews start with `default` unless configured otherwise.
 Consensus-domain routing or conservative fallback automatically promotes the
-remaining review to high and records the reason. Stage overrides apply after
+remaining Core review to high and records the reason. GUI uses its own audit selection. Stage overrides apply after
 both explicit and automatic profile selection.
 
 `ralph-telegram.service` runs separately from `ralph.service`, so it can answer

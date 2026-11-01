@@ -2,29 +2,16 @@
 let
   flake = builtins.getFlake (toString ../../..);
   lib = flake.inputs.nixpkgs.lib;
-  common = {
-    enable = true;
-    origin = "https://git.example.org/owner/repo.git";
-    repository = "owner/repo";
-    forgejoApi = "https://git.example.org/api/v1/repos/owner/repo";
+  repository = name: {
+    origin = "https://git.example.org/owner/${name}.git";
+    repository = "owner/${name}";
+    forgejoApi = "https://git.example.org/api/v1/repos/owner/${name}";
     botLogin = "ralph";
-    openaiKeyFile = "/run/secrets/key";
-    webhookSecretFile = "/run/secrets/hook";
+    webhookSecretFile = "/run/secrets/${name}-hook";
     forgejoTokenFile = "/run/secrets/token";
   };
-  pair = {
-    core = common // {
-      serviceName = "ralph";
-      reportDir = "/var/lib/reports/core";
-      reportBaseUrl = "https://review.example.org/core";
-    };
-    gui = common // {
-      port = 8766;
-      repository = "owner/gui";
-    };
-  };
   evaluate =
-    instances:
+    overrides:
     (lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
@@ -36,42 +23,45 @@ let
             fsType = "ext4";
           };
           system.stateVersion = "26.05";
-          services.ralph.instances = instances;
+          services.ralph = {
+            enable = true;
+            openaiKeyFile = "/run/secrets/key";
+            reportDir = "/var/www/ralph";
+            reportBaseUrl = "https://reviews.example.org";
+            repositories = {
+              core = repository "core";
+              gui = repository "gui" // {
+                strategy = "gui";
+              };
+            };
+          };
         }
+        overrides
       ];
     }).config;
-  cfg = evaluate pair;
   failures = c: map (x: x.message) (builtins.filter (x: !x.assertion) c.assertions);
-  rejects = override: failures (evaluate (pair // { gui = pair.gui // override; })) != [ ];
+  cfg = evaluate { };
   results = {
-    isolated =
+    sharedCoordinator =
       failures cfg == [ ]
-      && cfg.systemd.services.ralph.serviceConfig.StateDirectory == "ralph"
-      && cfg.systemd.services.ralph-gui.serviceConfig.StateDirectory == "ralph-gui"
-      &&
-        cfg.systemd.services.ralph.environment.RALPH_WRITE_VERIFIER_CGROUP
-        == "/sys/fs/cgroup/system.slice/ralph.service"
-      &&
-        cfg.systemd.services.ralph-gui.environment.RALPH_WRITE_VERIFIER_CGROUP
-        == "/sys/fs/cgroup/system.slice/ralph-gui.service"
-      && cfg.systemd.services.ralph-stats.requires == [ "ralph.service" ]
-      && !(cfg.systemd.services ? ralph-gui-stats)
-      && !(cfg.systemd.services ? ralph-gui-telegram);
-    duplicatePort = rejects { port = 8765; };
-    sharedState = rejects { stateDir = "/var/lib/ralph"; };
-    nestedReport = rejects { stateDir = "/var/lib/reports/core/gui"; };
-    companionCollision = rejects { serviceName = "ralph-stats"; };
-    duplicateRepository = rejects { repository = "owner/repo"; };
-    disabled =
-      !(evaluate {
-        gui = {
-          enable = false;
-        };
-      }).systemd.services ? ralph-gui;
-    explicitCurrentOptions = rejects {
-      engine = "external";
-      routingMode = "enabled";
-    };
+      && cfg.systemd.services ? ralph
+      && !(cfg.systemd.services ? ralph-gui)
+      && lib.hasInfix "--repositories" cfg.systemd.services.ralph.serviceConfig.ExecStart
+      && lib.hasInfix "--repositories" cfg.systemd.services.ralph-stats.serviceConfig.ExecStart
+      && lib.hasInfix "--repositories" cfg.systemd.services.ralph-followup.serviceConfig.ExecStart;
+    publicationRequiresCredentials =
+      failures (evaluate {
+        services.ralph.repositories.gui.githubPostMajorFindings = true;
+      }) != [ ];
+    duplicateSource =
+      failures (evaluate {
+        services.ralph.repositories.gui.forgejoApi =
+          lib.mkForce "https://git.example.org/api/v1/repos/owner/core";
+      }) != [ ];
+    separatePublicState =
+      failures (evaluate {
+        services.ralph.reportDir = lib.mkForce "/var/lib/ralph/reports";
+      }) != [ ];
   };
 in
 assert lib.all (result: result) (builtins.attrValues results);
