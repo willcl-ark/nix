@@ -14,17 +14,32 @@ tool result, so the review continues from code and the frozen input. The
 remotes, or a model.
 
 Captures pin the selected engine and its resolved configuration as well as the
-repository and prompt inputs. `capture` accepts `--engine` and
-`--engine-config PATH` (a JSON object). `run` uses the captured selection by
+repository and prompt inputs. `capture` requires `--repositories` and
+`--repository-id`, selecting the source, review strategy, trusted submodules and
+experiment environment from that registry entry:
+
+```sh
+ralph-evaluate capture --state-dir ./evaluation-state --output-dir ./cases \
+  --repositories /path/to/repositories.json --repository-id gui 1049
+```
+
+Capture uses the entry's Forgejo token file, with `--forgejo-token-file` available
+as an explicit override. It makes no model calls. `capture` also accepts
+`--engine` and `--engine-config PATH` (a JSON object). `run` uses the captured selection by
 default; pass the same options to override it for a comparison. Use
 `--agents-dir DIR` to load another complete directory of agent prompts and TOML
 settings. The current-engine agent, routing and blind-alternative switches
 cannot be combined with another engine. Configuration changes produce a distinct
 effective configuration group. The capture schema has a hard
 cutover: recapture manifests created before engine identity was added. Current
-captures use manifest schema version 7. Recapture pre-split manifests. Core and
+captures use manifest schema version 8. Recapture older manifests. Core and
 engine hashes are separate from companion presentation code, and captures record
 the resolved archaeology setting. Frozen evidence never falls back to live reads.
+Configured submodule snapshots retain their trusted source URL, exact base/head
+commit IDs and file evidence. Keep the evaluation checkout and its dependency
+Git objects with the manifests. Replay verifies dependency provenance and reads
+only retained objects; it does not fetch a current upstream revision. Missing
+required dependency evidence cannot count as complete coverage.
 Follow-up prompt and model overrides are separate companion settings.
 
 Agent prompts, models and tool limits live under
@@ -66,6 +81,8 @@ review. Include both known bugs and clean changes. A useful set covers:
 - RPC, CLI, configuration, error, and result contracts
 - build, portability, dependency, and toolchain changes
 - test-only changes and clean refactors
+- GUI bindings, property notifications, QObject lifetime and wallet selection changes
+- GUI dependency pin changes and Qt compatibility
 
 Freeze the reviewed head before a later fix. Use `--research-cutoff` when later
 discussion should not be visible, and use `--research-requests-json` for exact

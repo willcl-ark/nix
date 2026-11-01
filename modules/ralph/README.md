@@ -670,7 +670,7 @@ publication outcomes. Never clear an uncertain delivery hold as part of migratio
 
 On the profile cutover, unfinished jobs with recorded model maps are converted
 once to resolved `default` profiles with those models. Saved results retain
-their original identity. Frozen evaluation uses schema version 7; recapture
+their original identity. Frozen evaluation uses schema version 8; recapture
 older cases before replaying them.
 
 ## Routing and usage options
@@ -716,15 +716,15 @@ Capture performs Forgejo/Git reads but makes no model calls:
 ```sh
 ralph-evaluate capture \
   --state-dir ./evaluation-state --output-dir ./cases \
-  --origin https://git.example.org/owner/repo.git \
-  --repository owner/repo \
-  --forgejo-api https://git.example.org/api/v1/repos/owner/repo \
-  --forgejo-token-file /run/secrets/forgejo-token \
+  --repositories /path/to/repositories.json --repository-id core \
   123
 ```
 
 Capture retains complete Git objects in a dedicated evaluation checkout. The
-initial download can be large. Keep that checkout with the manifests.
+initial download can be large. Keep that checkout and its configured submodule
+Git objects with the manifests. The selected registry entry supplies the review
+strategy, trusted submodule remotes and experiment environment. Captures retain
+the exact dependency revisions and provenance for offline replay.
 Capture stores bounded current PR discussion by default. Use
 `--research-requests-json` to add exact prior discussion calls to the manifest,
 and `--research-cutoff` to cap visible discussion at an ISO timestamp. The

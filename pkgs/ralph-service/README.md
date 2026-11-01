@@ -11,11 +11,37 @@ The package installs:
 - `ralph-followup`, background assessment of previously published findings.
 - `ralph-telegram`, independent Telegram publication, monitoring and channel commands.
 
-The `ralph` command now performs a local review and accepts no service flags.
-Change explicit service package overrides to `packages.<system>.ralph-service`
-and manual daemon or migration commands to `ralph-service`. The NixOS module,
-`services.ralph` options, systemd unit names and existing state paths keep their
-names. See the [module guide](../../modules/ralph/README.md) and
+The `ralph` command performs a local review and accepts no service flags.
+The service uses one repository registry, queue and worker pool. Configure NixOS
+under `services.ralph.repositories.<id>`; the module generates the registry.
+Manual commands use the same JSON file:
+
+```sh
+ralph-service --state-dir /path/to/state --repositories /path/to/repositories.json \
+  --openai-key-file /run/secrets/proxy-key \
+  --report-dir /path/to/public-reports --report-base-url https://reviews.example.org/traces
+```
+
+The registry is an object keyed by stable IDs such as `core` and `gui`. Each
+entry contains `origin`, `repository`, `forgejo_api`, `repository_url`,
+`bot_login`, `webhook_secret_file` and `forgejo_token_file`. Credentials are
+runtime file paths, never secret contents. `engine_config` holds prompt/model
+settings; `strategy` selects `core` or `gui` independently of default/high compute
+profiles. `max_workers` caps that repository within the shared `--workers` limit.
+
+Set `core.github_post_major_findings` to `false`. GUI can set
+`github_repository` to `bitcoin-core/gui-qml`, `github_token_file` to its runtime
+credential path, and `github_post_major_findings` to `true`. Only that repository
+then publishes verified major findings upstream.
+
+GUI alone sets `submodules` to
+`{"bitcoin": "https://github.com/bitcoin/bitcoin"}` and `experiment_shell` to its
+Qt environment launcher. Other repositories default to no submodules. Preparation
+fetches the configured trusted remote and uses each GUI revision's exact pin;
+PR-controlled submodule URLs are not followed. Forgejo mirror sync needs no
+submodule update command.
+
+See the [module guide](../../modules/ralph/README.md) and
 [evaluation guide](../../modules/ralph/evaluation.md).
 
 Core imports and defaults live under the core package's `libexec/ralph`.
@@ -42,7 +68,8 @@ flowchart TD
     workers --> stale["Changed head: supersede and enqueue latest head"]
 ```
 
-Only one attempt runs per PR. Fetch and snapshot preparation share a Git lock;
+Only one attempt runs per repository and PR. Each repository has its own checkout;
+fetch and snapshot preparation share that checkout's Git lock;
 model calls run outside it. Each attempt pins its Git objects with separate refs.
 PR target, head and local generation checks guard publication. Webhooks and
 stale-head refreshes record durable hints; the coordinator resolves current PR
@@ -80,25 +107,29 @@ publication destinations and holds further writes for the PR while an earlier
 write remains unresolved, including writes from newer review generations.
 Duplicate bot markers require operator investigation.
 
-The first startup with delivery tracking quarantines non-complete legacy jobs
-that already have saved results. Missing delivery records cannot establish that
-an old request is no longer pending. This includes old failed and superseded
-saved jobs, so inspect holds for every affected PR. Historical reports are not
-rewritten.
-
-For upgrade, stop the service and back up its state before starting the new
-version. The upgrade adds reconciliation and delivery tables to `jobs.sqlite3`.
-Do not roll back to an older binary against live upgraded state: it ignores
-durable hints and uncertain-write holds. Restoring a backup also loses work
-accepted since that backup and cannot undo remote writes. Any rollback needs
-service downtime and explicit reconciliation of intervening work and writes.
-
-Stop the coordinator before inspecting or releasing holds; these commands acquire
-its state-directory lock and need no provider credentials:
+Stop all state writers and take a verified backup before the repository schema
+migration. Explicitly assign existing state to `core`:
 
 ```sh
-ralph-service --state-dir /path/to/state --list-held-deliveries
-ralph-service --state-dir /path/to/state --release-delivery 123 --confirm-no-pending-write
+ralph-service --state-dir /path/to/state --repositories /path/to/repositories.json \
+  --migrate-state --legacy-repository core
+```
+
+Migration preserves job IDs, saved reviews, exact publication intent and existing
+uncertain delivery holds. Startup refuses unmigrated state. Do not run an older
+binary against the upgraded database. Restoring a backup also loses work accepted
+since that snapshot and cannot undo remote writes; reconcile intervening work
+before restarting.
+
+Stop the coordinator before inspecting or releasing holds. These commands acquire
+its state-directory lock and need no provider credentials. Listing includes all
+repositories; release requires an explicit repository ID:
+
+```sh
+ralph-service --state-dir /path/to/state --repositories /path/to/repositories.json \
+  --list-held-deliveries
+ralph-service --state-dir /path/to/state --repositories /path/to/repositories.json \
+  --repository-id gui --release-delivery 123 --confirm-no-pending-write
 ```
 
 Release only after establishing that outstanding writes can no longer arrive.
@@ -119,9 +150,10 @@ python3 pkgs/ralph/review.py check-agents
 ```
 
 This check needs no credentials or review target. The service uses the bundled
-agents by default. Use `--agents-dir DIR` or `services.ralph.agentsDir` to select
-a complete alternate agent directory. `ralph-evaluate capture` and `run` accept
-the same option; replay keeps the captured settings unless explicitly overridden.
+agents by default. Set a repository's `engine_config.agents_dir` in the registry,
+or `services.ralph.repositories.<id>.agentsDir`, to select a complete alternate
+agent directory. `ralph-evaluate capture` and `run` also accept `--agents-dir DIR`;
+replay keeps the captured settings unless explicitly overridden.
 
 For the current engine, mirror comments show at most six current verified
 findings, including historical issues confirmed as still present at this head.
@@ -138,9 +170,10 @@ settings. Main-review agent settings do not affect follow-up.
 
 ## State and upgrades
 
-Keep `jobs.sqlite3`, private traces, the shared Git object store and retained
-refs, public reports, and all of `followup/`. Preserve follow-up initialization
-metadata, `assessments.sqlite3`, its checkout and its usage ledger.
+Keep `jobs.sqlite3`, `telegram.sqlite3`, private traces, every repository checkout
+and retained refs, public reports, and all of `followup/`. Back up the complete
+state root, including `repos/`, and the complete public report root. Preserve
+follow-up initialization metadata, `assessments.sqlite3`, its checkout and its usage ledger.
 
 New requests are recorded in fresh `usage.sqlite3` and `followup/usage.sqlite3`
 databases. Ralph does not read, convert or delete the old spend databases.
@@ -152,6 +185,12 @@ from reported totals.
 Queued and frozen configurations that contain the old budget schema need to be
 recreated. No automatic conversion of old usage data or live host deployment
 is performed by building these packages.
+
+Pass `--repositories /path/to/repositories.json` to `ralph-evaluate stats` and
+`python -m ralph_service.backfill` to attach configured repository names and URLs.
+This option is optional for historical/offline presentation. Backfill remains a
+dry run unless `--apply` is supplied. Reports and stats label repository identity
+and provide per-repository views; Core's existing report URLs remain valid.
 
 The stats command can also take `--proxy-management-url` and
 `--proxy-management-key-file` together to collect passive Codex and Claude quota
@@ -179,25 +218,25 @@ their configured models.
 Switch the companion package, its core dependency, module commands and custom
 prompt/model configuration together. Before a deployment, stop timers and
 services and take SQLite-consistent backups, retaining refs and reports too.
-Hydrate the shared Git store before starting local-only snapshot reads. Start
+Hydrate each repository's Git store before starting local-only snapshot reads. Start
 one companion against the existing state and resume timers after startup succeeds.
 No deployment is performed by building these packages. A package rollback does
 not undo published comments or recorded model requests.
 
-Optional `--github-repository owner/repo` and `--github-token-file /run/secrets/token`
-authenticate upstream metadata and author-feedback reads independently of posting.
-Add `--github-post-major-findings` to maintain one upstream GitHub comment with
+Repository registry fields `github_repository` and `github_token_file` enable
+authenticated upstream metadata reads independently of posting.
+`github_post_major_findings = true` maintains one upstream GitHub comment with
 exactly `major` findings and a public report link. The same six-finding limit and
-brief format apply after eligibility checks; the full report retains the rest.
-Posting requires both report
-options and the GitHub credentials. Later completed reviews update
-or delete the comment when major findings change or disappear. Skipped reviews
-and missing findings exports preserve it. Upstream PR numbers must match the
-mirror, and the upstream must be open at the reviewed head before a write.
-GitHub credentials are separate from Forgejo credentials and model tools.
+brief format apply after verifier and judge approval checks; the full report
+retains the rest. Posting requires public report configuration and credentials.
+Later complete reviews update or delete the comment when major findings change
+or disappear. Skipped or incomplete reviews cannot remove old findings. Upstream
+PR numbers must match the mirror. Writes require an open, non-draft upstream PR
+matching the reviewed head, base branch and review context. GitHub credentials
+are separate from Forgejo credentials and model tools.
 
 Run `ralph-telegram` separately from the review daemon with `--state-dir`,
-`--report-dir`, `--report-base-url`, `--repository-url`,
+`--report-dir`, `--report-base-url`, `--repositories /path/to/repositories.json`,
 `--telegram-token-file /run/secrets/telegram-token` and
 `--telegram-chat-id @channel`. Use a numeric channel ID for a private channel.
 The monitor reads review state and recorded usage, publishes completed reviews, sends
@@ -211,8 +250,8 @@ preserving the counts and links. A new exported finding with severity exactly
 `major` adds `🚨 Major finding`.
 
 Post `/status` in the configured channel to see service states, queue and
-result totals, recorded token usage and the latest subscription quota snapshot. `/high <PR number>` requests a fresh review
-of an open PR in the configured repository using the high profile. It increases
+result totals, recorded token usage and the latest subscription quota snapshot. `/high gui 123` requests a fresh review
+of GUI PR #123 using the high profile. The repository ID is required. It increases
 the reasoning effort and models of the harder core review stages. `/help` lists the
 commands. Commands are channel-only. All channel administrators may issue commands.
 Anonymous posts rely on Telegram's administrator posting permissions;
@@ -228,7 +267,7 @@ webhooks and head refreshes preserve a pending or running high review. The
 monitor can accept commands while the review daemon is stopped. A second
 reply confirms queueing or explains why the PR could not be queued.
 
-Normal webhook reviews use the default profile. Set `engineConfig.profile` to
+Normal webhook reviews use the default profile. Set the repository's `engine_config.profile` to
 `"high"` to select high for ordinary reviews too. Custom engine modules do not
 support `/high`.
 
