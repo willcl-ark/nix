@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 # Bump whenever extraction or cached summary interpretation changes.
-VERSION = 1
+VERSION = 2
 
 
 class Cache:

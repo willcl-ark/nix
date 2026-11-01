@@ -10,6 +10,90 @@ from ralph_service import jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
+    def test_repository_scopes_preserve_same_number_reviews_and_source_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = jobs.JobStore(root / "jobs.sqlite3")
+            repositories = {
+                key: {
+                    "repository": name,
+                    "repository_url": "https://forge.example/" + name,
+                }
+                for key, name in (
+                    ("core", "bitcoin/bitcoin"),
+                    ("gui", "bitcoin-core/gui-qml"),
+                )
+            }
+            reports = root / "reports"
+            ledger = Ledger(root / "usage.sqlite3")
+            for key in repositories:
+                scoped = store.for_repository(key)
+                scoped.enqueue(
+                    123, "main", "a" * 40, "opened", engine_identity={"name": "current"}
+                )
+                job = scoped.claim()
+                result = {
+                    "schema_version": 1,
+                    "head_sha": "a" * 40,
+                    "engine": {"name": "current"},
+                    "output": {
+                        "schema_version": 2,
+                        "exports": {"findings": []},
+                        "data": {},
+                    },
+                }
+                scoped.save_result(job, result)
+                scoped.complete(job)
+                review_id = (
+                    f"pr:123:{job['id']}:{job['generation']}"
+                    if key == "core"
+                    else f"pr:gui:123:{job['id']}:{job['generation']}"
+                )
+                token = ledger.start("tests", "test-model", review_id)
+                ledger.complete(
+                    token,
+                    {
+                        "id": key,
+                        "usage": {
+                            "input_tokens": 10 if key == "core" else 20,
+                            "output_tokens": 1,
+                        },
+                    },
+                )
+                report.save_report(
+                    reports,
+                    123,
+                    result,
+                    f"123-{'a' * 40}-{job['id']}-{job['generation']}",
+                    repository_id=key,
+                    **repositories[key],
+                )
+            summary = stats.collect_stats(root, reports, repositories=repositories)
+            self.assertEqual(summary["inventory"]["unique_prs"], 2)
+            self.assertEqual(
+                {item["repository_id"] for item in summary["reviews"]}, {"core", "gui"}
+            )
+            for key in repositories:
+                scoped = summary["repositories"][key]
+                self.assertEqual(scoped["inventory"]["unique_prs"], 1)
+                self.assertEqual(
+                    [item["repository_id"] for item in scoped["reviews"]], [key]
+                )
+                self.assertEqual(
+                    scoped["reviews"][0]["tokens"]["input"], 10 if key == "core" else 20
+                )
+            output = reports / "stats"
+            stats_page.save_stats(output, summary, None, "https://reports.example")
+            page = (output / "reviews/index.html").read_text()
+            self.assertEqual(page.count('title="Most recent saved review"'), 2)
+            for metadata in repositories.values():
+                self.assertIn(metadata["repository_url"] + "/pulls/123", page)
+            self.assertIn("https://reports.example/gui/123-", page)
+            gui = (output / "repos/gui/reviews/index.html").read_text()
+            self.assertIn("bitcoin-core/gui-qml", gui)
+            self.assertNotIn("https://forge.example/bitcoin/bitcoin/pulls/123", gui)
+            self.assertIn('href="../../../index.html"', gui)
+
     def test_timestamp_refresh_preserves_pages_and_removes_obsolete_agents(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)

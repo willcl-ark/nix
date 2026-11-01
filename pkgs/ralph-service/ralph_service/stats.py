@@ -38,7 +38,14 @@ COVERAGE_STATUSES = ("complete", "partial", "failed", "unknown")
 TOKEN_FIELDS = ("input", "output", "cached", "cache_write", "reasoning")
 
 
-def collect_stats(state_dir: Path, report_dir: Path, *, cache=None) -> dict:
+def collect_stats(
+    state_dir: Path,
+    report_dir: Path,
+    *,
+    cache=None,
+    repositories=None,
+    repository_id=None,
+) -> dict:
     """Return public JSON-compatible aggregate review statistics."""
     state_dir = Path(state_dir)
     report_dir = Path(report_dir)
@@ -53,6 +60,27 @@ def collect_stats(state_dir: Path, report_dir: Path, *, cache=None) -> dict:
     followup_requests, followup_ledger_missing = _provider_ledger_rows(
         "followup", followup_dir / "usage.sqlite3", cache
     )
+    repositories = repositories or {}
+    job_repositories = {item["row"]["id"]: item["row"]["repo_id"] for item in jobs}
+    for request in requests + followup_requests:
+        request["repository_id"] = job_repositories.get(
+            request.get("job_id"), request.get("repository_id")
+        )
+    if repository_id is not None:
+        jobs = [item for item in jobs if item["row"]["repo_id"] == repository_id]
+        followups = [
+            item
+            for item in followups
+            if job_repositories.get(item.get("job_id")) == repository_id
+        ]
+        requests = [
+            item for item in requests if item.get("repository_id") == repository_id
+        ]
+        followup_requests = [
+            item
+            for item in followup_requests
+            if item.get("repository_id") == repository_id
+        ]
     usage = _usage_summary(requests, current_month)
 
     report_dir_missing = not report_dir.exists()
@@ -63,7 +91,9 @@ def collect_stats(state_dir: Path, report_dir: Path, *, cache=None) -> dict:
         ),
         "saved_results": 0,
         "analyzed_reviews": 0,
-        "unique_prs": len({item["row"]["number"] for item in jobs}),
+        "unique_prs": len(
+            {(item["row"]["repo_id"], item["row"]["number"]) for item in jobs}
+        ),
         "skipped_results": 0,
         "malformed_results": 0,
         "malformed_followups": malformed_followups,
@@ -131,8 +161,14 @@ def collect_stats(state_dir: Path, report_dir: Path, *, cache=None) -> dict:
         routing_tiers.update(contribution["routing"])
         for record in contribution["reviews"]:
             ledger = _observed_review_totals(
-                _request_totals(requests_by_review.get(_review_id(row), [])),
-                bool(requests_by_review.get(_review_id(row))),
+                _request_totals(
+                    requests_by_review.get(_review_id(row), [])
+                    + requests_by_review.get(_legacy_review_id(row), [])
+                ),
+                bool(
+                    requests_by_review.get(_review_id(row))
+                    or requests_by_review.get(_legacy_review_id(row))
+                ),
             )
             record["ledger"] = ledger
             record["tokens"] = ledger["tokens"]
@@ -172,7 +208,11 @@ def collect_stats(state_dir: Path, report_dir: Path, *, cache=None) -> dict:
         state_dir, review_time_records, addressed_summary["findings"]
     )
 
-    return {
+    summary = {
+        "repository_id": repository_id,
+        "repository": (repositories.get(repository_id) or {}).get(
+            "repository", repository_id
+        ),
         "generated_at": _iso_z(now),
         "limitations": {
             "missing_timestamps": True,
@@ -212,9 +252,43 @@ def collect_stats(state_dir: Path, report_dir: Path, *, cache=None) -> dict:
         ),
     }
 
+    def identify(value):
+        if isinstance(value, dict):
+            job_id = value.get("job_id", value.get("source_job_id"))
+            if job_id is not None:
+                repo = job_repositories.get(job_id)
+                if repo is not None:
+                    metadata = repositories.get(repo) or {}
+                    value.update(
+                        repository_id=repo,
+                        repository=metadata.get("repository", repo),
+                        repository_url=metadata.get("repository_url"),
+                    )
+            for child in value.values():
+                identify(child)
+        elif isinstance(value, list):
+            for child in value:
+                identify(child)
+
+    identify(summary)
+    if repository_id is None:
+        ids = sorted(set(repositories) | set(job_repositories.values()))
+        summary["repositories"] = {
+            repo: collect_stats(
+                state_dir,
+                report_dir,
+                cache=cache,
+                repositories=repositories,
+                repository_id=repo,
+            )
+            for repo in ids
+        }
+    return summary
+
 
 def _review_summary(row):
     """Extract only statistics inputs; never cache raw diagnostics or prompts."""
+    row = dict(row)
     inventory = dict.fromkeys(
         ("malformed_results", "saved_results", "skipped_results", "analyzed_reviews"), 0
     )
@@ -257,8 +331,11 @@ def _review_summary(row):
     def finish():
         return {
             "row": {
-                key: row[key]
-                for key in ("id", "number", "generation", "status", "attempts")
+                "repo_id": row.get("repo_id", "core"),
+                **{
+                    key: row[key]
+                    for key in ("id", "number", "generation", "status", "attempts")
+                },
             },
             "inventory": inventory,
             "overview": overview,
@@ -293,6 +370,9 @@ def _review_summary(row):
 
     review_id = _review_id(row)
     configured_stage_models.update(_configured_stage_models(review_id, debug))
+    configured_stage_models.update(
+        _configured_stage_models(_legacy_review_id(row), debug)
+    )
     findings = _published_findings(result) or []
     concept = _concept_summary(debug)
     research_completed = _archaeology_research_completed(debug)
@@ -348,6 +428,7 @@ def _review_summary(row):
             concept_alternative_values.append(concept["alternative_count"])
 
     record = {
+        "repository_id": row.get("repo_id", "core"),
         "job_id": row["id"],
         "number": row["number"],
         "generation": row["generation"],
@@ -396,6 +477,7 @@ def _review_summary(row):
     review_time_records.append(
         {
             "number": row["number"],
+            "repository_id": row.get("repo_id", "core"),
             "job_id": row["id"],
             "generation": row["generation"],
             "head": record["head"],
@@ -410,6 +492,7 @@ def _review_summary(row):
     if row["status"] == "complete":
         completed_reviews[(row["number"], row["id"], row["generation"])] = {
             "number": row["number"],
+            "repository_id": row.get("repo_id", "core"),
             "job_id": row["id"],
             "generation": row["generation"],
             "head": record["head"],
@@ -464,6 +547,7 @@ def _collect_limit_runs(runs, debug, result, row, report_name):
                 "stage": name,
                 "model": stage.get("model") or "unknown",
                 "limits": public_limits(stage),
+                "repository_id": row.get("repo_id", "core"),
                 "job_id": row["id"],
                 "number": row["number"],
                 "report_name": report_name,
@@ -599,6 +683,7 @@ def _ledger_record(provider, row):
         provider = "claude"
     return {
         "provider": provider,
+        "repository_id": _review_repository(row["review_id"]),
         "review_id": row["review_id"],
         "number": parsed[0],
         "job_id": parsed[1],
@@ -648,6 +733,8 @@ def _parse_review_id(review_id):
     if not isinstance(review_id, str) or not review_id.startswith(REVIEW_ID_PREFIX):
         return None, None, None
     parts = review_id[len(REVIEW_ID_PREFIX) :].split(":")
+    if len(parts) == 4:
+        parts = parts[1:]
     if len(parts) != 3:
         return None, None, None
     try:
@@ -691,7 +778,18 @@ def _skipped_result(result):
 
 
 def _review_id(row):
+    return f"pr:{row.get('repo_id', 'core')}:{row['number']}:{row['id']}:{row['generation']}"
+
+
+def _legacy_review_id(row):
     return f"pr:{row['number']}:{row['id']}:{row['generation']}"
+
+
+def _review_repository(review_id):
+    if not isinstance(review_id, str) or not review_id.startswith("pr:"):
+        return None
+    parts = review_id.split(":")
+    return parts[1] if len(parts) == 5 else "core" if len(parts) == 4 else None
 
 
 def _verifier_completed(debug):
@@ -775,7 +873,18 @@ def _day_range(series):
 
 
 def _review_days(trace_dir, records):
-    traces, malformed_traces = _trace_days(trace_dir)
+    repositories = {record.get("repository_id", "core") for record in records}
+    traces = {}
+    malformed_traces = 0
+    for repository_id in repositories:
+        directory = (
+            trace_dir
+            if repository_id == "core"
+            else trace_dir.parent / "repos" / repository_id / trace_dir.name
+        )
+        found, malformed = _trace_days(directory)
+        traces.update({(repository_id, *key): value for key, value in found.items()})
+        malformed_traces += malformed
     grouped = defaultdict(list)
     invalid_heads = 0
     for record in records:
@@ -783,7 +892,9 @@ def _review_days(trace_dir, records):
         if not isinstance(head, str):
             invalid_heads += 1
             continue
-        grouped[(record["number"], head.lower())].append(record)
+        grouped[
+            (record.get("repository_id", "core"), record["number"], head.lower())
+        ].append(record)
 
     days = {}
     undated = invalid_heads
@@ -852,14 +963,24 @@ def _addressed_day_counts(state_dir, findings):
         for item in findings
         if item["status"] in {"addressed", "partially_addressed"}
     ]
-    days = _commit_days(
-        state_dir / "followup" / "checkout" / ".git",
-        {item.get("new_head") for item in eligible},
-    )
+    days = {}
+    for repository_id in {item.get("repository_id", "core") for item in eligible}:
+        directory = state_dir / "followup"
+        if repository_id != "core":
+            directory = directory / "repos" / repository_id
+        found = _commit_days(
+            directory / "checkout" / ".git",
+            {
+                item.get("new_head")
+                for item in eligible
+                if item.get("repository_id", "core") == repository_id
+            },
+        )
+        days.update({(repository_id, head): period for head, period in found.items()})
     counts = Counter()
     undated = 0
     for item in eligible:
-        period = days.get(item.get("new_head"))
+        period = days.get((item.get("repository_id", "core"), item.get("new_head")))
         if period is None:
             undated += 1
         else:
@@ -967,6 +1088,7 @@ def _addressed_records(followup, completed_reviews_by_job):
             status = "unclear"
         records.append(
             {
+                "repository_id": assessment.get("repository_id", "core"),
                 "number": assessment["number"],
                 "assessment_job_id": assessment["job_id"],
                 "assessment_generation": assessment["generation"],
@@ -1292,6 +1414,8 @@ def _report_name(report_dir, row, result):
     if not isinstance(head, str):
         return None
     name = f"{row['number']}-{head}-{row['id']}-{row['generation']}.html"
+    if row.get("repo_id", "core") != "core":
+        name = row["repo_id"] + "/" + name
     return name if report_dir is None or (report_dir / name).is_file() else None
 
 
@@ -1577,6 +1701,7 @@ def _stage_findings(debug, name, stage, row, report_name):
         records.append(
             {
                 "number": row["number"],
+                "repository_id": row.get("repo_id", "core"),
                 "job_id": row["id"],
                 "candidate_id": identifier,
                 "title": finding.get("title") or identifier,
@@ -1657,6 +1782,7 @@ def _add_stage_results(stages, debug, row, report_name):
                                 )
                             },
                             "number": row["number"],
+                            "repository_id": row.get("repo_id", "core"),
                             "job_id": row["id"],
                             "report_name": report_name,
                         }

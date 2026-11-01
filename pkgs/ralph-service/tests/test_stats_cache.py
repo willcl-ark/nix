@@ -166,7 +166,7 @@ class StatsCacheTests(unittest.TestCase):
 
             with closing(sqlite3.connect(path)) as db, db:
                 db.execute(
-                    "INSERT INTO jobs (number,generation,base_ref,head,action,force,engine_identity,status) VALUES (1,0,'main','a','open',0,'{}','pending')"
+                    "INSERT INTO jobs (repo_id,number,generation,base_ref,head,action,force,engine_identity,status) VALUES ('core',1,0,'main','a','open',0,'{}','pending')"
                 )
             self.assertEqual(read(), [{"id": 1, "status": "pending"}])
             read()
@@ -182,7 +182,7 @@ class StatsCacheTests(unittest.TestCase):
             # SQLite REPLACE deletes UNIQUE conflicts without DELETE triggers.
             with closing(sqlite3.connect(path)) as db, db:
                 db.execute(
-                    "INSERT OR REPLACE INTO jobs (id,number,generation,base_ref,head,action,force,engine_identity,status) VALUES (2,1,0,'main','b','open',0,'{}','complete')"
+                    "INSERT OR REPLACE INTO jobs (repo_id,id,number,generation,base_ref,head,action,force,engine_identity,status) VALUES ('core',2,1,0,'main','b','open',0,'{}','complete')"
                 )
             self.assertEqual(read(), [{"id": 2, "status": "complete"}])
             # Pre-initialization stores must be fully reread, never stale-cached.

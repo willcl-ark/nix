@@ -118,7 +118,11 @@ def _safe_report_name(review):
     name = _field(review, "report_name")
     if (
         isinstance(name, str)
-        and report.REPORT_ID.fullmatch(name)
+        and all(
+            part not in {".", ".."} and report.REPORT_ID.fullmatch(part)
+            for part in name.split("/")
+        )
+        and len(name.split("/")) <= 2
         and name.endswith(".html")
     ):
         return name
@@ -148,10 +152,11 @@ def _link(url, text):
 
 def _pr_link(review, repository_url):
     number = _pr_number(review)
-    base = _valid_http_base(repository_url)
+    base = _valid_http_base(review.get("repository_url") or repository_url)
+    label = f"{review.get('repository_id', 'core')}#{number}"
     if number is None or base is None:
-        return _escape(_field(review, "number", default="N/A"))
-    return _link(f"{base}/pulls/{number}", f"#{number}")
+        return _escape(label if number is not None else "N/A")
+    return _link(f"{base}/pulls/{number}", label)
 
 
 def _report_link(review, report_base_url):
@@ -164,7 +169,7 @@ def _report_name_link(name, report_base_url, text, *, anchor=""):
     if name is None or base is None:
         return "N/A"
     fragment = "#" + quote(anchor) if anchor else ""
-    return _link(f"{base}/{quote(name, safe='._-')}{fragment}", text)
+    return _link(f"{base}/{quote(name, safe='/._-')}{fragment}", text)
 
 
 def _compare_link(assessment, repository_url):
@@ -173,7 +178,7 @@ def _compare_link(assessment, repository_url):
     if not _valid_sha(old_head) or not _valid_sha(new_head):
         return "N/A"
     text = f"{old_head[:12]}..{new_head[:12]}"
-    base = _valid_http_base(repository_url)
+    base = _valid_http_base(assessment.get("repository_url") or repository_url)
     if base is None:
         return _escape(text)
     return _link(f"{base}/compare/{old_head}..{new_head}", text)
@@ -1104,15 +1109,16 @@ def _reviews_table(reviews, repository_url, report_base_url):
     latest = {}
     for review in reviews:
         number = _pr_number(review)
+        key = (review.get("repository_id", "core"), number)
         if (
             number is not None
             and _safe_report_name(review) is not None
             and (
-                number not in latest
-                or _review_sort_key(review) > _review_sort_key(latest[number])
+                key not in latest
+                or _review_sort_key(review) > _review_sort_key(latest[key])
             )
         ):
-            latest[number] = review
+            latest[key] = review
     for review in reviews:
         findings = _mapping(review.get("findings"))
         severities = findings.get("severities")
@@ -1135,7 +1141,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
         )
         title = _escape(review.get("pr_title") or "Unknown")
         head = review.get("head")
-        base = _valid_http_base(repository_url)
+        base = _valid_http_base(review.get("repository_url") or repository_url)
         commit = (
             _link(f"{base}/commit/{head}", head[:12])
             if base and _valid_sha(head)
@@ -1143,12 +1149,16 @@ def _reviews_table(reviews, repository_url, report_base_url):
         )
         marker = (
             ' <span title="Most recent saved review">🟠</span>'
-            if latest.get(_pr_number(review)) is review
+            if latest.get((review.get("repository_id", "core"), _pr_number(review)))
+            is review
             else ""
         )
         rows.append(
             _cells(
                 [
+                    _escape(
+                        review.get("repository") or review.get("repository_id", "core")
+                    ),
                     _pr_link(review, repository_url) + marker,
                     f'<span class="review-title" title="{title}">{title}</span>',
                     f'<code data-search-text="{head if _valid_sha(head) else ""}">{commit}</code>',
@@ -1158,11 +1168,17 @@ def _reviews_table(reviews, repository_url, report_base_url):
             )
             .replace("</tr>", severity_cells + "</tr>")
             .replace(
-                "<tr>", '<tr data-severities="' + _escape(json.dumps(counts)) + '">'
+                "<tr>",
+                '<tr data-repository="'
+                + _escape(review.get("repository_id", "core"))
+                + '" data-severities="'
+                + _escape(json.dumps(counts))
+                + '">',
             )
         )
     return _interactive_table(
         [
+            "Repository",
             "PR",
             "PR title",
             "Commit",
@@ -1172,7 +1188,12 @@ def _reviews_table(reviews, repository_url, report_base_url):
         ],
         rows,
         "reviews",
-        controls='<label>Severity <select data-severity><option value="">Any</option>'
+        controls='<label>Repository <select data-repository-filter><option value="">All</option>'
+        + "".join(
+            f'<option value="{_escape(repo)}">{_escape(repo)}</option>'
+            for repo in sorted({r.get("repository_id", "core") for r in reviews})
+        )
+        + '</select></label><label>Severity <select data-severity><option value="">Any</option>'
         + "".join(
             f'<option value="{level}">{labels.get(level, level.title())}</option>'
             for level in levels
@@ -1617,6 +1638,7 @@ document.querySelectorAll('.data-list').forEach(list => {
   const rows = [...list.querySelector('tbody').children];
   const search = list.querySelector('[data-search]');
   const filter = list.querySelector('select[data-filter]');
+  const repository = list.querySelector('[data-repository-filter]');
   const severity = list.querySelector('[data-severity]');
   const sort = list.querySelector('[data-review-sort]');
   const counts = new Map(rows.map(row => [row, JSON.parse(row.dataset.severities || '{}')]));
@@ -1631,6 +1653,7 @@ document.querySelectorAll('.data-list').forEach(list => {
     const query = search.value.trim().toLocaleLowerCase();
     const matches = rows.filter((row, index) => searchable[index].includes(query)
       && (!filter || !filter.value || row.dataset.filter === filter.value)
+      && (!repository || !repository.value || row.dataset.repository === repository.value)
       && (!severity || !severity.value || counts.get(row)[severity.value] > 0));
     if (sort && sort.value === 'severity') matches.sort((a, b) => {
       for (const level of ['critical', 'major', 'minor', 'suggestion', 'unknown']) {
@@ -1651,7 +1674,7 @@ document.querySelectorAll('.data-list').forEach(list => {
   }
   search.addEventListener('input', () => { page = 0; render(); });
   if (filter) filter.addEventListener('change', () => { page = 0; render(); });
-  for (const control of [severity, sort]) if (control) control.addEventListener('change', () => { page = 0; render(); });
+  for (const control of [severity, sort, repository]) if (control) control.addEventListener('change', () => { page = 0; render(); });
   previous.addEventListener('click', () => { page--; render(); });
   next.addEventListener('click', () => { page++; render(); });
   list.querySelector('.list-controls').hidden = false;
@@ -1692,11 +1715,24 @@ def _header(summary, page_prefix="", active="Overview"):
         + f'><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{icons[label]}"/></svg>{label}</a>'
         for path, label in links
     )
+    scope = summary.get("repository_id")
+    scope_root = page_prefix + ("../../" if scope else "")
+    scopes = summary.get("repository_names") or {
+        key: value.get("repository", key)
+        for key, value in (summary.get("repositories") or {}).items()
+    }
+    scope_links = _link(scope_root + "index.html", "All repositories")
+    for key, name in scopes.items():
+        scope_links += " · " + _link(
+            scope_root + "repos/" + quote(key, safe="") + "/index.html", name
+        )
+    scope_label = summary.get("repository") or scope or "All repositories"
     preview = _field(summary, "preview_notice", "")
     return (
         '<header><div class="header-top">'
         + f'<a class="brand" href="{page_prefix}reviews/"><span class="brand-mark" aria-hidden="true">r.</span>'
         + "<span>ralph<small>Review statistics</small></span></a></div>"
+        + f'<p class="statistics-scope">{_escape(scope_label)}</p><nav aria-label="Repositories">{scope_links}</nav>'
         + (f'<p class="preview">{_escape(preview)}</p>' if preview else "")
         + '<div class="nav-label">Workspace</div><nav aria-label="Statistics">'
         + nav
@@ -2268,6 +2304,20 @@ def save_stats(
             and path.name not in stage_names
         ):
             path.unlink()
+    if summary.get("repository_id") is None:
+        names = {
+            key: value.get("repository", key)
+            for key, value in (summary.get("repositories") or {}).items()
+        }
+        for key, value in (summary.get("repositories") or {}).items():
+            if not re.fullmatch(r"[a-z][a-z0-9_-]*", key):
+                raise ValueError("invalid repository key in statistics")
+            save_stats(
+                output_dir / "repos" / key,
+                {**value, "repository_names": names},
+                repository_url,
+                report_base_url,
+            )
     # A timestamp-only refresh must not rewrite every historical HTML page.
     # Publish freshness last, after all pages have been successfully saved.
     write("freshness.json", json.dumps({"generated_at": _generated_at(summary)}) + "\n")
