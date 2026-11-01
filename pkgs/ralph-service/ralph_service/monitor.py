@@ -21,23 +21,26 @@ def _readonly(path):
 
 
 def migrate_notification_repositories(path, legacy_repo_id="core"):
-    """Bind existing durable commands to their original repository while stopped."""
+    """Preserve existing commands as high reviews during the stopped migration."""
     path = Path(path)
     if not path.exists():
         return False
     with closing(sqlite3.connect(path)) as db, db:
-        if "repo_id" in {
-            row[1] for row in db.execute("PRAGMA table_info(review_requests)")
-        }:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(review_requests)")}
+        if {"repo_id", "profile"} <= columns:
             return False
         db.execute("BEGIN IMMEDIATE")
         db.execute("ALTER TABLE review_requests RENAME TO legacy_review_requests")
         db.execute(
-            "CREATE TABLE review_requests (id INTEGER PRIMARY KEY, repo_id TEXT NOT NULL, number INTEGER NOT NULL, processed INTEGER NOT NULL DEFAULT 0)"
+            "CREATE TABLE review_requests (id INTEGER PRIMARY KEY, repo_id TEXT NOT NULL, "
+            "number INTEGER NOT NULL, profile TEXT NOT NULL CHECK(profile IN ('default', 'high')), "
+            "processed INTEGER NOT NULL DEFAULT 0)"
         )
+        repository = "repo_id" if "repo_id" in columns else "?"
+        profile = "profile" if "profile" in columns else "'high'"
         db.execute(
-            "INSERT INTO review_requests SELECT id, ?, number, processed FROM legacy_review_requests",
-            (legacy_repo_id,),
+            f"INSERT INTO review_requests SELECT id, {repository}, number, {profile}, processed FROM legacy_review_requests",
+            () if "repo_id" in columns else (legacy_repo_id,),
         )
         db.execute("DROP TABLE legacy_review_requests")
     return True
@@ -64,13 +67,14 @@ class NotificationStore:
                 );
                 CREATE TABLE IF NOT EXISTS review_requests (
                     id INTEGER PRIMARY KEY, repo_id TEXT NOT NULL, number INTEGER NOT NULL,
+                    profile TEXT NOT NULL CHECK(profile IN ('default', 'high')),
                     processed INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL
                 );
             """)
-            if "repo_id" not in {
+            if not {"repo_id", "profile"} <= {
                 row[1] for row in db.execute("PRAGMA table_info(review_requests)")
             }:
                 raise RuntimeError(

@@ -129,7 +129,12 @@ def command_worker(store, jobs, contexts, stop):
             scoped = jobs.for_repository(repo_id)
             try:
                 service.consume_review_requests(
-                    store, scoped, ctx["bot"], ctx["forgejo_token"], ctx["high_engine"]
+                    store,
+                    scoped,
+                    ctx["bot"],
+                    ctx["forgejo_token"],
+                    ctx["default_engine"],
+                    ctx["high_engine"],
                 )
             except Exception:
                 logging.exception("Could not process commands repo=%s", repo_id)
@@ -265,6 +270,12 @@ def main(resources):
                 "bot": bot,
                 "state_dir": state_dir,
                 "engine": engine.load(engine_name, engine_config),
+                "default_engine": engine.load(
+                    engine_name,
+                    {**engine_config, "profile": "default"}
+                    if engine_name == "current"
+                    else engine_config,
+                ),
                 "high_engine": engine.load(
                     "current", {**engine_config, "profile": "high"}
                 )

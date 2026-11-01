@@ -57,7 +57,7 @@ class CommandTests(unittest.TestCase):
             self.root,
             self.root,
             "https://reports",
-            repositories={"core": {}, "gui": {}},
+            repositories={"core": {"github_repository": "bitcoin/bitcoin"}, "gui": {}},
         )
 
     def messages(self):
@@ -78,11 +78,40 @@ class CommandTests(unittest.TestCase):
         with closing(self.store._connect()) as db:
             self.assertEqual(
                 db.execute(
-                    "SELECT id, repo_id, number FROM review_requests"
+                    "SELECT id, repo_id, number, profile FROM review_requests"
                 ).fetchall(),
-                [(10, "gui", 42)],
+                [(10, "gui", 42, "high")],
             )
         self.assertIn("high review", self.messages()["command:10"])
+
+    def test_normal_reviews_accept_aliases_and_compact_targets(self):
+        self.updates = [
+            self.update(10, text="/review gui 1049"),
+            self.update(11, text="/review gui1050"),
+            self.update(12, text="/review bitcoin 36688"),
+            self.update(13, text="/review@RalphBot bitcoin36689"),
+        ]
+        self.assertEqual(self.poll(), 4)
+        self.assertEqual(self.poll(), 0)
+        with closing(self.store._connect()) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT repo_id, number, profile FROM review_requests ORDER BY id"
+                ).fetchall(),
+                [
+                    ("gui", 1049, "default"),
+                    ("gui", 1050, "default"),
+                    ("core", 36688, "default"),
+                    ("core", 36689, "default"),
+                ],
+            )
+        self.assertIn("normal review of core#36688", self.messages()["command:12"])
+        ambiguous = {"core": {"github_repository": "bitcoin/bitcoin"}, "bitcoin": {}}
+        self.assertIsNone(commands._review_target("bitcoin42", ambiguous))
+        self.assertIsNone(commands._review_target("gui123", {"gui": {}, "gui1": {}}))
+        self.assertEqual(
+            commands._review_target("gui1 23", {"gui": {}, "gui1": {}}), ("gui1", 23)
+        )
 
     def test_high_invalid_and_unauthorized_requests(self):
         for index, text in enumerate(

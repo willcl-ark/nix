@@ -256,7 +256,8 @@ class JobStore:
                 else {}
             )
             if (
-                _profile_name(previous) == "high"
+                not force
+                and _profile_name(previous) == "high"
                 and _profile_name(engine_identity) == "default"
             ):
                 identity = active["engine_identity"]
@@ -351,7 +352,8 @@ class JobStore:
             if previous:
                 old_identity = json.loads(previous["engine_identity"])
                 if (
-                    _profile_name(old_identity) == "high"
+                    not force
+                    and _profile_name(old_identity) == "high"
                     and _profile_name(engine_identity) == "default"
                 ):
                     engine_identity = old_identity

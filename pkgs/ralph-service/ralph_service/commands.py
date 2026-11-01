@@ -24,9 +24,27 @@ def _command(post, configured_chat_id, bot):
     command, separator, username = parts[0].partition("@")
     if separator and username.casefold() != bot.get("username", "").casefold():
         return None
-    if command == "/high":
+    if command in {"/high", "/review"}:
         return (command, parts[1] if len(parts) > 1 else "")
     return command if command in {"/status", "/help"} and len(parts) == 1 else None
+
+
+def _review_target(argument, repositories):
+    """Resolve explicit or compact selectors without guessing an ambiguous prefix."""
+    matches = set()
+    for repo_id, entry in repositories.items():
+        selectors = {repo_id}
+        if "bitcoin/bitcoin" in {
+            entry.get("repository"),
+            entry.get("github_repository"),
+        }:
+            selectors.add("bitcoin")
+        for selector in selectors:
+            if argument.startswith(selector):
+                number = argument[len(selector) :].strip()
+                if re.fullmatch(r"[1-9][0-9]{0,9}", number):
+                    matches.add((repo_id, int(number)))
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 def _admin_only(token, post, bot):
@@ -90,19 +108,20 @@ def poll_commands(
                 command = None
             if command:
                 if isinstance(command, tuple):
-                    argument = command[1]
-                    match = re.fullmatch(
-                        r"([a-z][a-z0-9_-]*) ([1-9][0-9]{0,9})", argument
-                    )
-                    if match and match[1] in repositories:
-                        repo_id, number = match[1], int(match[2])
+                    target = _review_target(command[1], repositories)
+                    if target is not None:
+                        repo_id, number = target
+                        profile = "high" if command[0] == "/high" else "default"
                         db.execute(
-                            "INSERT OR IGNORE INTO review_requests (id, repo_id, number) VALUES (?, ?, ?)",
-                            (update["update_id"], repo_id, number),
+                            "INSERT OR IGNORE INTO review_requests (id, repo_id, number, profile) VALUES (?, ?, ?, ?)",
+                            (update["update_id"], repo_id, number, profile),
                         )
-                        text = f"Requested a fresh high review of {repo_id}#{number}."
+                        label = "high" if profile == "high" else "normal"
+                        text = (
+                            f"Requested a fresh {label} review of {repo_id}#{number}."
+                        )
                     else:
-                        text = "Usage: /high <repository> <PR number>"
+                        text = f"Usage: {command[0]} <repository> <PR number> (for example gui 1049 or bitcoin36688)"
                 elif command == "/status":
                     from . import status
 
@@ -111,7 +130,9 @@ def poll_commands(
                     text = (
                         "Ralph commands\n"
                         "/status - Service health, review results and usage\n"
+                        "/review <repository> <PR number> - Request a fresh normal review\n"
                         "/high <repository> <PR number> - Request a fresh high review\n"
+                        "Compact forms also work: /review gui1049 or bitcoin36688\n"
                         "/help - Show these commands\n"
                         "Post commands in this channel as an administrator.\n"
                         + "Repositories: "

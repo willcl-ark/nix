@@ -838,7 +838,13 @@ queuing a reply. Displayed author signatures are not used for authorization.
 Post `/status` to see the current states of `ralph.service`,
 `ralph-followup.service`, `ralph-stats.service` and `ralph-telegram.service`,
 plus queue counts, review results, recorded tokens and the latest subscription quotas. `/help` lists the
-commands. Post `/high gui 123` to request a fresh high-profile review of GUI PR #123, even if its current head was already reviewed.
+commands. Post `/review gui 1049` or `/review gui1049` to request a fresh
+normal-profile review of GUI PR #1049. `/review bitcoin 36688` and
+`/review bitcoin36688` select the configured Bitcoin Core repository.
+`/high gui 1049` uses the high profile instead. Both commands accept stable
+repository IDs and rerun a head that was already reviewed. Ambiguous selectors
+are rejected. An explicit `/review` replaces a pending high request with the
+normal profile; ordinary webhooks still preserve pending high requests.
 The reviewer checks that the PR is open before queuing it. These commands
 cannot restart services.
 
@@ -880,10 +886,12 @@ downtime, the monitor counts newly observed events in the window it sees them
 and sends only the latest completed window's digest.
 
 Notifications and review requests live in `stateDir/telegram.sqlite3` and retry
-independently of reviews. The monitor saves each `/high` request with its
+independently of reviews. The monitor saves each `/review` or `/high` request, including its selected profile, with its
 Telegram update offset; the reviewer consumes it and deduplicates it in the job
 database. Requests survive reviewer downtime without creating duplicate runs
 after a crash. An ordinary webhook cannot downgrade a pending high review.
+The explicit state migration preserves earlier command records as high-profile
+requests, including their processed flags and Telegram offset.
 Preserve this database with Ralph's other state. Command replies
 are sent as soon as the summary is ready, ahead of queued background posts.
 Background delivery sends one message per check. All messages respect

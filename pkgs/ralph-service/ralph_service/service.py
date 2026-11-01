@@ -656,17 +656,21 @@ def process_job(
             )
 
 
-def consume_review_requests(store, jobs, bot_config, token, high_engine):
+def consume_review_requests(
+    store, jobs, bot_config, token, default_engine, high_engine
+):
     """Replay durable Telegram requests safely after either process restarts."""
     with closing(store._connect()) as db:
         requests = db.execute(
-            "SELECT id, number FROM review_requests WHERE processed = 0 AND repo_id = ? ORDER BY id",
+            "SELECT id, number, profile FROM review_requests WHERE processed = 0 AND repo_id = ? ORDER BY id",
             (bot_config.repo_id,),
         ).fetchall()
-    for request_id, number in requests:
+    for request_id, number, profile in requests:
+        label = "high" if profile == "high" else "normal"
         try:
-            if high_engine is None:
-                raise ValueError("high reviews require the current engine")
+            selected = {"default": default_engine, "high": high_engine}.get(profile)
+            if selected is None:
+                raise ValueError(f"{label} review engine is unavailable")
             pr = forgejo.forgejo_request(bot_config, token, f"/pulls/{number}")
             if pr.get("number") != number or pr.get("state") != "open":
                 raise ValueError("pull request is not open")
@@ -691,14 +695,12 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
                 base_ref,
                 action,
                 force,
-                engine_identity=high_engine.identity,
+                engine_identity=selected.identity,
                 request_id=f"telegram:{request_id}",
             )
-            message = f"Queued high review of {bot_config.repo_id}#{number}."
+            message = f"Queued {label} review of {bot_config.repo_id}#{number}."
         except ValueError as exc:
-            message = (
-                f"Could not queue high review of {bot_config.repo_id}#{number}: {exc}."
-            )
+            message = f"Could not queue {label} review of {bot_config.repo_id}#{number}: {exc}."
         except urllib.error.HTTPError as exc:
             if exc.code not in {404, 422}:
                 logging.warning(

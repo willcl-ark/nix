@@ -130,6 +130,7 @@ class ReconciliationTests(unittest.TestCase):
                     "core": {
                         "bot": self.config,
                         "forgejo_token": "token",
+                        "default_engine": None,
                         "high_engine": None,
                     }
                 },

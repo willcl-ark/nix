@@ -762,7 +762,7 @@ class ServiceTests(unittest.TestCase):
             contexts = {"core": {
                 "state_dir": root, "forgejo_token": "token", "github_token": None,
                 "entry": {"bot_login": "ralph"}, "bot": bot,
-                "engine": review_engine, "high_engine": None,
+                "engine": review_engine, "default_engine": review_engine, "high_engine": None,
             }}
             reviews = [threading.Thread(
                 target=service.worker,

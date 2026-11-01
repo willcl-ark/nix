@@ -51,7 +51,7 @@ class ProfileTests(unittest.TestCase):
     def test_request_handoff_is_idempotent(self):
         with closing(self.store._connect()) as db, db:
             db.executemany(
-                "INSERT INTO review_requests (id, repo_id, number) VALUES (?, ?, 42)",
+                "INSERT INTO review_requests (id, repo_id, number, profile) VALUES (?, ?, 42, 'high')",
                 [(1, "core"), (2, "gui")],
             )
         pr = {
@@ -62,7 +62,7 @@ class ProfileTests(unittest.TestCase):
         }
         with patch.object(service.forgejo, "forgejo_request", return_value=pr):
             service.consume_review_requests(
-                self.store, self.jobs, self.config, "token", self.high
+                self.store, self.jobs, self.config, "token", self.default, self.high
             )
             service.reconcile_next(self.jobs, self.config, "token")
             job = self.jobs.claim()
@@ -79,7 +79,38 @@ class ProfileTests(unittest.TestCase):
                 )
                 db.execute("UPDATE review_requests SET processed = 0 WHERE id = 1")
             service.consume_review_requests(
-                self.store, self.jobs, self.config, "token", self.high
+                self.store, self.jobs, self.config, "token", self.default, self.high
+            )
+            self.assertIsNone(self.jobs.claim())
+
+    def test_normal_request_overrides_pending_high_and_replays_once(self):
+        self.enqueue(self.high, force=True)
+        self.jobs.reconcile_hint(
+            42, "master", "opened", True, engine_identity=self.high.identity
+        )
+        with closing(self.store._connect()) as db, db:
+            db.execute(
+                "INSERT INTO review_requests (id, repo_id, number, profile) VALUES (1, 'core', 42, 'default')"
+            )
+        pr = {
+            "number": 42,
+            "state": "open",
+            "base": {"ref": "master"},
+            "head": {"sha": "a" * 40},
+        }
+        with patch.object(service.forgejo, "forgejo_request", return_value=pr):
+            service.consume_review_requests(
+                self.store, self.jobs, self.config, "token", self.default, self.high
+            )
+            service.reconcile_next(self.jobs, self.config, "token")
+            job = self.jobs.claim()
+            self.assertEqual(job["engine_identity"], self.default.identity)
+            self.assertTrue(job["force"])
+            self.jobs.complete(job)
+            with closing(self.store._connect()) as db, db:
+                db.execute("UPDATE review_requests SET processed = 0")
+            service.consume_review_requests(
+                self.store, self.jobs, self.config, "token", self.default, self.high
             )
             self.assertIsNone(self.jobs.claim())
 

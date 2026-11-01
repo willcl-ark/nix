@@ -120,15 +120,35 @@ class MonitorTests(unittest.TestCase):
         with closing(store._connect()) as db:
             self.assertEqual(
                 db.execute(
-                    "SELECT id, repo_id, number, processed FROM review_requests"
+                    "SELECT id, repo_id, number, profile, processed FROM review_requests"
                 ).fetchall(),
-                [(7, "core", 42, 0)],
+                [(7, "core", 42, "high", 0)],
             )
             self.assertEqual(
                 db.execute(
                     "SELECT value FROM metadata WHERE key = 'update_offset'"
                 ).fetchone(),
                 ("8",),
+            )
+
+    def test_repository_schema_commands_migrate_as_high_without_losing_state(self):
+        path = self.root / "repository-commands.sqlite3"
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute(
+                "CREATE TABLE review_requests (id INTEGER PRIMARY KEY, repo_id TEXT NOT NULL, number INTEGER NOT NULL, processed INTEGER NOT NULL DEFAULT 0)"
+            )
+            db.executemany(
+                "INSERT INTO review_requests VALUES (?, ?, 42, ?)",
+                [(1, "core", 1), (2, "gui", 0)],
+            )
+        self.assertTrue(monitor.migrate_notification_repositories(path))
+        self.assertFalse(monitor.migrate_notification_repositories(path))
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT id, repo_id, profile, processed FROM review_requests ORDER BY id"
+                ).fetchall(),
+                [(1, "core", "high", 1), (2, "gui", "high", 0)],
             )
 
     def test_outbox_is_idempotent_and_retries_with_rate_limit(self):
