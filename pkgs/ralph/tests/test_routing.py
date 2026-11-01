@@ -46,6 +46,21 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(plan["tier"], "sensitive")
         self.assertEqual(plan["profiles"], ["wallet"])
 
+    def test_gui_coverage_preserves_other_audits_and_semantic_tier(self):
+        for path in ("qml/Send.qml", "src/qt/walletmodel.cpp", "src/qt/forms/send.ui"):
+            with self.subTest(path=path):
+                plan = routing.validate_plan(
+                    route(tier="standard", audits=("concurrency",)), {path}
+                )
+                self.assertEqual(plan["tier"], "standard")
+                self.assertEqual(plan["profiles"], [])
+                self.assertTrue(
+                    {"gui", "concurrency", "tests", "design"} <= set(plan["audits"])
+                )
+        plan = routing.validate_plan(route(), {"src/qt/README.md"})
+        self.assertNotIn("gui", plan["audits"])
+        self.assertEqual(plan["tier"], "routine")
+
     def runtime(self):
         case = engine.ReviewCase("Patch", None)
         return engine.Runtime(case=case, api_key="key")

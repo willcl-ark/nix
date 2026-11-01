@@ -15,6 +15,7 @@ from .profiles import (
 AUDIT_NAMES = (
     "script",
     "concurrency",
+    "gui",
     "state",
     "public_contract",
     "tests",

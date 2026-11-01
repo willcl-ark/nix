@@ -227,6 +227,7 @@ Conservative fallback does the same when classification is incomplete.
 | Any non-documentation path, including tests and recognized build files | dead_code audit |
 | Production code, excluding docs, tests and recognized build paths | design audit |
 | Synchronization, scheduler, queues, validation callbacks, thread utilities | concurrency audit |
+| QML files and Core Qt C++, forms and translations | gui audit |
 | Databases, indexes, wallet storage, chainstate and block storage | state audit |
 | RPC, CLI, HTTP, REST, initialization and argument handling | public_contract audit |
 | Recognized build paths, including CMake, depends, Guix, CI and Cargo/flake locks | build audit |
@@ -299,7 +300,7 @@ flowchart LR
     remaining --> pool["Candidate pool"]
 ```
 
-Focused audit order: concurrency, state, public_contract, build, tests,
+Focused audit order: concurrency, gui, state, public_contract, build, tests,
 dead_code, design. Discovery can escalate coverage and add pending audits.
 Claude adversarial review requires `claude-opus-5-5` on the configured proxy.
 A failed Claude pass is reported as incomplete coverage.
@@ -407,7 +408,7 @@ to decide code correctness.
 | script | gpt-6.1-sol | high | 25,000 | Original input; code and base history, no discussion or web tools |
 | adversarial | gpt-6-astra | high | 25,000 | Full tool set and selected domain profiles |
 | adversarial_claude | claude-opus-5-5 | xhigh | 64,000 | Same tools and profiles, via the configured proxy |
-| concurrency | gpt-6-luna | medium | 8,000 | Focused input and code tools |
+| concurrency, gui | gpt-6-luna | medium | 8,000 | Focused input and code tools |
 | dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |

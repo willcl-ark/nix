@@ -69,6 +69,10 @@ def domain_audits(paths):
     for path in paths:
         if BUILD.search(path):
             audits.add("build")
+        if path.endswith(".qml") or (
+            path.startswith("src/qt/") and path.endswith((".cpp", ".h", ".ui", ".ts"))
+        ):
+            audits.add("gui")
         if is_test_path(path):
             continue
         if CONCURRENCY.search(path):

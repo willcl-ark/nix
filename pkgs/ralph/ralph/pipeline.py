@@ -17,6 +17,7 @@ DISCOVERY_ORDER = (
     "script",
     "adversarial",
     "concurrency",
+    "gui",
     "state",
     "public_contract",
     "build",

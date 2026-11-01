@@ -16,6 +16,7 @@ STAGE_NAMES = (
     "adversarial_claude",
     "script",
     "concurrency",
+    "gui",
     "state",
     "public_contract",
     "tests",

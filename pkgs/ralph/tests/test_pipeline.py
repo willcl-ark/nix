@@ -143,6 +143,37 @@ class PipelineTests(unittest.TestCase):
             )
         )
 
+    def test_gui_audit_runs_and_passes_candidates_to_verification(self):
+        self.tier, self.audits = "standard", ["gui"]
+        stages = []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            stages.append(stage)
+            if stage == "gui":
+                return discovery([candidate()])
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            if stage == "verifier":
+                return verification(
+                    [
+                        {
+                            "candidate_ids": ["gui:1"],
+                            "disposition": "supported",
+                            "reason": "The changed interaction uses stale state.",
+                            "finding": self.published,
+                        }
+                    ]
+                )
+            return discovery()
+
+        self.run_review(review)
+        self.assertEqual(stages.count("gui"), 1)
+        self.assertEqual(len(self.result.findings), 1)
+        self.assertEqual(
+            self.debug["finding_attribution"][0]["candidate_ids"], ["gui:1"]
+        )
+
     def test_consensus_routing_selects_frozen_high_settings(self):
         for domains in ([], ["consensus"]):
             with self.subTest(domains=domains):

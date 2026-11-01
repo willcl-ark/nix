@@ -115,6 +115,15 @@ class StageConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requeue.*recapture"):
             saved.run(None, None)
 
+    def test_saved_configuration_before_gui_requires_recapture(self):
+        settings = engine.load().config
+        for name in ("profile", "high_profile"):
+            del settings[name]["stages"]["gui"]
+        del settings["prompts"]["audit_prompts"]["gui"]
+        saved = engine.load(config=settings, configured=True)
+        with self.assertRaisesRegex(ValueError, "requeue.*recapture"):
+            saved.run(None, None)
+
     def test_invalid_stage_override_fails_configuration(self):
         for stages, message in (
             ({"verifer": {}}, "Unknown review stage: verifer"),
