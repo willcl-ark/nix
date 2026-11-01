@@ -27,7 +27,7 @@ def truncate_message(text, limit=MESSAGE_LIMIT):
     )
 
 
-def review_message(repository_url, number, result):
+def review_message(repository_url, number, result, *, repository_id):
     run = result["run"]
     findings_export = trace.findings_export(result)
     findings = findings_export or []
@@ -48,7 +48,7 @@ def review_message(repository_url, number, result):
     else:
         marker = ""
     title = " ".join(run.get("pr_title", f"Pull request #{number}").split())
-    heading = f"{marker}PR #{number}: {title}"
+    heading = f"{marker}{repository_id}#{number}: {title}"
     links = (
         f"\n{repository_url.rstrip('/')}/pulls/{number}"
         f"\nRead full review: {run['report_url']}"

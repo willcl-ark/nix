@@ -57,6 +57,7 @@ class CommandTests(unittest.TestCase):
             self.root,
             self.root,
             "https://reports",
+            repositories={"core": {}, "gui": {}},
         )
 
     def messages(self):
@@ -71,19 +72,28 @@ class CommandTests(unittest.TestCase):
             return row[0] if row else None
 
     def test_high_request_is_durable_and_idempotent(self):
-        self.updates = [self.update(text="/high@RalphBot 42")]
+        self.updates = [self.update(text="/high@RalphBot gui 42")]
         self.assertEqual(self.poll(), 1)
         self.assertEqual(self.poll(), 0)
         with closing(self.store._connect()) as db:
             self.assertEqual(
-                db.execute("SELECT id, number FROM review_requests").fetchall(),
-                [(10, 42)],
+                db.execute(
+                    "SELECT id, repo_id, number FROM review_requests"
+                ).fetchall(),
+                [(10, "gui", 42)],
             )
         self.assertIn("high review", self.messages()["command:10"])
 
     def test_high_invalid_and_unauthorized_requests(self):
         for index, text in enumerate(
-            ("/high", "/high -1", "/high https://elsewhere/42", "/high 42 extra")
+            (
+                "/high",
+                "/high -1",
+                "/high https://elsewhere/42",
+                "/high 42 extra",
+                "/high missing 42",
+                "/high 42",
+            )
         ):
             self.updates = [self.update(10 + index, text=text)]
             self.poll()

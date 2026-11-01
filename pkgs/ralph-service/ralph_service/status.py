@@ -105,18 +105,20 @@ def _jobs(state_dir):
 
 
 def _job_status(db):
-    rows = list(db.execute("SELECT number, status FROM jobs ORDER BY id"))
+    rows = list(db.execute("SELECT repo_id, number, status FROM jobs ORDER BY id"))
     counts = Counter(row["status"] for row in rows)
-    lines = ["Reviews"]
+    lines = ["Reviews, all repositories"]
     for key, label in (
         ("running", "Running"),
         ("pending", "Queued PRs"),
         ("retry", "Retrying PRs"),
     ):
-        numbers = sorted({row["number"] for row in rows if row["status"] == key})
+        numbers = sorted(
+            {(row["repo_id"], row["number"]) for row in rows if row["status"] == key}
+        )
         if key != "running" and not numbers:
             continue
-        displayed = ", ".join(f"#{number}" for number in numbers[:20])
+        displayed = ", ".join(f"{repo_id}#{number}" for repo_id, number in numbers[:20])
         if len(numbers) > 20:
             displayed += f", … ({len(numbers):,} total)"
         lines.append(f"{label}: {displayed or 'none'}")

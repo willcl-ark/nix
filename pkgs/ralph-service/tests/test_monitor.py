@@ -25,20 +25,21 @@ class MonitorTests(unittest.TestCase):
         with closing(sqlite3.connect(self.jobs_path)) as db, db:
             db.execute(
                 "CREATE TABLE jobs (id INTEGER PRIMARY KEY, generation INTEGER, "
-                "number INTEGER, status TEXT, review_result TEXT, head TEXT)"
+                "number INTEGER, status TEXT, review_result TEXT, head TEXT, repo_id TEXT)"
             )
         self.store = monitor.NotificationStore(self.root / "telegram.sqlite3")
         self.day = timestamp("2026-10-26T12:00:00")
 
-    def job(self, job_id, status, *, result=None):
+    def job(self, job_id, status, *, result=None, repo_id="core"):
         with closing(sqlite3.connect(self.jobs_path)) as db, db:
             db.execute(
-                "INSERT OR REPLACE INTO jobs VALUES (?, 1, ?, ?, ?, 'abc')",
+                "INSERT OR REPLACE INTO jobs VALUES (?, 1, ?, ?, ?, 'abc', ?)",
                 (
                     job_id,
                     job_id + 100,
                     status,
                     json.dumps(result) if result else None,
+                    repo_id,
                 ),
             )
 
@@ -46,7 +47,16 @@ class MonitorTests(unittest.TestCase):
         self.store.observe(
             self.root,
             "https://reports.example",
-            "https://forge.example/repo",
+            {
+                "core": {
+                    "repository": "owner/core",
+                    "repository_url": "https://forge.example/repo",
+                },
+                "gui": {
+                    "repository": "owner/gui",
+                    "repository_url": "https://forge.example/gui",
+                },
+            },
             report_dir=self.root / "reports",
             now=self.day if now is None else now,
         )
@@ -70,8 +80,56 @@ class MonitorTests(unittest.TestCase):
         ) as render:
             self.observe()
             self.observe()
-        render.assert_called_once_with("https://forge.example/repo", 101, result)
+        render.assert_called_once_with(
+            "https://forge.example/repo", 101, result, repository_id="core"
+        )
         self.assertEqual(self.messages(), {"review:1:1": "Review post"})
+
+    def test_same_number_notifications_use_their_repository(self):
+        self.observe()
+        result = {
+            "run": {"pr_title": "Change", "report_url": "https://reports/review.html"}
+        }
+        self.job(1, "complete", result=result)
+        self.job(2, "complete", result=result, repo_id="gui")
+        with closing(sqlite3.connect(self.jobs_path)) as db, db:
+            db.execute("UPDATE jobs SET number = 42")
+        self.observe()
+        messages = self.messages()
+        self.assertIn("core#42", messages["review:1:1"])
+        self.assertIn("https://forge.example/repo/pulls/42", messages["review:1:1"])
+        self.assertIn("gui#42", messages["review:2:1"])
+        self.assertIn("https://forge.example/gui/pulls/42", messages["review:2:1"])
+
+    def test_legacy_requests_require_explicit_migration_and_keep_offsets(self):
+        path = self.root / "legacy.sqlite3"
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute(
+                "CREATE TABLE review_requests (id INTEGER PRIMARY KEY, number INTEGER NOT NULL, processed INTEGER NOT NULL DEFAULT 0)"
+            )
+            db.execute("INSERT INTO review_requests VALUES (7, 42, 0)")
+            db.execute(
+                "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            db.execute("INSERT INTO metadata VALUES ('update_offset', '8')")
+        with self.assertRaisesRegex(RuntimeError, "repository migration"):
+            monitor.NotificationStore(path)
+        self.assertTrue(monitor.migrate_notification_repositories(path))
+        self.assertFalse(monitor.migrate_notification_repositories(path))
+        store = monitor.NotificationStore(path)
+        with closing(store._connect()) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT id, repo_id, number, processed FROM review_requests"
+                ).fetchall(),
+                [(7, "core", 42, 0)],
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM metadata WHERE key = 'update_offset'"
+                ).fetchone(),
+                ("8",),
+            )
 
     def test_outbox_is_idempotent_and_retries_with_rate_limit(self):
         with closing(sqlite3.connect(self.store.path)) as db, db:

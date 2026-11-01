@@ -11,13 +11,36 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
-from . import commands, report, telegram
+from . import commands, config, report, telegram
 
 LOGGER = logging.getLogger(__name__)
 
 
 def _readonly(path):
     return sqlite3.connect(f"file:{quote(str(path), safe='/:')}?mode=ro", uri=True)
+
+
+def migrate_notification_repositories(path, legacy_repo_id="core"):
+    """Bind existing durable commands to their original repository while stopped."""
+    path = Path(path)
+    if not path.exists():
+        return False
+    with closing(sqlite3.connect(path)) as db, db:
+        if "repo_id" in {
+            row[1] for row in db.execute("PRAGMA table_info(review_requests)")
+        }:
+            return False
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("ALTER TABLE review_requests RENAME TO legacy_review_requests")
+        db.execute(
+            "CREATE TABLE review_requests (id INTEGER PRIMARY KEY, repo_id TEXT NOT NULL, number INTEGER NOT NULL, processed INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execute(
+            "INSERT INTO review_requests SELECT id, ?, number, processed FROM legacy_review_requests",
+            (legacy_repo_id,),
+        )
+        db.execute("DROP TABLE legacy_review_requests")
+    return True
 
 
 class NotificationStore:
@@ -40,26 +63,32 @@ class NotificationStore:
                     PRIMARY KEY (id, generation, status)
                 );
                 CREATE TABLE IF NOT EXISTS review_requests (
-                    id INTEGER PRIMARY KEY, number INTEGER NOT NULL,
+                    id INTEGER PRIMARY KEY, repo_id TEXT NOT NULL, number INTEGER NOT NULL,
                     processed INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL
                 );
             """)
+            if "repo_id" not in {
+                row[1] for row in db.execute("PRAGMA table_info(review_requests)")
+            }:
+                raise RuntimeError(
+                    "notification database needs explicit repository migration"
+                )
 
     def _connect(self):
         return sqlite3.connect(self.path, timeout=30)
 
     def observe(
-        self, state_dir, report_base_url, repository_url, *, report_dir=None, now=None
+        self, state_dir, report_base_url, repositories, *, report_dir=None, now=None
     ):
         """Observe jobs and enqueue alerts in one transaction, without changing jobs."""
         now = time.time() if now is None else now
         period_day = (datetime.fromtimestamp(now, UTC) - timedelta(hours=21)).date()
         with closing(_readonly(Path(state_dir) / "jobs.sqlite3")) as jobs:
             rows = jobs.execute(
-                "SELECT id, generation, number, status, review_result, head FROM jobs ORDER BY id"
+                "SELECT id, generation, number, status, review_result, head, repo_id FROM jobs ORDER BY id"
             ).fetchall()
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -67,7 +96,11 @@ class NotificationStore:
                 "SELECT value FROM metadata WHERE key = 'period_day'"
             ).fetchone()
             failed = []
-            for job_id, generation, number, status, raw_result, head in rows:
+            for job_id, generation, number, status, raw_result, head, repo_id in rows:
+                if repo_id not in repositories:
+                    continue
+                repository = repositories[repo_id]
+                repository_url = repository["repository_url"]
                 old = db.execute(
                     "SELECT status FROM observed_jobs WHERE id = ? AND generation = ?",
                     (job_id, generation),
@@ -85,7 +118,9 @@ class NotificationStore:
                         (job_id, generation, status, str(period_day)),
                     )
                     if status == "failed":
-                        failed.append((job_id, generation, number))
+                        failed.append(
+                            (job_id, generation, number, repo_id, repository_url)
+                        )
                     elif raw_result is not None:
                         result = json.loads(raw_result)
                         if not result.get("run", {}).get("report_url"):
@@ -95,6 +130,9 @@ class NotificationStore:
                                     number,
                                     result,
                                     f"{number}-{head}-{job_id}-{generation}",
+                                    repository_id=repo_id,
+                                    repository=repository["repository"],
+                                    repository_url=repository_url,
                                 )
                             except (OSError, ValueError, TypeError):
                                 LOGGER.warning(
@@ -108,7 +146,12 @@ class NotificationStore:
                             "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
                             (
                                 f"review:{job_id}:{generation}",
-                                telegram.review_message(repository_url, number, result),
+                                telegram.review_message(
+                                    repository_url,
+                                    number,
+                                    result,
+                                    repository_id=repo_id,
+                                ),
                             ),
                         )
                 db.execute(
@@ -116,10 +159,10 @@ class NotificationStore:
                     (job_id, generation, status),
                 )
             if failed:
-                key = "failures:" + ",".join(f"{j}:{g}" for j, g, _ in failed)
+                key = "failures:" + ",".join(f"{j}:{g}" for j, g, *_ in failed)
                 db.execute(
                     "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
-                    (key, _failure_message(failed, repository_url)),
+                    (key, _failure_message(failed)),
                 )
             if previous and previous[0] < str(period_day):
                 completed_day = period_day - timedelta(days=1)
@@ -132,7 +175,7 @@ class NotificationStore:
                 pending = sum(row[3] in {"pending", "retry"} for row in rows)
                 running = sum(row[3] == "running" for row in rows)
                 text = (
-                    f"Ralph daily digest: {completed_day} 21:00 to {period_day} 21:00 UTC\n"
+                    f"Ralph daily digest, all repositories: {completed_day} 21:00 to {period_day} 21:00 UTC\n"
                     f"Reviews completed: {counts.get('complete', 0)}\n"
                     f"Terminal failures: {counts.get('failed', 0)}\n"
                     f"Queue now: {pending} pending, {running} running\n"
@@ -185,10 +228,10 @@ class NotificationStore:
                 db.execute("UPDATE outbox SET sent = 1 WHERE key = ?", (row[0],))
 
 
-def _failure_message(failed, repository_url):
+def _failure_message(failed):
     text = f"Ralph: {len(failed)} terminal review failure(s)\n"
-    for index, (_, _, number) in enumerate(failed):
-        line = f"\nPR #{number}: {repository_url.rstrip('/')}/pulls/{number}"
+    for index, (_, _, number, repo_id, repository_url) in enumerate(failed):
+        line = f"\n{repo_id}#{number}: {repository_url.rstrip('/')}/pulls/{number}"
         remainder = f"\n…and {len(failed) - index} more."
         if telegram.message_length(text + line + remainder) > 4096:
             return text + remainder
@@ -207,7 +250,7 @@ def run_monitor(
     state_dir,
     report_dir,
     report_base_url,
-    repository_url,
+    repositories,
     token,
     chat_id,
     stop_event=None,
@@ -228,7 +271,7 @@ def run_monitor(
         if time.monotonic() >= next_scan:
             try:
                 store.observe(
-                    state_dir, report_base_url, repository_url, report_dir=report_dir
+                    state_dir, report_base_url, repositories, report_dir=report_dir
                 )
             except (OSError, sqlite3.Error):
                 LOGGER.warning("Telegram monitor could not read state; will retry")
@@ -249,6 +292,7 @@ def run_monitor(
                 report_dir,
                 report_base_url,
                 timeout=max(1, min(20, int(next_scan - time.monotonic()))),
+                repositories=repositories,
             )
             for _ in range(replies):
                 store.deliver(token, chat_id, commands_only=True)
@@ -268,7 +312,7 @@ def main():
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--report-dir", type=Path, required=True)
     parser.add_argument("--report-base-url", required=True)
-    parser.add_argument("--repository-url", required=True)
+    parser.add_argument("--repositories", type=Path, required=True)
     parser.add_argument("--telegram-token-file", type=Path, required=True)
     parser.add_argument("--telegram-chat-id", required=True)
     args = parser.parse_args()
@@ -284,7 +328,7 @@ def main():
         args.state_dir,
         args.report_dir,
         args.report_base_url.rstrip("/"),
-        args.repository_url.rstrip("/"),
+        config.load_repositories(args.repositories),
         token,
         args.telegram_chat_id,
     )

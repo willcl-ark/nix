@@ -19,7 +19,9 @@ class TelegramTests(unittest.TestCase):
         }
 
     def render(self, result):
-        return telegram.review_message("https://forge.example/owner/repo", 42, result)
+        return telegram.review_message(
+            "https://forge.example/owner/repo", 42, result, repository_id="gui"
+        )
 
     def test_unicode_limit_and_oversized_title_keep_links(self):
         self.assertEqual(telegram.message_length("🚨"), 2)
@@ -72,7 +74,7 @@ class TelegramTests(unittest.TestCase):
         )
         self.assertEqual(
             self.render(result),
-            "PR #42: Fix <handling> & parsing\n"
+            "gui#42: Fix <handling> & parsing\n"
             "Current findings: Major: 0 · Minor: 0 · Suggestions: 1\n"
             "https://forge.example/owner/repo/pulls/42\n"
             "Read full review: https://reports.example/42.html",

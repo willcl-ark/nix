@@ -58,6 +58,8 @@ def poll_commands(
     report_dir,
     report_base_url,
     timeout=20,
+    *,
+    repositories,
 ):
     """Queue replies and acknowledge a fetched batch in one transaction."""
     with closing(store._connect()) as db:
@@ -89,15 +91,18 @@ def poll_commands(
             if command:
                 if isinstance(command, tuple):
                     argument = command[1]
-                    if re.fullmatch(r"[1-9][0-9]{0,9}", argument):
-                        number = int(argument)
+                    match = re.fullmatch(
+                        r"([a-z][a-z0-9_-]*) ([1-9][0-9]{0,9})", argument
+                    )
+                    if match and match[1] in repositories:
+                        repo_id, number = match[1], int(match[2])
                         db.execute(
-                            "INSERT OR IGNORE INTO review_requests (id, number) VALUES (?, ?)",
-                            (update["update_id"], number),
+                            "INSERT OR IGNORE INTO review_requests (id, repo_id, number) VALUES (?, ?, ?)",
+                            (update["update_id"], repo_id, number),
                         )
-                        text = f"Requested a fresh high review of PR #{number}."
+                        text = f"Requested a fresh high review of {repo_id}#{number}."
                     else:
-                        text = "Usage: /high <PR number>"
+                        text = "Usage: /high <repository> <PR number>"
                 elif command == "/status":
                     from . import status
 
@@ -106,9 +111,11 @@ def poll_commands(
                     text = (
                         "Ralph commands\n"
                         "/status - Service health, review results and usage\n"
-                        "/high <PR number> - Request a fresh high review\n"
+                        "/high <repository> <PR number> - Request a fresh high review\n"
                         "/help - Show these commands\n"
-                        "Post commands in this channel as an administrator."
+                        "Post commands in this channel as an administrator.\n"
+                        + "Repositories: "
+                        + ", ".join(sorted(repositories))
                     )
                 replies += db.execute(
                     "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
