@@ -249,7 +249,7 @@ def assess_job(
 
 
 def _review_id(job):
-    return f"repo:{job['repo_id']}:pr:{job['number']}:{job['id']}:{job['generation']}"
+    return f"pr:{job['repo_id']}:{job['number']}:{job['id']}:{job['generation']}"
 
 
 def run_once(

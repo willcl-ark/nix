@@ -696,7 +696,7 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
             )
             message = f"Queued high review of {bot_config.repo_id}#{number}."
         except ValueError as exc:
-            message = f"Could not queue high review of PR #{number}: {exc}."
+            message = f"Could not queue high review of {bot_config.repo_id}#{number}: {exc}."
         except urllib.error.HTTPError as exc:
             if exc.code not in {404, 422}:
                 logging.warning(
@@ -705,7 +705,7 @@ def consume_review_requests(store, jobs, bot_config, token, high_engine):
                     exc.code,
                 )
                 continue
-            message = f"Could not find PR #{number}."
+            message = f"Could not find {bot_config.repo_id}#{number}."
         except (OSError, urllib.error.URLError, sqlite3.Error):
             logging.exception(
                 "Could not queue Telegram review of PR %d; will retry", number
