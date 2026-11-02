@@ -1443,6 +1443,7 @@ nav a { display: flex; align-items: center; gap: .8rem; text-decoration: none; c
 nav svg { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 nav a:hover { background: var(--raised); color: var(--text); }
 nav a[aria-current] { background: var(--raised); color: var(--accent); border-color: var(--border); }
+nav[aria-label="Repositories"] { margin-bottom: 1.5rem; }
 .sidebar-tools { margin-top: auto; padding: 2rem .5rem 0; display: grid; gap: .8rem; font-size: .8rem; }
 .sidebar-tools a { color: var(--muted); text-decoration: none; }
 main { max-width: 112rem; margin-left: 14rem; padding: 2.5rem clamp(1rem, 3vw, 3.5rem) 3rem; }
@@ -1722,18 +1723,24 @@ def _header(summary, page_prefix="", active="Overview"):
         key: value.get("repository", key)
         for key, value in (summary.get("repositories") or {}).items()
     }
-    scope_links = _link(scope_root + "index.html", "All repositories")
-    for key, name in scopes.items():
-        scope_links += " · " + _link(
-            scope_root + "repos/" + quote(key, safe="") + "/index.html", name
-        )
-    scope_label = summary.get("repository") or scope or "All repositories"
+    scope_links = "".join(
+        f'<a href="{_escape(scope_root + path)}"'
+        + (' aria-current="true"' if key == scope else "")
+        + f">{_escape(name)}</a>"
+        for key, path, name in [
+            (None, "index.html", "All repositories"),
+            *(
+                (key, "repos/" + quote(key, safe="") + "/index.html", name)
+                for key, name in scopes.items()
+            ),
+        ]
+    )
     preview = _field(summary, "preview_notice", "")
     return (
         '<header><div class="header-top">'
         + f'<a class="brand" href="{page_prefix}reviews/"><span class="brand-mark" aria-hidden="true">r.</span>'
         + "<span>ralph<small>Review statistics</small></span></a></div>"
-        + f'<p class="statistics-scope">{_escape(scope_label)}</p><nav aria-label="Repositories">{scope_links}</nav>'
+        + f'<div class="nav-label">Repositories</div><nav aria-label="Repositories">{scope_links}</nav>'
         + (f'<p class="preview">{_escape(preview)}</p>' if preview else "")
         + '<div class="nav-label">Workspace</div><nav aria-label="Statistics">'
         + nav
