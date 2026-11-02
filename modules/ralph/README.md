@@ -803,14 +803,16 @@ still run. One repository's publication mode does not enable another's.
 `major` findings, using judge-approved wording, plus a full-report link. A
 later review updates that comment; a complete review deletes it when no Critical
 or Major findings remain. Failed or skipped reviews and engines without a
-findings export leave it alone.
+findings export leave it alone. Forgejo also receives the full review comment.
 
-`"full"` uses the same review summary as Forgejo, including findings across
+`"full"` publishes the review summary only on GitHub, including findings across
 severities, verified design assessments, coverage notices and the
 no-actionable-issues message when appropriate. Source and commit links point to
 GitHub. Both modes show at most six findings and link to the full report for
 additional findings and details. They update the same bot comment rather than
-posting inline reviews or approvals.
+posting inline reviews or approvals. In full mode, Ralph does not create or
+update a native Forgejo comment, even if GitHub publication fails. Existing
+native Forgejo comments remain; a mirror may import the GitHub comment.
 
 Writes require an open, non-draft upstream PR matching the reviewed head and base
 branch. Title, body and label edits do not cancel a running review or block its

@@ -155,7 +155,7 @@ in
                 "full"
               ];
               default = "off";
-              description = "GitHub comment policy for this repository: disabled, verified Critical and Major findings only, or the full review summary.";
+              description = "Publication destinations: off posts only to Forgejo; major-only also posts verified Critical and Major findings to GitHub; full posts the full review summary only to GitHub.";
             };
 
             githubTokenFile = lib.mkOption {

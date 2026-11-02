@@ -270,7 +270,7 @@ def process_job(
                     raise model.StaleReview("PR head changed")
                 comment = (
                     None
-                    if force
+                    if force or github_publication == "full"
                     else forgejo.find_comment(
                         bot_config, forgejo_token, number, bot_login
                     )
@@ -504,7 +504,8 @@ def process_job(
                     outcome = "superseded"
                     return outcome
             if (
-                not forgejo_delivery.has_intent()
+                github_publication != "full"
+                and not forgejo_delivery.has_intent()
                 and engine_identity["name"] == "current"
                 and not saved["run"].get("skipped")
             ):
@@ -527,23 +528,25 @@ def process_job(
                     report_url=saved["run"].get("report_url"),
                     head_sha=head_sha,
                 )
-            stage = "publish"
-            result = forgejo.publish_review(
-                bot_config,
-                forgejo_token,
-                number,
-                bot_login,
-                base_sha,
-                head_sha,
-                content,
-                source_base_sha=result_record["merge_base"],
-                engine_identity=engine_identity,
-                report_url=result_record["run"].get("report_url"),
-                review_fingerprint=review_fingerprint,
-                expected_context=expected_context,
-                is_current=lambda: jobs.is_current(job),
-                delivery=forgejo_delivery,
-            )
+            result = "unchanged"
+            if github_publication != "full":
+                stage = "publish"
+                result = forgejo.publish_review(
+                    bot_config,
+                    forgejo_token,
+                    number,
+                    bot_login,
+                    base_sha,
+                    head_sha,
+                    content,
+                    source_base_sha=result_record["merge_base"],
+                    engine_identity=engine_identity,
+                    report_url=result_record["run"].get("report_url"),
+                    review_fingerprint=review_fingerprint,
+                    expected_context=expected_context,
+                    is_current=lambda: jobs.is_current(job),
+                    delivery=forgejo_delivery,
+                )
             if result == "stale":
                 if jobs.is_current(job):
                     reconcile_stale_review(
@@ -567,6 +570,8 @@ def process_job(
                         is_current=lambda: jobs.is_current(job),
                         delivery=github_delivery,
                     )
+                    if github_publication == "full":
+                        result = github_result
                     if github_result == "stale":
                         raise model.StaleReview("PR changed before GitHub publication")
                 jobs.complete(job)

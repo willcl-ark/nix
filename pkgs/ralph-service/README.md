@@ -227,11 +227,14 @@ not undo published comments or recorded model requests.
 Repository registry fields `github_repository` and `github_token_file` enable
 authenticated upstream metadata reads independently of posting.
 `github_publication = "major-only"` maintains one upstream GitHub comment with
-`critical` and `major` findings and a public report link. `"full"` uses the Forgejo
-review summary, including other finding severities, verified design assessments,
-coverage notices and the no-actionable-issues message when appropriate. Source
+`critical` and `major` findings and a public report link, alongside the native
+Forgejo review. `"full"` publishes only on GitHub, including other finding
+severities, verified design assessments, coverage notices and the
+no-actionable-issues message when appropriate. Source
 links point to GitHub. Both modes use a six-finding limit; the full report retains
-the rest. Posting requires public report configuration and credentials.
+the rest. Full mode leaves existing native Forgejo comments untouched and does
+not fall back to Forgejo if GitHub publication fails. Posting requires public
+report configuration and credentials.
 Later reviews update the same comment. In major-only mode, a complete review can
 delete it when no Critical or Major findings remain; incomplete reviews cannot
 delete the comment. Failed or skipped reviews do not post in either mode.
@@ -239,8 +242,9 @@ delete the comment. Failed or skipped reviews do not post in either mode.
 existing exact delivery intents are preserved until reconciled. The old
 `github_post_major_findings` boolean is rejected; replace it with the new mode.
 Upstream PR numbers must match the mirror. Writes require an open, non-draft upstream PR
-matching the reviewed head, base branch and review context. GitHub credentials
-are separate from Forgejo credentials and model tools.
+matching the reviewed head and base branch. Metadata edits do not block
+publication. GitHub credentials are separate from Forgejo credentials and model
+tools.
 
 Run `ralph-telegram` separately from the review daemon with `--state-dir`,
 `--report-dir`, `--report-base-url`, `--repositories /path/to/repositories.json`,

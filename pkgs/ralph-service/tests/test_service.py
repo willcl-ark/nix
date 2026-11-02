@@ -300,9 +300,7 @@ class ServiceTests(unittest.TestCase):
             self.assertLogs(level="ERROR"),
         ):
             self.assertEqual(
-                self.process(
-                    job, github_token="token", github_publication="major-only"
-                ),
+                self.process(job, github_token="token", github_publication="full"),
                 "retry",
             )
         run.assert_not_called()
@@ -331,13 +329,11 @@ class ServiceTests(unittest.TestCase):
             ),
         ):
             self.assertEqual(
-                self.process(
-                    job, github_token="token", github_publication="major-only"
-                ),
+                self.process(job, github_token="token", github_publication="full"),
                 "unchanged",
             )
         run.assert_not_called()
-        publish.assert_called_once()
+        publish.assert_not_called()
         self.assertEqual(delivery.held(self.jobs), [])
 
     def test_publication_retry_reuses_saved_result(self):
@@ -537,6 +533,72 @@ class ServiceTests(unittest.TestCase):
             is_current=ANY,
             delivery=ANY,
         )
+
+    def test_full_github_review_does_not_use_old_forgejo_comment(self):
+        self.bot_config = replace(self.bot_config, github_repository="owner/repo")
+        job = self.enqueue()
+        result = self.saved_result()
+        result["diff_base_sha"] = result["merge_base"]
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "find_comment") as find,
+            patch.object(
+                repository,
+                "collect_review",
+                return_value=("b" * 40, "a" * 40, "input", None),
+            ),
+            patch.object(
+                local_repository,
+                "snapshot_repository",
+                return_value=SimpleNamespace(merge_base="c" * 40),
+            ),
+            patch.object(service, "collect_review_feedback", return_value=None),
+            patch.object(service.runner, "run_review", return_value=result) as review,
+            patch.object(forgejo, "publish_review") as forgejo_publish,
+            patch.object(service.github, "publish_review", return_value="updated"),
+        ):
+            self.assertEqual(
+                self.process(
+                    job, github_token="write-token", github_publication="full"
+                ),
+                "updated",
+            )
+        find.assert_not_called()
+        review.assert_called_once()
+        forgejo_publish.assert_not_called()
+
+    def test_full_github_publication_omits_forgejo_and_keeps_report(self):
+        self.bot_config = replace(
+            self.bot_config,
+            github_repository="owner/repo",
+            report_dir=self.state_dir / "public",
+            report_base_url="https://review.example.org/traces",
+        )
+        job = self.enqueue()
+        job["review_result"] = self.saved_result()
+        self.jobs.save_result(job, job["review_result"])
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "publish_review") as forgejo_publish,
+            patch.object(
+                service.github, "publish_review", return_value="created"
+            ) as publish,
+            patch.object(
+                service.runner, "run_review", side_effect=AssertionError("paid rerun")
+            ),
+        ):
+            self.assertEqual(
+                self.process(
+                    job, github_token="write-token", github_publication="full"
+                ),
+                "created",
+            )
+        forgejo_publish.assert_not_called()
+        publish.assert_called_once()
+        self.assertEqual(publish.call_args.kwargs["publication"], "full")
+        self.assertEqual(len(list(self.bot_config.report_dir.glob("*.json"))), 1)
+        self.assertIsNotNone(self.jobs.latest_completed_result(42))
+        self.assertIsNone(self.jobs.claim())
 
     def test_mirror_comment_is_bounded_and_report_keeps_all_findings(self):
         self.bot_config = replace(
