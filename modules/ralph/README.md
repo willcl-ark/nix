@@ -812,9 +812,12 @@ GitHub. Both modes show at most six findings and link to the full report for
 additional findings and details. They update the same bot comment rather than
 posting inline reviews or approvals.
 
-Writes require an open, non-draft upstream PR matching the reviewed head, base
-branch, title, body and labels. The Forgejo comment is unchanged. Publication
-failures use the saved-result retry queue without repeating the model review.
+Writes require an open, non-draft upstream PR matching the reviewed head and base
+branch. Title, body and label edits do not cancel a running review or block its
+publication on either Forgejo or GitHub. The report retains the metadata used
+during review. A stale GitHub head or target branch marks the job stale instead
+of reporting successful publication. Publication failures use the saved-result
+retry queue without repeating the model review.
 Selected findings must record `verified_by = "verifier"` and
 `judged_by = "judge"`; missing approval leaves the GitHub comment alone. Changing
 publication mode does not schedule a new review of an unchanged head. No database

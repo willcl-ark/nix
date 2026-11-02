@@ -738,7 +738,8 @@ def publish_review(
     # Check as close as possible to publication, after paginating old comments.
     if (
         expected_context is not None
-        and pull_request_context(bot_config, token, number) != expected_context
+        and pull_request_context(bot_config, token, number)["base_ref"]
+        != expected_context["base_ref"]
     ):
         return "stale"
     if current_head(bot_config, number) != head_sha:

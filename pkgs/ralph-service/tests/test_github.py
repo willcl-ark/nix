@@ -475,15 +475,26 @@ class GitHubTests(unittest.TestCase):
         self.assertIn("remain unresolved", body)
         self.assertNotIn("Edited title", body)
 
+    def test_metadata_edits_do_not_block_current_head_publication(self):
+        pull = self.pull(
+            title="Edited title",
+            body="Edited description",
+            labels=[{"name": "backport"}],
+        )
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[{"id": 7}, [], pull, pull, {}],
+        ) as request:
+            self.assertEqual(self.publish(self.result()), "created")
+        self.assertEqual(request.call_args.args[2], "POST")
+
     def test_stale_or_closed_upstream_does_not_post(self):
         for pull in (
             {"state": "open", "head": {"sha": "b" * 40}},
             {"state": "closed", "head": {"sha": "a" * 40}},
             self.pull(draft=True),
             self.pull(base={"ref": "other", "repo": {"full_name": "owner/repo"}}),
-            self.pull(title="Changed after mirror sync"),
-            self.pull(body="Changed instructions"),
-            self.pull(labels=[{"name": "backport"}]),
             self.pull(base={"ref": "qt6", "repo": {"full_name": "other/repo"}}),
         ):
             with patch.object(

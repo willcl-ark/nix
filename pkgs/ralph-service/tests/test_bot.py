@@ -115,6 +115,43 @@ class BotTests(unittest.TestCase):
             )
         request.assert_not_called()
 
+    def test_same_head_metadata_edits_allow_publication(self):
+        context = {"title": "Title", "body": "", "labels": [], "base_ref": "master"}
+        with (
+            patch.object(forgejo, "find_comment", return_value=None),
+            patch.object(
+                forgejo,
+                "pull_request_context",
+                return_value={
+                    **context,
+                    "title": "Edited title",
+                    "body": "Edited description",
+                    "labels": ["backport"],
+                },
+            ),
+            patch.object(forgejo, "current_head", return_value="a" * 40),
+            patch.object(
+                forgejo, "forgejo_request", return_value={"user": {"login": "ralph"}}
+            ) as request,
+        ):
+            self.assertEqual(
+                forgejo.publish_review(
+                    self.bot_config,
+                    "token",
+                    42,
+                    "ralph",
+                    "b" * 40,
+                    "a" * 40,
+                    "Review",
+                    source_base_sha="c" * 40,
+                    expected_context=context,
+                    is_current=lambda: True,
+                    delivery=self.session(),
+                ),
+                "created",
+            )
+        self.assertEqual(request.call_args.args[3], "POST")
+
     def test_concurrent_review_refs_preserve_pinned_snapshots(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

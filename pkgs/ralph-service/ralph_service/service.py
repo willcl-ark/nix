@@ -241,8 +241,10 @@ def process_job(
             and repository.current_head(bot_config, number) == expected_head
             and (
                 expected_context is None
-                or forgejo.pull_request_context(bot_config, forgejo_token, number)
-                == expected_context
+                or forgejo.pull_request_context(bot_config, forgejo_token, number)[
+                    "base_ref"
+                ]
+                == expected_context["base_ref"]
             )
         )
 
@@ -555,7 +557,7 @@ def process_job(
                             "PR head changed before GitHub publication"
                         )
                     stage = "github"
-                    github.publish_review(
+                    github_result = github.publish_review(
                         bot_config.github_repository,
                         github_token,
                         number,
@@ -565,6 +567,8 @@ def process_job(
                         is_current=lambda: jobs.is_current(job),
                         delivery=github_delivery,
                     )
+                    if github_result == "stale":
+                        raise model.StaleReview("PR changed before GitHub publication")
                 jobs.complete(job)
             outcome = result
             return outcome

@@ -416,12 +416,12 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(publish.call_args.kwargs["source_base_sha"], "c" * 40)
         self.assertIsNone(restarted.claim())
 
-    def test_saved_review_with_changed_labels_is_not_published_or_rerun(self):
+    def test_saved_review_with_changed_metadata_is_published_without_rerun(self):
         job = self.enqueue()
         result = self.saved_result()
         result["run"]["review_context"] = {
-            "title": "Title",
-            "body": "Description",
+            "title": "Old title",
+            "body": "Old description",
             "labels": ["Backport"],
             "base_ref": "master",
         }
@@ -430,11 +430,11 @@ class ServiceTests(unittest.TestCase):
         with (
             patch.object(repository, "current_head", return_value="a" * 40),
             patch.object(service.runner, "run_review") as run,
-            patch.object(forgejo, "publish_review") as publish,
+            patch.object(forgejo, "publish_review", return_value="updated") as publish,
         ):
-            self.assertEqual(self.process(job), "stale")
+            self.assertEqual(self.process(job), "updated")
         run.assert_not_called()
-        publish.assert_not_called()
+        publish.assert_called_once()
         self.assertIsNone(self.jobs.claim())
 
     def test_saved_review_without_target_identity_requires_recapture(self):
@@ -603,6 +603,26 @@ class ServiceTests(unittest.TestCase):
                 "stale",
             )
         publish.assert_not_called()
+
+    def test_stale_github_publication_does_not_complete_review(self):
+        self.bot_config = replace(self.bot_config, github_repository="owner/repo")
+        job = self.enqueue()
+        job["review_result"] = self.saved_result()
+        self.jobs.save_result(job, job["review_result"])
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "publish_review", return_value="updated"),
+            patch.object(service.github, "publish_review", return_value="stale"),
+        ):
+            self.assertEqual(
+                self.process(
+                    job, github_token="write-token", github_publication="full"
+                ),
+                "stale",
+            )
+        self.assertIsNone(self.jobs.latest_completed_result(42))
+        self.assertIsNotNone(self.jobs.claim_reconciliation())
+        self.assertFalse(self.jobs.is_current(job))
 
     def test_stale_review_keeps_newer_pending_head(self):
         old = self.enqueue()

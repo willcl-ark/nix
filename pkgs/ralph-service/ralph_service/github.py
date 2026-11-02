@@ -127,15 +127,9 @@ def publish_review(
     def publication_current():
         if not is_current():
             return False
-        # Read upstream immediately before dispatch. A mirror may lag a retarget,
-        # metadata edit, draft conversion, push or close.
+        # Metadata edits do not invalidate a review of the current head.
+        # Recheck upstream immediately before dispatch in case the mirror lags.
         pull = github_request(token, f"{base}/pulls/{number}")
-        context = {
-            "base_ref": pull.get("base", {}).get("ref"),
-            "title": pull.get("title"),
-            "body": pull.get("body") or "",
-            "labels": sorted({label["name"] for label in pull.get("labels", [])}),
-        }
         return (
             pull.get("number") == number
             and pull.get("state") == "open"
@@ -143,7 +137,7 @@ def publish_review(
             and pull.get("head", {}).get("sha") == result["head_sha"]
             and pull.get("base", {}).get("repo", {}).get("full_name") == repository
             and expected_context is not None
-            and context == expected_context
+            and pull.get("base", {}).get("ref") == expected_context["base_ref"]
             and is_current()
         )
 
