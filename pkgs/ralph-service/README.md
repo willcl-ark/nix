@@ -82,8 +82,9 @@ tools; if the PR prelude and manifest still exceed 200,000 bytes, review is skip
 
 Review outcome and delivery status are separate. A failed verifier marks the
 review as failed in its saved result, public report, logs and statistics. The
-service still delivers verified findings and review history, then completes the
-queue job so publication retries do not run the models again. A failed review
+service publishes an attempt status in full GitHub mode, or the Forgejo review
+and history in other modes, then completes the queue job so publication retries
+do not run the models again. A failed review
 cannot create, update or delete the upstream GitHub major-findings comment.
 Public stage diagnostics include the bounded, redacted provider error message
 and HTTP status, without response bodies or headers.
@@ -237,7 +238,13 @@ not fall back to Forgejo if GitHub publication fails. Posting requires public
 report configuration and credentials.
 Later reviews update the same comment. In major-only mode, a complete review can
 delete it when no Critical or Major findings remain; incomplete reviews cannot
-delete the comment. Failed or skipped reviews do not post in either mode.
+delete the comment. Failed or skipped reviews leave the major-only comment alone.
+In full mode, failed, skipped, unavailable-export and unverified attempts update
+the same comment with status, attempted head, a fixed safe reason, the attempt
+report, and the previous completed review when available. No findings appear in
+these status comments. Terminal acquisition failures use the same saved-result
+publication path; transient errors retry before publishing failure. Publication
+transport errors never replace a completed review with a failure status.
 `"off"` leaves existing comments untouched. No database migration is needed;
 existing exact delivery intents are preserved until reconciled. The old
 `github_post_major_findings` boolean is rejected; replace it with the new mode.

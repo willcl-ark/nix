@@ -222,6 +222,7 @@ def process_job(
     stage = "precheck"
     outcome = "failed"
     failure = None
+    resumed_failure = False
     runtime = None
     run_status = "failed"
     base_sha = None
@@ -595,6 +596,65 @@ def process_job(
                 job["id"],
                 exc,
             )
+        if (
+            github_publication == "full"
+            and result_record is None
+            and job["review_result"] is None
+            and (expected_context is not None or not base_ref.startswith("sha:"))
+            and (not retryable_error(exc) or job["attempts"] + 1 >= jobs.max_attempts)
+            and jobs.is_current(job)
+        ):
+            # Persist a safe terminal result before releasing the claim. The saved
+            # result path below handles reports and publication retries without
+            # repeating the failed review or exposing the exception text.
+            result_record = {
+                "schema_version": 1,
+                "engine": engine_identity,
+                "base_sha": base_sha,
+                "head_sha": expected_head,
+                "merge_base": merge_base,
+                "content": "Review failed before completion.",
+                "output": {
+                    "schema_version": 1,
+                    "data": {},
+                    "exports": {"findings": []},
+                },
+                "run": {
+                    "review_id": usage.review_id,
+                    "usage": _usage_summary(usage, debug, "usage"),
+                    "status": "failed",
+                    "skipped": False,
+                    "attempt": {},
+                    "metrics": runtime.metrics() if runtime else {},
+                    "review_context": expected_context or {"base_ref": base_ref},
+                    "review_completed_at": forgejo._retrieved_at(),
+                    "repository_id": bot_config.repo_id,
+                    "repository": bot_config.repository,
+                },
+            }
+            if jobs.save_result(job, result_record):
+                logging.warning(
+                    "terminal review failure repo=%s pr=%d stage=%s error_type=%s",
+                    bot_config.repository,
+                    number,
+                    stage,
+                    type(exc).__name__,
+                )
+                resumed_failure = True
+                return process_job(
+                    {**job, "review_result": result_record},
+                    jobs,
+                    state_dir,
+                    api_key,
+                    forgejo_token,
+                    bot_login,
+                    bot_config,
+                    ledger,
+                    review_engine,
+                    allow_discussions=allow_discussions,
+                    github_token=github_token,
+                    github_publication=github_publication,
+                )
         outcome = (
             jobs.retry(job, exc)
             if retryable_error(exc)
@@ -660,22 +720,23 @@ def process_job(
             if isinstance(failure, urllib.error.HTTPError)
             else None
         )
-        log_review_outcome(
-            bot_config.repository,
-            number,
-            action,
-            expected_head,
-            outcome,
-            started,
-            debug,
-            runtime.metrics() if runtime else {},
-            logging.ERROR if failure or run_status == "failed" else logging.INFO,
-            debug.get("pipeline_stage", stage) if failure else None,
-            type(failure).__name__ if failure else None,
-            http_status,
-            http_host,
-            review_status=run_status,
-        )
+        if not resumed_failure:
+            log_review_outcome(
+                bot_config.repository,
+                number,
+                action,
+                expected_head,
+                outcome,
+                started,
+                debug,
+                runtime.metrics() if runtime else {},
+                logging.ERROR if failure or run_status == "failed" else logging.INFO,
+                debug.get("pipeline_stage", stage) if failure else None,
+                type(failure).__name__ if failure else None,
+                http_status,
+                http_host,
+                review_status=run_status,
+            )
         try:
             summary = ledger.summary()
             logging.info(

@@ -814,6 +814,15 @@ posting inline reviews or approvals. In full mode, Ralph does not create or
 update a native Forgejo comment, even if GitHub publication fails. Existing
 native Forgejo comments remain; a mirror may import the GitHub comment.
 
+In full mode, failed or skipped attempts and findings without required approval
+replace the same GitHub comment with an explicit attempt status and head, a safe
+reason, an attempt-report link, and the previous completed review when available.
+These status comments contain no findings. Exhausted review acquisition failures
+also publish a status when the current head and target can be checked. Transient
+review failures retry first; publication transport failures retain the saved
+review and leave the existing comment until delivery succeeds. Uncertain writes
+remain held for reconciliation.
+
 Writes require an open, non-draft upstream PR matching the reviewed head and base
 branch. Title, body and label edits do not cancel a running review or block its
 publication on either Forgejo or GitHub. The report retains the metadata used
@@ -821,7 +830,7 @@ during review. A stale GitHub head or target branch marks the job stale instead
 of reporting successful publication. Publication failures use the saved-result
 retry queue without repeating the model review.
 Selected findings must record `verified_by = "verifier"` and
-`judged_by = "judge"`; missing approval leaves the GitHub comment alone. Changing
+`judged_by = "judge"`; missing approval leaves the major-only comment alone. Changing
 publication mode does not schedule a new review of an unchanged head. No database
 migration is needed. Existing exact publication intents remain unchanged until
 reconciled; switching modes does not replace an uncertain write with a new body.

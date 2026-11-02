@@ -269,6 +269,127 @@ class ServiceTests(unittest.TestCase):
             service.retryable_error(subprocess.CalledProcessError(1, ["git", "diff"]))
         )
 
+    def test_full_terminal_fetch_failure_publishes_status_after_retries(self):
+        self.bot_config = replace(
+            self.bot_config,
+            github_repository="owner/repo",
+            report_dir=self.state_dir / "public",
+            report_base_url="https://review.example/traces",
+        )
+        job = self.enqueue()
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(
+                forgejo,
+                "pull_request_context",
+                side_effect=TimeoutError("credential=private"),
+            ),
+            patch.object(service.runner, "run_review") as review,
+            patch.object(
+                service.github, "publish_review", return_value="updated"
+            ) as publish,
+            self.assertLogs(level="ERROR"),
+        ):
+            for _ in range(self.jobs.max_attempts - 1):
+                self.assertEqual(
+                    self.process(job, github_token="token", github_publication="full"),
+                    "retry",
+                )
+                publish.assert_not_called()
+                job = self.jobs.claim()
+            # The upstream/mirror read recovers for publication after the final
+            # collection failure, so only the saved failed result is published.
+            with patch.object(
+                forgejo,
+                "pull_request_context",
+                side_effect=[
+                    TimeoutError("credential=private"),
+                    {"base_ref": "master"},
+                    {"base_ref": "master"},
+                ],
+            ):
+                self.assertEqual(
+                    self.process(job, github_token="token", github_publication="full"),
+                    "updated",
+                )
+        review.assert_not_called()
+        publish.assert_called_once()
+        saved = publish.call_args.args[3]
+        self.assertEqual(saved["run"]["status"], "failed")
+        self.assertIsNone(saved["base_sha"])
+        self.assertIsNone(saved["merge_base"])
+        self.assertNotIn("credential=private", json.dumps(saved))
+        self.assertTrue(saved["run"]["report_url"])
+        self.assertEqual(len(list(self.bot_config.report_dir.glob("*.json"))), 1)
+        self.assertIsNotNone(self.jobs.latest_completed_result(42))
+
+    def test_full_terminal_collection_failure_publishes_safe_status(self):
+        self.bot_config = replace(
+            self.bot_config,
+            github_repository="owner/repo",
+            report_dir=self.state_dir / "public",
+            report_base_url="https://review.example/traces",
+        )
+        job = self.enqueue()
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(
+                repository,
+                "collect_review",
+                side_effect=ValueError(
+                    "configured submodule bitcoin has no gitlink credential=private"
+                ),
+            ),
+            patch.object(service.runner, "run_review") as review,
+            patch.object(
+                service.github, "publish_review", return_value="updated"
+            ) as publish,
+            self.assertLogs(level="WARNING") as logs,
+        ):
+            self.assertEqual(
+                self.process(job, github_token="token", github_publication="full"),
+                "updated",
+            )
+        review.assert_not_called()
+        publish.assert_called_once()
+        saved = publish.call_args.args[3]
+        self.assertEqual(saved["run"]["status"], "failed")
+        self.assertIsNone(saved["base_sha"])
+        self.assertIsNone(saved["merge_base"])
+        self.assertNotIn("credential=private", json.dumps(saved))
+        self.assertIn("stage=collect error_type=ValueError", "\n".join(logs.output))
+        self.assertNotIn("credential=private", "\n".join(logs.output))
+        self.assertEqual(len(list(self.bot_config.report_dir.glob("*.json"))), 1)
+
+    def test_full_publication_failure_does_not_replace_completed_review(self):
+        self.bot_config = replace(self.bot_config, github_repository="owner/repo")
+        job = self.enqueue()
+        result = self.saved_result()
+        self.jobs.save_result(job, result)
+        job["review_result"] = result
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(
+                service.github, "publish_review", side_effect=TimeoutError()
+            ) as publish,
+            patch.object(service.runner, "run_review") as review,
+            self.assertLogs(level="ERROR"),
+        ):
+            for expected in ("retry", "retry", "failed"):
+                self.assertEqual(
+                    self.process(job, github_token="token", github_publication="full"),
+                    expected,
+                )
+                job = self.jobs.claim()
+        review.assert_not_called()
+        self.assertEqual(publish.call_count, 3)
+        self.assertTrue(
+            all(
+                call.args[3]["run"]["status"] == "completed"
+                for call in publish.call_args_list
+            )
+        )
+
     def test_uncertain_github_reconciles_after_restart_without_models(self):
         from ralph_service import delivery
         from unittest.mock import Mock

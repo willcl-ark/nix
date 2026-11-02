@@ -78,21 +78,26 @@ def publish_review(
         return "disabled"
     if publication not in {"major-only", "full"}:
         raise ValueError("Invalid GitHub publication mode")
-    if result["run"].get("status") == "failed":
-        return "failed"
     exported = trace.findings_export(result)
-    if exported is None or result["run"].get("skipped"):
-        return "skipped"
     findings = [
         finding
-        for finding in exported
+        for finding in exported or []
         if publication == "full" or finding.get("severity") in {"critical", "major"}
     ]
-    if any(
+    status = None
+    if result["run"].get("status") == "failed":
+        status = "failed"
+    elif result["run"].get("skipped"):
+        status = "skipped"
+    elif exported is None:
+        status = "unavailable" if publication == "full" else "skipped"
+    elif any(
         finding.get("verified_by") != "verifier" or finding.get("judged_by") != "judge"
         for finding in findings
     ):
-        return "unverified"
+        status = "unverified"
+    if status and publication == "major-only":
+        return status
     retained = [
         item
         for item in trace.unresolved_memory(result)
@@ -169,6 +174,40 @@ def publish_review(
         comment_format = identity["config"]["comment_format"]
 
     def render_body():
+        if status:
+            reason = {
+                "failed": "The review did not finish successfully.",
+                "skipped": "The attempt did not produce a review for publication.",
+                "unverified": "The findings did not pass all required verification checks.",
+                "unavailable": "The attempt did not provide a verifiable findings export.",
+            }[status]
+            body = (
+                f"{marker}\n\nReview {status} for `{result['head_sha'][:12]}`. "
+                f"{reason} No findings are published for this attempt."
+                f"\n\nAttempted head: [`{result['head_sha'][:12]}`]"
+                f"(<https://github.com/{repository}/commit/{result['head_sha']}>)"
+                f" · [Attempt report](<{report_url}>)"
+            )
+            for previous in delivery.jobs.completed_results_before(delivery.job):
+                run = previous["run"]
+                previous_findings = trace.findings_export(previous)
+                if (
+                    run.get("status") == "completed"
+                    and not run.get("skipped")
+                    and run.get("report_url")
+                    and previous_findings is not None
+                    and all(
+                        item.get("verified_by") == "verifier"
+                        and item.get("judged_by") == "judge"
+                        for item in previous_findings
+                    )
+                ):
+                    body += (
+                        f"\n\nPrevious completed review: "
+                        f"[`{previous['head_sha'][:12]}`](<{run['report_url']}>)"
+                    )
+                    break
+            return body
         diagnostics = trace.current_diagnostics(result)
         tier = diagnostics.get("routing", {}).get("selected", {}).get("tier")
         repository_url = f"https://github.com/{repository}"

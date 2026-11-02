@@ -217,10 +217,106 @@ class GitHubTests(unittest.TestCase):
             f"/blob/{result['head_sha']}/src/test.cpp#L5",
         ):
             self.assertIn(expected, body)
-        minor["judged_by"] = None
-        with patch.object(github, "github_request") as request:
-            self.assertEqual(self.publish(result, "full"), "unverified")
-        request.assert_not_called()
+
+    def test_full_terminal_status_replaces_same_comment_without_findings(self):
+        own = {
+            "id": 2,
+            "user": {"id": 7},
+            "body": "<!-- ralph-major:owner/repo -->old findings",
+        }
+        for status in ("failed", "skipped", "unverified", "unavailable"):
+            with self.subTest(status=status):
+                result = self.result()
+                result["run"]["status"] = (
+                    "failed" if status == "failed" else "completed"
+                )
+                result["run"]["skipped"] = status == "skipped"
+                if status == "unavailable":
+                    result["output"]["exports"].pop("findings")
+                result["run"]["attempt"] = {"error": "credential=private"}
+                with patch.object(
+                    github,
+                    "github_request",
+                    side_effect=[{"id": 7}, [own], self.pull(), self.pull(), {}],
+                ) as request:
+                    self.assertEqual(self.publish(result, "full"), "updated")
+                self.assertEqual(
+                    request.call_args.args[1:3],
+                    ("/repos/owner/repo/issues/comments/2", "PATCH"),
+                )
+                body = request.call_args.args[3]["body"]
+                self.assertIn(status, body.lower())
+                self.assertIn(result["head_sha"], body)
+                self.assertIn("Attempt report", body)
+                self.assertIn(result["run"]["report_url"], body)
+                self.assertNotIn("Original", body)
+                self.assertNotIn("Minor", body)
+                self.assertNotIn("credential", body)
+                self.assertNotIn("Reviewed:", body)
+
+    def test_status_links_last_completed_review_across_unsuccessful_attempts(self):
+        session = self.session()
+        store = session.jobs
+        previous = self.result()
+        previous["run"]["status"] = "completed"
+        previous["output"]["exports"]["findings"] = []
+        previous["run"]["report_url"] = "https://review.example/previous.html"
+        store.save_result(session.job, previous)
+        store.complete(session.job)
+        for head, status in (("b", "failed"), ("c", "skipped"), ("d", "unverified")):
+            store.enqueue(42, "qt6", head * 40, "synchronize", engine_identity=None)
+            job = store.claim()
+            result = self.result()
+            result["head_sha"] = head * 40
+            result["run"].update(
+                status="failed" if status == "failed" else "completed",
+                skipped=status == "skipped",
+            )
+            store.save_result(job, result)
+            store.complete(job)
+        store.enqueue(42, "qt6", "e" * 40, "synchronize", engine_identity=None)
+        session = delivery.Session(store, store.claim(), "github")
+        result = self.result()
+        result["head_sha"] = "e" * 40
+        result["run"]["status"] = "failed"
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[
+                {"id": 7},
+                [],
+                self.pull(head={"sha": "e" * 40}),
+                self.pull(head={"sha": "e" * 40}),
+                {},
+            ],
+        ) as request:
+            self.assertEqual(
+                github.publish_review(
+                    "owner/repo",
+                    "token",
+                    42,
+                    result,
+                    publication="full",
+                    expected_context=self.context(),
+                    is_current=lambda: True,
+                    delivery=session,
+                ),
+                "created",
+            )
+        body = request.call_args.args[3]["body"]
+        self.assertIn("Previous completed review", body)
+        self.assertIn(previous["run"]["report_url"], body)
+        self.assertIn("`aaaaaaaaaaaa`", body)
+
+    def test_status_never_publishes_to_newer_head_or_draft(self):
+        result = self.result()
+        result["run"]["status"] = "failed"
+        for pull in (self.pull(head={"sha": "b" * 40}), self.pull(draft=True)):
+            with patch.object(
+                github, "github_request", side_effect=[{"id": 7}, [], pull]
+            ) as request:
+                self.assertEqual(self.publish(result, "full"), "stale")
+            self.assertTrue(all(len(call.args) < 3 for call in request.call_args_list))
 
     def test_full_empty_review_distinguishes_complete_from_partial(self):
         result = self.result()

@@ -615,6 +615,21 @@ class JobStore:
                 return None
             return json.loads(row["review_result"])
 
+    def completed_results_before(self, job):
+        """Return older published results, newest first, within this PR."""
+        self._check_job(job)
+        with self._connection() as db:
+            rows = db.execute(
+                """
+                SELECT review_result FROM jobs
+                WHERE repo_id = ? AND number = ? AND generation < ?
+                    AND status = 'complete' AND review_result IS NOT NULL
+                ORDER BY generation DESC
+                """,
+                (job["repo_id"], job["number"], job["generation"]),
+            ).fetchall()
+        return [json.loads(row["review_result"]) for row in rows]
+
     def supersede(self, job):
         return self._finish(job, "superseded")
 
