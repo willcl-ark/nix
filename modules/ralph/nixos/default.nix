@@ -603,6 +603,7 @@ in
       wants = [ "network-online.target" ];
       environment = {
         RALPH_WRITE_VERIFIER_CGROUP = experimentCgroup;
+        RALPH_WRITE_VERIFIER_CCACHE = "${cfg.stateDir}/ccache";
       }
       // lib.optionalAttrs (cfg.writeVerifierEnvironment != null) {
         RALPH_WRITE_VERIFIER_SHELL = lib.getExe cfg.writeVerifierEnvironment;

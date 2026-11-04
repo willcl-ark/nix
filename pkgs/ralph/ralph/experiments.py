@@ -26,6 +26,7 @@ PATCH_BYTES = 65_536
 SOURCE_BYTES = 512 * 1024 * 1024
 FILE_BYTES = 1024 * 1024
 WORK_BYTES = 8 * 1024 * 1024 * 1024
+CCACHE_SIZE = "20G"
 
 TOOLS = [
     {
@@ -40,7 +41,8 @@ TOOLS = [
             "Put build and runtime artifacts under /tmp (e.g. cmake -B /tmp/build), "
             "so source patches contain tests and code rather than build output. "
             "Limits: 8 GiB aggregate memory, 128 processes, four CPUs, and a "
-            "30-minute total stage deadline. Network access is disabled; loopback "
+            "30-minute total stage deadline. A compiler cache persists across "
+            "experiments. Network access is disabled; loopback "
             "is available. Output and patches "
             "are bounded. Build, environment and timeout failures are inconclusive."
         ),
@@ -84,6 +86,7 @@ class ExperimentSession:
         }
         self.directory = None
         self.lock = None
+        self.ccache = None
         self.unavailable = None
         self.archives = {}
 
@@ -96,6 +99,9 @@ class ExperimentSession:
 
     def __enter__(self):
         try:
+            self.ccache = os.environ.get("RALPH_WRITE_VERIFIER_CCACHE")
+            if self.ccache is not None:
+                Path(self.ccache).mkdir(parents=True, exist_ok=True)
             self.cgroup_root = Path(os.environ["RALPH_WRITE_VERIFIER_CGROUP"]).resolve(
                 strict=True
             )
@@ -205,6 +211,21 @@ class ExperimentSession:
                 _kill(process)
             process.stdout.close()
         return status, process.returncode, bytes(output), total > limit
+
+    def _cache_mounts(self):
+        if self.ccache is None:
+            return []
+        return [
+            "--bind",
+            self.ccache,
+            "/ccache",
+            "--setenv",
+            "CCACHE_DIR",
+            "/ccache",
+            "--setenv",
+            "CCACHE_MAXSIZE",
+            CCACHE_SIZE,
+        ]
 
     def _run_isolated(self, argv, entry):
         # The service controller lives in a sibling subgroup. Only the launcher
@@ -404,6 +425,7 @@ class ExperimentSession:
                 "/",
                 "--remount-ro",
                 "/dev",
+                *self._cache_mounts(),
                 "--setenv",
                 "HOME",
                 "/tmp/home",

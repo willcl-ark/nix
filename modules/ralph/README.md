@@ -64,7 +64,8 @@ Experiments use Bubblewrap with private mount, user, PID, network, IPC and UTS
 namespaces. The review service allows these namespaces; hosts must allow
 unprivileged user namespaces. A host that blocks them records experiments as
 inconclusive. The experiment sees the Nix store read-only, its source copy,
-temporary files and private loopback, without Ralph's secrets or state.
+temporary files, private loopback and a compiler cache under `stateDir/ccache`
+that experiments share read-write, without Ralph's secrets or other state.
 The service delegates CPU, memory and process controllers to the runner.
 Each experiment has an 8 GiB total memory limit, no swap, at most 128 processes
 and a CPU quota of four cores. The review controller runs in a separate subgroup
