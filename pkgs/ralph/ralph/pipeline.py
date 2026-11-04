@@ -1,7 +1,7 @@
 """Discover candidates, challenge their claims, verify evidence, then judge."""
 
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 
 from final_comment import render_report as render
@@ -9,22 +9,26 @@ from final_comment import render_report as render
 from . import coverage, experiments, feedback, model, progress, protocol, routing
 from .repository import audit_developer_notes, focused_review_input
 
-# Domain stages run in a predictable order; the two
-# adversarial models review the same evidence concurrently.
-# Domain correctness precedes design, then the challenger examines their reports.
+# Discovery stages never read each other's output and share a bounded pool.
+# This sequence orders pooled candidates before the challenger examines them.
 DISCOVERY_ORDER = (
     "script",
+    "independent",
     "adversarial",
+    "adversarial_claude",
     "concurrency",
     "gui",
     "state",
     "public_contract",
     "build",
     "tests",
+    "tests_followup",
     "dead_code",
     "design",
 )
+DISCOVERY_WORKERS = 6
 ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude")
+POOLED_STAGES = frozenset({*DISCOVERY_ORDER, "archaeologist", "alternatives"})
 FULL_CONTEXT_STAGES = {
     "script",
     "dead_code",
@@ -83,7 +87,7 @@ def _run_stage(
     debug = runtime.debug
     stages = debug["stages"]
     outputs = debug["stage_outputs"]
-    if name not in ADVERSARIAL_STAGES:
+    if name not in POOLED_STAGES:
         debug["pipeline_stage"] = name
     settings = prompt_config.profile.stages[
         "tests" if name == "tests_followup" else name
@@ -806,188 +810,198 @@ def review_with_independent_passes(
             }
             return None
 
-    # Spend on selected script correctness before advisory research or overview.
-    completed = set()
-    script_sensitive = False
-    if "script" in plan["audits"]:
-        script_sensitive = collect("script", discover("script"))
-        completed.add("script")
-
-    if archaeology:
-        concept_candidate = run_archaeologist()
-    else:
-        reason = "Archaeology was not requested."
-        debug["concept_assessment"] = {"status": "skipped", "reason": reason}
-        for name in ("archaeologist", "alternatives"):
-            stages[name] = {
-                "model": prompt_config.models[name],
+    def run_research():
+        concept = None
+        if archaeology:
+            concept = run_archaeologist()
+        else:
+            reason = "Archaeology was not requested."
+            debug["concept_assessment"] = {"status": "skipped", "reason": reason}
+            for name in ("archaeologist", "alternatives"):
+                stages[name] = {
+                    "model": prompt_config.models[name],
+                    "status": "skipped",
+                    "reason": reason,
+                    "turns": [],
+                    "tools": [],
+                }
+        if backport_evidence is not None:
+            stages["alternatives"] = {
+                "model": prompt_config.models["alternatives"],
                 "status": "skipped",
-                "reason": reason,
+                "reason": "Backport review focuses on fidelity and release suitability.",
                 "turns": [],
                 "tools": [],
             }
-    if backport_evidence is not None:
-        stages["alternatives"] = {
-            "model": prompt_config.models["alternatives"],
-            "status": "skipped",
-            "reason": "Backport review focuses on fidelity and release suitability.",
-            "turns": [],
-            "tools": [],
-        }
-    elif blind_alternatives and concept_candidate is not None:
-        # Only the goal and baseline cross this boundary, never the PR solution
-        # or discussion. The tools expose only the pinned comparison-base tree.
-        alternative_input = json.dumps(
-            {key: concept_candidate[key] for key in ("problem", "goal", "baseline")}
-        )
-        try:
-            answer = run_stage(
-                "alternatives",
-                alternative_input,
-                prompt_config.audit_prompts["alternatives"],
-                protocol.ALTERNATIVES_SCHEMA,
+        elif blind_alternatives and concept is not None:
+            # Only the goal and baseline cross this boundary, never the PR solution
+            # or discussion. The tools expose only the pinned comparison-base tree.
+            alternative_input = json.dumps(
+                {key: concept[key] for key in ("problem", "goal", "baseline")}
             )
-            result = protocol.blind_alternatives(answer)
-            stages["alternatives"]["coverage"] = result["coverage"]
-            alternatives_candidate = result["alternatives"]
-        except model.StaleReview:
-            raise
-        except Exception as exc:
-            record = stages["alternatives"]
-            if record["status"] == "completed":
-                record.update(status="invalid", error_type=type(exc).__name__)
-    elif blind_alternatives and archaeology:
-        stages["alternatives"] = {
-            "model": prompt_config.models["alternatives"],
-            "status": "skipped",
-            "reason": "No valid problem and baseline from concept review.",
-            "turns": [],
-            "tools": [],
-        }
-    independent_sensitive = collect("independent", discover("independent"))
-    sensitive = independent_sensitive or script_sensitive
-    selected = set(plan["audits"])
-    if sensitive and plan["tier"] != "sensitive":
-        selected.update(name for name in strategy.audits if name != "script")
-        plan = {
-            **plan,
-            "tier": "sensitive",
-            "audits": [name for name in strategy.audits if name in selected],
-            "profiles": list(strategy.adversarial_profiles),
-            "evidence": plan["evidence"] + ["Overview requested sensitive review"],
-        }
-        debug["routing"]["selected"] = plan
-        select_profile()
-        log_plan(
-            "escalation",
-            source="independent" if independent_sensitive else "script",
-        )
+            try:
+                answer = run_stage(
+                    "alternatives",
+                    alternative_input,
+                    prompt_config.audit_prompts["alternatives"],
+                    protocol.ALTERNATIVES_SCHEMA,
+                )
+                result = protocol.blind_alternatives(answer)
+                stages["alternatives"]["coverage"] = result["coverage"]
+                return concept, result["alternatives"]
+            except model.StaleReview:
+                raise
+            except Exception as exc:
+                record = stages["alternatives"]
+                if record["status"] == "completed":
+                    record.update(status="invalid", error_type=type(exc).__name__)
+        elif blind_alternatives and archaeology:
+            stages["alternatives"] = {
+                "model": prompt_config.models["alternatives"],
+                "status": "skipped",
+                "reason": "No valid problem and baseline from concept review.",
+                "turns": [],
+                "tools": [],
+            }
+        return concept, None
+
+    selected = {"independent", *plan["audits"]}
     if plan["tier"] == "sensitive":
-        selected.add("adversarial")
+        selected.update(ADVERSARIAL_STAGES)
 
     def escalate_review(name, requested):
         nonlocal plan
-        if requested and plan["tier"] != "sensitive":
-            selected.update(("adversarial", "state", "concurrency"))
-            plan = {
-                **plan,
-                "tier": "sensitive",
-                "profiles": plan["profiles"] or list(strategy.adversarial_profiles),
-                "audits": [audit for audit in strategy.audits if audit in selected],
-                "evidence": plan["evidence"] + [f"{name} requested sensitive review"],
-            }
-            debug["routing"]["selected"] = plan
-            debug["routing"]["escalated_by"] = name
-            select_profile()
-            log_plan("escalation", source=name)
-
-    while pending := [name for name in DISCOVERY_ORDER if name in selected - completed]:
-        name = pending[0]
-        if name == "adversarial":
-            debug["pipeline_stage"] = "adversarial"
-            with ThreadPoolExecutor(max_workers=len(ADVERSARIAL_STAGES)) as executor:
-                futures = {
-                    stage: executor.submit(discover, stage)
-                    for stage in ADVERSARIAL_STAGES
-                }
-                results = {stage: future.result() for stage, future in futures.items()}
-            escalate = any(
-                [collect(stage, results[stage]) for stage in ADVERSARIAL_STAGES]
-            )
-            completed.update(ADVERSARIAL_STAGES)
+        if not requested or plan["tier"] == "sensitive":
+            return
+        if name in {"script", "independent"}:
+            selected.update(audit for audit in strategy.audits if audit != "script")
+            profiles = list(strategy.adversarial_profiles)
+            evidence = "Overview requested sensitive review"
         else:
-            escalate = collect(name, discover(name))
-            completed.add(name)
-        escalate_review(name, escalate)
-        if name == "tests":
-            assessments = stages[name].get("test_coverage", [])
-            checked = {
-                path
-                for assessment in assessments
-                if assessment["status"] != "deferred"
-                for path in assessment["paths"]
-            }
-            deferred = {
-                path
-                for assessment in assessments
-                if assessment["status"] == "deferred"
-                for path in assessment["paths"]
-            }
-            remaining = sorted((set(test_paths) - checked) | deferred)
-            if remaining:
-                followup = discover("tests_followup", remaining)
-                escalate_review("tests_followup", collect("tests_followup", followup))
-                if followup is not None and stages[name]["status"] == "completed":
-                    # Keep the initial output and model's stated limitations.
-                    # Recompute only the assignment coverage repaired by this pass.
-                    record = stages[name]
-                    record["coverage_before_followup"] = record["coverage"]
-                    record["initial_test_coverage"] = assessments
-                    resolved = {
-                        path
-                        for assessment in followup["test_coverage"]
-                        if assessment["status"] != "deferred"
-                        for path in assessment["paths"]
-                    } - {
-                        path
-                        for assessment in followup["test_coverage"]
-                        if assessment["status"] == "deferred"
-                        for path in assessment["paths"]
-                    }
-                    combined = [
-                        assessment
-                        for assessment in assessments
-                        if assessment["status"] != "deferred"
-                        or not set(assessment["paths"]) <= resolved
-                    ] + followup["test_coverage"]
-                    result = protocol.tests_discovery(
-                        json.dumps(
-                            {
-                                "coverage": json.loads(record["raw_output"])[
-                                    "coverage"
-                                ],
-                                "findings": [],
-                                "requires_sensitive_review": False,
-                                "test_coverage": combined,
-                            }
-                        ),
-                        snapshot,
-                        test_paths,
-                    )
-                    record["coverage"] = result["coverage"]
-                    record["test_coverage"] = result["test_coverage"]
-    for name in (*DISCOVERY_ORDER, "adversarial_claude"):
-        if name not in completed:
+            selected.update(("state", "concurrency"))
+            profiles = plan["profiles"] or list(strategy.adversarial_profiles)
+            evidence = f"{name} requested sensitive review"
+            debug["routing"]["escalated_by"] = name
+        selected.update(ADVERSARIAL_STAGES)
+        plan = {
+            **plan,
+            "tier": "sensitive",
+            "audits": [audit for audit in strategy.audits if audit in selected],
+            "profiles": profiles,
+            "evidence": plan["evidence"] + [evidence],
+        }
+        debug["routing"]["selected"] = plan
+        select_profile()
+        log_plan("escalation", source=name)
+
+    def unchecked_test_paths():
+        assessments = stages["tests"].get("test_coverage", [])
+        checked = {
+            path
+            for assessment in assessments
+            if assessment["status"] != "deferred"
+            for path in assessment["paths"]
+        }
+        deferred = {
+            path
+            for assessment in assessments
+            if assessment["status"] == "deferred"
+            for path in assessment["paths"]
+        }
+        return sorted((set(test_paths) - checked) | deferred)
+
+    def merge_followup(followup):
+        # Keep the initial output and model's stated limitations.
+        # Recompute only the assignment coverage repaired by this pass.
+        record = stages["tests"]
+        assessments = record.get("test_coverage", [])
+        record["coverage_before_followup"] = record["coverage"]
+        record["initial_test_coverage"] = assessments
+        resolved = {
+            path
+            for assessment in followup["test_coverage"]
+            if assessment["status"] != "deferred"
+            for path in assessment["paths"]
+        } - {
+            path
+            for assessment in followup["test_coverage"]
+            if assessment["status"] == "deferred"
+            for path in assessment["paths"]
+        }
+        combined = [
+            assessment
+            for assessment in assessments
+            if assessment["status"] != "deferred"
+            or not set(assessment["paths"]) <= resolved
+        ] + followup["test_coverage"]
+        result = protocol.tests_discovery(
+            json.dumps(
+                {
+                    "coverage": json.loads(record["raw_output"])["coverage"],
+                    "findings": [],
+                    "requires_sensitive_review": False,
+                    "test_coverage": combined,
+                }
+            ),
+            snapshot,
+            test_paths,
+        )
+        record["coverage"] = result["coverage"]
+        record["test_coverage"] = result["test_coverage"]
+
+    running = {}
+    completed = set()
+
+    def launch(executor):
+        for name in DISCOVERY_ORDER:
+            if name in selected and name not in running and name not in completed:
+                running[name] = executor.submit(discover, name)
+
+    # Discovery stages never see each other's output, so they share a pool.
+    # Escalation only adds stages; newly selected ones start as soon as the
+    # completed stage requests them. Research feeds only the verifier.
+    debug["pipeline_stage"] = "discovery"
+    with ThreadPoolExecutor(max_workers=DISCOVERY_WORKERS) as executor:
+        research = executor.submit(run_research)
+        try:
+            launch(executor)
+            while running:
+                wait(running.values(), return_when=FIRST_COMPLETED)
+                for name in [
+                    name
+                    for name in DISCOVERY_ORDER
+                    if name in running and running[name].done()
+                ]:
+                    result = running.pop(name).result()
+                    completed.add(name)
+                    escalate_review(name, collect(name, result))
+                    if name == "tests" and (remaining := unchecked_test_paths()):
+                        running["tests_followup"] = executor.submit(
+                            discover, "tests_followup", remaining
+                        )
+                    elif (
+                        name == "tests_followup"
+                        and result is not None
+                        and stages["tests"]["status"] == "completed"
+                    ):
+                        merge_followup(result)
+                launch(executor)
+            concept_candidate, alternatives_candidate = research.result()
+        finally:
+            for future in (research, *running.values()):
+                future.cancel()
+    for name in DISCOVERY_ORDER:
+        if name != "tests_followup" and name not in completed:
             stages[name] = {
                 "model": prompt_config.models[name],
                 "status": "skipped",
                 "turns": [],
                 "tools": [],
             }
+    order = {name: index for index, name in enumerate(DISCOVERY_ORDER)}
+    candidates.sort(key=lambda finding: order[candidate_sources[finding["id"]]])
 
-    _challenge_candidates(run_stage, prompt_config, review, candidates, snapshot, debug)
-
-    if feedback_packet is not None:
+    def map_feedback():
         settings = prompt_config.profile.stages["feedback"]
         record = {
             "model": settings.model,
@@ -1018,11 +1032,9 @@ def review_with_independent_passes(
                 raise protocol.InvalidReview("Feedback response was incomplete")
             record["status"] = "completed"
             record["raw_output"] = answer
-            feedback_mappings = feedback.parse_feedback(
-                answer, feedback_packet, candidates
-            )
             record["coverage"] = {"status": "complete", "limitations": []}
             debug["stage_outputs"]["feedback"] = answer
+            return feedback.parse_feedback(answer, feedback_packet, candidates)
         except model.StaleReview:
             raise
         except Exception as exc:
@@ -1030,6 +1042,23 @@ def review_with_independent_passes(
                 status="failed",
                 error_type=type(exc).__name__,
             )
+            return None
+
+    # The challenger and the feedback mapping both read only the candidates.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        challenge = executor.submit(
+            _challenge_candidates,
+            run_stage,
+            prompt_config,
+            review,
+            candidates,
+            snapshot,
+            debug,
+        )
+        mapping = executor.submit(map_feedback) if feedback_packet is not None else None
+        challenge.result()
+        if mapping is not None:
+            feedback_mappings = mapping.result()
 
     if is_current is not None and not is_current():
         raise model.StaleReview()

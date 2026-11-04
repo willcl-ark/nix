@@ -918,9 +918,9 @@ class PipelineTests(unittest.TestCase):
             ), {"status": "completed"}
 
         self.run_review(reviewer, audit=audit, review_feedback=packet)
-        self.assertEqual(
-            order[:4], ["independent", "challenger", "feedback", "verifier"]
-        )
+        self.assertEqual(order[0], "independent")
+        self.assertEqual(set(order[1:3]), {"challenger", "feedback"})
+        self.assertEqual(order[3], "verifier")
         self.assertEqual(len(self.result.findings), 1)
         self.assertEqual(self.result.findings[0]["severity"], "suggestion")
         entry = self.debug["review_memory"][0]
@@ -1340,6 +1340,29 @@ class PipelineTests(unittest.TestCase):
             finding["raised_by_models"],
             sorted(self.prompts.models[stage] for stage in pipeline.ADVERSARIAL_STAGES),
         )
+
+    def test_discovery_stages_run_concurrently_with_ordered_candidates(self):
+        self.tier, self.audits = "routine", ["tests", "dead_code"]
+        rendezvous = Barrier(3)
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            if stage == "verifier":
+                candidates = json.loads(args[1].split("Verification input:\n")[1])[
+                    "candidate_findings"
+                ]
+                self.assertEqual(
+                    [item["id"] for item in candidates],
+                    ["independent:1", "tests:1", "dead_code:1"],
+                )
+                return verification()
+            rendezvous.wait(timeout=5)
+            return discovery([candidate()])
+
+        self.run_review(review)
+        self.assertEqual(self.debug["stages"]["dead_code"]["status"], "completed")
 
     def test_omitted_candidate_preserves_valid_finding_and_attribution(self):
         self.tier, self.audits = "routine", []
