@@ -67,7 +67,7 @@ inconclusive. The experiment sees the Nix store read-only, its source copy,
 temporary files and private loopback, without Ralph's secrets or state.
 The service delegates CPU, memory and process controllers to the runner.
 Each experiment has an 8 GiB total memory limit, no swap, at most 128 processes
-and a CPU quota of two cores. The review controller runs in a separate subgroup
+and a CPU quota of four cores. The review controller runs in a separate subgroup
 so an experiment exceeding its allowance cannot kill the controller through
 that limit. The runner also bounds temporary storage and serializes experiments.
 Without writable cgroup delegation, experiments are unavailable and findings

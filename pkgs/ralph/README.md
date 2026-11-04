@@ -366,7 +366,7 @@ start the sandbox leaves the finding eligible for static verification.
 
 The NixOS module provisions a delegated cgroup for experiments. Each experiment
 has an 8 GiB total memory limit including temporary files, no swap, 128 tasks,
-and two CPUs of aggregate execution time per wall-clock interval. Experiments
+and four CPUs of aggregate execution time per wall-clock interval. Experiments
 share a 30-minute stage deadline with model requests, and service workers
 serialize experiments. Commands should build under `/tmp/build` so recorded
 source patches are not filled with compiler output.

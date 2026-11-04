@@ -39,7 +39,7 @@ TOOLS = [
             "tests its pinned comparison revision. The configured build environment is ready. "
             "Put build and runtime artifacts under /tmp (e.g. cmake -B /tmp/build), "
             "so source patches contain tests and code rather than build output. "
-            "Limits: 8 GiB aggregate memory, 128 processes, two CPUs, and a "
+            "Limits: 8 GiB aggregate memory, 128 processes, four CPUs, and a "
             "30-minute total stage deadline. Network access is disabled; loopback "
             "is available. Output and patches "
             "are bounded. Build, environment and timeout failures are inconclusive."
@@ -217,7 +217,7 @@ class ExperimentSession:
                 "memory.swap.max": "0",
                 "memory.oom.group": "1",
                 "pids.max": "128",
-                "cpu.max": "200000 100000",
+                "cpu.max": "400000 100000",
             }.items():
                 (group / name).write_text(value)
             return self._run(
