@@ -281,27 +281,26 @@ enabled. Model names and limits are listed in the table below.
 
 ```mermaid
 flowchart LR
-    route["Route"] --> script["Script audit<br/>if selected"]
-    script --> history["Archaeology<br/>if enabled"]
+    route["Route"] --> history["Archaeology<br/>if enabled"]
     history --> alternatives["Blind alternatives<br/>if enabled + valid concept"]
     classDef optional stroke-dasharray: 5 4
-    class script,history,alternatives optional
+    class history,alternatives optional
 ```
 
 **2. Discover candidates and close test-review gaps**
 
 ```mermaid
 flowchart LR
-    overview["Independent overview"] --> adversarial["Selected adversarial passes<br/>Astra + Claude in parallel"]
-    adversarial --> focused["Selected early audits"]
-    focused --> tests["Test coverage review"]
-    tests --> followup["One test-coverage follow-up<br/>when required paths remain"]
-    followup --> remaining["Remaining selected audits"]
-    remaining --> pool["Candidate pool"]
+    route["Route"] --> discovery["Discovery pool<br/>overview, script, adversarial passes<br/>and selected audits run concurrently"]
+    discovery --> followup["One test-coverage follow-up<br/>when required paths remain"]
+    discovery --> escalation["Escalation adds audits<br/>to the running pool"]
+    followup --> pool["Candidate pool"]
 ```
 
-Focused audit order: concurrency, gui, state, public_contract, build, tests,
-dead_code, design. Discovery can escalate coverage and add pending audits.
+Discovery agents never receive each other's output. Research runs alongside
+them and feeds only the verifier. Pooled candidates keep a fixed stage order:
+script, independent, adversarial, concurrency, gui, state, public_contract,
+build, tests, dead_code, design.
 Claude adversarial review requires `claude-opus-5-5` on the configured proxy.
 A failed Claude pass is reported as incomplete coverage.
 

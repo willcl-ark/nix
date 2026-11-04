@@ -83,8 +83,8 @@ the Git lock. Each model request has its own durable usage record.
 
 The model can also search and read other public issues and pull requests in the
 same repository, including a small sample of ordinary comments. The current PR
-is excluded from code discovery. After routing and before independent code
-discovery, a separate Luna archaeologist receives the full review input, base
+is excluded from code discovery. After routing, alongside code discovery,
+a separate Luna archaeologist receives the full review input, base
 and head code tools, current discussion, original upstream reviews, previous
 attempts and alternatives. Its concept candidate goes to the verifier with the
 pooled code candidates.
@@ -113,8 +113,8 @@ alone do not select it. Documentation, test-only changes, mechanical refactors
 and unrelated validation/policy work skip it. Generic fallback and overview
 escalation also skip it; explicit full and shadow modes request it.
 It uses Sol 6.1, high reasoning, 25,000 tokens per response and 48 code/history
-inspections, with no discussion or web tools. Selected script review runs before
-concept research. Partial coverage reaches the verifier as named inspection
+inspections, with no discussion or web tools. Selected script review runs in the
+discovery pool. Partial coverage reaches the verifier as named inspection
 gaps and remains visible in reports and stats. See the [specialist design](../../pkgs/ralph/README.md#script-and-transaction-policy-specialist).
 
 Sensitive changes receive parallel independent GPT-6 Astra and Claude Opus 5.5
@@ -123,9 +123,9 @@ configured OpenAI-compatible proxy, with a 64,000-token response allowance.
 Selected consensus, wallet, and P2P profiles add the same domain instructions
 to both reviews. Concurrency covers C++ lifetime, locks and shared state; state
 covers persistence and recovery. Public-contract and build audits cover exposed
-behavior and portability respectively. These correctness checks run before
-tests and design. Reviewers can escalate when inspection reveals sensitive
-behavior. Independent reviewers never receive each other's candidates. They also
+behavior and portability respectively. Discovery agents run concurrently in
+a bounded pool. Reviewers can escalate when inspection reveals sensitive
+behavior, which adds audits to the running pool. Independent reviewers never receive each other's candidates. They also
 never receive the archaeology output or current PR discussion.
 
 The tests audit starts with changed production behavior and existing coverage,
@@ -137,8 +137,8 @@ inspection. Not-applicable needs a concrete explanation. A production-only
 review cannot establish test coverage.
 
 When required paths remain omitted or deferred, one bounded `tests_followup`
-runs immediately after tests and reuses its prompt and resolved settings to
-inspect those remaining groups, before later discovery audits.
+starts as soon as tests completes and reuses its prompt and resolved settings
+to inspect those remaining groups while other audits may still run.
 Prior assessments and candidates prevent repeating the whole review. Checked
 assignments from both passes are combined; original model replies and limitations
 remain in the trace. Unfinished work remains visible after that pass; receiving

@@ -8,16 +8,15 @@ Major findings before that decision.
 
 ```mermaid
 flowchart TD
-    router[Router] --> script[Script audit, when selected]
-    script --> history[Archaeologist and blind alternatives, when enabled]
-    history --> independent[Independent overview]
-    independent --> audits[Selected early specialist audits]
-    audits --> tests[Test coverage review]
-    tests --> followup[Test coverage follow-up, when needed]
-    followup --> remaining[Remaining selected audits]
-    remaining --> challenger[Attempt to refute supplied candidates]
-    challenger --> feedback[Author-feedback mapping, when supplied]
-    feedback --> verifier[Assess source support]
+    router[Router] --> discovery[Discovery pool: overview, script, adversarial pair and selected audits]
+    router --> history[Archaeologist and blind alternatives, when enabled]
+    discovery --> followup[Test coverage follow-up, when needed]
+    discovery --> escalation[Escalation adds audits to the running pool]
+    followup --> challenger[Attempt to refute supplied candidates]
+    followup --> feedback[Author-feedback mapping, when supplied]
+    challenger --> verifier[Assess source support]
+    feedback --> verifier
+    history --> verifier
     verifier --> write[Attempt Major reproduction, when available]
     write --> judge[Judge publication and final wording]
     judge --> render[Render approved review]
@@ -35,8 +34,9 @@ select the consensus domain.
 
 The [independent](independent/prompt.md) agent reviews the overall change.
 Specialists cover script, concurrency, state, public contracts, build changes,
-tests, dead code and design. When selected, the script audit runs first.
-Sensitive reviews run the two adversarial reviewers concurrently. They share a
+tests, dead code and design. Discovery agents run concurrently in a bounded
+pool and never receive each other's output; pooled candidates keep a fixed
+stage order. Sensitive reviews add the two adversarial reviewers. They share a
 [prompt](adversarial/prompt.md) with selected consensus, wallet or P2P
 [domain instructions](adversarial/domains).
 
@@ -59,8 +59,8 @@ and a reason. Checked means the implementation and relevant assertions were
 inspected; it can include a confirmed missing assertion. Deferred means the
 inspection is unfinished. Not-applicable needs a concrete reason.
 
-One `tests_followup` pass runs immediately after tests when required paths
-remain omitted or deferred, before later discovery audits. It reuses the tests
+One `tests_followup` pass starts as soon as tests completes when required
+paths remain omitted or deferred, while other audits may still run. It reuses the tests
 prompt and resolved settings. It receives the remaining assignments and prior
 assessments and candidates. It does not repeat the whole review. Checked
 assignments from both passes are combined; original model replies and their
