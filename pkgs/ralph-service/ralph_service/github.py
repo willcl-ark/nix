@@ -1,6 +1,7 @@
 """Publish repository-scoped reviews to the upstream GitHub pull request."""
 
 import json
+import re
 import urllib.request
 import urllib.error
 
@@ -8,6 +9,12 @@ from final_comment import render, render_github
 from ralph import trace
 
 MARKER_PREFIX = "<!-- ralph-major:"
+MENTION = re.compile(r"(?<!\w)@(?=[A-Za-z0-9])")
+
+
+def neutralize_mentions(body):
+    """Model text must not notify people; a zero-width space stops GitHub linking."""
+    return MENTION.sub("@\u200b", body)
 
 
 def github_request(token, path, method="GET", data=None):
@@ -253,7 +260,7 @@ def publish_review(
             )
         return marker + "\n\n" + content
 
-    body = delivery.body(render_body)
+    body = delivery.body(lambda: neutralize_mentions(render_body()))
     if not is_current():
         return "stale"
     return delivery.execute(

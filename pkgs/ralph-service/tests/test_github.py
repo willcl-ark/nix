@@ -111,6 +111,27 @@ class GitHubTests(unittest.TestCase):
                 "stale",
             )
 
+    def test_published_comments_cannot_mention_people(self):
+        for publication in ("major-only", "full"):
+            result = self.result()
+            result["engine"] = engine.load().identity
+            result["output"].update(schema_version=2, data={"schema_version": 2})
+            finding = result["output"]["exports"]["findings"].pop(0)
+            result["output"]["exports"]["findings"] = [finding]
+            finding["presented_title"] = "Ask @maintainer and (@org/team)"
+            finding["presented_summary"] = "Email dev@example.com about `@param`"
+            with patch.object(
+                github,
+                "github_request",
+                side_effect=[{"id": 7}, [], self.pull(), self.pull(), {}],
+            ) as request:
+                self.assertEqual(self.publish(result, publication), "created")
+            body = request.call_args.args[3]["body"]
+            self.assertIn("Ask @\u200bmaintainer and (@\u200borg/team)", body)
+            self.assertIn("dev@example.com", body)
+            self.assertIn("`@\u200bparam`", body)
+            self.assertIn("<!-- ralph-major:owner/repo -->", body)
+
     def test_only_major_findings_with_report(self):
         result = self.result()
         result["engine"] = engine.load().identity

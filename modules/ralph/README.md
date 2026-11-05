@@ -815,6 +815,8 @@ posting inline reviews or approvals. In full mode, Ralph does not create or
 update a native Forgejo comment, even if GitHub publication fails. Existing
 native Forgejo comments remain; a mirror may import the GitHub comment.
 
+GitHub comments neutralize `@` mentions so model text cannot notify anyone.
+
 In full mode, failed or skipped attempts and findings without required approval
 replace the same GitHub comment with an explicit attempt status and head, a safe
 reason, an attempt-report link, and the previous completed review when available.
