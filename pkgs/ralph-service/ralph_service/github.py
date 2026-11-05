@@ -156,6 +156,10 @@ def publish_review(
 
     if not is_current():
         return "stale"
+    # Refresh an existing comment so it cannot pass for a review of this head, but
+    # do not start a public thread just to report an attempt with no findings.
+    if status and comment is None:
+        return status
     if publication == "major-only" and not findings and not retained:
         if comment is None:
             return "unchanged"

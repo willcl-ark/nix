@@ -818,10 +818,12 @@ native Forgejo comments remain; a mirror may import the GitHub comment.
 GitHub comments neutralize `@` mentions so model text cannot notify anyone.
 
 In full mode, failed or skipped attempts and findings without required approval
-replace the same GitHub comment with an explicit attempt status and head, a safe
-reason, an attempt-report link, and the previous completed review when available.
-These status comments contain no findings. Exhausted review acquisition failures
-also publish a status when the current head and target can be checked. Transient
+never create a GitHub comment. If one exists, they replace it with an explicit
+attempt status and head, a safe reason, an attempt-report link, and the previous
+completed review when available, so older findings cannot pass for a review of
+this head. These status comments contain no findings. Reports and Telegram still
+record the attempt. Exhausted review acquisition failures also update a comment
+when the current head and target can be checked. Transient
 review failures retry first; publication transport failures retain the saved
 review and leave the existing comment until delivery succeeds. Uncertain writes
 remain held for reconciliation.

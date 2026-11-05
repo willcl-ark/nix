@@ -323,6 +323,37 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(list(self.bot_config.report_dir.glob("*.json"))), 1)
         self.assertIsNotNone(self.jobs.latest_completed_result(42))
 
+    def test_full_terminal_failure_without_comment_finishes_without_posting(self):
+        self.bot_config = replace(
+            self.bot_config,
+            github_repository="owner/repo",
+            report_dir=self.state_dir / "public",
+            report_base_url="https://review.example/traces",
+        )
+        job = self.enqueue()
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(
+                repository, "collect_review", side_effect=ValueError("broken")
+            ),
+            patch.object(service.runner, "run_review") as review,
+            patch.object(
+                service.github, "github_request", side_effect=[{"id": 7}, []]
+            ) as request,
+            self.assertLogs(level="WARNING"),
+        ):
+            self.assertEqual(
+                self.process(job, github_token="token", github_publication="full"),
+                "failed",
+            )
+        review.assert_not_called()
+        self.assertEqual(request.call_count, 2)
+        self.assertIsNone(self.jobs.claim())
+        self.assertEqual(
+            self.jobs.latest_completed_result(42)["run"]["status"], "failed"
+        )
+        self.assertEqual(len(list(self.bot_config.report_dir.glob("*.json"))), 1)
+
     def test_full_terminal_collection_failure_publishes_safe_status(self):
         self.bot_config = replace(
             self.bot_config,

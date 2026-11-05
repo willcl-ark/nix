@@ -305,7 +305,13 @@ class GitHubTests(unittest.TestCase):
             "github_request",
             side_effect=[
                 {"id": 7},
-                [],
+                [
+                    {
+                        "id": 2,
+                        "user": {"id": 7},
+                        "body": "<!-- ralph-major:owner/repo -->",
+                    }
+                ],
                 self.pull(head={"sha": "e" * 40}),
                 self.pull(head={"sha": "e" * 40}),
                 {},
@@ -322,7 +328,7 @@ class GitHubTests(unittest.TestCase):
                     is_current=lambda: True,
                     delivery=session,
                 ),
-                "created",
+                "updated",
             )
         body = request.call_args.args[3]["body"]
         self.assertIn("Previous completed review", body)
@@ -335,10 +341,36 @@ class GitHubTests(unittest.TestCase):
         with patch.object(
             github,
             "github_request",
-            side_effect=[{"id": 7}, [], self.pull(head={"sha": "b" * 40})],
+            side_effect=[
+                {"id": 7},
+                [
+                    {
+                        "id": 2,
+                        "user": {"id": 7},
+                        "body": "<!-- ralph-major:owner/repo -->",
+                    }
+                ],
+                self.pull(head={"sha": "b" * 40}),
+            ],
         ) as request:
             self.assertEqual(self.publish(result, "full"), "stale")
         self.assertTrue(all(len(call.args) < 3 for call in request.call_args_list))
+
+    def test_status_never_creates_a_comment(self):
+        for status in ("failed", "skipped", "unverified", "unavailable"):
+            with self.subTest(status=status):
+                result = self.result()
+                result["run"]["status"] = (
+                    "failed" if status == "failed" else "completed"
+                )
+                result["run"]["skipped"] = status == "skipped"
+                if status == "unavailable":
+                    result["output"]["exports"] = {}
+                with patch.object(
+                    github, "github_request", side_effect=[{"id": 7}, []]
+                ) as request:
+                    self.assertEqual(self.publish(result, "full"), status)
+                self.assertEqual(request.call_count, 2)
 
     def test_reviews_publish_on_draft_pull_requests(self):
         result = self.result()
@@ -347,9 +379,21 @@ class GitHubTests(unittest.TestCase):
         with patch.object(
             github,
             "github_request",
-            side_effect=[{"id": 7}, [], draft, draft, {}],
+            side_effect=[
+                {"id": 7},
+                [
+                    {
+                        "id": 2,
+                        "user": {"id": 7},
+                        "body": "<!-- ralph-major:owner/repo -->",
+                    }
+                ],
+                draft,
+                draft,
+                {},
+            ],
         ):
-            self.assertEqual(self.publish(result, "full"), "created")
+            self.assertEqual(self.publish(result, "full"), "updated")
 
     def test_full_empty_review_distinguishes_complete_from_partial(self):
         result = self.result()

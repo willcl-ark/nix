@@ -81,10 +81,10 @@ model run. Transient transport failures have bounded job retries. Oversized inpu
 tools; if the PR prelude and manifest still exceed 200,000 bytes, review is skipped.
 
 Review outcome and delivery status are separate. A failed verifier marks the
-review as failed in its saved result, public report, logs and statistics. The
-service publishes an attempt status in full GitHub mode, or the Forgejo review
-and history in other modes, then completes the queue job so publication retries
-do not run the models again. A failed review
+review as failed in its saved result, public report, logs and statistics. In full
+GitHub mode the service updates an existing comment with an attempt status; in
+other modes it publishes the Forgejo review and history. It then completes the
+queue job so publication retries do not run the models again. A failed review
 cannot create, update or delete the upstream GitHub major-findings comment.
 Public stage diagnostics include the bounded, redacted provider error message
 and HTTP status, without response bodies or headers.
@@ -240,8 +240,8 @@ report configuration and credentials.
 Later reviews update the same comment. In major-only mode, a complete review can
 delete it when no Critical or Major findings remain; incomplete reviews cannot
 delete the comment. Failed or skipped reviews leave the major-only comment alone.
-In full mode, failed, skipped, unavailable-export and unverified attempts update
-the same comment with status, attempted head, a fixed safe reason, the attempt
+In full mode, failed, skipped, unavailable-export and unverified attempts never
+create a comment; if one exists they update it with status, attempted head, a fixed safe reason, the attempt
 report, and the previous completed review when available. No findings appear in
 these status comments. Terminal acquisition failures use the same saved-result
 publication path; transient errors retry before publishing failure. Publication
