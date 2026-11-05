@@ -123,9 +123,10 @@ binary against the upgraded database. Restoring a backup also loses work accepte
 since that snapshot and cannot undo remote writes; reconcile intervening work
 before restarting.
 
-Stop the coordinator before inspecting or releasing holds. These commands acquire
-its state-directory lock and need no provider credentials. Listing includes all
-repositories; release requires an explicit repository ID:
+Listing holds is read-only, covers all repositories and works while the
+coordinator runs. Stop the coordinator before releasing a hold: release acquires
+its state-directory lock and requires an explicit repository ID. Neither command
+needs provider credentials:
 
 ```sh
 ralph-service --state-dir /path/to/state --repositories /path/to/repositories.json \

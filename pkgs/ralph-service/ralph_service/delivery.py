@@ -1,5 +1,8 @@
 """Durable publication attempts; uncertain remote writes are never replayed blindly."""
 
+from contextlib import closing
+from pathlib import Path
+import sqlite3
 import urllib.error
 
 
@@ -33,14 +36,28 @@ def initialize(db):
         """)
 
 
-def held(jobs, *, all_repositories=False):
+def held(jobs):
     with jobs._connection() as db:
         return [
             dict(row)
             for row in db.execute(
                 "SELECT job_id, repo_id, number, destination, operation, path FROM deliveries "
-                "WHERE state = 'uncertain' AND (? OR repo_id = ?) ORDER BY repo_id, number, job_id, destination",
-                (all_repositories, jobs.repo_id),
+                "WHERE state = 'uncertain' AND repo_id = ? ORDER BY number, job_id, destination",
+                (jobs.repo_id,),
+            )
+        ]
+
+
+def list_held(path):
+    """Read every repository's holds without opening the store for writing."""
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(uri, uri=True, timeout=30)) as db:
+        db.row_factory = sqlite3.Row
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT job_id, repo_id, number, destination, operation, path FROM deliveries "
+                "WHERE state = 'uncertain' ORDER BY repo_id, number, job_id, destination"
             )
         ]
 

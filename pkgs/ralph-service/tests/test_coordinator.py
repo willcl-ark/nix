@@ -1,5 +1,7 @@
 import hashlib
 import hmac
+import contextlib
+import io
 import json
 import logging
 from pathlib import Path
@@ -33,6 +35,39 @@ class CoordinatorTests(unittest.TestCase):
                     for line in formatter.format(record).splitlines()
                 )
             )
+
+    def test_listing_held_deliveries_works_while_coordinator_runs(self):
+        with self.jobs._connection(write=True) as db:
+            db.execute(
+                "INSERT INTO deliveries (job_id, repo_id, number, destination, state) "
+                "VALUES (1, 'gui', 42, 'github:owner/repo', 'uncertain'), "
+                "(2, 'core', 43, 'github:owner/repo', 'confirmed')"
+            )
+        registry = self.root / "repositories.json"
+        registry.write_text(
+            json.dumps(
+                {
+                    "core": {
+                        "origin": "https://git.example/repo",
+                        "repository": "owner/repo",
+                        "forgejo_api": "https://git.example/api/v1/repos/owner/repo",
+                    }
+                }
+            )
+        )
+        arguments = ["--state-dir", str(self.root), "--repositories", str(registry)]
+        output = io.StringIO()
+        with (
+            service.coordinator_lock(self.root),
+            contextlib.ExitStack() as resources,
+            contextlib.redirect_stdout(output),
+            patch("sys.argv", ["ralph-service", *arguments, "--list-held-deliveries"]),
+        ):
+            self.assertEqual(coordinator.main(resources), 0)
+        self.assertEqual(
+            [(row["repo_id"], row["number"]) for row in json.loads(output.getvalue())],
+            [("gui", 42)],
+        )
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

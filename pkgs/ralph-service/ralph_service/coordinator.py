@@ -235,6 +235,13 @@ def main(resources):
     progress.LOGGER.setLevel(logging.DEBUG)
     try:
         entries = config.load_repositories(args.repositories)
+        if args.list_held_deliveries:
+            print(
+                json.dumps(
+                    delivery.list_held(args.state_dir / "jobs.sqlite3"), indent=2
+                )
+            )
+            return 0
         resources.enter_context(service.coordinator_lock(args.state_dir))
         args.state_dir.chmod(0o700)
         if args.migrate_state:
@@ -253,9 +260,6 @@ def main(resources):
             },
         )
         bind_repositories(jobs, entries)
-        if args.list_held_deliveries:
-            print(json.dumps(delivery.held(jobs, all_repositories=True), indent=2))
-            return 0
         if args.release_delivery is not None:
             if (
                 args.repository_id not in entries
