@@ -147,7 +147,6 @@ def publish_review(
         return (
             pull.get("number") == number
             and pull.get("state") == "open"
-            and pull.get("draft") is False
             and pull.get("head", {}).get("sha") == result["head_sha"]
             and pull.get("base", {}).get("repo", {}).get("full_name") == repository
             and expected_context is not None

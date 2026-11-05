@@ -826,7 +826,7 @@ review failures retry first; publication transport failures retain the saved
 review and leave the existing comment until delivery succeeds. Uncertain writes
 remain held for reconciliation.
 
-Writes require an open, non-draft upstream PR matching the reviewed head and base
+Writes require an open upstream PR, draft or not, matching the reviewed head and base
 branch. Title, body and label edits do not cancel a running review or block its
 publication on either Forgejo or GitHub. The report retains the metadata used
 during review. A stale GitHub head or target branch marks the job stale instead

@@ -249,7 +249,7 @@ transport errors never replace a completed review with a failure status.
 `"off"` leaves existing comments untouched. No database migration is needed;
 existing exact delivery intents are preserved until reconciled. The old
 `github_post_major_findings` boolean is rejected; replace it with the new mode.
-Upstream PR numbers must match the mirror. Writes require an open, non-draft upstream PR
+Upstream PR numbers must match the mirror. Writes require an open upstream PR
 matching the reviewed head and base branch. Metadata edits do not block
 publication. GitHub credentials are separate from Forgejo credentials and model
 tools.

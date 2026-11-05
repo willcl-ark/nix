@@ -329,15 +329,27 @@ class GitHubTests(unittest.TestCase):
         self.assertIn(previous["run"]["report_url"], body)
         self.assertIn("`aaaaaaaaaaaa`", body)
 
-    def test_status_never_publishes_to_newer_head_or_draft(self):
+    def test_status_never_publishes_to_newer_head(self):
         result = self.result()
         result["run"]["status"] = "failed"
-        for pull in (self.pull(head={"sha": "b" * 40}), self.pull(draft=True)):
-            with patch.object(
-                github, "github_request", side_effect=[{"id": 7}, [], pull]
-            ) as request:
-                self.assertEqual(self.publish(result, "full"), "stale")
-            self.assertTrue(all(len(call.args) < 3 for call in request.call_args_list))
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[{"id": 7}, [], self.pull(head={"sha": "b" * 40})],
+        ) as request:
+            self.assertEqual(self.publish(result, "full"), "stale")
+        self.assertTrue(all(len(call.args) < 3 for call in request.call_args_list))
+
+    def test_reviews_publish_on_draft_pull_requests(self):
+        result = self.result()
+        result["run"]["status"] = "failed"
+        draft = self.pull(draft=True)
+        with patch.object(
+            github,
+            "github_request",
+            side_effect=[{"id": 7}, [], draft, draft, {}],
+        ):
+            self.assertEqual(self.publish(result, "full"), "created")
 
     def test_full_empty_review_distinguishes_complete_from_partial(self):
         result = self.result()
@@ -610,7 +622,6 @@ class GitHubTests(unittest.TestCase):
         for pull in (
             {"state": "open", "head": {"sha": "b" * 40}},
             {"state": "closed", "head": {"sha": "a" * 40}},
-            self.pull(draft=True),
             self.pull(base={"ref": "other", "repo": {"full_name": "owner/repo"}}),
             self.pull(base={"ref": "qt6", "repo": {"full_name": "other/repo"}}),
         ):
