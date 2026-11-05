@@ -9,6 +9,8 @@ from urllib.parse import quote
 
 from ralph import trace
 
+from .config import pull_request_url
+
 MESSAGE_LIMIT = 4096
 
 
@@ -50,7 +52,7 @@ def review_message(repository_url, number, result, *, repository_id):
     title = " ".join(run.get("pr_title", f"Pull request #{number}").split())
     heading = f"{marker}{repository_id}#{number}: {title}"
     links = (
-        f"\n{repository_url.rstrip('/')}/pulls/{number}"
+        f"\n{pull_request_url(repository_url, number)}"
         f"\nRead full review: {run['report_url']}"
     )
     counts = Counter(

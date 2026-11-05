@@ -13,7 +13,7 @@ from markdown_it import MarkdownIt
 
 from ralph import trace as core_trace
 
-from . import theme
+from . import config, theme
 
 
 REPORT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -1049,7 +1049,8 @@ def _pr_link(record):
     base = _safe_http_url(record.get("repository_url"))
     if base is None:
         return _escape(label)
-    return f'<a href="{_escape(base.rstrip("/"))}/pulls/{record["pr"]}">{label}</a>'
+    url = config.pull_request_url(base, record["pr"])
+    return f'<a href="{_escape(url)}">{label}</a>'
 
 
 def _html_report(record, json_name):

@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from . import report, theme
+from . import config, report, theme
 
 
 MISSING = object()
@@ -157,7 +157,7 @@ def _pr_link(review, repository_url):
     label = f"{'bitcoin' if repository_id == 'core' else repository_id}#{number}"
     if number is None or base is None:
         return _escape(label if number is not None else "N/A")
-    return _link(f"{base}/pulls/{number}", label)
+    return _link(config.pull_request_url(base, number), label)
 
 
 def _report_link(review, report_base_url):

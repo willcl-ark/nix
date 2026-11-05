@@ -89,8 +89,7 @@ def _comments(bot_config, number, cutoff, token):
         record = {
             "id": f"{kind}:{item.get('id')}",
             "kind": kind,
-            "url": item.get("html_url")
-            or f"{bot_config.repository_url}/pulls/{number}",
+            "url": item.get("html_url") or forgejo.pull_request_url(bot_config, number),
             "body": body,
             "author_id": author_id,
             "updated_at": item.get("updated_at")

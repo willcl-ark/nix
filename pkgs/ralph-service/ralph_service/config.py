@@ -16,6 +16,11 @@ def default_repository_url(forgejo_api):
     return f"{base_url.rstrip('/')}/{repository}".rstrip("/")
 
 
+def pull_request_url(repository_url, number):
+    path = "pull" if urlsplit(repository_url).hostname == "github.com" else "pulls"
+    return f"{repository_url.rstrip('/')}/{path}/{number}"
+
+
 def default_comment_marker(repository):
     return f"<!-- ralph:{repository} -->"
 

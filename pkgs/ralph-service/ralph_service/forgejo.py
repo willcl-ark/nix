@@ -9,6 +9,7 @@ import urllib.request
 
 from ralph.repository import MAX_TOOL_BYTES
 from ralph.evidence import ToolFailure
+from . import config
 from .github import MARKER_PREFIX
 from .repository import current_head
 
@@ -108,12 +109,13 @@ def public_discussion_request(bot_config, path):
 
 
 def pull_request_url(bot_config, number):
-    path = (
-        "pull"
-        if urllib.parse.urlsplit(bot_config.repository_url).hostname == "github.com"
-        else "pulls"
-    )
-    return f"{bot_config.repository_url}/{path}/{number}"
+    return config.pull_request_url(bot_config.repository_url, number)
+
+
+def _discussion_url(bot_config, kind, number):
+    if kind == "PR":
+        return pull_request_url(bot_config, number)
+    return f"{bot_config.repository_url}/issues/{number}"
 
 
 def search_discussions(bot_config, query, current_pr, cutoff=None):
@@ -147,8 +149,9 @@ def search_discussions(bot_config, query, current_pr, cutoff=None):
         kind = "PR" if issue.get("pull_request") else "Issue"
         title = str(issue.get("title") or "").replace("\n", " ")[:200]
         number = issue["number"]
-        url_kind = "pulls" if kind == "PR" else "issues"
-        item = f"{kind} #{number}: {title} ({bot_config.repository_url}/{url_kind}/{number})\n"
+        item = (
+            f"{kind} #{number}: {title} ({_discussion_url(bot_config, kind, number)})\n"
+        )
         if len((result + item).encode()) > MAX_TOOL_BYTES:
             return result + "[Results truncated]"
         result += item
@@ -182,11 +185,10 @@ def read_discussion(bot_config, number, current_pr, cutoff=None):
     if not isinstance(issue, dict) or issue.get("number") != number:
         raise ToolFailure("unavailable", "Forgejo returned an invalid discussion.")
     kind = "PR" if issue.get("pull_request") else "Issue"
-    url_kind = "pulls" if kind == "PR" else "issues"
     title, body = _discussion_title_body(issue, cutoff, 3000)
     result = (
         f"{kind} #{number}: {title}\n"
-        f"{bot_config.repository_url}/{url_kind}/{number}\n"
+        f"{_discussion_url(bot_config, kind, number)}\n"
         f"{'Cutoff' if cutoff else 'Retrieved at'}: {cutoff or _retrieved_at()}\n"
         f"Description:\n{body}\n"
     )

@@ -235,7 +235,9 @@ class NotificationStore:
 def _failure_message(failed):
     text = f"Ralph: {len(failed)} terminal review failure(s)\n"
     for index, (_, _, number, repo_id, repository_url) in enumerate(failed):
-        line = f"\n{repo_id}#{number}: {repository_url.rstrip('/')}/pulls/{number}"
+        line = (
+            f"\n{repo_id}#{number}: {config.pull_request_url(repository_url, number)}"
+        )
         remainder = f"\n…and {len(failed) - index} more."
         if telegram.message_length(text + line + remainder) > 4096:
             return text + remainder

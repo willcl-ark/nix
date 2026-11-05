@@ -8,7 +8,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ralph import repository as local_repository
-from ralph_service import config, delivery, forgejo, jobs, repository, research
+from ralph_service import (
+    config,
+    delivery,
+    forgejo,
+    jobs,
+    monitor,
+    report,
+    repository,
+    research,
+    stats_page,
+    telegram,
+)
 
 
 class BotTests(unittest.TestCase):
@@ -303,6 +314,48 @@ class BotTests(unittest.TestCase):
             discussion = forgejo.read_discussion(self.bot_config, 7, 42)
         self.assertIn("Human comment", discussion)
         self.assertNotIn("Own finding", discussion)
+
+    def test_pull_request_links_use_each_hosts_path(self):
+        forge = "https://forge.example/owner/repo"
+        github = "https://github.com/owner/repo"
+        self.assertEqual(config.pull_request_url(forge, 7), f"{forge}/pulls/7")
+        self.assertEqual(config.pull_request_url(github + "/", 7), f"{github}/pull/7")
+
+        expected = f"{github}/pull/7"
+        result = {
+            "schema_version": 1,
+            "output": {"schema_version": 1, "exports": {"findings": []}},
+            "run": {"report_url": "https://reports.example/7.html"},
+        }
+        for rendered in (
+            stats_page._pr_link({"number": 7}, github),
+            report._pr_link({"pr": 7, "repository_url": github}),
+            telegram.review_message(github, 7, result, repository_id="core"),
+            monitor._failure_message([(1, 1, 7, "core", github)]),
+        ):
+            self.assertIn(expected, rendered)
+
+        bot = replace(self.bot_config, repository_url=github)
+        with patch.object(
+            forgejo,
+            "public_discussion_request",
+            return_value=[
+                {"number": 7, "title": "PR", "pull_request": {"merged": False}},
+                {"number": 8, "title": "Issue"},
+            ],
+        ):
+            matches = forgejo.search_discussions(bot, "query", 42)
+        self.assertIn(expected, matches)
+        self.assertIn(f"{github}/issues/8", matches)
+        with patch.object(
+            forgejo,
+            "public_discussion_request",
+            side_effect=[
+                {"number": 7, "title": "PR", "pull_request": {"merged": False}},
+                [],
+            ],
+        ):
+            self.assertIn(expected, forgejo.read_discussion(bot, 7, 42))
 
     def test_github_discussion_reads_send_the_token_only_to_github(self):
         url = "https://github.com/bitcoin/bitcoin/pull/7"

@@ -362,7 +362,7 @@ def process_job(
                             **metadata,
                             "kind": "pull_request",
                             "number": number,
-                            "url": f"{bot_config.repository_url}/pulls/{number}",
+                            "url": forgejo.pull_request_url(bot_config, number),
                         },
                     )
                     runtime = engine.Runtime(
