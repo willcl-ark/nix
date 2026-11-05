@@ -15,7 +15,9 @@ def utc_now():
     )
 
 
-def _capture_call(bot_config, current_pr, request, cutoff, captured_at):
+def _capture_call(
+    bot_config, current_pr, request, cutoff, captured_at, github_token=None
+):
     if not isinstance(request, dict):
         raise ValueError("research request must be an object")
     name = request.get("name")
@@ -46,6 +48,7 @@ def _capture_call(bot_config, current_pr, request, cutoff, captured_at):
                 arguments["kind"],
                 arguments["page"],
                 cutoff=cutoff,
+                token=github_token,
             )
         else:
             raise ValueError(f"unsupported research tool: {name}")
@@ -98,12 +101,17 @@ def capture(bot_config, current_pr, requests=None, cutoff=None, captured_at=None
     return validate(evidence)
 
 
-def discussion_lookup(bot_config, current_pr):
+def discussion_lookup(bot_config, current_pr, github_token=None):
     """Bind live discussion tools to this service's PR context."""
 
     def lookup(name, arguments):
         entry = _capture_call(
-            bot_config, current_pr, {"name": name, "arguments": arguments}, None, None
+            bot_config,
+            current_pr,
+            {"name": name, "arguments": arguments},
+            None,
+            None,
+            github_token,
         )
         if entry["outcome"] != "success":
             raise ToolFailure(entry["outcome"], entry["output"])

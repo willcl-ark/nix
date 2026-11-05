@@ -844,6 +844,8 @@ For an account outside the upstream organization, use a classic personal access
 token with `public_repo` scope. Fine-grained tokens owned by the bot account
 provide only read access to other owners' public repositories. See
 [GitHub's token limitations](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#fine-grained-personal-access-tokens-limitations).
+Review stages also send this token when reading GitHub discussions at URLs the
+model chooses, so do not give it access to private repositories.
 Never put the token itself in Nix configuration or the Nix store.
 
 ### Telegram publishing and monitoring

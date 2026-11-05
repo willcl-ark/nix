@@ -1,3 +1,4 @@
+import io
 import tempfile
 import unittest
 import urllib.error
@@ -7,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ralph import repository as local_repository
-from ralph_service import config, delivery, forgejo, jobs, repository
+from ralph_service import config, delivery, forgejo, jobs, repository, research
 
 
 class BotTests(unittest.TestCase):
@@ -302,6 +303,36 @@ class BotTests(unittest.TestCase):
             discussion = forgejo.read_discussion(self.bot_config, 7, 42)
         self.assertIn("Human comment", discussion)
         self.assertNotIn("Own finding", discussion)
+
+    def test_github_discussion_reads_send_the_token_only_to_github(self):
+        url = "https://github.com/bitcoin/bitcoin/pull/7"
+        lookup = research.discussion_lookup(self.bot_config, 42, "token")
+        for target in (url, url + "#issuecomment-5", url + "#discussion_r6"):
+            with patch.object(
+                urllib.request,
+                "urlopen",
+                side_effect=lambda *_, **__: io.BytesIO(b"[]"),
+            ) as send:
+                lookup(
+                    "read_github_discussion",
+                    {"url": target, "kind": "comments", "page": 1},
+                )
+            for call in send.call_args_list:
+                request = call.args[0]
+                self.assertEqual(request.host, "api.github.com")
+                self.assertEqual(request.headers["Authorization"], "Bearer token")
+
+    def test_failed_github_comment_read_does_not_blame_forgejo(self):
+        responses = [
+            io.BytesIO(b'{"number": 7, "title": "Title"}'),
+            urllib.error.URLError("unreachable"),
+        ]
+        with patch.object(urllib.request, "urlopen", side_effect=responses):
+            discussion = forgejo.read_github_discussion(
+                self.bot_config, "https://github.com/bitcoin/bitcoin/pull/7"
+            )
+        self.assertIn("Comments are unavailable.", discussion)
+        self.assertNotIn("Forgejo", discussion)
 
     def test_public_discussion_request_sends_no_token_and_limits_response(self):
         class Response:

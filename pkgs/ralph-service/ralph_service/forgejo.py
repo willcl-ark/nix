@@ -260,7 +260,7 @@ def _append_comments(
     result, comments, bot_config, *, limit=DISCUSSION_PAGE_LIMIT, cutoff=None
 ):
     if not isinstance(comments, list):
-        return result + "Forgejo returned invalid comments.\n"
+        return result + "Comments are unavailable.\n"
     human = [
         comment
         for comment in comments
@@ -439,10 +439,12 @@ def _parse_github_issue_url(url):
     return owner, repo, number
 
 
-def _github_page(path, *, page, per_page=DISCUSSION_PAGE_LIMIT, cutoff=None):
+def _github_page(
+    path, *, page, per_page=DISCUSSION_PAGE_LIMIT, cutoff=None, token=None
+):
     separator = "&" if "?" in path else "?"
     try:
-        items = _github_api(f"{path}{separator}per_page={per_page}&page={page}")
+        items = _github_api(f"{path}{separator}per_page={per_page}&page={page}", token)
     except (ValueError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
         return None, True
     if not isinstance(items, list):
@@ -450,22 +452,24 @@ def _github_page(path, *, page, per_page=DISCUSSION_PAGE_LIMIT, cutoff=None):
     return items, len(items) == per_page
 
 
-def _github_fragment_comment(base, fragment):
+def _github_fragment_comment(base, fragment, token=None):
     if not isinstance(fragment, str):
         return None, False
     try:
         if fragment.startswith("discussion_r"):
             identifier = int(fragment.removeprefix("discussion_r"))
-            return _github_api(f"{base}/pulls/comments/{identifier}"), True
+            return _github_api(f"{base}/pulls/comments/{identifier}", token), True
         if fragment.startswith("issuecomment-"):
             identifier = int(fragment.removeprefix("issuecomment-"))
-            return _github_api(f"{base}/issues/comments/{identifier}"), True
+            return _github_api(f"{base}/issues/comments/{identifier}", token), True
     except (ValueError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
         return None, True
     return None, False
 
 
-def read_github_discussion(bot_config, url, kind="comments", page=1, cutoff=None):
+def read_github_discussion(
+    bot_config, url, kind="comments", page=1, cutoff=None, token=None
+):
     parsed = _parse_github_issue_url(url)
     if parsed is None:
         raise ToolFailure(
@@ -485,7 +489,7 @@ def read_github_discussion(bot_config, url, kind="comments", page=1, cutoff=None
     base = f"/repos/{owner}/{repo}"
     fragment = urllib.parse.urlsplit(url).fragment
     try:
-        issue = _github_api(f"{base}/issues/{number}")
+        issue = _github_api(f"{base}/issues/{number}", token)
     except (ValueError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
         raise ToolFailure(
             "unavailable",
@@ -501,7 +505,7 @@ def read_github_discussion(bot_config, url, kind="comments", page=1, cutoff=None
         f"{'Cutoff' if cutoff else 'Retrieved at'}: {cutoff or _retrieved_at()}\n"
         f"Description:\n{body}\n"
     )
-    fragment_comment, had_fragment = _github_fragment_comment(base, fragment)
+    fragment_comment, had_fragment = _github_fragment_comment(base, fragment, token)
     if had_fragment:
         result += "GitHub referenced comment:\n"
         result = _append_comments(
@@ -513,17 +517,17 @@ def read_github_discussion(bot_config, url, kind="comments", page=1, cutoff=None
         return result
     if kind == "comments":
         comments, truncated = _github_page(
-            f"{base}/issues/{number}/comments", page=page, cutoff=cutoff
+            f"{base}/issues/{number}/comments", page=page, cutoff=cutoff, token=token
         )
         result += f"GitHub issue comments page {page}:\n"
     elif kind == "inline":
         comments, truncated = _github_page(
-            f"{base}/pulls/{number}/comments", page=page, cutoff=cutoff
+            f"{base}/pulls/{number}/comments", page=page, cutoff=cutoff, token=token
         )
         result += f"GitHub inline review comments page {page}:\n"
     else:
         comments, truncated = _github_page(
-            f"{base}/pulls/{number}/reviews", page=page, cutoff=cutoff
+            f"{base}/pulls/{number}/reviews", page=page, cutoff=cutoff, token=token
         )
         result += f"GitHub review summaries page {page}:\n"
     result = _append_comments(result, comments, bot_config, cutoff=cutoff)

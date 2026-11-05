@@ -372,7 +372,7 @@ def process_job(
                         is_current=lambda: jobs.is_current(job),
                         is_cancelled=lambda: not jobs.is_current(job),
                         discussion_lookup=(
-                            discussion_lookup(bot_config, number)
+                            discussion_lookup(bot_config, number, github_token)
                             if allow_discussions
                             else None
                         ),
