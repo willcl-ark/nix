@@ -23,6 +23,19 @@ class TelegramTests(unittest.TestCase):
             "https://forge.example/owner/repo", 42, result, repository_id="gui"
         )
 
+    def test_failed_and_skipped_reviews_do_not_look_clean(self):
+        for field, value, label in (
+            ("status", "failed", "⚠️ Review failed"),
+            ("skipped", True, "⚠️ Review skipped"),
+        ):
+            result = self.result()
+            result["run"][field] = value
+            text = self.render(result)
+            self.assertIn(label, text)
+            self.assertIn("Current findings: unavailable", text)
+            self.assertIn("https://reports.example/42.html", text)
+        self.assertNotIn("⚠️", self.render(self.result()))
+
     def test_unicode_limit_and_oversized_title_keep_links(self):
         self.assertEqual(telegram.message_length("🚨"), 2)
         result = self.result(

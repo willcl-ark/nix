@@ -40,7 +40,16 @@ def review_message(repository_url, number, result, *, repository_id):
         if item.get("collapsed")
         for finding_id in item.get("current_finding_ids", [])
     }
-    if any(
+    outcome = (
+        "failed"
+        if run.get("status") == "failed"
+        else "skipped"
+        if run.get("skipped")
+        else None
+    )
+    if outcome:
+        marker = f"⚠️ Review {outcome}\n"
+    elif any(
         finding.get("severity") == "major" and finding.get("id") not in collapsed
         for finding in findings
     ):
@@ -64,7 +73,7 @@ def review_message(repository_url, number, result, *, repository_id):
     if counts["critical"]:
         labels.insert(0, ("critical", "Critical"))
     summary = " · ".join(f"{label}: {counts[severity]}" for severity, label in labels)
-    if findings_export is None:
+    if findings_export is None or outcome:
         summary = "unavailable"
     footer = f"\nCurrent findings: {summary}{links}"
     # Keep the counts and both links even if a PR has an unusually long title.
