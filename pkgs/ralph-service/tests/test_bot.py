@@ -281,6 +281,28 @@ class BotTests(unittest.TestCase):
                 first_head,
             )
 
+    def test_discussion_reads_exclude_ralphs_github_comments(self):
+        ralph = {
+            "id": 1,
+            "user": {"login": "ralph-account", "type": "User"},
+            "body": "<!-- ralph-major:bitcoin-core/gui-qml -->\n\nOwn finding",
+        }
+        human = {
+            "id": 2,
+            "user": {"login": "reviewer", "type": "User"},
+            "body": "Human comment",
+        }
+        self.assertTrue(forgejo._is_bot_comment(ralph, self.bot_config))
+        self.assertFalse(forgejo._is_bot_comment(human, self.bot_config))
+        with patch.object(
+            forgejo,
+            "public_discussion_request",
+            side_effect=[{"number": 7, "title": "Title"}, [ralph, human]],
+        ):
+            discussion = forgejo.read_discussion(self.bot_config, 7, 42)
+        self.assertIn("Human comment", discussion)
+        self.assertNotIn("Own finding", discussion)
+
     def test_public_discussion_request_sends_no_token_and_limits_response(self):
         class Response:
             def __init__(self, body):

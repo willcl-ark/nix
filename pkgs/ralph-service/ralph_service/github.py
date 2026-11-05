@@ -7,6 +7,8 @@ import urllib.error
 from final_comment import render, render_github
 from ralph import trace
 
+MARKER_PREFIX = "<!-- ralph-major:"
+
 
 def github_request(token, path, method="GET", data=None):
     request = urllib.request.Request(
@@ -26,7 +28,7 @@ def github_request(token, path, method="GET", data=None):
 
 
 def reconcile_delivery(repository, token, number, delivery):
-    marker = f"<!-- ralph-major:{repository} -->"
+    marker = f"{MARKER_PREFIX}{repository} -->"
     base = f"/repos/{repository}"
     user = github_request(token, "/user")
     comment = None
@@ -113,7 +115,7 @@ def publish_review(
         findings = [
             finding for finding in findings if finding.get("id") not in collapsed
         ]
-    marker = f"<!-- ralph-major:{repository} -->"
+    marker = f"{MARKER_PREFIX}{repository} -->"
     base = f"/repos/{repository}"
     comment, lookup = reconcile_delivery(repository, token, number, delivery)
 

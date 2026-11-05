@@ -9,6 +9,7 @@ import urllib.request
 
 from ralph.repository import MAX_TOOL_BYTES
 from ralph.evidence import ToolFailure
+from .github import MARKER_PREFIX
 from .repository import current_head
 
 MAX_DISCUSSION_RESPONSE_BYTES = 500_000
@@ -207,8 +208,7 @@ def read_discussion(bot_config, number, current_pr, cutoff=None):
     human = [
         comment
         for comment in comments
-        if isinstance(comment, dict)
-        and bot_config.comment_marker not in str(comment.get("body") or "")
+        if isinstance(comment, dict) and not _is_bot_comment(comment, bot_config)
     ]
     visible = [comment for comment in human if _visible_before_cutoff(comment, cutoff)]
     selected = visible[:2] + visible[-6:] if len(visible) > 8 else visible
@@ -250,6 +250,7 @@ def _is_bot_comment(comment, bot_config):
     kind = str(user.get("type") or "")
     return (
         bot_config.comment_marker in body
+        or MARKER_PREFIX in body
         or kind.lower() == "bot"
         or login.endswith("[bot]")
     )
