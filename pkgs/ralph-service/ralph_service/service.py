@@ -369,7 +369,7 @@ def process_job(
                         case=case,
                         api_key=api_key,
                         usage=usage,
-                        is_current=is_current,
+                        is_current=lambda: jobs.is_current(job),
                         is_cancelled=lambda: not jobs.is_current(job),
                         discussion_lookup=(
                             discussion_lookup(bot_config, number)

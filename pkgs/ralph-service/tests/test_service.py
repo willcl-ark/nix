@@ -554,6 +554,46 @@ class ServiceTests(unittest.TestCase):
         publish.assert_called_once()
         self.assertIsNone(self.jobs.claim())
 
+    def test_review_stages_detect_new_work_without_contacting_the_source(self):
+        job = self.enqueue()
+
+        def review(case, runtime, review_engine):
+            source_reads = head.call_count, forgejo.pull_request_context.call_count
+            runtime.check_current()
+            self.assertEqual(
+                (head.call_count, forgejo.pull_request_context.call_count),
+                source_reads,
+            )
+            self.jobs.enqueue(
+                42,
+                "master",
+                "c" * 40,
+                "synchronize",
+                engine_identity=self.review_engine.identity,
+            )
+            runtime.check_current()
+
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40) as head,
+            patch.object(forgejo, "find_comment", return_value=None),
+            patch.object(
+                repository,
+                "collect_review",
+                return_value=("b" * 40, "a" * 40, "review", None),
+            ),
+            patch.object(
+                service.local_repository,
+                "snapshot_repository",
+                return_value=SimpleNamespace(merge_base="b" * 40),
+            ),
+            patch.object(service, "collect_review_feedback", return_value=None),
+            patch.object(service.runner, "run_review", side_effect=review) as run,
+            patch.object(forgejo, "publish_review") as publish,
+        ):
+            self.assertEqual(self.process(job), "stale")
+        run.assert_called_once()
+        publish.assert_not_called()
+
     def test_saved_review_without_target_identity_requires_recapture(self):
         job = self.enqueue()
         result = self.saved_result()
