@@ -4,6 +4,7 @@
   python3,
   git,
   systemd,
+  nix,
   makeWrapper,
   ralph,
   bubblewrap,
@@ -42,7 +43,7 @@ stdenvNoCC.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    for launcher in bot.py evaluate.py followup.py monitor.py; do
+    for launcher in bot.py job.py evaluate.py followup.py monitor.py; do
       install -Dm755 "$launcher" $out/libexec/ralph-service/"$launcher"
     done
     for module in ralph_service/*.py ralph_service/*.css ralph_service/*.js; do
@@ -51,6 +52,23 @@ stdenvNoCC.mkDerivation {
     install -Dm644 audits/addressed_findings.md $out/libexec/ralph-service/audits/addressed_findings.md
     makeWrapper ${python.interpreter} $out/bin/ralph-service \
       --add-flags $out/libexec/ralph-service/bot.py \
+      --set-default RALPH_JOB_EXECUTABLE "$out/bin/ralph-job" \
+      --prefix PYTHONPATH : ${ralph}/libexec/ralph \
+      --prefix PATH : ${
+        lib.makeBinPath [
+          git
+          bash
+          util-linux
+          systemd
+          nix
+        ]
+      } \
+      --set-default RALPH_WRITE_VERIFIER_BWRAP ${lib.getExe bubblewrap} \
+      ${lib.optionalString (
+        ralph.writeVerifierEnvironment != null
+      ) "--set-default RALPH_WRITE_VERIFIER_SHELL ${lib.getExe ralph.writeVerifierEnvironment}"}
+    makeWrapper ${python.interpreter} $out/bin/ralph-job \
+      --add-flags $out/libexec/ralph-service/job.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
       --prefix PATH : ${
         lib.makeBinPath [

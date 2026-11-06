@@ -68,6 +68,12 @@
         };
       });
 
+      checks = forAllSystems (system: {
+        ralph-job-lifecycle = import ./tests/ralph-job-lifecycle.nix {
+          pkgs = nixpkgs.legacyPackages.${system};
+        };
+      });
+
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-tree);
     };
 }

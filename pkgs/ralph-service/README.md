@@ -6,14 +6,16 @@ the exact core package and imports its `run_review` function directly.
 
 The package installs:
 
-- `ralph-service`, the webhook receiver, queue workers and explicit state converter.
+- `ralph-service`, the webhook receiver, job scheduler and explicit state converter.
+- `ralph-job`, the single-attempt runner.
 - `ralph-evaluate`, frozen capture/replay, usage inspection and offline summaries.
 - `ralph-followup`, background assessment of previously published findings.
 - `ralph-telegram`, independent Telegram publication, monitoring and channel commands.
 
 The `ralph` command performs a local review and accepts no service flags.
-The service uses one repository registry, queue and worker pool. Configure NixOS
-under `services.ralph.repositories.<id>`; the module generates the registry.
+The service uses one repository registry and queue, with independent systemd
+review jobs. Configure NixOS under `services.ralph.repositories.<id>`; the module
+generates the registry.
 Manual commands use the same JSON file:
 
 ```sh
@@ -48,6 +50,25 @@ See the [module guide](../../modules/ralph/README.md) and
 Core imports and defaults live under the core package's `libexec/ralph`.
 Companion code and launchers live under `libexec/ralph-service`; wrappers add the
 core Python root without copying its source. Core has no companion dependency.
+
+## Independent job operations
+
+Use the coordinator's configured `--state-dir` and `--repositories` arguments
+with `ralph-service --list-job-units` to list active attempt IDs and unit names.
+`ralph-service --cancel-job ID` invalidates that attempt and requests its unit
+stop; its concurrency slot remains occupied until exit is confirmed. Run these
+commands as the service account. `systemctl restart ralph.service` replaces only
+the coordinator and leaves review units running.
+
+Each attempt uses a private manifest and GC roots under `STATE_DIR/attempts`.
+The manifest pins its executable and non-secret configuration; credentials are
+loaded from their configured files. Do not edit manifests for running jobs.
+The scheduler reconciles stopped attempts and removes their roots. Temporary
+systemd failures pause recovery rather than invalidating live reviews.
+
+The first deployment from threaded execution needs one last drain. Future
+schema-breaking changes and rollback to the threaded version require all
+independent jobs to stop first. Ordinary compatible package updates can overlap.
 
 ## Service and review lifecycle
 
@@ -212,9 +233,9 @@ cap usage is observable but provider-side blocking is not. These counts help
 choose limits to investigate, rather than measure review quality.
 
 Queued reviews retain their resolved profile and prompt settings across retries
-and restarts. The running engine code may update after a deployment; its hash
-is recorded when the worker claims the review. Saved results retain their
-original identity and retry publication without running the engine again.
+and restarts. Each running attempt pins its package and configuration across
+deployments. New attempts use the deployed package; the engine hash is recorded
+on claim. Saved results retain their original identity and retry publication without running the engine again.
 Existing unfinished reviews migrate once into the default profile, preserving
 their configured models.
 

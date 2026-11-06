@@ -7,7 +7,27 @@
 
 let
   cfg = config.services.ralph;
-  experimentCgroup = "/sys/fs/cgroup/system.slice/ralph.service";
+  experimentCgroup = "/sys/fs/cgroup/system.slice/ralph-job@%i.service";
+  jobLauncher = pkgs.writeScriptBin "ralph-job-launch" ''
+    #!${pkgs.python3}/bin/python3
+    import argparse
+    import json
+    import os
+    from pathlib import Path
+    import re
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--instance", required=True)
+    args = parser.parse_args()
+    if not re.fullmatch(r"[1-9][0-9]*-[0-9a-f]{32}", args.instance):
+        parser.error("invalid job instance")
+    manifest = args.state_dir / "attempts" / args.instance / "manifest.json"
+    executable = json.loads(manifest.read_text())["executable"]
+    if not re.fullmatch(r"/nix/store/[a-z0-9]{32}-[^/]+/bin/ralph-job", executable):
+        parser.error("job executable must be a pinned Nix store package")
+    os.execv(executable, [executable, "run", str(manifest)])
+  '';
   defaultPackage = pkgs.callPackage ../../../pkgs/ralph-service {
     ralph = pkgs.callPackage ../../../pkgs/ralph { };
   };
@@ -596,19 +616,25 @@ in
       };
     };
 
+    # Only fixed unprivileged worker instances may be managed by the coordinator.
+    security.polkit.enable = true;
+    security.polkit.extraConfig = ''
+      polkit.addRule(function(action, subject) {
+        if (subject.user === ${builtins.toJSON cfg.user} &&
+            action.id === "org.freedesktop.systemd1.manage-units" &&
+            /^ralph-job@[1-9][0-9]*-[0-9a-f]{32}\.service$/.test(action.lookup("unit")) &&
+            ["start", "stop"].indexOf(action.lookup("verb")) !== -1) {
+          return polkit.Result.YES;
+        }
+      });
+    '';
+
     systemd.services.ralph = {
-      description = "ralph pull request reviewer";
+      description = "ralph pull request coordinator";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
-      environment = {
-        RALPH_WRITE_VERIFIER_CGROUP = experimentCgroup;
-        RALPH_WRITE_VERIFIER_CCACHE = "${cfg.stateDir}/ccache";
-      }
-      // lib.optionalAttrs (cfg.writeVerifierEnvironment != null) {
-        RALPH_WRITE_VERIFIER_SHELL = lib.getExe cfg.writeVerifierEnvironment;
-      };
-
+      environment.RALPH_JOB_EXECUTABLE = "${cfg.package}/bin/ralph-job";
       serviceConfig = {
         ExecStart = "${lib.getExe' cfg.package "ralph-service"} ${lib.escapeShellArgs args}";
         User = cfg.user;
@@ -616,14 +642,49 @@ in
         StateDirectory = lib.removePrefix "/var/lib/" cfg.stateDir;
         StateDirectoryMode = "0700";
         WorkingDirectory = cfg.stateDir;
-
         Restart = "always";
         RestartSec = "10s";
+        # Independent job units survive coordinator replacement.
+        TimeoutStopSec = "10s";
+        KillMode = "control-group";
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [ cfg.stateDir ] ++ lib.optional (cfg.reportDir != null) cfg.reportDir;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictSUIDSGID = true;
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        RestrictRealtime = true;
+      };
+    };
 
-        # Drain current reviews without signalling their experiment subprocesses.
-        KillMode = "mixed";
-        TimeoutStopSec = "infinity";
-
+    systemd.services."ralph-job@" = {
+      description = "ralph review attempt %i";
+      # Existing attempts retain their process, package and sandbox until exit.
+      restartIfChanged = false;
+      stopIfChanged = false;
+      environment = {
+        RALPH_WRITE_VERIFIER_CGROUP = experimentCgroup;
+        RALPH_WRITE_VERIFIER_CCACHE = "${cfg.stateDir}/ccache";
+        RALPH_WRITE_VERIFIER_LOCK = "${cfg.stateDir}/experiment.lock";
+      };
+      serviceConfig = {
+        Type = "exec";
+        ExecStart = "${jobLauncher}/bin/ralph-job-launch --state-dir ${lib.escapeShellArg cfg.stateDir} --instance %i";
+        User = cfg.user;
+        Group = cfg.group;
+        WorkingDirectory = cfg.stateDir;
+        # Template instances otherwise get their own implicit slice.
+        Slice = "system.slice";
+        Restart = "no";
+        KillMode = "control-group";
+        TimeoutStopSec = "10s";
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;

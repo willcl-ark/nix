@@ -4,13 +4,13 @@ This module runs `ralph-service`, a webhook receiver that posts a
 first-pass review on Forgejo pull requests.
 
 Configure repositories under `services.ralph.repositories.<id>`. One coordinator,
-worker pool, queue and Telegram consumer serve all repositories. IDs such as
+job scheduler, queue and Telegram consumer serve all repositories. IDs such as
 `core` and `gui` are persistent identities, so do not rename or reuse them for a
 different source. Jobs, cancellation, publication holds, reports and commands
 are scoped by repository and PR number.
 
 Global options configure the account, state/report directories, listener,
-provider and worker pool. Each repository selects its source, credentials,
+provider and job scheduler. Each repository selects its source, credentials,
 review strategy, concurrency allowance and optional GitHub publication policy.
 GitHub publication is disabled by default. Both repositories ingest Forgejo
 webhooks; native GitHub ingestion is not required.
@@ -74,7 +74,7 @@ that limit. The runner also bounds temporary storage and serializes experiments.
 Without writable cgroup delegation, experiments are unavailable and findings
 continue to the final source-based check.
 
-Three worker threads review different PRs concurrently by default. Set
+Three independent job services review different PRs concurrently by default. Set
 `services.ralph.workers` (or `--workers`) to change this limit.
 Reviews of the same PR run serially; newer heads wait for the active attempt to
 finish. Fetches and snapshot creation share a lock in one Git object store.
@@ -263,16 +263,36 @@ review payloads are saved before publication. Publication retries reuse that
 payload. Transient failures have bounded retries; pending claims recover when
 the service restarts. ralph retains one editable comment per PR.
 
-On SIGTERM or SIGINT, Ralph stops claiming jobs and lets active reviews finish,
-including saving and publishing their results. Webhooks remain available during
-the drain and queue work for the next process. Deployment therefore waits for
-the active reviews, even if new work keeps arriving. There is a brief webhook
-outage while the process restarts.
+Each admitted review runs in its own `ralph-job@<job>-<token>.service` unit.
+The coordinator accepts webhooks, manages the queue and starts attempts; it does
+not execute reviews. Restarting `ralph.service` stops admission briefly without
+waiting for existing reviews. Those units keep their original package and
+configuration, including publication policy. New attempts use the deployed
+package. Existing jobs still count against global and repository limits, so a
+restart does not create extra review capacity.
 
-The NixOS service sends the shutdown signal only to Ralph's main process so
-review experiments can finish too. It waits without a stop timeout; a stuck
-review can hold up deployment and requires an operator to intervene. Forced
-termination still uses the persisted-job recovery described above.
+The fixed worker template runs as the Ralph account with its own sandbox and
+delegated experiment cgroup. A scoped polkit rule allows that account to start
+and stop only job instances. Template changes do not restart running instances.
+Package GC roots and non-secret manifests are kept under the private state
+directory until attempts stop. Credentials are read from configured files, not
+stored in manifests. Checkout and experiment locks are shared between processes.
+
+Startup reconciles each recorded attempt with its systemd unit before releasing
+capacity. A live or stopping unit retains its claim; an unavailable systemd
+query prevents recovery rather than declaring the job dead. Saved results still
+retry publication without repeating inference. A reboot or killed worker can
+lose unfinished inference; this is not checkpoint/resume.
+
+The initial upgrade from threaded workers requires one final legacy drain.
+Do not run the former coordinator alongside independent units: its startup
+recovery invalidates their claims. Schema-breaking upgrades and rollback to an
+incompatible version require stopping admission and draining or cancelling all
+jobs first. Do not restore old queue state over already published results.
+
+Inspect individual jobs with `systemctl status 'ralph-job@*.service'` and
+`journalctl -u ralph-job@JOB-TOKEN.service`. Stopping the coordinator alone does
+not stop reviews. See the service package documentation for attempt management.
 
 The public PR comment contains the marker, base and head commits, and verified
 review text. When full reports are configured, it also links to the report. It
