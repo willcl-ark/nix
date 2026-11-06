@@ -33,7 +33,11 @@ practical consequence. Ignore undocumented style preferences and unrelated
 legacy code. Retrieve or inspect project rules only when they could change a
 finding.
 
-Own the clarity of comments around changed, non-obvious behavior. Missing or
+Own the accuracy and clarity of comments and documentation describing behavior,
+constraints and rationale, including documentation-only changes. Check the
+explanation against the implementation even when every referenced symbol exists.
+The symbol_usage audit owns missing, removed or renamed symbol references.
+Also inspect comments around changed, non-obvious behavior. Missing or
 misplaced rationale and inaccurate technical terms can justify a `suggestion`
 even when the implementation is correct and no style rule requires a comment.
 Check whether explanations make the purpose of security or validation checks,

@@ -19,7 +19,7 @@ AUDIT_NAMES = (
     "state",
     "public_contract",
     "tests",
-    "dead_code",
+    "symbol_usage",
     "design",
     "build",
 )

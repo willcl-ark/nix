@@ -57,10 +57,17 @@ shared test harness, coverage policy, or fixture shape in a way worth reviewing.
 Select every audit that fits; the tier does not replace relevant specialist
 coverage.
 
-Select `dead_code` for changes to production code, tests, scripts, or build
+Select `symbol_usage` for changes to production code, tests, scripts, or build
 wiring, including removals and mechanical refactors. These can introduce unused
 code or remove the last use of existing code in an unchanged file. Skip it for
-ordinary documentation-only changes.
+documentation-only changes that contain no symbol references. Select it for
+changed comments or documentation naming code symbols, to check that references
+resolve in the intended context. Removals and renames also need searches for
+stale references in unchanged documentation.
+
+Select `design` for changed comments or documentation explaining behavior,
+constraints or rationale, including documentation-only PRs. Select both audits
+when both concerns apply. Pure spelling or formatting changes need neither.
 
 Select `script` only when changed production behavior materially affects script
 execution or flags, signature hashing or verification, witness/annex handling,

@@ -62,7 +62,7 @@ def domain_audits(paths, strategy=None):
     audits = set()
     paths = [path for path in paths if not _doc_path(path)]
     if paths:
-        audits.add("dead_code")
+        audits.add("symbol_usage")
     if any(is_test_path(path) or _production_path(path) for path in paths):
         audits.add("tests")
     if any(_production_path(path) for path in paths):

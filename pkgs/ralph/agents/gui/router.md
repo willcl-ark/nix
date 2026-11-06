@@ -18,7 +18,12 @@ caches, recovery and retries. Select public_contract for user-visible errors,
 validation, defaults, command-line options and GUI/backend interfaces.
 Select tests for changed tests or production behavior, build for CMake, CI,
 Qt versions, packaging and dependency pins, design for changed responsibilities
-and interfaces, and dead_code for changed code, scripts, tests or build wiring.
+and interfaces, and symbol_usage for changed code, scripts, tests or build wiring.
+Select symbol_usage for changed comments or documentation naming code symbols,
+and for removals or renames that could leave stale references in unchanged files.
+Select design for documentation explaining behavior, constraints or rationale,
+even in documentation-only PRs. Select both when both concerns apply; pure
+spelling or formatting changes need neither.
 A submodule pointer change needs build and affected interface inspection; it
 does not alone establish consensus or Script behavior changes.
 

@@ -1342,7 +1342,7 @@ class PipelineTests(unittest.TestCase):
         )
 
     def test_discovery_stages_run_concurrently_with_ordered_candidates(self):
-        self.tier, self.audits = "routine", ["tests", "dead_code"]
+        self.tier, self.audits = "routine", ["tests", "symbol_usage"]
         rendezvous = Barrier(3)
 
         def review(*args, **kwargs):
@@ -1355,14 +1355,14 @@ class PipelineTests(unittest.TestCase):
                 ]
                 self.assertEqual(
                     [item["id"] for item in candidates],
-                    ["independent:1", "tests:1", "dead_code:1"],
+                    ["independent:1", "tests:1", "symbol_usage:1"],
                 )
                 return verification()
             rendezvous.wait(timeout=5)
             return discovery([candidate()])
 
         self.run_review(review)
-        self.assertEqual(self.debug["stages"]["dead_code"]["status"], "completed")
+        self.assertEqual(self.debug["stages"]["symbol_usage"]["status"], "completed")
 
     def test_omitted_candidate_preserves_valid_finding_and_attribution(self):
         self.tier, self.audits = "routine", []
@@ -1457,7 +1457,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.debug["coverage"]["verification"]["status"], "partial")
 
     def test_verified_material_concept_concern_gets_public_paragraph(self):
-        self.tier, self.audits = "routine", ["dead_code"]
+        self.tier, self.audits = "routine", ["symbol_usage"]
         concern = {
             **assessment(),
             "assessment": "rework_approach",
@@ -1475,7 +1475,7 @@ class PipelineTests(unittest.TestCase):
                 return json.dumps(
                     {"coverage": COMPLETE, "alternatives": concern["alternatives"]}
                 )
-            if stage in {"independent", "dead_code"}:
+            if stage in {"independent", "symbol_usage"}:
                 return discovery([candidate()])
             if stage == "challenger":
                 challenge.update(json.loads(args[1].split("Challenge input:\n")[1]))
@@ -1489,7 +1489,7 @@ class PipelineTests(unittest.TestCase):
                             "reason": "The fixtures exercise different paths",
                             "finding": None,
                         }
-                        for source in ("independent", "dead_code")
+                        for source in ("independent", "symbol_usage")
                     ],
                     concept={
                         "disposition": "publish",
@@ -1505,7 +1505,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(
             [item["id"] for item in challenge["candidates"]],
-            ["independent:1", "dead_code:1"],
+            ["independent:1", "symbol_usage:1"],
         )
         self.assertEqual(self.debug["coverage"]["status"], "complete")
         self.assertIn("Concept and approach", content)

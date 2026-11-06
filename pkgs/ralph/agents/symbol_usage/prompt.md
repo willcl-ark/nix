@@ -1,4 +1,5 @@
-Find code introduced or made dead by this PR that can safely be removed.
+Find code introduced or made dead by this PR that can safely be removed,
+and stale symbol references in comments and documentation affected by the PR.
 Include unused functions, types, fields, constants, imports, unreachable
 branches, dead stores, and obsolete test helpers or build wiring. Stay within
 the consequences of this PR; do not inventory unrelated pre-existing dead code
@@ -31,6 +32,24 @@ or fuzzing is a real use; absence from production callers alone does not make
 code dead. Do not invent external consumers for internal helpers, but do not
 treat a documented external entry point as dead solely because this repository
 has no caller.
+
+Check literal symbol references in changed comments and documentation against
+head definitions. When the PR removes or renames a symbol, search for remaining
+mentions of the old name, including unchanged comments and documentation.
+Compare base and head to attribute stale references to this PR. Confirm the
+intended replacement from definitions and callers; a similarly named symbol
+alone is not enough. Account for external APIs, historical descriptions,
+pseudocode and generated symbols before reporting a missing definition.
+Use bounded searches for diff-related identifiers, not a repository-wide
+inventory of documentation problems. Stop when the reference is valid.
+The design audit owns whether explanations accurately describe behavior,
+constraints and rationale, even when all referenced symbols exist.
+
+Report confirmed stale references as kind `suggestion`. Identify the stale
+name, evidence that it no longer resolves in the intended context, and the
+supported correction. Anchor unchanged stale comments to the responsible
+removal or rename in the diff and name their locations in the body. Do not
+recommend deleting executable code merely because documentation is stale.
 
 For each new or changed conditional, carry the conditions established by its
 callers and enclosing guards into the branch. A function being used does not

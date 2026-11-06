@@ -23,7 +23,7 @@ DISCOVERY_ORDER = (
     "build",
     "tests",
     "tests_followup",
-    "dead_code",
+    "symbol_usage",
     "design",
 )
 DISCOVERY_WORKERS = 6
@@ -31,7 +31,7 @@ ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude")
 POOLED_STAGES = frozenset({*DISCOVERY_ORDER, "archaeologist", "alternatives"})
 FULL_CONTEXT_STAGES = {
     "script",
-    "dead_code",
+    "symbol_usage",
     "independent",
     "challenger",
     *ADVERSARIAL_STAGES,
@@ -65,7 +65,8 @@ def _stage_tools(name, runtime, settings):
     return model.available_tools(
         tools,
         discussion_lookup
-        if name not in {"script", "dead_code", "write_verifier", "challenger", "judge"}
+        if name
+        not in {"script", "symbol_usage", "write_verifier", "challenger", "judge"}
         else None,
         evidence,
         allow_web_search,

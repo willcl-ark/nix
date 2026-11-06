@@ -224,7 +224,7 @@ Conservative fallback does the same when classification is incomplete.
 | Changed paths, excluding tests where stated | Mandatory specialist coverage |
 | --- | --- |
 | Tests or production code | tests audit |
-| Any non-documentation path, including tests and recognized build files | dead_code audit |
+| Any non-documentation path, including tests and recognized build files | symbol_usage audit |
 | Production code, excluding docs, tests and recognized build paths | design audit |
 | Synchronization, scheduler, queues, validation callbacks, thread utilities | concurrency audit |
 | QML files and Core Qt C++, forms and translations | gui audit |
@@ -300,7 +300,7 @@ flowchart LR
 Discovery agents never receive each other's output. Research runs alongside
 them and feeds only the verifier. Pooled candidates keep a fixed stage order:
 script, independent, adversarial, concurrency, gui, state, public_contract,
-build, tests, dead_code, design.
+build, tests, symbol_usage, design.
 Claude adversarial review requires `claude-opus-5-5` on the configured proxy.
 A failed Claude pass is reported as incomplete coverage.
 
@@ -409,7 +409,7 @@ to decide code correctness.
 | adversarial | gpt-6-astra | high | 25,000 | Full tool set and selected domain profiles |
 | adversarial_claude | claude-opus-5-5 | xhigh | 64,000 | Same tools and profiles, via the configured proxy |
 | concurrency, gui | gpt-6-luna | medium | 8,000 | Focused input and code tools |
-| dead_code | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
+| symbol_usage | gpt-6-luna | medium | 8,000 | Original input; base/head code and history, no discussion or web tools |
 | public_contract | gpt-6.1-sol | low | 25,000 | Focused input and code tools |
 | state, build, tests | gpt-6-luna | low | 4,000 | Focused input and code tools |
 | design | gpt-6-luna | xhigh | 25,000 | Focused input, code tools and comparison-base developer notes |
@@ -463,14 +463,17 @@ tool-enabled stage. Archaeology has twelve total
 inspections. Hosted web actions count toward the stage limit. The allowance of
 two per response is advisory, so a provider response can exceed it. The early
 concept stage never stops later code stages.
-Script, dead_code, independent, challenger, both adversarial passes, verifier,
+Script, symbol_usage, independent, challenger, both adversarial passes, verifier,
 and judge require a first inspection. Claude uses automatic tool selection
 because Opus 5.5 rejects forced tool calls; Ralph checks that inspection occurred. At limits,
 a final turn uses collected evidence and must preserve uncertainty.
 
-The [dead-code audit](agents/dead_code/prompt.md) runs on production, test, script and
-build changes, including deletions and mechanical refactors. Ordinary docs-only
-changes skip it unless routing requests it. It checks both new unused code and
+The [symbol-usage audit](agents/symbol_usage/prompt.md) runs on production, test, script and
+build changes, including deletions and mechanical refactors. The router also selects it for changed comments or documentation naming code
+symbols. It checks stale references left by removals and renames, including in
+unchanged files. Design checks whether explanations match behavior, constraints
+and rationale. Documentation-only changes can select either or both; spelling
+and formatting alone need neither. It checks both new unused code and
 existing code orphaned by the PR, following removed references into unchanged
 files. Literal base/head searches and caller inspection must account for
 indirect uses, supported configurations, external contracts and side effects
@@ -478,7 +481,7 @@ before recommending deletion. Findings use the normal suggestion and verifier
 flow; no runtime failure is required for a proven safe removal. Its 48-call
 limit allows reference tracing even on routine PRs. These settings have not
 been tuned against live reviews.
-Custom agent directories must include the `dead_code` agent.
+Custom agent directories must include the `symbol_usage` agent.
 
 Failed discovery becomes a coverage limitation. Failed source verification
 withholds unsupported findings. A failed or invalid judge response withholds

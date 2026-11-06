@@ -90,6 +90,24 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn("gui", plan["audits"])
         self.assertEqual(plan["tier"], "routine")
 
+    def test_documentation_can_select_symbol_and_behavior_checks(self):
+        for name in ("core", "gui"):
+            strategy = config.PromptConfig.load(strategy=name).strategy
+            with self.subTest(strategy=name):
+                plan = routing.validate_plan(
+                    route(audits=("symbol_usage", "design")),
+                    {"doc/example.md"},
+                    strategy,
+                )
+                self.assertEqual(set(plan["audits"]), {"symbol_usage", "design"})
+                self.assertEqual(plan["tier"], "routine")
+                self.assertEqual(
+                    routing.validate_plan(route(), {"doc/example.md"}, strategy)[
+                        "audits"
+                    ],
+                    [],
+                )
+
     def runtime(self):
         case = engine.ReviewCase("Patch", None)
         return engine.Runtime(case=case, api_key="key")

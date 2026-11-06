@@ -148,10 +148,13 @@ Design owns architecture, simplicity and applicable merge-base developer notes;
 there is no separate developer-notes stage. Pure test changes can take the
 routine route when the router establishes that deeper checks are unnecessary.
 
-The Luna `dead_code` audit runs on code, test, script and build changes,
+The Luna `symbol_usage` audit runs on code, test, script and build changes,
 including deletions and refactors. It finds new unused code and existing code
 whose last use the PR removes, including definitions in unchanged files.
-Ordinary docs-only changes skip it unless routing requests it. It uses medium
+The router also selects it for comments and documentation naming code symbols.
+It checks stale references left by removals or renames, including in unchanged
+files. Design checks behavioral explanations; documentation-only changes can
+select either or both audits. Spelling and formatting alone need neither. It uses medium
 reasoning, 8,000 tokens per response and up to 48 base/head code and history
 inspections under the configured tool limit. It checks indirect uses, supported
 configurations and side effects before proposing removal. Candidates pass
