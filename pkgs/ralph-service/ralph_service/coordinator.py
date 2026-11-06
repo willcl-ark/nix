@@ -7,11 +7,12 @@ import logging
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from ralph import engine, progress, usage
+from ralph import engine, progress
 from . import config, delivery, monitor
 from .jobs import JobStore
 
@@ -207,6 +208,43 @@ def migrate(state_dir, legacy_repo_id, entries):
     _write_manifest(manifest, legacy_repo_id, "complete")
 
 
+def load_contexts(entries, root, report_dir=None, report_base_url=None):
+    """Load the same repository configuration in coordinator and job processes."""
+    contexts = {}
+    for repo_id, entry in entries.items():
+        if not entry.get("bot_login"):
+            raise ValueError(f"{repo_id}: bot_login is required")
+        bot = config.repository_config(entry, report_dir, report_base_url)
+        if entry.get("github_publication", "off") != "off" and report_dir is None:
+            raise ValueError("GitHub publication requires public reports")
+        engine_name = entry.get("engine", "current")
+        engine_config = dict(entry.get("engine_config", {}))
+        if engine_name == "current":
+            engine_config.setdefault("archaeology", True)
+            engine_config["strategy"] = entry.get("strategy", "core")
+        state_dir = config.repository_state_dir(root, repo_id)
+        state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        contexts[repo_id] = {
+            "entry": entry,
+            "bot": bot,
+            "state_dir": state_dir,
+            "engine": engine.load(engine_name, engine_config),
+            "default_engine": engine.load(
+                engine_name,
+                {**engine_config, "profile": "default"}
+                if engine_name == "current"
+                else engine_config,
+            ),
+            "high_engine": engine.load("current", {**engine_config, "profile": "high"})
+            if engine_name == "current"
+            else None,
+            "secret": _secret(entry, "webhook_secret_file").encode(),
+            "forgejo_token": _secret(entry, "forgejo_token_file"),
+            "github_token": _secret(entry, "github_token_file", optional=True),
+        }
+    return contexts
+
+
 def main(resources):
     from . import service
 
@@ -222,6 +260,8 @@ def main(resources):
     parser.add_argument("--migrate-state", action="store_true")
     parser.add_argument("--legacy-repository")
     parser.add_argument("--list-held-deliveries", action="store_true")
+    parser.add_argument("--list-job-units", action="store_true")
+    parser.add_argument("--cancel-job", type=int)
     parser.add_argument("--repository-id")
     parser.add_argument("--release-delivery", type=int)
     parser.add_argument("--confirm-no-pending-write", action="store_true")
@@ -240,6 +280,43 @@ def main(resources):
                 json.dumps(
                     delivery.list_held(args.state_dir / "jobs.sqlite3"), indent=2
                 )
+            )
+            return 0
+        if args.list_job_units or args.cancel_job is not None:
+            jobs = JobStore(args.state_dir / "jobs.sqlite3", initialize=False)
+            attempts = jobs.active_attempts()
+            if args.list_job_units:
+                print(
+                    json.dumps(
+                        [
+                            {
+                                key: job[key]
+                                for key in (
+                                    "id",
+                                    "repo_id",
+                                    "number",
+                                    "status",
+                                    "unit_name",
+                                )
+                            }
+                            for job in attempts
+                        ],
+                        indent=2,
+                    )
+                )
+                return 0
+            matches = [job for job in attempts if job["id"] == args.cancel_job]
+            if not matches:
+                raise ValueError("job has no active execution attempt")
+            job = matches[0]
+            claim = jobs.get_claim(job["id"], job["attempt_token"])
+            if claim is not None:
+                jobs.for_repository(job["repo_id"]).supersede(claim)
+            # Retain execution ownership/capacity until systemd confirms exit.
+            subprocess.run(
+                ["systemctl", "stop", "--no-block", job["unit_name"]],
+                check=True,
+                timeout=3,
             )
             return 0
         resources.enter_context(service.coordinator_lock(args.state_dir))
@@ -275,56 +352,27 @@ def main(resources):
             return 0
         if args.openai_key_file is None:
             raise ValueError("--openai-key-file is required")
-        api_key = args.openai_key_file.read_text().strip()
-        if not api_key:
+        if not args.openai_key_file.read_text().strip():
             raise ValueError("OpenAI key must not be empty")
-        contexts = {}
-        for repo_id, entry in entries.items():
-            if not entry.get("bot_login"):
-                raise ValueError(f"{repo_id}: bot_login is required")
-            bot = config.repository_config(entry, args.report_dir, args.report_base_url)
-            if (
-                entry.get("github_publication", "off") != "off"
-                and args.report_dir is None
-            ):
-                raise ValueError("GitHub publication requires public reports")
-            engine_name = entry.get("engine", "current")
-            engine_config = dict(entry.get("engine_config", {}))
-            if engine_name == "current":
-                engine_config.setdefault("archaeology", True)
-                engine_config["strategy"] = entry.get("strategy", "core")
-            state_dir = config.repository_state_dir(args.state_dir, repo_id)
-            state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            contexts[repo_id] = {
-                "entry": entry,
-                "bot": bot,
-                "state_dir": state_dir,
-                "engine": engine.load(engine_name, engine_config),
-                "default_engine": engine.load(
-                    engine_name,
-                    {**engine_config, "profile": "default"}
-                    if engine_name == "current"
-                    else engine_config,
-                ),
-                "high_engine": engine.load(
-                    "current", {**engine_config, "profile": "high"}
-                )
-                if engine_name == "current"
-                else None,
-                "secret": _secret(entry, "webhook_secret_file").encode(),
-                "forgejo_token": _secret(entry, "forgejo_token_file"),
-                "github_token": _secret(entry, "github_token_file", optional=True),
-            }
+        contexts = load_contexts(
+            entries, args.state_dir, args.report_dir, args.report_base_url
+        )
         command_store = monitor.NotificationStore(args.state_dir / "telegram.sqlite3")
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
         parser.error(str(exc))
-    recovered = jobs.recover()
-    ledger = usage.Ledger(args.state_dir / "usage.sqlite3")
+    from .job_units import JobUnits
+
+    jobs.recover_reconciliation()
+    units = JobUnits(
+        jobs,
+        args.state_dir,
+        entries,
+        args.openai_key_file,
+        args.report_dir,
+        args.report_base_url,
+    )
     logging.info(
-        "review queue recovered_claims=%d workers=%d repositories=%s",
-        recovered,
-        args.workers,
-        ",".join(contexts),
+        "review scheduler workers=%d repositories=%s", args.workers, ",".join(contexts)
     )
     drain, stop = threading.Event(), threading.Event()
     command_thread = threading.Thread(
@@ -332,13 +380,9 @@ def main(resources):
     )
     workers = [
         threading.Thread(
-            target=service.worker,
-            args=(jobs, api_key, ledger, contexts),
-            kwargs={"stop_event": drain},
-            daemon=True,
-            name=f"review-{index + 1}",
+            target=units.serve, args=(drain,), daemon=True, name="review-scheduler"
         )
-        for index in range(args.workers)
     ]
     server = ThreadingHTTPServer((args.listen, args.port), make_handler(contexts, jobs))
+    server.daemon_threads = True
     service.serve_until_stopped(server, workers, command_thread, drain, stop)

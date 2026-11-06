@@ -32,7 +32,9 @@ class ProfileTests(unittest.TestCase):
 
     def test_same_head_high_is_fresh_and_preserved_on_update(self):
         self.enqueue(self.default)
-        self.jobs.complete(self.jobs.claim())
+        job = self.jobs.claim()
+        self.jobs.complete(job)
+        self.jobs.release_attempt(job["id"], job["token"])
         self.assertTrue(self.enqueue(self.high, force=True))
         self.assertTrue(self.enqueue(self.default, head="b" * 40))
         job = self.jobs.claim()
@@ -40,11 +42,14 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(job["head"], "b" * 40)
         self.assertTrue(job["force"])
         self.jobs.retry(job, RuntimeError("transient"))
+        self.jobs.release_attempt(job["id"], job["token"])
         self.assertEqual(self.jobs.claim()["engine_identity"], self.high.identity)
 
     def test_duplicate_request_after_completion_does_not_repeat(self):
         self.enqueue(self.high, force=True, request_id="telegram:1")
-        self.jobs.complete(self.jobs.claim())
+        job = self.jobs.claim()
+        self.jobs.complete(job)
+        self.jobs.release_attempt(job["id"], job["token"])
         self.assertFalse(self.enqueue(self.high, force=True, request_id="telegram:1"))
         self.assertIsNone(self.jobs.claim())
 
@@ -69,6 +74,7 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(job["engine_identity"], self.high.identity)
             self.assertTrue(job["force"])
             self.jobs.complete(job)
+            self.jobs.release_attempt(job["id"], job["token"])
             # Simulate a crash after jobs commit but before acknowledging the command.
             with closing(self.store._connect()) as db, db:
                 self.assertEqual(
@@ -107,6 +113,7 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(job["engine_identity"], self.default.identity)
             self.assertTrue(job["force"])
             self.jobs.complete(job)
+            self.jobs.release_attempt(job["id"], job["token"])
             with closing(self.store._connect()) as db, db:
                 db.execute("UPDATE review_requests SET processed = 0")
             service.consume_review_requests(

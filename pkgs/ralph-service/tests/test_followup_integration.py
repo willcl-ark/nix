@@ -183,6 +183,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                     },
                 )
                 jobs.complete(job)
+                jobs.release_attempt(job["id"], job["token"])
                 return job
 
             old = complete(

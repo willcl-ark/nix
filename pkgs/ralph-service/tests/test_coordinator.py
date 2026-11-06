@@ -232,13 +232,10 @@ class CoordinatorTests(unittest.TestCase):
                 stop.set()
 
         with patch.object(service, "process_job", side_effect=process):
-            service.worker(
-                self.jobs,
-                "key",
-                None,
-                contexts,
-                stop_event=stop,
-            )
+            for _ in range(2):
+                job = self.jobs.claim()
+                service.run_job(job, self.jobs, "key", None, contexts)
+                self.jobs.release_attempt(job["id"], job["token"])
         self.assertEqual({repo for repo, _ in seen}, {"core", "gui"})
         self.assertEqual(dict(seen)["core"], self.root)
         self.assertEqual(dict(seen)["gui"], self.root / "repos" / "gui")

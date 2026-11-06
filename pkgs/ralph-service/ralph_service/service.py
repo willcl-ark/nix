@@ -36,7 +36,15 @@ from .review_feedback import collect_review_feedback
 from ralph.repository import BRANCH, SHA
 
 MAX_BODY = 1024 * 1024
-CHECKOUT_LOCK = threading.Lock()
+
+
+@contextmanager
+def checkout_lock(state_dir):
+    # Every review process uses the same repository checkout.
+    state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (state_dir / "checkout.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def valid_signature(body, header, secret):
@@ -292,7 +300,7 @@ def process_job(
                     "repository": bot_config.github_repository or bot_config.repository,
                 }
                 stage = "collect"
-                with CHECKOUT_LOCK:
+                with checkout_lock(state_dir):
                     base_sha, head_sha, review, skip = repository.collect_review(
                         checkout,
                         number,
@@ -668,7 +676,7 @@ def process_job(
     finally:
         if (checkout / ".git").exists():
             try:
-                with CHECKOUT_LOCK:
+                with checkout_lock(state_dir):
                     repository.release_source_refs(checkout, ref_prefix)
                     local_repository.release_review_refs(checkout, ref_prefix)
             except (OSError, subprocess.SubprocessError) as exc:
@@ -855,71 +863,51 @@ def reconcile_next(jobs, bot_config, token):
         raise
 
 
-def worker(jobs, api_key, ledger, contexts, stop_event=None, allow_discussions=True):
-    stop_event = stop_event or threading.Event()
-    while not stop_event.is_set():
-        try:
-            job = jobs.claim()
-        except Exception:
-            logging.exception("Could not claim review job")
-            stop_event.wait(1)
-            continue
-        if job is None:
-            stop_event.wait(1)
-            continue
-        try:
-            job_store = jobs.for_repository(job["repo_id"])
-            context = contexts[job["repo_id"]]
-            state_dir = context["state_dir"]
-            forgejo_token = context["forgejo_token"]
-            bot_login = context["entry"]["bot_login"]
-            bot_config = context["bot"]
-            review_engine = context["engine"]
-            github_token = context["github_token"]
-            github_publication = context["entry"].get("github_publication", "off")
-            if job["review_result"] is None:
-                identity = job["engine_identity"]
-                job_engine = (
-                    review_engine
-                    if identity is None
-                    or identity.get("config") is None
-                    or identity == review_engine.identity
-                    else engine.load(
-                        identity["name"], identity["config"], configured=True
-                    )
-                )
-                if not job_store.bind_engine(job, job_engine.identity):
-                    continue
-            else:
-                job_engine = None
-            process_job(
-                job,
-                job_store,
-                state_dir,
-                api_key,
-                forgejo_token,
-                bot_login,
-                bot_config,
-                ledger,
-                job_engine,
-                allow_discussions,
-                github_token,
-                github_publication,
+def run_job(job, jobs, api_key, ledger, contexts, allow_discussions=True):
+    """Run one already-admitted claim, including durable publication."""
+    try:
+        job_store = jobs.for_repository(job["repo_id"])
+        context = contexts[job["repo_id"]]
+        state_dir = context["state_dir"]
+        forgejo_token = context["forgejo_token"]
+        bot_login = context["entry"]["bot_login"]
+        bot_config = context["bot"]
+        review_engine = context["engine"]
+        github_token = context["github_token"]
+        github_publication = context["entry"].get("github_publication", "off")
+        if job["review_result"] is None:
+            identity = job["engine_identity"]
+            job_engine = (
+                review_engine
+                if identity is None
+                or identity.get("config") is None
+                or identity == review_engine.identity
+                else engine.load(identity["name"], identity["config"], configured=True)
             )
-        except Exception as exc:
-            logging.exception(
-                "Review worker failed unexpectedly for PR %d", job["number"]
-            )
-            try:
-                if retryable_error(exc):
-                    jobs.retry(job, exc)
-                else:
-                    jobs.fail(job, exc)
-            except Exception:
-                logging.exception(
-                    "Could not record failed review for PR %d", job["number"]
-                )
-            stop_event.wait(1)
+            if not job_store.bind_engine(job, job_engine.identity):
+                return
+        else:
+            job_engine = None
+        process_job(
+            job,
+            job_store,
+            state_dir,
+            api_key,
+            forgejo_token,
+            bot_login,
+            bot_config,
+            ledger,
+            job_engine,
+            allow_discussions,
+            github_token,
+            github_publication,
+        )
+    except Exception as exc:
+        logging.exception("Review worker failed unexpectedly for PR %d", job["number"])
+        if retryable_error(exc):
+            jobs.for_repository(job["repo_id"]).retry(job, exc)
+        else:
+            jobs.for_repository(job["repo_id"]).fail(job, exc)
 
 
 def make_handler(secret, jobs, bot_config, engine_identity=None):
@@ -1059,19 +1047,18 @@ def serve_until_stopped(
     finally:
         try:
             drain_event.set()
-            logging.info("Draining review workers; new requests will remain queued")
-            # Claims already entered when draining begins belong to this process.
-            # Keep ingestion available until their results have been published.
+            logging.info("Stopping admission; independent review jobs remain running")
+            # These are short-lived coordinator loops, never review workers.
             for thread in workers:
                 if thread.ident is not None:
-                    thread.join()
+                    thread.join(timeout=2)
             command_stop_event.set()
             if command_thread.ident is not None:
-                command_thread.join()
+                command_thread.join(timeout=2)
             if http_thread.is_alive():
                 server.shutdown()
             if http_thread.ident is not None:
-                http_thread.join()
+                http_thread.join(timeout=2)
         finally:
             server.server_close()
             for signum, handler in previous_handlers.items():

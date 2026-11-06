@@ -27,6 +27,7 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaises(delivery.DeliveryHeld):
             self.execute(dispatch=send)
         self.jobs.complete(self.job)
+        self.jobs.release_attempt(self.job["id"], self.job["token"])
         self.jobs.enqueue(1, "master", "b" * 40, "synchronize", engine_identity=None)
         newer = delivery.Session(self.jobs, self.jobs.claim(), "forgejo:repo")
         with self.assertRaises(delivery.DeliveryHeld):

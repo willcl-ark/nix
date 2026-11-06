@@ -284,6 +284,7 @@ class GitHubTests(unittest.TestCase):
         previous["run"]["report_url"] = "https://review.example/previous.html"
         store.save_result(session.job, previous)
         store.complete(session.job)
+        store.release_attempt(session.job["id"], session.job["token"])
         for head, status in (("b", "failed"), ("c", "skipped"), ("d", "unverified")):
             store.enqueue(42, "qt6", head * 40, "synchronize", engine_identity=None)
             job = store.claim()
@@ -295,6 +296,7 @@ class GitHubTests(unittest.TestCase):
             )
             store.save_result(job, result)
             store.complete(job)
+            store.release_attempt(job["id"], job["token"])
         store.enqueue(42, "qt6", "e" * 40, "synchronize", engine_identity=None)
         session = delivery.Session(store, store.claim(), "github")
         result = self.result()

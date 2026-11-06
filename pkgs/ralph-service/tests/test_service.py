@@ -82,7 +82,7 @@ class ServiceTests(unittest.TestCase):
         return self.jobs.claim()
 
     def process(self, job, **kwargs):
-        return service.process_job(
+        result = service.process_job(
             job,
             self.jobs,
             self.state_dir,
@@ -94,6 +94,9 @@ class ServiceTests(unittest.TestCase):
             self.review_engine,
             **kwargs,
         )
+
+        self.jobs.release_attempt(job["id"], job["token"])
+        return result
 
     def saved_result(
         self,
@@ -207,12 +210,14 @@ class ServiceTests(unittest.TestCase):
             (42, "master", "a" * 40, "opened", False),
         )
         restarted.complete(job)
+        restarted.release_attempt(job["id"], job["token"])
         self.assertEqual(self.post_webhook(force=True), 202)
         with patch.object(forgejo, "forgejo_request", return_value=pr):
             service.reconcile_next(restarted, self.bot_config, "token")
         job = restarted.claim()
         self.assertTrue(job["force"])
         restarted.complete(job)
+        restarted.release_attempt(job["id"], job["token"])
         self.assertEqual(self.post_webhook(force=True, signature="bad"), 401)
         self.assertIsNone(restarted.claim())
 
@@ -439,7 +444,7 @@ class ServiceTests(unittest.TestCase):
                 lambda: True,
             )
         self.jobs = JobStore(self.jobs.path, retry_base_seconds=0)
-        self.jobs.recover()
+        self.jobs.release_attempt(job["id"], job["token"])
         job = self.jobs.claim()
         with (
             patch.object(repository, "current_head", return_value="a" * 40),
@@ -943,7 +948,9 @@ class ServiceTests(unittest.TestCase):
         }
         self.jobs.enqueue(42, "master", "a" * 40, "opened", engine_identity=previous)
         interrupted = self.jobs.claim()
-        self.assertEqual(self.jobs.recover(), 1)
+        self.assertTrue(
+            self.jobs.release_attempt(interrupted["id"], interrupted["token"])
+        )
         stop_event = threading.Event()
 
         def review(*_args, comment_format):
@@ -995,7 +1002,8 @@ class ServiceTests(unittest.TestCase):
             patch.object(service.forgejo, "publish_review", side_effect=publish),
             patch.object(stop_event, "wait", side_effect=lambda _: stop_event.set()),
         ):
-            service.worker(
+            service.run_job(
+                self.jobs.claim(),
                 self.jobs,
                 "api-key",
                 self.ledger,
@@ -1009,7 +1017,6 @@ class ServiceTests(unittest.TestCase):
                         "github_token": None,
                     }
                 },
-                stop_event=stop_event,
             )
         reviewed.assert_called_once()
         self.assertEqual(reviewed.call_args.args[3], "enabled")
@@ -1026,157 +1033,47 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(stored, self.review_engine.identity)
         self.assertFalse(self.jobs.complete(interrupted))
 
-    def test_shutdown_drains_running_review_while_webhooks_keep_queueing(self):
+    def test_shutdown_does_not_wait_for_independent_claim(self):
         child = textwrap.dedent("""
             import sys
             import threading
-            import time
             from http.server import ThreadingHTTPServer
             from pathlib import Path
-            from types import SimpleNamespace
-            from ralph_service import config, coordinator, service
+            from ralph_service import config, service
             from ralph_service.jobs import JobStore
-
             root = Path(sys.argv[1])
-            jobs = JobStore(root / "jobs.sqlite3")
-            bot = config.BotConfig(
-                "https://git.example.org/owner/repo.git", "owner/repo",
-                "https://git.example.org/api/v1/repos/owner/repo",
-            )
-
-            class RecordedEvent(threading.Event):
-                def __init__(self, name):
-                    super().__init__()
-                    self.name = name
-
-                def set(self):
-                    super().set()
-                    (root / self.name).touch()
-
+            jobs = JobStore(root / "jobs.sqlite3", initialize=False)
+            bot = config.BotConfig("https://example/repo.git", "owner/repo",
+                                  "https://example/api/v1/repos/owner/repo")
             class ReadyServer(ThreadingHTTPServer):
                 def service_actions(self):
                     (root / "ready").touch()
-
-            def process(job, jobs, *args):
-                (root / "started").touch()
-                while not (root / "finish").exists():
-                    time.sleep(0.01)
-                assert jobs.is_current(job)
-                assert jobs.save_result(job, {"content": "Finished review"})
-                (root / "published").touch()
-                jobs.complete(job)
-
-            service.process_job = process
-            service.consume_review_requests = lambda *args: None
-            drain = RecordedEvent("draining")
-            commands_stop = RecordedEvent("commands-stopped")
-            review_engine = SimpleNamespace(identity={"name": "test"})
-            contexts = {"core": {
-                "state_dir": root, "forgejo_token": "token", "github_token": None,
-                "entry": {"bot_login": "ralph"}, "bot": bot,
-                "engine": review_engine, "default_engine": review_engine, "high_engine": None,
-            }}
-            reviews = [threading.Thread(
-                target=service.worker,
-                args=(jobs, "key", None, contexts),
-                kwargs={"stop_event": drain}, daemon=True,
-            )]
-            commands = threading.Thread(
-                target=coordinator.command_worker,
-                args=(None, jobs, contexts, commands_stop), daemon=True,
-            )
-            server = ReadyServer(
-                ("127.0.0.1", 0),
-                service.make_handler(b"secret", jobs, bot, review_engine.identity),
-            )
-            (root / "port").write_text(str(server.server_port))
-            service.serve_until_stopped(server, reviews, commands, drain, commands_stop)
+            stop = threading.Event()
+            commands = threading.Thread(target=stop.wait, daemon=True)
+            server = ReadyServer(("127.0.0.1", 0), service.make_handler(b"secret", jobs, bot))
+            service.serve_until_stopped(server, [], commands, stop, stop)
         """)
-        for busy, signum in ((True, signal.SIGTERM), (False, signal.SIGINT)):
-            with self.subTest(busy=busy), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                jobs = JobStore(root / "jobs.sqlite3")
-                if busy:
-                    for number in (42, 43):
-                        jobs.enqueue(
-                            number,
-                            "master",
-                            "a" * 40,
-                            "opened",
-                            engine_identity={"name": "test"},
-                        )
-                process = subprocess.Popen(
-                    [sys.executable, "-B", "-c", child, directory],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-
-                def await_file(name):
-                    deadline = time.monotonic() + 5
-                    while not (root / name).exists():
-                        if process.poll() is not None:
-                            self.fail(process.communicate()[1])
-                        self.assertLess(time.monotonic(), deadline, name)
-                        time.sleep(0.01)
-
-                try:
-                    await_file("ready")
-                    if busy:
-                        await_file("started")
-                    process.send_signal(signum)
-                    if busy:
-                        await_file("draining")
-                        self.assertIsNone(process.poll())
-                        self.assertFalse((root / "commands-stopped").exists())
-                        event = payload()
-                        event["repository"]["full_name"] = "owner/repo"
-                        event["repository"]["html_url"] = (
-                            "https://git.example.org/owner/repo"
-                        )
-                        event["pull_request"]["number"] = 44
-                        body = json.dumps(event).encode()
-                        signature = hmac.new(
-                            b"secret", body, hashlib.sha256
-                        ).hexdigest()
-                        connection = http.client.HTTPConnection(
-                            "127.0.0.1", int((root / "port").read_text()), timeout=5
-                        )
-                        connection.request(
-                            "POST",
-                            "/webhooks/forgejo",
-                            body,
-                            {
-                                "X-Forgejo-Event": "pull_request",
-                                "X-Forgejo-Signature": signature,
-                            },
-                        )
-                        response = connection.getresponse()
-                        response.read()
-                        connection.close()
-                        self.assertEqual(response.status, 202)
-                        (root / "finish").touch()
-                    _, stderr = process.communicate(timeout=5)
-                    self.assertEqual(process.returncode, 0, stderr)
-                    self.assertTrue((root / "commands-stopped").exists())
-                    if busy:
-                        self.assertTrue((root / "published").exists())
-                        with closing(sqlite3.connect(root / "jobs.sqlite3")) as db:
-                            states = db.execute(
-                                "SELECT number,status FROM jobs ORDER BY number"
-                            ).fetchall()
-                        self.assertEqual(states, [(42, "complete"), (43, "pending")])
-                        with closing(sqlite3.connect(root / "jobs.sqlite3")) as db:
-                            self.assertEqual(
-                                db.execute(
-                                    "SELECT number FROM reconciliation"
-                                ).fetchall(),
-                                [(44,)],
-                            )
-                finally:
-                    if process.poll() is None:
-                        process.kill()
-                    process.communicate()
+        job = self.enqueue()
+        process = subprocess.Popen(
+            [sys.executable, "-B", "-c", child, str(self.state_dir)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not (self.state_dir / "ready").exists():
+                self.assertIsNone(process.poll())
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.01)
+            process.send_signal(signal.SIGTERM)
+            _, error = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, error)
+            self.assertTrue(self.jobs.is_current(job))
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
 
 
 def payload(action="opened", head="a" * 40):
