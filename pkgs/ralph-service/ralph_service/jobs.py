@@ -21,7 +21,7 @@ def _profile_name(identity):
     return None
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _repository_id(value):
@@ -41,6 +41,7 @@ class JobStore:
         max_attempts=3,
         retry_base_seconds=30,
         retry_max_seconds=300,
+        initialize=True,
     ):
         if max_attempts < 1 or retry_base_seconds < 0 or retry_max_seconds < 0:
             raise ValueError("retry limits must be non-negative")
@@ -58,15 +59,29 @@ class JobStore:
         self.max_attempts = max_attempts
         self.retry_base_seconds = retry_base_seconds
         self.retry_max_seconds = retry_max_seconds
+        if not initialize:
+            if not os.path.isfile(path):
+                raise FileNotFoundError(path)
+            with self._connection() as db:
+                if db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+                    raise RuntimeError("unsupported job database schema version")
+            return
         with self._connection(write=True) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             existing = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
-            if version not in {0, SCHEMA_VERSION}:
+            if version not in {0, 1, SCHEMA_VERSION}:
                 raise RuntimeError("unsupported job database schema version")
             if existing and "repo_id" not in existing:
                 raise RuntimeError(
                     "job database requires explicit repository migration"
                 )
+            if existing and version != SCHEMA_VERSION:
+                if db.execute(
+                    "SELECT 1 FROM jobs WHERE status = 'running' LIMIT 1"
+                ).fetchone():
+                    raise RuntimeError(
+                        "drain legacy review workers before upgrading the job database"
+                    )
             db.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     id INTEGER PRIMARY KEY,
@@ -87,6 +102,13 @@ class JobStore:
                     UNIQUE(repo_id, number, generation)
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS execution_attempts (
+                    job_id INTEGER PRIMARY KEY REFERENCES jobs(id),
+                    token TEXT NOT NULL UNIQUE,
+                    unit_name TEXT NOT NULL UNIQUE
+                )
+            """)
             delivery.initialize(db)
             columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
             if "engine_identity" not in columns:
@@ -101,7 +123,7 @@ class JobStore:
             stats_changes.install(db, "jobs", "id")
             # Migrate unfinished reviews before loading their saved configuration.
             for row in db.execute(
-                "SELECT id, engine_identity FROM jobs WHERE review_result IS NULL AND status IN ('pending', 'running', 'retry')"
+                "SELECT id, engine_identity FROM jobs WHERE review_result IS NULL AND status IN ('pending', 'retry') AND NOT EXISTS (SELECT 1 FROM execution_attempts WHERE job_id = jobs.id)"
             ).fetchall():
                 if row["engine_identity"] is None:
                     continue
@@ -446,47 +468,80 @@ class JobStore:
                 ),
             )
 
-    def recover(self):
-        """Release claims left by a previous process. Call once at startup."""
+    def recover_reconciliation(self):
+        """Release hints owned by the previous singleton coordinator."""
         with self._connection(write=True) as db:
-            db.execute(
+            return db.execute(
                 "UPDATE reconciliation SET token = NULL WHERE ? OR repo_id = ?",
                 (not self._scoped, self.repo_id),
-            )
-            running = db.execute(
-                "SELECT * FROM jobs WHERE status = 'running' AND (? OR repo_id = ?)",
-                (not self._scoped, self.repo_id),
-            ).fetchall()
-            for job in running:
-                newer = db.execute(
+            ).rowcount
+
+    def active_attempts(self):
+        """Return execution ownership, including workers recording final outcomes."""
+        with self._connection() as db:
+            return [
+                self._job(row)
+                for row in db.execute(
                     """
-                    SELECT 1 FROM jobs WHERE repo_id = ? AND number = ? AND generation > ?
-                        AND status = 'pending'
-                """,
-                    (job["repo_id"], job["number"], job["generation"]),
-                ).fetchone()
-                status = (
-                    "superseded"
-                    if newer
-                    else "retry"
-                    if job["review_result"] is not None
-                    else "pending"
+                    SELECT jobs.*, execution_attempts.token AS attempt_token,
+                        execution_attempts.unit_name
+                    FROM jobs JOIN execution_attempts ON jobs.id = execution_attempts.job_id
+                    WHERE ? OR jobs.repo_id = ?
+                    ORDER BY jobs.id
+                    """,
+                    (not self._scoped, self.repo_id),
                 )
+            ]
+
+    def get_claim(self, job_id, token):
+        """Read an existing claim without creating or changing database state."""
+        with self._connection() as db:
+            return self._job(
                 db.execute(
                     """
-                    UPDATE jobs SET status = ?, token = NULL, next_attempt = 0
-                    WHERE id = ?
+                SELECT jobs.* FROM jobs JOIN execution_attempts
+                    ON jobs.id = execution_attempts.job_id
+                WHERE jobs.id = ? AND jobs.token = ? AND jobs.status = 'running'
+                    AND execution_attempts.token = jobs.token
+                    AND (? OR jobs.repo_id = ?)
                 """,
-                    (status, job["id"]),
+                    (job_id, token, not self._scoped, self.repo_id),
+                ).fetchone()
+            )
+
+    def release_attempt(self, job_id, token):
+        """Release capacity only after the caller confirms this unit has stopped."""
+        with self._connection(write=True) as db:
+            job = db.execute(
+                """
+                SELECT jobs.* FROM jobs JOIN execution_attempts
+                    ON jobs.id = execution_attempts.job_id
+                WHERE jobs.id = ? AND execution_attempts.token = ?
+                    AND (? OR jobs.repo_id = ?)
+                """,
+                (job_id, token, not self._scoped, self.repo_id),
+            ).fetchone()
+            if job is None:
+                return False
+            if job["status"] == "running":
+                # Failed launches count too: a broken worker must not be
+                # restarted forever, potentially repeating paid requests.
+                self._retry(
+                    db, job, RuntimeError("review unit exited without an outcome")
                 )
-            return len(running)
+            db.execute(
+                "DELETE FROM execution_attempts WHERE job_id = ? AND token = ?",
+                (job_id, token),
+            )
+            return True
 
     def claim(self):
         """Admit runnable repositories fairly under transactional concurrency caps."""
         with self._connection(write=True) as db:
             running = dict(
                 db.execute(
-                    "SELECT repo_id, count(*) FROM jobs WHERE status = 'running' GROUP BY repo_id"
+                    "SELECT jobs.repo_id, count(*) FROM execution_attempts JOIN jobs "
+                    "ON jobs.id = execution_attempts.job_id GROUP BY jobs.repo_id"
                 ).fetchall()
             )
             if (
@@ -515,10 +570,10 @@ class JobStore:
                         AND (candidate.status = 'pending'
                             OR (candidate.status = 'retry' AND candidate.next_attempt <= ?))
                         AND NOT EXISTS (
-                            SELECT 1 FROM jobs AS running
+                            SELECT 1 FROM jobs AS running JOIN execution_attempts
+                                ON running.id = execution_attempts.job_id
                             WHERE running.repo_id = candidate.repo_id
                                 AND running.number = candidate.number
-                                AND running.status = 'running'
                         )
                     ORDER BY candidate.id LIMIT 1
                     """,
@@ -532,6 +587,10 @@ class JobStore:
             db.execute(
                 "UPDATE jobs SET status = 'running', token = ? WHERE id = ?",
                 (token, row["id"]),
+            )
+            db.execute(
+                "INSERT INTO execution_attempts VALUES (?, ?, ?)",
+                (row["id"], token, f"ralph-job@{row['id']}-{token}.service"),
             )
             db.execute(
                 "INSERT INTO scheduler VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET last_repo = excluded.last_repo",
@@ -667,32 +726,36 @@ class JobStore:
             ).fetchone()
             if row is None:
                 return None
-            newer = db.execute(
-                """
-                SELECT 1 FROM jobs WHERE repo_id = ? AND number = ? AND generation > ?
-                    AND status = 'pending'
-            """,
-                (row["repo_id"], row["number"], row["generation"]),
-            ).fetchone()
-            attempts = row["attempts"] + 1
-            if newer:
-                status, next_attempt = "superseded", 0
-            elif attempts >= self.max_attempts:
-                status, next_attempt = "failed", 0
-            else:
-                status = "retry"
-                delay = min(
-                    self.retry_base_seconds * 2 ** (attempts - 1),
-                    self.retry_max_seconds,
-                )
-                next_attempt = time.time() + delay
-            db.execute(
-                """
-                UPDATE jobs SET status = ?, attempts = ?, next_attempt = ?,
-                    error = ?, token = NULL WHERE id = ?
-            """,
-                (status, attempts, next_attempt, str(error), row["id"]),
+            return self._retry(db, row, error)
+
+    def _retry(self, db, job, error):
+        """Record failure under the caller's claim/attempt transaction."""
+        newer = db.execute(
+            """
+            SELECT 1 FROM jobs WHERE repo_id = ? AND number = ? AND generation > ?
+                AND status = 'pending'
+        """,
+            (job["repo_id"], job["number"], job["generation"]),
+        ).fetchone()
+        attempts = job["attempts"] + 1
+        if newer:
+            status, next_attempt = "superseded", 0
+        elif attempts >= self.max_attempts:
+            status, next_attempt = "failed", 0
+        else:
+            status = "retry"
+            delay = min(
+                self.retry_base_seconds * 2 ** (attempts - 1),
+                self.retry_max_seconds,
             )
+            next_attempt = time.time() + delay
+        db.execute(
+            """
+            UPDATE jobs SET status = ?, attempts = ?, next_attempt = ?,
+                error = ?, token = NULL WHERE id = ?
+        """,
+            (status, attempts, next_attempt, str(error), job["id"]),
+        )
         progress.emit(
             "job_retry",
             repo_id=job["repo_id"],

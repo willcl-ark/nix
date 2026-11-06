@@ -50,6 +50,8 @@ class ReconciliationTests(unittest.TestCase):
         self.resolve("a" * 40)
         self.assertFalse(self.jobs.is_current(running))
         self.jobs.supersede(running)
+        self.assertIsNone(self.jobs.claim())
+        self.jobs.release_attempt(running["id"], running["token"])
         self.assertEqual(self.jobs.claim()["head"], "a" * 40)
 
     def test_observation_invalidated_during_fetch_and_failed_fetch_survive_restart(
@@ -71,7 +73,7 @@ class ReconciliationTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             self.resolve("a" * 40, effect=TimeoutError())
         self.jobs = JobStore(self.jobs.path, retry_base_seconds=0)
-        self.jobs.recover()
+        self.jobs.recover_reconciliation()
         self.resolve("b" * 40)
         self.assertEqual(self.jobs.claim()["head"], "b" * 40)
 
@@ -145,5 +147,7 @@ class ReconciliationTests(unittest.TestCase):
         running = self.jobs.claim()
         service.reconcile_stale_review(self.jobs, 42, "master", "opened", IDENTITY)
         self.jobs.supersede(running)
+        self.assertIsNone(self.jobs.claim())
+        self.jobs.release_attempt(running["id"], running["token"])
         self.resolve("a" * 40)
         self.assertIsNone(self.jobs.claim())

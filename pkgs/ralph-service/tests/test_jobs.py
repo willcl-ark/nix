@@ -29,12 +29,13 @@ class JobStoreTests(unittest.TestCase):
         self.assertTrue(self.enqueue())
         self.assertFalse(self.enqueue())
         reopened = jobs.JobStore(self.path)
-        self.assertEqual(reopened.recover(), 0)
+        self.assertEqual(reopened.active_attempts(), [])
         job = reopened.claim()
         self.assertEqual(
             (job["number"], job["head"], job["generation"]), (42, "a" * 40, 1)
         )
         self.assertTrue(reopened.complete(job))
+        self.assertTrue(reopened.release_attempt(job["id"], job["token"]))
         self.assertFalse(
             reopened.enqueue(
                 42, "master", "a" * 40, "synchronize", engine_identity=ENGINE
@@ -104,14 +105,18 @@ class JobStoreTests(unittest.TestCase):
         self.assertFalse(self.store.is_current(old))
         self.assertIsNone(self.store.claim())
         self.assertTrue(self.store.complete(old))
+        self.assertIsNone(self.store.claim())
+        self.store.release_attempt(old["id"], old["token"])
         new = self.store.claim()
         self.assertEqual((new["head"], new["generation"]), ("b" * 40, 2))
 
     def test_recover_releases_claim_and_rejects_stale_token(self):
         self.enqueue()
         old = self.store.claim()
-        restarted = jobs.JobStore(self.path)
-        self.assertEqual(restarted.recover(), 1)
+        restarted = jobs.JobStore(self.path, retry_base_seconds=0)
+        self.assertEqual(len(restarted.active_attempts()), 1)
+        self.assertIsNone(restarted.claim())
+        self.assertTrue(restarted.release_attempt(old["id"], old["token"]))
         new = restarted.claim()
         self.assertEqual(new["id"], old["id"])
         self.assertNotEqual(new["token"], old["token"])
@@ -119,6 +124,77 @@ class JobStoreTests(unittest.TestCase):
         self.assertFalse(restarted.complete(old))
         self.assertIsNone(restarted.retry(old, "stale"))
         self.assertTrue(restarted.complete(new))
+
+    def test_completed_and_retrying_workers_hold_capacity_until_unit_exit(self):
+        store = jobs.JobStore(self.path, global_limit=1, retry_base_seconds=0)
+        self.enqueue()
+        old = store.claim()
+        self.assertEqual(store.retry(old, TimeoutError()), "retry")
+        self.assertIsNone(store.claim())
+        self.assertEqual(store.active_attempts()[0]["attempt_token"], old["token"])
+        self.assertFalse(store.release_attempt(old["id"], "wrong-token"))
+        store.release_attempt(old["id"], old["token"])
+        new = store.claim()
+        self.assertNotEqual(new["token"], old["token"])
+        self.assertFalse(store.release_attempt(old["id"], old["token"]))
+        store.complete(new)
+        self.enqueue("b" * 40)
+        self.assertIsNone(store.claim())
+        store.release_attempt(new["id"], new["token"])
+        self.assertEqual(store.claim()["head"], "b" * 40)
+
+    def test_dead_worker_with_saved_result_retries_publication(self):
+        self.store.retry_base_seconds = 0
+        self.enqueue()
+        job = self.store.claim()
+        result = {"content": "saved before publication"}
+        self.store.save_result(job, result)
+        self.store.release_attempt(job["id"], job["token"])
+        retried = self.store.claim()
+        self.assertEqual(retried["review_result"], result)
+        self.assertNotEqual(retried["token"], job["token"])
+
+    def test_crashed_workers_obey_backoff_and_attempt_limit(self):
+        self.enqueue()
+        first = self.store.claim()
+        self.store.release_attempt(first["id"], first["token"])
+        self.assertIsNone(self.store.claim())
+        with self.store._connection(write=True) as db:
+            row = db.execute(
+                "SELECT status, attempts, next_attempt FROM jobs"
+            ).fetchone()
+            self.assertEqual((row["status"], row["attempts"]), ("retry", 1))
+            self.assertGreater(row["next_attempt"], 0)
+            db.execute("UPDATE jobs SET next_attempt = 0")
+        self.store.retry_base_seconds = 0
+        for _ in range(2):
+            job = self.store.claim()
+            self.store.release_attempt(job["id"], job["token"])
+        self.assertIsNone(self.store.claim())
+        self.assertEqual(self.store.active_attempts(), [])
+        with self.store._connection() as db:
+            row = db.execute("SELECT status, attempts FROM jobs").fetchone()
+            self.assertEqual(tuple(row), ("failed", 3))
+
+    def test_worker_open_preserves_live_claim_and_does_not_migrate(self):
+        self.enqueue()
+        job = self.store.claim()
+        worker = jobs.JobStore(self.path, initialize=False)
+        self.assertEqual(worker.get_claim(job["id"], job["token"]), job)
+        self.assertIsNone(worker.get_claim(job["id"], "wrong-token"))
+        self.assertIsNone(
+            worker.for_repository("gui").get_claim(job["id"], job["token"])
+        )
+        with self.store._connection(write=True) as db:
+            db.execute("PRAGMA user_version = 1")
+        with self.assertRaisesRegex(RuntimeError, "unsupported"):
+            jobs.JobStore(self.path, initialize=False)
+        with self.store._connection() as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
+        with self.assertRaisesRegex(RuntimeError, "drain legacy"):
+            jobs.JobStore(self.path)
+        with self.assertRaises(FileNotFoundError):
+            jobs.JobStore(self.path.parent / "missing.sqlite", initialize=False)
 
     def test_simultaneous_claims_get_distinct_jobs_once(self):
         self.enqueue()
@@ -163,8 +239,12 @@ class MultiRepositoryTests(unittest.TestCase):
         self.assertFalse(self.gui.is_current(gui))
         with self.assertRaises(ValueError):
             self.gui.complete(core)
-        restarted = jobs.JobStore(self.path, repository_limits={"core": 2, "gui": 1})
-        self.assertEqual(restarted.recover(), 2)
+        restarted = jobs.JobStore(
+            self.path, repository_limits={"core": 2, "gui": 1}, retry_base_seconds=0
+        )
+        self.assertEqual(len(restarted.active_attempts()), 2)
+        for job in (core, gui):
+            self.assertTrue(restarted.release_attempt(job["id"], job["token"]))
         claimed = [restarted.claim(), restarted.claim()]
         self.assertEqual(
             {(j["repo_id"], j["head"]) for j in claimed},
@@ -192,6 +272,8 @@ class MultiRepositoryTests(unittest.TestCase):
         self.assertEqual({job["repo_id"] for job in claimed}, {"core", "gui"})
         core = next(job for job in claimed if job["repo_id"] == "core")
         self.queue.complete(core)
+        self.assertIsNone(self.queue.claim())
+        self.queue.release_attempt(core["id"], core["token"])
         # GUI is already at its cap, so another Core review can use spare capacity.
         self.assertEqual(self.queue.claim()["repo_id"], "core")
         self.assertIsNone(self.queue.claim())

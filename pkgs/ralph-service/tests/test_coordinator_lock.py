@@ -8,7 +8,7 @@ from ralph_service.jobs import JobStore
 
 
 class CoordinatorLockTests(unittest.TestCase):
-    def test_live_owner_blocks_recovery_and_killed_owner_releases_lock(self):
+    def test_coordinator_restart_preserves_independent_worker_claim(self):
         script = """
 import sys
 from pathlib import Path
@@ -16,7 +16,7 @@ from ralph_service.service import coordinator_lock
 from ralph_service.jobs import JobStore
 with coordinator_lock(Path(sys.argv[1])):
     jobs = JobStore(Path(sys.argv[1]) / "jobs.sqlite3")
-    jobs.recover()
+    jobs.recover_reconciliation()
     print("locked", flush=True)
     sys.stdin.read()
 """
@@ -61,7 +61,7 @@ with coordinator_lock(Path(sys.argv[1])):
                 )
                 self.assertEqual(successor.returncode, 0, successor.stderr)
                 self.assertEqual(successor.stdout.strip(), "locked")
-                self.assertFalse(store.is_current(claim))
+                self.assertTrue(store.is_current(claim))
             finally:
                 if owner.poll() is None:
                     owner.kill()
