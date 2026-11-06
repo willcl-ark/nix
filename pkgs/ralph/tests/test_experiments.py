@@ -225,6 +225,7 @@ finally:
                 os.environ,
                 {
                     "RALPH_WRITE_VERIFIER_SHELL": str(env_path),
+                    "RALPH_WRITE_VERIFIER_CCACHE": str(self.root / "ccache"),
                     "RALPH_OPENAI_API_KEY": "host-secret",
                 },
             ),
@@ -243,7 +244,9 @@ finally:
                     )
                 )
 
-            probe = run("printf ready")
+            probe = run(
+                'set -eu; printf "shared\\n" > "$CCACHE_DIR/probe"; printf ready'
+            )
             if probe["status"] != "completed":
                 # Nix build sandboxes often disallow nested user namespaces.
                 error = probe.get("error", "") + probe.get("output", "")
@@ -270,10 +273,16 @@ finally:
             self.assertTrue(result["capture_complete"])
             self.assertEqual((self.repo / "code.txt").read_text(), "head\n")
             fresh = run(
-                'read value < code.txt; test "$value" = head; test ! -e ignored-test.py'
+                'set -eu; read value < code.txt; test "$value" = head; '
+                'test ! -e ignored-test.py; read cached < "$CCACHE_DIR/probe"; '
+                'test "$cached" = shared'
             )
             self.assertEqual(fresh["exit_code"], 0)
-            base = run('read value < code.txt; test "$value" = base', side="base")
+            base = run(
+                'set -eu; read value < code.txt; test "$value" = base; '
+                'read cached < "$CCACHE_DIR/probe"; test "$cached" = shared',
+                side="base",
+            )
             self.assertEqual(base["exit_code"], 0)
             self.assertEqual(base["revision"], self.snapshot.diff_base_sha)
             # Aggregate OOM kills only this experiment, even when each child
