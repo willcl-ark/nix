@@ -1,6 +1,7 @@
 {
   lib,
   mkShell,
+  ccacheStdenv,
   writeShellScriptBin,
   cmake,
   ninja,
@@ -25,7 +26,7 @@ let
     qt6.qtsvg
   ];
   environment =
-    (mkShell {
+    ((mkShell.override { stdenv = ccacheStdenv; }) {
       nativeBuildInputs = [
         cmake
         ninja
