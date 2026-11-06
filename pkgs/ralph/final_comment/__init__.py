@@ -134,6 +134,7 @@ def _current_findings(findings, memory, head_sha):
             entry
             for entry in group
             if head_sha
+            and entry.get("severity") in SEVERITY_ORDER
             and entry.get("checked_head") == head_sha
             and entry.get("status") == "still_present"
             and entry.get("reason")
@@ -390,7 +391,9 @@ def render_report(
         return min(
             group,
             key=lambda entry: min(
-                severity_order.index(finding.get("severity", "suggestion"))
+                severity_order.index(finding["severity"])
+                if finding.get("severity") in severity_order
+                else len(severity_order)
                 for finding in published_findings(entry)
             ),
         )
@@ -407,15 +410,15 @@ def render_report(
     def memory_text(groups, finding, status=None):
         active = [entry for group in groups for entry in active_entries(group)]
         status = status or ("not confirmed" if active else "resolved")
+        severity = finding.get("severity")
+        label = f"{severity.capitalize()} · {status}" if severity else status
         return fill(
             "retained",
-            label=summary_label(
-                f"[{finding['severity'].capitalize()} · {status}] {finding['title']}"
-            ),
-            summary=finding.get("summary", ""),
-            location=f"{finding.get('path', '')}:{finding.get('line', '')}",
-            side=finding.get("side", "head"),
-            body=finding.get("body", ""),
+            label=summary_label(f"[{label}] {finding['title']}"),
+            summary=finding.get("summary") or "",
+            location=f"{finding.get('path') or ''}:{finding.get('line') or ''}",
+            side=finding.get("side") or "head",
+            body=finding.get("body") or "",
             provenance="\n\n".join(provenance(group) for group in groups),
         )
 

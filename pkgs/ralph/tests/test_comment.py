@@ -276,6 +276,38 @@ class CommentTests(unittest.TestCase):
         self.assertIn("Review coverage was incomplete", rendered)
         self.assertNotIn("I found no actionable issues", rendered)
 
+    def test_history_without_severity_stays_in_the_report(self):
+        history = {
+            "key": "old:1",
+            "title": "Historical fee conversion concern",
+            "severity": None,
+            "summary": None,
+            "body": None,
+            "path": None,
+            "line": None,
+            "side": None,
+            "status": "fixed",
+            "checked_head": "head",
+            "reason": "The earlier concern was checked.",
+            "source_evidence": [{"path": "current.cpp", "line": 1, "side": "head"}],
+        }
+        rendered = final_comment.render_report([], review_memory=[history])
+        self.assertIn(history["title"], rendered)
+        self.assertIn("resolved", rendered)
+        self.assertNotIn("Suggestion", rendered)
+        self.assertNotIn("None", rendered)
+
+        history["status"] = "still_present"
+        rendered = final_comment.render_report(
+            [], review_memory=[history], head_sha="head"
+        )
+        self.assertIn(history["title"], rendered)
+        self.assertIn("unconfirmed previous finding", rendered)
+        self.assertNotIn("Suggestion", rendered)
+        comment = final_comment.render([], review_memory=[history], head_sha="head")
+        self.assertNotIn(history["title"], comment)
+        self.assertNotIn("I found no actionable issues", comment)
+
 
 if __name__ == "__main__":
     unittest.main()
