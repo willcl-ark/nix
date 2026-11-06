@@ -3,7 +3,9 @@
 import io
 import json
 import os
+import selectors
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -38,6 +40,64 @@ class ExperimentTests(unittest.TestCase):
         self.snapshot = SimpleNamespace(
             checkout=self.repo, head_sha=head, diff_base_sha=base
         )
+
+    def test_shared_lock_serializes_processes_with_separate_temporary_directories(self):
+        lock = self.root / "experiment.lock"
+        first_tmp = self.root / "first"
+        second_tmp = self.root / "second"
+        first_tmp.mkdir()
+        second_tmp.mkdir()
+        script = """
+import sys
+from ralph.experiments import ExperimentSession
+from types import SimpleNamespace
+session = ExperimentSession(SimpleNamespace(head_sha="head", diff_base_sha="base"), [])
+try:
+    print("waiting", flush=True)
+    session._prepare()
+    print("acquired", flush=True)
+    sys.stdin.readline()
+finally:
+    session.__exit__()
+"""
+        processes = []
+        try:
+            for directory in (first_tmp, second_tmp):
+                process = subprocess.Popen(
+                    [sys.executable, "-c", script],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env={
+                        **os.environ,
+                        "TMPDIR": str(directory),
+                        "PYTHONPATH": str(
+                            Path(experiments.__file__).resolve().parent.parent
+                        ),
+                        "RALPH_WRITE_VERIFIER_LOCK": str(lock),
+                    },
+                )
+                processes.append(process)
+                line = process.stdout.readline().strip()
+                self.assertEqual(
+                    line, "waiting", process.stderr.read() if not line else ""
+                )
+                if len(processes) == 1:
+                    self.assertEqual(process.stdout.readline().strip(), "acquired")
+            with selectors.DefaultSelector() as selector:
+                selector.register(processes[1].stdout, selectors.EVENT_READ)
+                self.assertEqual(selector.select(timeout=0.2), [])
+            processes[0].communicate("release\n", timeout=5)
+            self.assertEqual(processes[0].returncode, 0)
+            stdout, stderr = processes[1].communicate("release\n", timeout=5)
+            self.assertEqual(processes[1].returncode, 0, stderr)
+            self.assertEqual(stdout.strip(), "acquired")
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate()
 
     def test_unavailable_sessions_are_not_execution_evidence(self):
         with (

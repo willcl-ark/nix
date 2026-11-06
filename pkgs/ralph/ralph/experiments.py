@@ -140,7 +140,9 @@ class ExperimentSession:
             return
         self.directory = tempfile.TemporaryDirectory(prefix="ralph-experiment-")
         self.lock = os.open(
-            Path(tempfile.gettempdir()) / f"ralph-experiment-{os.getuid()}.lock",
+            Path(os.environ["RALPH_WRITE_VERIFIER_LOCK"])
+            if "RALPH_WRITE_VERIFIER_LOCK" in os.environ
+            else Path(tempfile.gettempdir()) / f"ralph-experiment-{os.getuid()}.lock",
             os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
             0o600,
         )
