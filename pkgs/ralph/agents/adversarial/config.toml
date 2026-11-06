@@ -1,6 +1,6 @@
 prompt = "prompt.md"
 tool_set = "full"
-model = "gpt-6-astra"
+model = "gpt-6.1-sol"
 reasoning_effort = "high"
 max_output_tokens = 25000
 max_tool_calls = { routine = 72, standard = 72, sensitive = 72 }
@@ -11,4 +11,5 @@ timeout = 1800
 final_timeout = 1800
 
 [profiles.high]
+model = "gpt-6-astra"
 max_tool_calls = { routine = 128, standard = 128, sensitive = 128 }
