@@ -109,9 +109,11 @@ Frozen evaluations keep those saved values until explicitly given new settings.
 
 To try a complete copied agent directory, pass `--agents-dir DIR` to
 `check-agents` or `review`. The service uses `services.ralph.agentsDir` or
-`engineConfig.agents_dir`. Custom directories must include `judge`, with its
-prompt and config, and remove `collator` and `major_verifier`. Frozen
-configurations and evaluations from before this pipeline require fresh
-configuration and recapture; no migration is provided.
-This replaces the old separate prompt-file,
-audit-prompt-directory and model-map overrides.
+`engineConfig.agents_dir`. Supply every configured
+agent, including specialists, challenger, write-verifier and judge.
+`check-agents` validates the tree before a review. Frozen evaluations retain
+their captured configuration; recapture when a schema change makes that
+configuration incompatible.
+
+For per-run overrides without copying the agent tree, see
+[profiles and overrides](docs/usage.md#profiles-and-overrides).

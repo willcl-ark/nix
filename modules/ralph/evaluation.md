@@ -30,9 +30,7 @@ default; pass the same options to override it for a comparison. Use
 `--agents-dir DIR` to load another complete directory of agent prompts and TOML
 settings. The current-engine agent, routing and blind-alternative switches
 cannot be combined with another engine. Configuration changes produce a distinct
-effective configuration group. The capture schema has a hard
-cutover: recapture manifests created before engine identity was added. Current
-captures use manifest schema version 8. Recapture older manifests. Core and
+effective configuration group. Recapture manifests from incompatible older schema versions. Core and
 engine hashes are separate from companion presentation code, and captures record
 the resolved archaeology setting. Frozen evidence never falls back to live reads.
 Configured submodule snapshots retain their trusted source URL, exact base/head
@@ -49,10 +47,18 @@ edits with `python3 pkgs/ralph/review.py check-agents` before running a replay.
 Add `--agents-dir DIR` to validate an alternate directory. Frozen replay uses
 its captured prompts and settings until you explicitly select an override.
 
-An engine owns its Markdown and structured data. Reports and other consumers
-use only exports the engine declares; an absent export is unavailable, while an
-empty supported export means no items. They do not infer findings by parsing
-review text. Other engines need not provide current-engine stage diagnostics.
+Replay the captured case with provider credentials:
+
+```sh
+ralph-evaluate run --state-dir ./evaluation-state --output-dir ./results \
+  --openai-key-file /run/secrets/proxy-key ./cases/case-1049-*.json
+```
+
+`run` supports `--agents-dir`, `--routing-mode` and `--no-blind-alternatives` for
+comparisons. Optional `--labels-json` labels are saved with results and never
+sent to reviewers. Each run writes a distinct private artifact with effective
+configuration identity, stage results, evidence inventory, usage and outcome.
+See the [engine reference](../../pkgs/ralph/docs/engine.md) for output contracts.
 
 ```sh
 ralph-evaluate summarize ./results
@@ -63,10 +69,8 @@ failures, partial coverage, verifier decisions, accepted findings, archaeology
 completion, published conceptual concerns, request attempts, reported token
 usage, missing usage, elapsed time and per-stage source attribution.
 
-Accepted finding counts mean verifier-published findings. Conceptual concern
-counts mean the verifier published a concept assessment. Neither count is a
-human accuracy or recall measurement. Old frozen configurations containing
-budget settings must be recaptured before replay.
+These counts describe automated review output. They are not human accuracy or
+recall measurements.
 
 ## Case selection
 

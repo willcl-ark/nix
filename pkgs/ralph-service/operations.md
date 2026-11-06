@@ -1,0 +1,102 @@
+# Ralph service operations
+
+See [service setup and recovery](README.md) for the repository registry, jobs,
+publication holds and state backups. NixOS settings belong in the
+[module guide](../../modules/ralph/README.md).
+
+## Reports and statistics
+
+Reports include full preliminary agent replies, coverage limitations, and
+review details. Preliminary candidates remain unverified; the main review
+contains verified findings. Public reports exclude private request payloads
+and configuration. Each review run has a distinct URL, and publication retries
+reuse the saved report without changing its contents. If a report cannot be
+written, native Forgejo publication can continue without a report link. GitHub
+comment creation and updates require a full report URL.
+
+Challenger outcomes connect candidates to challenge, source verification and
+publication decisions. These counts measure agent agreement, not correctness or
+confirmed delivery. Missing decisions stay unassessed. Existing report snapshots
+remain unchanged when statistics are regenerated.
+
+Each PR has a history page, linked as **Previous reports** from new review
+comments and full reports. Core uses `reportBaseUrl/<PR>/`; other repositories
+use `reportBaseUrl/<repository-id>/<PR>/`. It lists every available
+public report, including reruns of the same commit. Add `?commit=<SHA>` to
+filter by a full commit hash or prefix. The archive root at `reportBaseUrl/`
+provides a search form for PR numbers and commit hashes or prefixes. It stays
+empty until a search is submitted. Reports appear newest first; undated
+backfills appear last. The stats timer refreshes its public
+`history.json` catalog alongside the PR history pages.
+
+Public reports may include reviews that were never posted. Private traces are
+never served or indexed directly. History uses saved report timestamps, falling
+back to file modification time for older reports.
+
+To recover missing reports from completed saved jobs, run the installed service
+Python environment with `python -m ralph_service.backfill --state-dir DIR
+--report-dir DIR`. This previews recoverable reports; add `--apply` to write
+them and refresh history. It makes no model calls or comment updates. Existing
+reports are preserved, missing historical dates are shown as unknown, and
+unrecoverable jobs are reported.
+
+Statistics read durable jobs and usage ledgers without model requests. Shared
+findings credit each contributing agent, so counts overlap. Concept assessments
+have separate counts; archaeology does not compete in the finding leaderboard.
+Verifier acceptance is not human validation or a recall measurement. Retries
+increase request counts without duplicating final findings, and summed model
+time is not elapsed review time.
+
+The Limits page at `stats/limits/` distinguishes usage at a cap from recorded
+interruptions, with links to affected reviews. Missing telemetry remains
+uninstrumented. Reaching a cap does not establish that more allowance would
+improve a review. Usage totals describe Ralph's requests; subscription quotas
+also include other tools using the same accounts.
+
+## Rebuilding statistics
+
+Stats updates are incremental by default. A private cache in `stateDir/stats`
+holds compact review summaries and source checkpoints. Database triggers record
+inserts, updates and deletions transactionally, so retries and completed requests
+invalidate their earlier summaries. Stores without change tracking are read in
+full until their writer initializes tracking. Aggregate calculations and live
+subscription usage still refresh each run; the cache never substitutes for the
+authoritative review and usage databases.
+
+To rebuild after a backfill or manual restore, run the same `ralph-evaluate stats`
+command and arguments as the service with `--full` added, as the service user.
+This rebuilds derived summaries and history without making model calls. Missing
+caches and changes to the cache calculation version also cause a full rebuild.
+Developers must bump `stats_cache.VERSION` when changing cached extraction or
+interpretation. Source replacement and sequence regression invalidate checkpoints,
+but an in-place database restore that preserves identity and does not regress the
+sequence requires `--full`.
+
+History checks report file metadata before parsing changed reports. Use `--full`
+after edits that preserve file size and modification time. Unchanged generated
+pages are not replaced; a small freshness document supplies their current update
+time. The full JSON export remains available and is refreshed each run.
+The stats content security policy must allow `connect-src 'self'` for the
+freshness request, in addition to the existing same-origin script permission.
+
+## Requesting another review
+
+Automatic events schedule a new review only when the authoritative PR head SHA
+changes. Engine upgrades, metadata edits and base-branch changes do not rerun an
+unchanged head or replace its pending, running or retrying job.
+
+Failures fetching the required PR refs retry the existing job up to three total
+attempts, with 30-second and 60-second delays. Each attempt rechecks the PR head
+before collection. These retries precede model execution; sanitized Git errors
+are retained in the job and warning logs. Other Git failures are not automatically
+treated as retryable.
+
+To force a fresh review of the same head, send a signed synthetic pull request
+webhook with `"ralph_force": true`. Normal Forgejo webhooks omit this field.
+For a historical review, also supply `pull_request.base.sha` with the recorded
+base commit. Merged PRs use the merge commit's first parent; closed, unmerged
+PRs use their recorded base SHA. Only forced requests honor this field. Open
+PRs omit it so the worker fetches the current target branch. Every review uses
+`merge-base(base, head)..head` for its patch and file tools. Historical reviews
+remain retrospective: discussion and web research are not time-filtered.
+Changing prompts does not automatically rerun previously reviewed heads.

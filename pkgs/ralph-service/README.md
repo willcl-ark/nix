@@ -46,6 +46,8 @@ submodule update command.
 
 See the [module guide](../../modules/ralph/README.md) and
 [evaluation guide](../../modules/ralph/evaluation.md).
+For reports, statistics recovery and forced reviews, see
+[service operations](operations.md).
 
 Core imports and defaults live under the core package's `libexec/ralph`.
 Companion code and launchers live under `libexec/ralph-service`; wrappers add the
@@ -66,9 +68,11 @@ loaded from their configured files. Do not edit manifests for running jobs.
 The scheduler reconciles stopped attempts and removes their roots. Temporary
 systemd failures pause recovery rather than invalidating live reviews.
 
-The first deployment from threaded execution needs one last drain. Future
-schema-breaking changes and rollback to the threaded version require all
-independent jobs to stop first. Ordinary compatible package updates can overlap.
+Before schema-breaking upgrades or incompatible rollbacks, stop admission and
+drain or cancel all independent jobs. Stopping the coordinator alone does not
+stop reviews. Do not restore old queue state over published results. Ordinary
+compatible package updates can overlap; a killed worker or reboot can lose
+unfinished inference, since reviews do not checkpoint model execution.
 
 ## Service and review lifecycle
 
@@ -81,7 +85,7 @@ flowchart TD
     workers --> collect["Fetch current branch or pinned historical base and collect merge-base/head snapshot"]
     collect --> existing{"Same base and head already reviewed?"}
     existing -->|yes| done["Complete without model calls"]
-    existing -->|no| pipeline["Route, assess concept, discover, verify and edit"]
+    existing -->|no| pipeline["Run selected review engine"]
     pipeline --> saved["Save result before publication"]
     saved --> report["Optional public HTML and JSON report"]
     report --> publish["Create or update one bot comment per PR"]
@@ -130,8 +134,10 @@ publication destinations and holds further writes for the PR while an earlier
 write remains unresolved, including writes from newer review generations.
 Duplicate bot markers require operator investigation.
 
-Stop all state writers and take a verified backup before the repository schema
-migration. Explicitly assign existing state to `core`:
+Stop the coordinator, independent jobs, Telegram monitor, stats and follow-up
+timers, and any other state writers before repository schema migration. Back up
+the full state and public report directories and verify the backup. Explicitly
+assign existing state to `core`:
 
 ```sh
 ralph-service --state-dir /path/to/state --repositories /path/to/repositories.json \
@@ -142,7 +148,8 @@ Migration preserves job IDs, saved reviews, exact publication intent and existin
 uncertain delivery holds. Startup refuses unmigrated state. Do not run an older
 binary against the upgraded database. Restoring a backup also loses work accepted
 since that snapshot and cannot undo remote writes; reconcile intervening work
-before restarting.
+before restarting. Check record counts and historical report access before
+resuming services. Never clear an uncertain delivery hold as part of migration.
 
 Listing holds is read-only, covers all repositories and works while the
 coordinator runs. Stop the coordinator before releasing a hold: release acquires
@@ -164,29 +171,12 @@ cannot establish that remote inference or billing stopped.
 
 ## Agents, comment formatting and follow-up
 
-To tune a main-review prompt, model or tool limit, edit the corresponding
-directory under [core agents](../ralph/agents/). Each agent keeps its prompt and
-TOML settings together. Comment templates live under
-[final_comment](../ralph/final_comment/). Validate edits from the repository root:
-
-```sh
-python3 pkgs/ralph/review.py check-agents
-```
-
-This check needs no credentials or review target. The service uses the bundled
-agents by default. Set a repository's `engine_config.agents_dir` in the registry,
-or `services.ralph.repositories.<id>.agentsDir`, to select a complete alternate
-agent directory. `ralph-evaluate capture` and `run` also accept `--agents-dir DIR`;
-replay keeps the captured settings unless explicitly overridden.
-
-For the current engine, mirror comments show at most six current verified
-findings, including historical issues confirmed as still present at this head.
-They sort by severity, with current findings first on ties.
-Each shows its title, impact summary and source location. Additional findings
-link to the full report. Earlier unresolved concerns and incomplete coverage
-receive short notices. Finding explanations, alternatives and full review
-history remain in saved reports and structured exports. The comment footer
-links the reviewed revision and report.
+See [Contributing](../ralph/CONTRIBUTING.md) for main-review prompt, model and
+template changes, and [comment formatting](../ralph/final_comment/README.md)
+for public review layout. The service uses bundled agents unless a repository
+sets `engine_config.agents_dir` in its registry or
+`services.ralph.repositories.<id>.agentsDir` in NixOS. Frozen replay retains
+captured settings unless explicitly overridden.
 
 The follow-up command loads its own `audits/addressed_findings.md` and default
 model. Use `ralph-followup --prompt-file FILE --model MODEL` to override those
@@ -216,6 +206,8 @@ This option is optional for historical/offline presentation. Backfill remains a
 dry run unless `--apply` is supplied. Reports and stats label repository identity
 and provide per-repository views; Core's existing report URLs remain valid.
 
+## Reports and usage
+
 The stats command can also take `--proxy-management-url` and
 `--proxy-management-key-file` together to collect passive Codex and Claude quota
 snapshots through CLIProxyAPI v8. Use a separate management key, not an inference
@@ -225,19 +217,16 @@ separate by window, and show reset times and collection time. Missing readings
 are unavailable, never zero. No inference requests or usage-queue reads are made.
 The bundled proxy UI does not need a separate frontend deployment.
 
-The `stats/limits/` page groups saved stage observations by agent, model,
-profile and configured cap. It shows usage at the cap, confirmed interruptions
-and affected review links. Older results without telemetry
-remain uninstrumented. Output-token usage is measured per response; web-search
-cap usage is observable but provider-side blocking is not. These counts help
-choose limits to investigate, rather than measure review quality.
+See [reports and statistics](operations.md#reports-and-statistics) for report
+history, attribution, limits and backfill, and
+[cache recovery](operations.md#rebuilding-statistics) after restoring state.
+
+## Package updates
 
 Queued reviews retain their resolved profile and prompt settings across retries
 and restarts. Each running attempt pins its package and configuration across
 deployments. New attempts use the deployed package; the engine hash is recorded
 on claim. Saved results retain their original identity and retry publication without running the engine again.
-Existing unfinished reviews migrate once into the default profile, preserving
-their configured models.
 
 Switch the companion package, its core dependency, module commands and custom
 prompt/model configuration together. Before a deployment, stop timers and
@@ -246,6 +235,8 @@ Hydrate each repository's Git store before starting local-only snapshot reads. S
 one companion against the existing state and resume timers after startup succeeds.
 No deployment is performed by building these packages. A package rollback does
 not undo published comments or recorded model requests.
+
+## GitHub publication
 
 Repository registry fields `github_repository` and `github_token_file` enable
 authenticated upstream metadata reads independently of posting.
@@ -268,12 +259,19 @@ these status comments. Terminal acquisition failures use the same saved-result
 publication path; transient errors retry before publishing failure. Publication
 transport errors never replace a completed review with a failure status.
 `"off"` leaves existing comments untouched. No database migration is needed;
-existing exact delivery intents are preserved until reconciled. The old
-`github_post_major_findings` boolean is rejected; replace it with the new mode.
-Upstream PR numbers must match the mirror. Writes require an open upstream PR
-matching the reviewed head and base branch. Metadata edits do not block
-publication. GitHub credentials are separate from Forgejo credentials and model
-tools.
+existing exact delivery intents are preserved until reconciled. Upstream PR
+numbers must match the mirror. Writes require an open upstream PR matching the
+reviewed head and base branch. Metadata edits do not block publication. GitHub
+credentials are separate from Forgejo credentials. Review tools may use them
+for discussion reads, so do not grant access to private repositories.
+
+Comments neutralize `@` mentions. Publication requires source-verifier and judge
+approval. Changing modes does not request a new review of an unchanged head or
+replace an uncertain write. A saved full-comment intent can still be delivered
+after switching to `"major-only"`; `"off"` also prevents saved intents from
+being dispatched.
+
+## Telegram
 
 Run `ralph-telegram` separately from the review daemon with `--state-dir`,
 `--report-dir`, `--report-base-url`, `--repositories /path/to/repositories.json`,
@@ -289,23 +287,36 @@ titles are shortened to fit Telegram's 4,096 UTF-16 code unit limit while
 preserving the counts and links. A new exported finding with severity exactly
 `major` adds `🚨 Major finding`.
 
-Post `/status` in the configured channel to see service states, queue and
-result totals, recorded token usage and the latest subscription quota snapshot. `/high gui 123` requests a fresh review
-of GUI PR #123 using the high profile. The repository ID is required. It increases
-the reasoning effort and models of the harder core review stages. `/help` lists the
-commands. Commands are channel-only. All channel administrators may issue commands.
-Anonymous posts rely on Telegram's administrator posting permissions;
-identified senders must be current administrators. The monitor verifies bot
-posting permission instead of trusting displayed signatures. Direct messages
-are ignored. Replies are sent as soon as the summary is ready and take
-priority over background posts, while honoring Telegram's retry delay.
+Post `/status` in the configured channel for service states, queue and result
+totals, usage and subscription quotas. `/help` lists commands. `/review gui 1049`
+requests a fresh default-profile review; `/high gui 1049` selects high.
+Commands accept stable repository IDs, and shorthand such as `gui1049` or
+`bitcoin36688`; ambiguous selectors are rejected. The PR must be open.
+An explicit `/review` replaces a pending high request with the default profile;
+ordinary webhooks and head refreshes preserve pending high reviews. Commands
+cannot restart services.
 
-High requests are saved with the Telegram update offset and reply in
-`telegram.sqlite3`. The review daemon consumes them and records request IDs
-transactionally with the job, so a restart cannot duplicate a command. Normal
-webhooks and head refreshes preserve a pending or running high review. The
-monitor can accept commands while the review daemon is stopped. A second
-reply confirms queueing or explains why the PR could not be queued.
+Commands are channel-only. All channel administrators may issue them. Anonymous
+posts rely on Telegram's administrator posting permissions; identified senders
+must be current administrators. The monitor verifies bot posting permission
+instead of trusting displayed signatures. Direct messages are ignored.
+
+Requests are saved with the Telegram update offset and reply in
+`telegram.sqlite3`. The daemon consumes them and records request IDs with the
+job, so restarts cannot duplicate a command. The monitor accepts commands while
+the daemon is stopped; a second reply confirms queueing or explains rejection.
+Preserve this database with the rest of the state.
+
+The monitor checks for completed reviews and terminal failures every 30 seconds,
+grouping new failures into one alert. On first enable, existing jobs form a
+baseline and are not posted. The 21:00 UTC digest covers the preceding day's
+observed completions and failures, queue depth and recorded usage. After
+downtime, only the latest completed window is sent. Missing ledgers and unknown
+usage remain explicit.
+
+Command replies take priority over background posts, which send one message per
+check. All messages honor Telegram's retry delay. A crash after Telegram accepts
+a message but before Ralph records delivery can cause a duplicate.
 
 Normal webhook reviews use the default profile. Set the repository's `engine_config.profile` to
 `"high"` to select high for ordinary reviews too. Custom engine modules do not
@@ -333,15 +344,14 @@ context remains current. Installing the feature does not enqueue historical PRs.
 
 The report includes the verified backport assessment separately from inline code
 findings. Missing whole commits can therefore be reported without fabricating a
-source-line location. See [core behavior](../ralph/README.md#backport-reviews).
+source-line location. See [core behavior](../ralph/docs/engine.md#backport-reviews).
 
 Label/body edits alone do not enqueue reviews. Use the existing explicit review
 request to re-review an unchanged head after editing its backport scope.
 
-Frozen cases use schema 7 and retain the backport evidence and available upstream
-objects for offline replay. Recreate older case manifests before evaluating with
-this version; replay rejects changed evidence or missing source pins before any
-model request.
+Frozen cases retain backport evidence and available upstream objects. Replay
+rejects changed evidence or missing source pins before any model request. See
+the [evaluation guide](../../modules/ralph/evaluation.md) for capture compatibility.
 
 ## PR-local author feedback
 

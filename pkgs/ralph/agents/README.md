@@ -45,6 +45,39 @@ Blind alternatives see the problem, goal and baseline code, not the proposed
 solution or discussion. Backport reviews skip blind alternatives. Neither
 research result can stop the selected code-review stages.
 
+### Routing modes and specialists
+
+| Selection or escalation | Result |
+| --- | --- |
+| Enabled routing | Use the semantic tier and profiles; add mandatory specialist audits from paths. |
+| Explicit full mode | Select every audit and profile, including script. |
+| Shadow mode | Record the routing proposal, then select every audit and profile, including script. This also applies after routing fallback. |
+| Invalid or failed routing, material missing context, or oversized patch | Use the sensitive general plan with all profiles, excluding script. Full and shadow modes still include script. Provider or stage failures remain explicit. |
+| Overview requests sensitive review from a lower tier | Add all general audits and profiles, excluding script. |
+| A focused audit requests sensitive review from a lower tier | Add adversarial, state and concurrency; keep selected profiles, or use all profiles if none were selected. |
+| Consensus domain or conservative fallback | Promote remaining stages to high settings, preserving explicit stage overrides. |
+
+
+Path rules add required audits for tests, production code, synchronization,
+storage, public interfaces, build files and GUI changes. See
+[routing.py](../ralph/routing.py) for the exact path rules. Documentation paths
+are excluded from directory-based coverage; the router may still select audits
+for substantive documentation changes. An empty audit list does not skip the
+independent review.
+
+The [script specialist](script/prompt.md) handles substantive script execution,
+signatures, spend acceptance and transaction-policy changes. Sensitive tier,
+filenames, generic missing context and routing fallback do not select it.
+Full and shadow modes include it. Its candidates use the same verification
+path as other findings.
+
+The [symbol-usage audit](symbol_usage/prompt.md) checks new unused code and
+references orphaned by removals or renames, including in unchanged files.
+Reviewers must account for indirect uses, supported configurations, external
+contracts and side effects before recommending deletion. The design audit
+checks explanations of behavior and rationale. Documentation that names code
+can warrant either audit; spelling and formatting alone need neither.
+
 ## Test coverage and large changes
 
 Large inputs include every changed path and its size, with commit-to-path
@@ -104,6 +137,6 @@ response withholds pending findings; there is no wording fallback. The
 coverage limitations. The shared [finding format](shared/finding-format.md)
 applies to the verifier's proposed text and the judge's final wording.
 
-Custom agent directories need `judge`; `collator` and `major_verifier` are
-removed. Older frozen configurations require fresh configuration and recapture.
-For settings and local checks, see [Contributing](../CONTRIBUTING.md).
+For settings, complete custom agent directories and local checks, see
+[Contributing](../CONTRIBUTING.md). For export contracts and detailed failure
+handling, see the [engine reference](../docs/engine.md).
