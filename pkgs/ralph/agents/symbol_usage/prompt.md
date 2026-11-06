@@ -58,8 +58,10 @@ guards separately, and distinguish checks protecting an established API contract
 from checks justified only by hypothetical future callers.
 
 For an unreachable branch, establish the controlling invariant and check all
-relevant callers. For an unread value or dead store, check evaluation side
-effects, object lifetime and destructor behavior, synchronization, and required
+relevant callers. Preserve deliberate invariant-failure checks even when current
+callers make the failure unreachable; removing them must not leave undefined
+behavior in place of an explicit failure. For an unread value or dead store,
+check evaluation side effects, object lifetime and destructor behavior, synchronization, and required
 validation before recommending removal. An unused result does not make the
 operation producing it removable. Preserve intentional security checks and
 protocol-reserved behavior unless evidence establishes that removal is sound.

@@ -136,6 +136,12 @@ an operation count; it cannot establish elapsed time or measured memory use.
 For crash claims, inspect the assertion or exception behavior in the relevant
 release configuration. A regtest check or sanitizer diagnostic must be tied to
 the underlying defect and its consequence, without inventing an observed crash.
+For supposedly unreachable paths, preserve explicit failure behavior rather than
+undefined behavior. Verify helper semantics in the reviewed revision, including
+NONFATAL_UNREACHABLE, which throws. Do not dismiss an intentional invariant check
+as redundant merely because current callers establish the invariant. A supported
+convention or design concern need not demonstrate a reachable runtime failure;
+keep that distinction in the finding kind and impact.
 
 Normal-operation fund or key loss can qualify without an attacker. A path's
 exclusion from a scanner's scope does not prove it is non-security; CI and

@@ -86,6 +86,12 @@ trace the exception boundary before calling the result an RPC error or a node
 crash. Verify these semantics in the reviewed revision and build configuration.
 A regtest-only consistency check can expose a real invalid state without its
 abort being a production crash. Identify that state and what it breaks.
+For supposedly unreachable paths, preserve explicit failure behavior rather than
+undefined behavior, including unchecked unreachable intrinsics. An invariant
+check is not redundant merely because current callers establish the invariant.
+Verify helper semantics in the reviewed revision: NONFATAL_UNREACHABLE throws
+rather than continuing. Distinguish a supported convention or design concern
+from a runtime defect; do not invent a reachable failure to justify the former.
 Distinguish a documented kernel C API caller-precondition violation from failure
 on valid input. Check affected integer widths, signedness, amount and size
 arithmetic, and conversions between time units on supported targets.
