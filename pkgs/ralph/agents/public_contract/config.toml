@@ -1,6 +1,6 @@
 prompt = "prompt.md"
 tool_set = "focused"
-model = "gpt-6.1-sol"
+model = "claude-opus-5-5"
 reasoning_effort = "low"
 max_output_tokens = 25000
 max_tool_calls = { routine = 12, standard = 24, sensitive = 48 }
