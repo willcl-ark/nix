@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -433,8 +434,10 @@ class JobStore:
                     (self.repo_id, hint["number"]),
                 )
                 return False
+            queued = False
+            reason = "pr_closed"
             if head is not None:
-                self._enqueue(
+                queued = self._enqueue(
                     db,
                     hint["number"],
                     hint["base_override"] or base_ref,
@@ -443,11 +446,26 @@ class JobStore:
                     bool(hint["force"]),
                     hint["engine_identity"],
                 )
+                reason = (
+                    "enqueued"
+                    if queued
+                    else ("already_pending" if hint["force"] else "head_unchanged")
+                )
             db.execute(
                 "DELETE FROM reconciliation WHERE repo_id = ? AND number = ?",
                 (self.repo_id, hint["number"]),
             )
-            return True
+        logging.info(
+            "review enqueue repo_id=%s pr=%d action=%s head=%s force=%s queued=%s reason=%s",
+            self.repo_id,
+            hint["number"],
+            hint["action"],
+            head[:12] if head else "-",
+            bool(hint["force"]),
+            queued,
+            reason,
+        )
+        return True
 
     def retry_reconciliation(self, hint):
         if hint["repo_id"] != self.repo_id:

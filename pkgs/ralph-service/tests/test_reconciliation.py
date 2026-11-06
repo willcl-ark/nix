@@ -44,10 +44,14 @@ class ReconciliationTests(unittest.TestCase):
         running = self.jobs.claim()
         self.hint()
         self.assertTrue(self.jobs.is_current(running))
-        self.resolve("b" * 40)
+        with self.assertLogs(level="INFO") as logs:
+            self.resolve("b" * 40)
+        self.assertIn("queued=False reason=head_unchanged", logs.output[-1])
         self.assertTrue(self.jobs.is_current(running))
         self.hint()
-        self.resolve("a" * 40)
+        with self.assertLogs(level="INFO") as logs:
+            self.resolve("a" * 40)
+        self.assertIn("queued=True reason=enqueued", logs.output[-1])
         self.assertFalse(self.jobs.is_current(running))
         self.jobs.supersede(running)
         self.assertIsNone(self.jobs.claim())
@@ -108,7 +112,9 @@ class ReconciliationTests(unittest.TestCase):
 
     def test_closed_pr_consumes_hint_without_enqueuing(self):
         self.hint()
-        self.resolve("a" * 40, state="closed")
+        with self.assertLogs(level="INFO") as logs:
+            self.resolve("a" * 40, state="closed")
+        self.assertIn("queued=False reason=pr_closed", logs.output[-1])
         self.assertIsNone(self.jobs.claim())
         self.assertFalse(self.resolve("a" * 40))
 

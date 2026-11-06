@@ -986,7 +986,7 @@ def make_handler(secret, jobs, bot_config, engine_identity=None):
             if job:
                 number, base_ref, head_sha, action, force = job
                 try:
-                    queued = jobs.reconcile_hint(
+                    accepted = jobs.reconcile_hint(
                         number,
                         base_ref,
                         action,
@@ -997,14 +997,14 @@ def make_handler(secret, jobs, bot_config, engine_identity=None):
                     logging.exception("Could not persist webhook job for PR %d", number)
                     self.send_error(503)
                     return
-                logging.info(
-                    "review enqueue repo=%s pr=%d action=%s head=%s force=%s queued=%s",
+                logging.debug(
+                    "review hint repo=%s pr=%d action=%s head=%s force=%s accepted=%s",
                     bot_config.repository,
                     number,
                     action,
                     short_sha(head_sha),
                     force,
-                    queued,
+                    accepted,
                 )
             self.send_response(202)
             self.end_headers()
