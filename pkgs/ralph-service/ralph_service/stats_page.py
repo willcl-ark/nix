@@ -114,8 +114,8 @@ def _valid_http_base(url):
     return url.rstrip("/")
 
 
-def _safe_report_name(review):
-    name = _field(review, "report_name")
+def _safe_report_name(review, field="report_name"):
+    name = _field(review, field)
     if (
         isinstance(name, str)
         and all(
@@ -662,7 +662,7 @@ def _interactive_table(headers, rows, label, filters=(), controls=""):
     )
 
 
-def _stage_findings_details(stage, repository_url, report_base_url):
+def _stage_findings_details(stage, repository_url, archive_base_url):
     findings = [item for item in _list(stage.get("findings")) if isinstance(item, dict)]
     if not findings:
         return "<p>No candidate findings were recorded for this agent.</p>"
@@ -692,7 +692,11 @@ def _stage_findings_details(stage, repository_url, report_base_url):
                 title,
                 _escape(decision),
                 _escape(attribution),
-                _report_link(finding, report_base_url),
+                _report_name_link(
+                    _safe_report_name(finding, "archive_name"),
+                    archive_base_url,
+                    "Run archive",
+                ),
             ]
         )
         rows.append(row.replace("<tr>", f'<tr data-filter="{_escape(group)}">', 1))
@@ -714,7 +718,7 @@ def _stage_findings_details(stage, repository_url, report_base_url):
     )
 
 
-def _challenge_details(tracking, repository_url, report_base_url):
+def _challenge_details(tracking, repository_url, archive_base_url):
     outcomes = _mapping(tracking.get("outcomes"))
     final = _mapping(tracking.get("refuted_final_decisions"))
     rows = []
@@ -749,8 +753,8 @@ def _challenge_details(tracking, repository_url, report_base_url):
                     }[decision]
                 ),
                 _report_name_link(
-                    _safe_report_name(item),
-                    report_base_url,
+                    _safe_report_name(item, "archive_name"),
+                    archive_base_url,
                     "evidence",
                     anchor="challenger",
                 ),
@@ -1798,7 +1802,7 @@ def _agents_html(summary, repository_url, report_base_url):
     return _page("Agents", summary, body, "../", "Agents")
 
 
-def _stage_html(summary, stage, repository_url, report_base_url):
+def _stage_html(summary, stage, repository_url, archive_base_url):
     ledger = _mapping(stage.get("ledger"))
     candidates = _mapping(stage.get("candidate_counts"))
     statuses = _mapping(stage.get("status_counts"))
@@ -1807,14 +1811,14 @@ def _stage_html(summary, stage, repository_url, report_base_url):
     candidate_section = ""
     if tracking:
         candidate_section = _challenge_details(
-            tracking, repository_url, report_base_url
+            tracking, repository_url, archive_base_url
         )
     if not tracking or findings:
         candidate_section += (
             "<section><h2>"
             + ("Earlier discovery findings" if tracking else "Candidate findings")
             + "</h2>"
-            + _stage_findings_details(stage, repository_url, report_base_url)
+            + _stage_findings_details(stage, repository_url, archive_base_url)
             + "</section>"
         )
     body = (
@@ -2165,7 +2169,7 @@ def _usage_html(summary):
     return _page("Usage", summary, body, "../", "Usage")
 
 
-def _limits_html(summary, repository_url, report_base_url):
+def _limits_html(summary, repository_url, archive_base_url):
     limits = _mapping(summary.get("limits"))
     labels = {
         "output_tokens": "Output tokens per response",
@@ -2211,7 +2215,11 @@ def _limits_html(summary, repository_url, report_base_url):
                     _escape(run["profile"]),
                     _escape(run["stage"]),
                     _escape(", ".join(reasons)),
-                    _report_link(run, report_base_url),
+                    _report_name_link(
+                        _safe_report_name(run, "archive_name"),
+                        archive_base_url,
+                        "Run archive",
+                    ),
                 ]
             )
         )
@@ -2270,7 +2278,12 @@ def _limits_html(summary, repository_url, report_base_url):
 
 
 def save_stats(
-    output_dir: Path, summary: dict, repository_url: str, report_base_url: str
+    output_dir: Path,
+    summary: dict,
+    repository_url: str,
+    report_base_url: str,
+    *,
+    archive_base_url: str,
 ):
     """Write the public statistics views, agent details and matching JSON."""
     output_dir = Path(output_dir)
@@ -2292,9 +2305,9 @@ def save_stats(
         ("agents/index.html", _agents_html),
         ("reviews/index.html", _reviews_html),
         ("addressed/index.html", _addressed_html),
-        ("limits/index.html", _limits_html),
     ):
         write(name, render(summary, repository_url, report_base_url))
+    write("limits/index.html", _limits_html(summary, repository_url, archive_base_url))
     write("usage/index.html", _usage_html(summary))
     stage_names = set()
     for stage in _list(summary.get("stages")):
@@ -2303,7 +2316,7 @@ def save_stats(
             stage_names.add(name)
             write(
                 "agents/" + name,
-                _stage_html(summary, stage, repository_url, report_base_url),
+                _stage_html(summary, stage, repository_url, archive_base_url),
             )
     # Only remove files matching the generated stage-page naming convention.
     for path in (output_dir / "agents").glob("agent-*.html"):
@@ -2325,6 +2338,7 @@ def save_stats(
                 {**value, "repository_names": names},
                 repository_url,
                 report_base_url,
+                archive_base_url=archive_base_url,
             )
     # A timestamp-only refresh must not rewrite every historical HTML page.
     # Publish freshness last, after all pages have been successfully saved.

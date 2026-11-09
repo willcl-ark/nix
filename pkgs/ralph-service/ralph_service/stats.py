@@ -526,8 +526,10 @@ def _merge_totals(target, source):
 def _refresh_report_links(value, report_dir):
     if isinstance(value, dict):
         name = value.get("report_name")
-        if name is not None and not (report_dir / name).is_file():
-            value["report_name"] = None
+        if name is not None:
+            value["archive_name"] = name if (report_dir / name).is_file() else None
+            if not (report_dir / "reports" / name).is_file():
+                value["report_name"] = None
         for item in value.values():
             _refresh_report_links(item, report_dir)
     elif isinstance(value, list):
@@ -1416,7 +1418,11 @@ def _report_name(report_dir, row, result):
     name = f"{row['number']}-{head}-{row['id']}-{row['generation']}.html"
     if row.get("repo_id", "core") != "core":
         name = row["repo_id"] + "/" + name
-    return name if report_dir is None or (report_dir / name).is_file() else None
+    return (
+        name
+        if report_dir is None or (report_dir / "reports" / name).is_file()
+        else None
+    )
 
 
 def _request_totals(requests):

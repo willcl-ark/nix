@@ -46,12 +46,12 @@ class HistoryTests(unittest.TestCase):
             catalog = json.loads((root / "history.json").read_text())
             self.assertEqual(
                 {
-                    (item["repository_id"], item["history_path"], item["report_path"])
+                    (item["repository_id"], item["history_path"], item["report_url"])
                     for item in catalog
                 },
                 {
-                    ("core", "123/", "review.html"),
-                    ("gui", "gui/123/", "gui/review.html"),
+                    ("core", "123/", "/report/review.html"),
+                    ("gui", "gui/123/", "/report/gui/review.html"),
                 },
             )
 
@@ -83,12 +83,18 @@ class HistoryTests(unittest.TestCase):
             before = {path: path.read_bytes() for path in root.iterdir()}
             self.assertEqual(history.save_history(root), 2)
             page = (root / "123/index.html").read_text()
-            self.assertLess(page.index("../rerun.html"), page.index("../new.html"))
-            self.assertLess(page.index("../new.html"), page.index("../old.html"))
+            self.assertLess(
+                page.index("/traces/rerun.html"), page.index("/traces/new.html")
+            )
+            self.assertLess(
+                page.index("/traces/new.html"), page.index("/traces/old.html")
+            )
             self.assertEqual(page.count('data-commit="' + "b" * 40), 2)
             self.assertEqual(page.count("🟠"), 1)
             self.assertIn("?commit=" + "a" * 40, page)
             self.assertNotIn("incomplete", page)
+            self.assertIn("Review report unavailable", page)
+            self.assertNotIn('href="/report/', page)
             self.assertNotIn("other.html", page)
             self.assertNotIn("secret", page)
             for path, content in before.items():
@@ -188,6 +194,25 @@ class HistoryTests(unittest.TestCase):
                     if p.is_file()
                 },
             )
+            (root / "reports").mkdir()
+            (root / "reports/review.html").touch()
+            history.save_history(
+                root,
+                cache_dir=cache,
+                report_base_url="https://example.org/report",
+                archive_base_url="https://example.org/traces",
+            )
+            catalog = json.loads((root / "history.json").read_text())
+            self.assertEqual(len(catalog), 1)
+            self.assertEqual(
+                catalog[0]["report_url"], "https://example.org/report/review.html"
+            )
+            self.assertEqual(
+                catalog[0]["archive_url"], "https://example.org/traces/review.html"
+            )
+            self.assertIn(
+                catalog[0]["report_url"], (root / "456/index.html").read_text()
+            )
             (root / "review.html").unlink()
             (cache / "history.json").unlink()
             history.save_history(root, cache_dir=cache, full=True)
@@ -218,9 +243,12 @@ class HistoryTests(unittest.TestCase):
                 (root / f"{name}.html").touch()
             history.save_history(root)
             page = (root / "123/index.html").read_text()
-            self.assertLess(page.index("../later.html"), page.index("../earlier.html"))
             self.assertLess(
-                page.index("../earlier.html"), page.index("../backfilled.html")
+                page.index("/traces/later.html"), page.index("/traces/earlier.html")
+            )
+            self.assertLess(
+                page.index("/traces/earlier.html"),
+                page.index("/traces/backfilled.html"),
             )
             self.assertIn("Unknown", page)
             self.assertIn("🟠", page)

@@ -29,10 +29,18 @@ def _report_time(record, path):
 
 
 # Increment when the compact record or timestamp calculation changes.
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
-def save_history(report_dir, number=None, *, cache_dir=None, full=False):
+def save_history(
+    report_dir,
+    number=None,
+    *,
+    cache_dir=None,
+    full=False,
+    report_base_url="/report",
+    archive_base_url="/traces",
+):
     """Refresh history, optionally reusing compact records from a private cache."""
     report_dir = Path(report_dir)
     report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -41,12 +49,16 @@ def save_history(report_dir, number=None, *, cache_dir=None, full=False):
     fd = os.open(report_dir, os.O_RDONLY | os.O_DIRECTORY)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        return _save_history(report_dir, number, cache_dir, full)
+        return _save_history(
+            report_dir, number, cache_dir, full, report_base_url, archive_base_url
+        )
     finally:
         os.close(fd)
 
 
-def _save_history(report_dir, number, cache_dir, full):
+def _save_history(
+    report_dir, number, cache_dir, full, report_base_url, archive_base_url
+):
     cache_path = Path(cache_dir) / "history.json" if cache_dir is not None else None
     previous = {}
     if cache_path is not None:
@@ -99,6 +111,17 @@ def _save_history(report_dir, number, cache_dir, full):
                 else "Unknown",
                 "timestamp": _report_time(value, path),
             }
+        # Page availability and URL configuration can change without changing JSON.
+        record = dict(record)
+        name = path.with_suffix(".html").relative_to(report_dir).as_posix()
+        record["report_url"] = (
+            f"{report_base_url.rstrip('/')}/{quote(name, safe='/._-')}"
+            if (report_dir / "reports" / name).is_file()
+            else None
+        )
+        record["archive_url"] = (
+            f"{archive_base_url.rstrip('/')}/{quote(name, safe='/._-')}"
+        )
         records[relative] = {"signature": signature, "record": record}
         if number is None or record["pr"] == number:
             groups[(record["repository_id"], record["pr"])].append(
@@ -148,9 +171,8 @@ def _save_history(report_dir, number, cache_dir, full):
                 "history_path": f"{pr}/"
                 if repository_id == "core"
                 else f"{repository_id}/{pr}/",
-                "report_path": name + ".html"
-                if repository_id == "core"
-                else f"{repository_id}/{name}.html",
+                "report_url": record["report_url"],
+                "archive_url": record["archive_url"],
                 "head": record["head"],
                 "report_id": name,
                 "reviewed": _date(timestamp),
@@ -208,13 +230,18 @@ def _page(number, records):
         if index == 0 and _latest_label(records):
             date += f" {_latest_label(records)}"
         count = str(record["findings_count"])
+        review_link = (
+            f'<a href="{html.escape(record["report_url"], quote=True)}">Review report</a>'
+            if record["report_url"]
+            else "Review report unavailable"
+        )
+        archive_link = f'<a href="{html.escape(record["archive_url"], quote=True)}">Run archive</a>'
         rows.append(
             f'<tr data-commit="{escaped_head}"><td>{date}</td>'
             f'<td><a href="?commit={quote(head, safe="")}"><code>'
             f"{escaped_head}</code></a></td>"
             f"<td>{html.escape(str(record.get('status') or 'unknown'))}</td>"
-            f'<td>{count}</td><td><a href="../{quote(name, safe="")}.html">'
-            "Full report</a></td></tr>"
+            f"<td>{count}</td><td>{review_link} · {archive_link}</td></tr>"
         )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -358,7 +385,11 @@ async function searchReports(query) {
             commitCell.append(code);
             row.insertCell().textContent = report.status;
             row.insertCell().textContent = report.findings;
-            link(row.insertCell(), report.report_path, 'Full report');
+            const documents = row.insertCell();
+            if (report.report_url) link(documents, report.report_url, 'Review report');
+            else documents.append('Review report unavailable');
+            documents.append(' · ');
+            link(documents, report.archive_url, 'Run archive');
         }
         scroll.append(table);
         results.append(scroll);

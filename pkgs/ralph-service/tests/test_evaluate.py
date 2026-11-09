@@ -33,6 +33,8 @@ class StatsCliTests(unittest.TestCase):
                         "--repository-url",
                         "https://git.example.org/owner/repo",
                         "--report-base-url",
+                        "https://review.example.org/report",
+                        "--archive-base-url",
                         "https://review.example.org/traces",
                     ]
                 ),
@@ -73,6 +75,8 @@ class StatsCliTests(unittest.TestCase):
                 "--repository-url",
                 "https://git.example.org/a/b",
                 "--report-base-url",
+                "https://review.example.org/report",
+                "--archive-base-url",
                 "https://review.example.org/traces",
                 "--proxy-management-url",
                 "http://127.0.0.1:8317",

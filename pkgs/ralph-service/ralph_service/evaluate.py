@@ -1068,6 +1068,7 @@ def main(argv=None):
     dashboard.add_argument("--repository-url")
     dashboard.add_argument("--repositories", type=Path)
     dashboard.add_argument("--report-base-url", required=True)
+    dashboard.add_argument("--archive-base-url", required=True)
     dashboard.add_argument(
         "--full", action="store_true", help="rebuild all cached statistics and history"
     )
@@ -1161,13 +1162,18 @@ def main(argv=None):
             else:
                 summary["subscriptions"] = {"status": "not_configured", "accounts": []}
             history.save_history(
-                args.report_dir, cache_dir=cache.directory, full=cache.full
+                args.report_dir,
+                cache_dir=cache.directory,
+                full=cache.full,
+                report_base_url=args.report_base_url,
+                archive_base_url=args.archive_base_url,
             )
             stats_page.save_stats(
                 args.report_dir / "stats",
                 summary,
                 args.repository_url,
                 args.report_base_url,
+                archive_base_url=args.archive_base_url,
             )
         return 0
 

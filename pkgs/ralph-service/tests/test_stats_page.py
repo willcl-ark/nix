@@ -83,7 +83,13 @@ class StatsPageTests(unittest.TestCase):
                     scoped["reviews"][0]["tokens"]["input"], 10 if key == "core" else 20
                 )
             output = reports / "stats"
-            stats_page.save_stats(output, summary, None, "https://reports.example")
+            stats_page.save_stats(
+                output,
+                summary,
+                None,
+                "https://reports.example",
+                archive_base_url="https://reports.example.org/traces",
+            )
             page = (output / "reviews/index.html").read_text()
             self.assertEqual(page.count('title="Most recent saved review"'), 2)
             for metadata in repositories.values():
@@ -106,6 +112,7 @@ class StatsPageTests(unittest.TestCase):
                 summary,
                 "https://example.com/repo",
                 "https://example.com/reports",
+                archive_base_url="https://reports.example.org/traces",
             )
             pages = list(output.rglob("*.html"))
             before = {p: p.stat().st_mtime_ns for p in pages}
@@ -115,6 +122,7 @@ class StatsPageTests(unittest.TestCase):
                 summary,
                 "https://example.com/repo",
                 "https://example.com/reports",
+                archive_base_url="https://reports.example.org/traces",
             )
             self.assertEqual(before, {p: p.stat().st_mtime_ns for p in pages})
             self.assertEqual(json.loads((output / "stats.json").read_text()), summary)
@@ -138,6 +146,7 @@ class StatsPageTests(unittest.TestCase):
                 summary,
                 "https://example.com/repo",
                 "https://example.com/reports",
+                archive_base_url="https://reports.example.org/traces",
             )
             self.assertEqual(page.read_bytes(), original_page)
             summary["stages"] = []
@@ -146,6 +155,7 @@ class StatsPageTests(unittest.TestCase):
                 summary,
                 "https://example.com/repo",
                 "https://example.com/reports",
+                archive_base_url="https://reports.example.org/traces",
             )
             self.assertEqual(list((output / "agents").glob("agent-*.html")), [])
 
@@ -267,7 +277,8 @@ class StatsPageTests(unittest.TestCase):
                 public,
                 summary,
                 "https://code.example.org/repo",
-                "https://reports.example.org/traces",
+                "https://reports.example.org/report",
+                archive_base_url="https://reports.example.org/traces",
             )
             detail = (
                 public / "agents" / stats_page._stage_filename(challenger)
@@ -276,7 +287,12 @@ class StatsPageTests(unittest.TestCase):
             self.assertIn('data-filter="refuted_publish"', detail)
             self.assertIn("Approved for publication", detail)
             self.assertIn("Unassessed", detail)
+            self.assertIn("https://reports.example.org/traces/", detail)
             self.assertIn(".html#challenger", detail)
+            self.assertNotIn(
+                "/report/" + tracking["candidates"][0]["archive_name"] + "#challenger",
+                detail,
+            )
             self.assertIn("&lt;script&gt;candidate&lt;/script&gt;", detail)
             self.assertNotIn("<script>candidate", detail)
             self.assertIn("Earlier discovery", detail)
@@ -474,6 +490,7 @@ class StatsPageTests(unittest.TestCase):
                 summary,
                 "https://code.example.org/org/repo",
                 "https://reports.example.org",
+                archive_base_url="https://reports.example.org/traces",
             )
             html = "".join(path.read_text() for path in public.rglob("*.html"))
             self.assertNotIn("$", html)
@@ -675,6 +692,7 @@ class StatsPageTests(unittest.TestCase):
                 summary,
                 "https://code.example.org/org/repo",
                 "https://reports.example.org/reviews",
+                archive_base_url="https://reports.example.org/traces",
             )
             self.assertTrue((public / "index.html").is_file())
             json.loads((public / "stats.json").read_text())

@@ -101,10 +101,20 @@ class StatsCacheTests(unittest.TestCase):
 
             # Report appearance/removal changes links even without a job mutation.
             report = reports / f"42-{'a' * 40}-{job['id']}-{job['generation']}.html"
-            report.write_text("report")
+            report.write_text("archive")
+            review = equivalent()["reviews"][0]
+            self.assertNotIn("report_name", review)
+            self.assertEqual(review["archive_name"], report.name)
+            human_report = reports / "reports" / report.name
+            human_report.parent.mkdir()
+            human_report.write_text("review")
             self.assertIn("report_name", equivalent()["reviews"][0])
+            human_report.unlink()
+            review = equivalent()["reviews"][0]
+            self.assertNotIn("report_name", review)
+            self.assertEqual(review["archive_name"], report.name)
             report.unlink()
-            self.assertNotIn("report_name", equivalent()["reviews"][0])
+            self.assertIsNone(equivalent()["reviews"][0]["archive_name"])
 
             with closing(sqlite3.connect(root / "jobs.sqlite3")) as db, db:
                 result["run"]["pr_title"] = "Corrected title"
