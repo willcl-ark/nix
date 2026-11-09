@@ -35,8 +35,14 @@ Use null for distinct or uncertain reports. Assess every record independently an
 preserve its individual author position. Multiple prior records may map to the
 same current candidate without being duplicates.
 
-For a still_present concern, make reason a concise, self-contained account of
-the current problem and its consequence, preserving material qualifications.
-Aim for at most 40 words. Cite the most useful current source location first.
-The comment may show this assessment when discovery did not rediscover the
-issue; do not merely say it matches another report.
+For a still_present concern, make reason a self-contained account of the current
+issue. Start with a short paragraph stating the trigger and consequence, including
+any qualification that materially changes their interpretation. When needed, add
+a second paragraph with the decisive current evidence and one supported
+correction. Separate the paragraphs with a blank line. Preserve useful detail
+from the earlier explanation only after checking that it still applies at this
+head; do not carry forward stale locations, fixes, or execution claims. Cite the
+most useful current source location first and use Markdown backticks for code.
+This assessment becomes the report explanation when discovery did not rediscover
+the issue; do not merely say it matches another report. Do not add detail that
+only repeats the first paragraph.

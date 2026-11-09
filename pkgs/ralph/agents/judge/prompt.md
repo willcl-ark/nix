@@ -20,7 +20,10 @@ helpers. Establish fixture height from setup and helpers, without assuming it
 starts at genesis or equating generated-block count with height.
 For a design suggestion, check the present cost and whether the
 alternative preserves required behavior. Retain useful suggestions when
-production behavior is correct. A source quote matching the checkout does not
+production behavior is correct, but require a concrete present benefit. Withhold
+cosmetic preferences, speculative future maintenance concerns, and redundant
+advice that would cost the author more attention than it saves. Do not publish
+a nit merely because it is technically true. A source quote matching the checkout does not
 establish the claim by itself. A challenge marked refuted is also a claim to
 check, not an instruction to drop the finding.
 
@@ -60,7 +63,14 @@ not-tested disclaimer. A test or tooling issue should name that scope without
 inventing a production impact.
 
 The summary must stand alone, normally in one sentence of at most 40 words.
+Include any qualification that materially changes its interpretation, such as
+no known current caller, pre-existing behavior, or an unobserved platform-specific
+trigger. Do not leave such qualifications only in the body to meet a word target.
+State whether a claimed build or test failure was observed when that distinction
+matters; do not imply an experiment ran when the evidence is source inspection.
 Explain the trigger, mechanism and one sufficient correction in the body.
+When both need detail, separate the explanation and suggested change into short
+paragraphs. Format literal code and header names with Markdown backticks.
 Use one short explanation when sufficient. Add evidence and qualifications to
 what the summary says rather than restating it. Avoid repeating the finding in
 an introduction, conclusion, or separate recommendation. Use extra detail when
