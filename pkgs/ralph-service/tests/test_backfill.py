@@ -124,7 +124,39 @@ class BackfillTests(unittest.TestCase):
             name = report.save_report(
                 reports,
                 123,
-                {"content": "Original approved wording."},
+                {
+                    "schema_version": 1,
+                    "content": "Original approved wording.",
+                    "engine": {"name": "current"},
+                    "run": {"status": "completed"},
+                    "output": {
+                        "schema_version": 2,
+                        "data": {
+                            "schema_version": 2,
+                            "coverage": {
+                                "status": "complete",
+                                "verification": {"status": "complete"},
+                            },
+                        },
+                        "exports": {
+                            "findings": [
+                                {
+                                    "id": "finding:1",
+                                    "verified_by": "verifier",
+                                    "judged_by": "judge",
+                                    "kind": "defect",
+                                    "severity": "minor",
+                                    "title": "Preserve saved wording",
+                                    "summary": "Original approved wording.",
+                                    "body": "The saved explanation remains unchanged.",
+                                    "path": "src/example.cpp",
+                                    "line": 1,
+                                    "side": "head",
+                                }
+                            ],
+                        },
+                    },
+                },
                 "saved-run",
                 repository_id="gui",
             )
@@ -159,6 +191,20 @@ class BackfillTests(unittest.TestCase):
             self.assertNotIn("Original approved wording.", (reports / name).read_text())
             self.assertIn("Run archive", (reports / name).read_text())
             self.assertEqual(backfill.backfill(root, reports)["existing"], 1)
+            expected_review = (reports / "reports" / name).read_bytes()
+            expected_archive = (reports / name).read_bytes()
+            (reports / "reports" / name).write_text("Outdated report layout")
+            (reports / name).write_text("Outdated archive layout")
+            self.assertEqual(backfill.backfill(root, reports)["existing"], 1)
+            refreshed_dry = backfill.backfill(root, reports, refresh=True)
+            self.assertEqual(refreshed_dry["eligible"], 1)
+            self.assertEqual(refreshed_dry["written"], 0)
+            self.assertEqual((reports / name).read_text(), "Outdated archive layout")
+            refreshed = backfill.backfill(root, reports, refresh=True, apply=True)
+            self.assertEqual(refreshed["written"], 1)
+            self.assertEqual((reports / "reports" / name).read_bytes(), expected_review)
+            self.assertEqual((reports / name).read_bytes(), expected_archive)
+            self.assertEqual(snapshot.read_bytes(), original)
             self.assertFalse((root / "jobs.sqlite3").exists())
 
     def test_missing_and_unsupported_results_are_reported_without_publication(self):

@@ -14,6 +14,7 @@ def backfill(
     report_dir,
     *,
     apply=False,
+    refresh=False,
     repositories=None,
     report_base_url="/report",
     archive_base_url="/traces",
@@ -46,7 +47,8 @@ def backfill(
                 raise ValueError("inconsistent public report identity")
             relative = path.relative_to(report_dir).with_suffix(".html")
             if (
-                path.with_suffix(".html").is_file()
+                not refresh
+                and path.with_suffix(".html").is_file()
                 and (report_dir / "reports" / relative).is_file()
             ):
                 counts["existing"] += 1
@@ -175,12 +177,18 @@ def main():
     )
     parser.add_argument("--report-base-url", default="/report")
     parser.add_argument("--archive-base-url", default="/traces")
-    parser.add_argument("--apply", action="store_true", help="Write missing reports")
+    parser.add_argument("--apply", action="store_true", help="Write eligible reports")
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Regenerate existing pages from saved snapshots",
+    )
     args = parser.parse_args()
     summary = backfill(
         args.state_dir,
         args.report_dir,
         apply=args.apply,
+        refresh=args.refresh,
         report_base_url=args.report_base_url,
         archive_base_url=args.archive_base_url,
         repositories=config.load_repositories(args.repositories)
