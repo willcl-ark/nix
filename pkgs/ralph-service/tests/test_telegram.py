@@ -90,7 +90,7 @@ class TelegramTests(unittest.TestCase):
             "gui#42: Fix <handling> & parsing\n"
             "Current findings: Major: 0 · Minor: 0 · Suggestions: 1\n"
             "https://forge.example/owner/repo/pulls/42\n"
-            "Read full review: https://reports.example/42.html",
+            "Review report: https://reports.example/42.html",
         )
         result["output"]["exports"] = {}
         self.assertIn("Current findings: unavailable", self.render(result))

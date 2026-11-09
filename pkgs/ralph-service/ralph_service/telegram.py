@@ -1,4 +1,4 @@
-"""Plain-text review posts for the Telegram Bot API."""
+"""Plain-text review notifications for the Telegram Bot API."""
 
 import json
 import urllib.error
@@ -62,7 +62,7 @@ def review_message(repository_url, number, result, *, repository_id):
     heading = f"{marker}{repository_id}#{number}: {title}"
     links = (
         f"\n{pull_request_url(repository_url, number)}"
-        f"\nRead full review: {run['report_url']}"
+        f"\nReview report: {run['report_url']}"
     )
     counts = Counter(
         finding.get("severity")

@@ -16,10 +16,10 @@ import urllib.error
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-from final_comment import render
 from ralph import trace as core_trace
 from . import (
     badge,
+    comments,
     delivery,
     forgejo,
     github,
@@ -489,6 +489,8 @@ def process_job(
                         repository_id=bot_config.repo_id,
                         repository=bot_config.repository,
                         repository_url=bot_config.repository_url,
+                        report_base_url=bot_config.report_base_url,
+                        archive_base_url=bot_config.archive_base_url,
                     )
                     result_record["run"]["report_url"] = (
                         f"{bot_config.report_base_url}/{filename}"
@@ -502,7 +504,12 @@ def process_job(
                     )
                 if result_record["run"].get("report_url"):
                     try:
-                        history.save_history(bot_config.report_dir, number)
+                        history.save_history(
+                            bot_config.report_dir,
+                            number,
+                            report_base_url=bot_config.report_base_url,
+                            archive_base_url=bot_config.archive_base_url,
+                        )
                     except OSError as exc:
                         logging.warning(
                             "Could not refresh review history for PR %d: %s",
@@ -518,25 +525,7 @@ def process_job(
                 and engine_identity["name"] == "current"
                 and not saved["run"].get("skipped")
             ):
-                diagnostics = core_trace.current_diagnostics(saved)
-                coverage = diagnostics.get("coverage", {})
-                concept = diagnostics.get("concept_assessment", {})
-                content = render(
-                    core_trace.findings_export(saved) or [],
-                    coverage.get("limitations", []),
-                    concept.get("summary")
-                    if concept.get("status") == "verified"
-                    else None,
-                    backport=saved["output"]["exports"].get("backport_assessment"),
-                    review_memory=core_trace.review_memory_export(saved),
-                    verification_failed=run_status == "failed",
-                    comment_format=engine_identity["config"]["comment_format"],
-                    review_tier=diagnostics.get("routing", {})
-                    .get("selected", {})
-                    .get("tier"),
-                    report_url=saved["run"].get("report_url"),
-                    head_sha=head_sha,
-                )
+                content = comments.review_comment(saved)
             result = "unchanged"
             if github_publication != "full":
                 stage = "publish"

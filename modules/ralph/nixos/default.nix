@@ -597,6 +597,8 @@ in
             cfg.reportDir
             "--report-base-url"
             cfg.reportBaseUrl
+            "--archive-base-url"
+            cfg.archiveBaseUrl
             "--repositories"
             registryFile
             "--telegram-token-file"

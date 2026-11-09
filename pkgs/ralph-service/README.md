@@ -21,7 +21,8 @@ Manual commands use the same JSON file:
 ```sh
 ralph-service --state-dir /path/to/state --repositories /path/to/repositories.json \
   --openai-key-file /run/secrets/proxy-key \
-  --report-dir /path/to/public-reports --report-base-url https://reviews.example.org/traces
+  --report-dir /path/to/public-reports --report-base-url https://reviews.example.org/report \
+  --archive-base-url https://reviews.example.org/traces
 ```
 
 The registry is an object keyed by stable IDs such as `core` and `gui`. Each
@@ -87,7 +88,7 @@ flowchart TD
     existing -->|yes| done["Complete without model calls"]
     existing -->|no| pipeline["Run selected review engine"]
     pipeline --> saved["Save result before publication"]
-    saved --> report["Optional public HTML and JSON report"]
+    saved --> report["Review report + Run archive, one public JSON record"]
     report --> publish["Create or update one bot comment per PR"]
     pipeline --> trace["Private trace: outputs, tools, usage and attribution"]
     saved --> stats["Static statistics from jobs and usage ledgers"]
@@ -245,7 +246,7 @@ authenticated upstream metadata reads independently of posting.
 Forgejo review. `"full"` publishes only on GitHub, including other finding
 severities, verified design assessments, coverage notices and the
 no-actionable-issues message when appropriate. Source
-links point to GitHub. Both modes use a six-finding limit; the full report retains
+links point to GitHub. Both modes use a six-finding limit; the Review report retains
 the rest. Full mode leaves existing native Forgejo comments untouched and does
 not fall back to Forgejo if GitHub publication fails. Posting requires public
 report configuration and credentials.
@@ -274,15 +275,16 @@ being dispatched.
 ## Telegram
 
 Run `ralph-telegram` separately from the review daemon with `--state-dir`,
-`--report-dir`, `--report-base-url`, `--repositories /path/to/repositories.json`,
+`--report-dir`, `--report-base-url`, `--archive-base-url`,
+`--repositories /path/to/repositories.json`,
 `--telegram-token-file /run/secrets/telegram-token` and
 `--telegram-chat-id @channel`. Use a numeric channel ID for a private channel.
 The monitor reads review state and recorded usage, publishes completed reviews, sends
 grouped terminal failure alerts, and delivers a daily digest at 21:00 UTC.
 It continues running when the review daemon stops.
 
-Each review post contains the PR title, current finding counts by severity,
-and links to the PR and full report. Review bodies are never included. Long
+Each review notification contains the PR title, current finding counts by severity,
+and links to the PR and Review report. Review bodies are never included. Long
 titles are shortened to fit Telegram's 4,096 UTF-16 code unit limit while
 preserving the counts and links. A new exported finding with severity exactly
 `major` adds `🚨 Major finding`.

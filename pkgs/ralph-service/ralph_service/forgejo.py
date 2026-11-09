@@ -640,7 +640,7 @@ def review_body(
         content.strip(),
         flags=re.MULTILINE,
     )
-    report_link = f" · [Full review report](<{report_url}>)" if report_url else ""
+    report_link = f" · [Review report](<{report_url}>)" if report_url else ""
     if history_url:
         report_link += f" · [Previous reports](<{history_url}>)"
     permalink = f"\n[permalink](<{report_url}>)\n" if report_url else ""
@@ -725,6 +725,7 @@ def publish_review(
     delivery.check_hold()
     if delivery.finished():
         return "unchanged"
+    repository_path = "" if bot_config.repo_id == "core" else f"{bot_config.repo_id}/"
     body = delivery.body(
         lambda: review_body(
             bot_config,
@@ -734,8 +735,8 @@ def publish_review(
             source_base_sha=source_base_sha,
             report_url=report_url,
             history_url=(
-                f"{bot_config.report_base_url}/{number}/"
-                if report_url and bot_config.report_base_url
+                f"{bot_config.archive_base_url}/{repository_path}{number}/"
+                if report_url and bot_config.archive_base_url
                 else None
             ),
             engine_identity=engine_identity,

@@ -6,39 +6,53 @@ publication holds and state backups. NixOS settings belong in the
 
 ## Reports and statistics
 
-Reports include full preliminary agent replies, coverage limitations, and
-review details. Preliminary candidates remain unverified; the main review
-contains verified findings. Public reports exclude private request payloads
-and configuration. Each review run has a distinct URL, and publication retries
-reuse the saved report without changing its contents. If a report cannot be
-written, native Forgejo publication can continue without a report link. GitHub
-comment creation and updates require a full report URL.
+The Review report contains approved findings, explanations and material coverage
+limitations. The Run archive contains preliminary agent replies, decisions,
+coverage diagnostics, retained history and usage. Intermediate claims in the
+archive are not published findings. Both views use one saved public JSON record;
+private request payloads, configuration and private traces remain private.
+
+Set `reportBaseUrl` to the URL serving `reportDir/reports` and `archiveBaseUrl`
+to the URL serving `reportDir`. Each run has matching HTML paths beneath these
+bases. Publication retries recover missing pages from the saved JSON without
+repeating inference. Native Forgejo publication can continue without a report
+link if saving fails; GitHub comment creation and updates require a Review
+report URL.
+
+PR comments reuse approved finding summaries. Telegram sends a notification
+with metadata and a report link, never review prose. Neither delivery channel
+rewrites the judge's wording.
 
 Challenger outcomes connect candidates to challenge, source verification and
 publication decisions. These counts measure agent agreement, not correctness or
-confirmed delivery. Missing decisions stay unassessed. Existing report snapshots
-remain unchanged when statistics are regenerated.
+confirmed delivery. Their statistics links point to the Run archive.
 
-Each PR has a history page, linked as **Previous reports** from new review
-comments and full reports. Core uses `reportBaseUrl/<PR>/`; other repositories
-use `reportBaseUrl/<repository-id>/<PR>/`. It lists every available
-public report, including reruns of the same commit. Add `?commit=<SHA>` to
-filter by a full commit hash or prefix. The archive root at `reportBaseUrl/`
-provides a search form for PR numbers and commit hashes or prefixes. It stays
-empty until a search is submitted. Reports appear newest first; undated
-backfills appear last. The stats timer refreshes its public
-`history.json` catalog alongside the PR history pages.
+History remains at `archiveBaseUrl/<PR>/` for Core and
+`archiveBaseUrl/<repository-id>/<PR>/` for other repositories. Each entry links
+to the Review report and Run archive. Add `?commit=<SHA>` to filter by a full
+commit hash or prefix. The archive root has the existing search form. History
+includes runs that were never posted, counts each run once, and labels reports
+unavailable until their human pages have been generated.
 
-Public reports may include reviews that were never posted. Private traces are
-never served or indexed directly. History uses saved report timestamps, falling
-back to file modification time for older reports.
+Before switching links to `/report`, preview the offline backfill using the
+installed service Python environment:
 
-To recover missing reports from completed saved jobs, run the installed service
-Python environment with `python -m ralph_service.backfill --state-dir DIR
---report-dir DIR`. This previews recoverable reports; add `--apply` to write
-them and refresh history. It makes no model calls or comment updates. Existing
-reports are preserved, missing historical dates are shown as unknown, and
-unrecoverable jobs are reported.
+```sh
+python -m ralph_service.backfill --state-dir STATE --report-dir PUBLIC \
+  --report-base-url https://reviews.example.org/report \
+  --archive-base-url https://reviews.example.org/traces
+```
+
+Add `--apply` to generate both views and refresh navigation from saved public
+snapshots, or recover missing snapshots from completed jobs. This makes no model
+calls or comment updates. Historical approved prose is preserved, so older
+reviews can remain verbose. Inspect reported failures before cutover. Rebuild
+statistics with `--full` afterward. Deploy the engine, service, module options and
+static routes together; old workers retain their pinned configuration and should
+finish before the one-time presentation backfill. The template schema changes
+without compatibility handling. Publication retries holding an old template
+snapshot may fail after cutover and need a newly requested review; no automatic
+replay or saved-result migration is performed.
 
 Statistics read durable jobs and usage ledgers without model requests. Shared
 findings credit each contributing agent, so counts overlap. Concept assessments

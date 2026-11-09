@@ -46,7 +46,7 @@ class MonitorTests(unittest.TestCase):
     def observe(self, now=None):
         self.store.observe(
             self.root,
-            "https://reports.example",
+            "https://reports.example/reviews",
             {
                 "core": {
                     "repository": "owner/core",
@@ -58,6 +58,7 @@ class MonitorTests(unittest.TestCase):
                 },
             },
             report_dir=self.root / "reports",
+            archive_base_url="https://archives.example/runs",
             now=self.day if now is None else now,
         )
 
@@ -84,6 +85,30 @@ class MonitorTests(unittest.TestCase):
             "https://forge.example/repo", 101, result, repository_id="core"
         )
         self.assertEqual(self.messages(), {"review:1:1": "Review post"})
+
+    def test_missing_report_uses_configured_public_views(self):
+        self.observe()
+        self.job(
+            1,
+            "complete",
+            repo_id="gui",
+            result={
+                "content": "Approved review",
+                "run": {"status": "complete", "pr_title": "Example PR"},
+            },
+        )
+        self.observe()
+        self.observe()
+        name = "gui/101-abc-1-1.html"
+        public = self.root / "reports"
+        archive = (public / name).read_text()
+        review = (public / "reports" / name).read_text()
+        self.assertIn("https://reports.example/reviews/" + name, archive)
+        self.assertIn("https://archives.example/runs/" + name, review)
+        self.assertIn(
+            "https://reports.example/reviews/" + name, self.messages()["review:1:1"]
+        )
+        self.assertEqual(len(self.messages()), 1)
 
     def test_same_number_notifications_use_their_repository(self):
         self.observe()

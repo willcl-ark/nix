@@ -5,8 +5,10 @@ import re
 import urllib.request
 import urllib.error
 
-from final_comment import render, render_github
+from final_comment import render_github
 from ralph import trace
+
+from .comments import review_comment
 
 MARKER_PREFIX = "<!-- ralph-major:"
 MENTION = re.compile(r"(?<!\w)@(?=[A-Za-z0-9])")
@@ -179,7 +181,7 @@ def publish_review(
         )
     report_url = result["run"].get("report_url")
     if not report_url:
-        raise urllib.error.URLError("GitHub publication requires a full report URL")
+        raise urllib.error.URLError("GitHub publication requires a Review report URL")
     identity = result.get("engine", {})
     comment_format = None
     if identity.get("name") == "current":
@@ -235,31 +237,11 @@ def publish_review(
                 review_tier=tier,
             )
         else:
-            coverage = diagnostics.get("coverage", {})
-            limitations = list(coverage.get("limitations", []))
-            if (
-                coverage.get("status") != "complete"
-                or coverage.get("verification", {}).get("status") != "complete"
-            ):
-                limitations.append("Review coverage was incomplete.")
-            concept = diagnostics.get("concept_assessment", {})
-            content = render(
-                findings,
-                limitations,
-                concept.get("summary") if concept.get("status") == "verified" else None,
-                backport=result["output"]["exports"].get("backport_assessment"),
-                review_memory=trace.review_memory_export(result),
-                comment_format=comment_format,
-                review_tier=tier,
-                report_url=report_url,
-                head_sha=result["head_sha"],
-                repository_url=repository_url,
-                base_sha=result["merge_base"],
-            )
+            content = review_comment(result, repository_url=repository_url)
             content += (
                 f"\n\n---\n\nReviewed: [`{result['head_sha'][:12]}`]"
                 f"(<{repository_url}/commit/{result['head_sha']}>)"
-                f" · [Full review report](<{report_url}>)"
+                f" · [Review report](<{report_url}>)"
             )
         return marker + "\n\n" + content
 

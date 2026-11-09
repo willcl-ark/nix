@@ -85,7 +85,14 @@ class NotificationStore:
         return sqlite3.connect(self.path, timeout=30)
 
     def observe(
-        self, state_dir, report_base_url, repositories, *, report_dir=None, now=None
+        self,
+        state_dir,
+        report_base_url,
+        repositories,
+        *,
+        archive_base_url,
+        report_dir=None,
+        now=None,
     ):
         """Observe jobs and enqueue alerts in one transaction, without changing jobs."""
         now = time.time() if now is None else now
@@ -137,6 +144,8 @@ class NotificationStore:
                                     repository_id=repo_id,
                                     repository=repository["repository"],
                                     repository_url=repository_url,
+                                    report_base_url=report_base_url,
+                                    archive_base_url=archive_base_url,
                                 )
                             except (OSError, ValueError, TypeError):
                                 LOGGER.warning(
@@ -260,6 +269,8 @@ def run_monitor(
     token,
     chat_id,
     stop_event=None,
+    *,
+    archive_base_url,
 ):
     """Observe reviews and poll commands independently of the review daemon."""
     stop_event = stop_event or threading.Event()
@@ -277,7 +288,11 @@ def run_monitor(
         if time.monotonic() >= next_scan:
             try:
                 store.observe(
-                    state_dir, report_base_url, repositories, report_dir=report_dir
+                    state_dir,
+                    report_base_url,
+                    repositories,
+                    report_dir=report_dir,
+                    archive_base_url=archive_base_url,
                 )
             except (OSError, sqlite3.Error):
                 LOGGER.warning("Telegram monitor could not read state; will retry")
@@ -318,6 +333,7 @@ def main():
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--report-dir", type=Path, required=True)
     parser.add_argument("--report-base-url", required=True)
+    parser.add_argument("--archive-base-url", required=True)
     parser.add_argument("--repositories", type=Path, required=True)
     parser.add_argument("--telegram-token-file", type=Path, required=True)
     parser.add_argument("--telegram-chat-id", required=True)
@@ -337,4 +353,5 @@ def main():
         config.load_repositories(args.repositories),
         token,
         args.telegram_chat_id,
+        archive_base_url=args.archive_base_url.rstrip("/"),
     )

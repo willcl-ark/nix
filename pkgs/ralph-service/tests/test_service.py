@@ -280,6 +280,7 @@ class ServiceTests(unittest.TestCase):
             github_repository="owner/repo",
             report_dir=self.state_dir / "public",
             report_base_url="https://review.example/traces",
+            archive_base_url="https://archives.example/traces",
         )
         job = self.enqueue()
         with (
@@ -334,6 +335,7 @@ class ServiceTests(unittest.TestCase):
             github_repository="owner/repo",
             report_dir=self.state_dir / "public",
             report_base_url="https://review.example/traces",
+            archive_base_url="https://archives.example/traces",
         )
         job = self.enqueue()
         with (
@@ -365,6 +367,7 @@ class ServiceTests(unittest.TestCase):
             github_repository="owner/repo",
             report_dir=self.state_dir / "public",
             report_base_url="https://review.example/traces",
+            archive_base_url="https://archives.example/traces",
         )
         job = self.enqueue()
         with (
@@ -705,6 +708,7 @@ class ServiceTests(unittest.TestCase):
             github_repository="owner/repo",
             report_dir=self.state_dir / "public",
             report_base_url="https://review.example.org/traces",
+            archive_base_url="https://archives.example/traces",
         )
         job = self.enqueue()
         job["review_result"] = self.saved_result()
@@ -770,6 +774,7 @@ class ServiceTests(unittest.TestCase):
             github_repository="owner/repo",
             report_dir=self.state_dir / "public",
             report_base_url="https://review.example.org/traces",
+            archive_base_url="https://archives.example/traces",
         )
         job = self.enqueue()
         job["review_result"] = self.saved_result()
@@ -802,6 +807,7 @@ class ServiceTests(unittest.TestCase):
             self.bot_config,
             report_dir=self.state_dir / "public",
             report_base_url="https://review.example.org/traces",
+            archive_base_url="https://archives.example/traces",
         )
         findings = [
             {
@@ -845,6 +851,7 @@ class ServiceTests(unittest.TestCase):
             self.bot_config,
             report_dir=self.state_dir / "public",
             report_base_url="https://review.example.org/traces",
+            archive_base_url="https://archives.example/traces",
             github_repository="owner/repo",
         )
         job = self.enqueue()
@@ -1270,7 +1277,7 @@ class WebhookTests(unittest.TestCase):
             "[Previous reports](<https://review.example.org/traces/42/>)", body
         )
         self.assertIn(
-            "[Full review report](<https://review.example.org/traces/report.html>)",
+            "[Review report](<https://review.example.org/traces/report.html>)",
             body,
         )
         self.assertTrue(

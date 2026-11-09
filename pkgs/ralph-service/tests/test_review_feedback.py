@@ -15,6 +15,7 @@ class ReviewFeedbackTests(unittest.TestCase):
             github_repository="a/b",
             report_dir=Path("/tmp/reports"),
             report_base_url="https://reports.example",
+            archive_base_url="https://archives.example/traces",
         )
         self.job = {"number": 3, "generation": 4}
         self.old = {

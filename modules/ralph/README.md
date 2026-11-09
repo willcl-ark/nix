@@ -203,13 +203,30 @@ continue to the final source-based check.
 
 ## Public reports and statistics
 
-For full browser reports, set `services.ralph.reportDir` to a
-separate public directory and `services.ralph.reportBaseUrl` to
-the HTTP URL serving it. The module creates the directory with mode `0755`;
-ralph writes readable static HTML and JSON files before publishing a link
-in the review comment. Configure your web server to serve this directory
-without directory browsing. Do not serve the private `stateDir` or its
-`review-traces` directory.
+For browser Review reports and Run archives, set `services.ralph.reportDir` to
+an absolute public directory separate from private state. Set
+`services.ralph.reportBaseUrl` to the URL serving `reportDir/reports`, such as
+`https://reviews.example.org/report`, and `services.ralph.archiveBaseUrl` to the
+URL serving `reportDir`, such as `https://reviews.example.org/traces`.
+Configure the web server to serve both static directories without directory
+browsing. Never serve private `stateDir` or its `review-traces` directory.
+New PR comments and
+Telegram notifications link to the Review report; diagnostic links and history
+use the Run archive. See the [cutover and backfill instructions](../../pkgs/ralph-service/operations.md).
+
+For example, with a public directory at `/var/www/ralph`, Caddy can serve the
+views using these routes alongside the existing archive and stats routes:
+
+```caddy
+redir /report /report/
+redir /report/ /traces/
+handle_path /report/* {
+  root * /var/www/ralph/reports
+  header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'"
+  header X-Content-Type-Options nosniff
+  file_server
+}
+```
 
 Serve directory indexes and redirect PR history paths to their trailing-slash
 form. History and stats pages require same-origin scripts and
@@ -299,7 +316,7 @@ services.ralph.repositories.gui.githubPublication = "full";
 `"off"`. Configure
 `githubRepository` with the upstream `owner/repo` and `githubTokenFile` with a
 runtime secret file. The upstream and mirror must use matching PR numbers.
-Public reports must also be enabled through `reportDir` and `reportBaseUrl`.
+Public reports must also be enabled through `reportDir`, `reportBaseUrl` and `archiveBaseUrl`.
 
 Modes behave as follows:
 
@@ -325,7 +342,7 @@ Never put the token itself in Nix configuration or the Nix store.
 
 Set `services.ralph.telegram.enable = true` to publish completed reviews and
 monitor Ralph in a Telegram channel. It defaults to `false`. Public reports
-must also be configured through `reportDir` and `reportBaseUrl`.
+must also be configured through `reportDir`, `reportBaseUrl` and `archiveBaseUrl`.
 
 ```nix
 services.ralph.telegram = {
