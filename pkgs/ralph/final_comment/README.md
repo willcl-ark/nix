@@ -42,8 +42,8 @@ Verification and coverage notices cannot be removed by changing templates.
 PR comments show at most six findings, each with its approved summary and source
 location. The Review report includes every current verified finding with its
 explanation, plus approved concept/backport conclusions and a coverage notice.
-The service appends the detailed coverage limitations to the human report once,
-using the saved run record. CLI previews retain the generic coverage notice.
+The service renders approved structured fields with the same renderer. Detailed
+coverage logs stay in the Run archive; the report retains a brief coverage notice.
 Both use the same severity ordering and preserve the supplied impact order on
 ties. Additional comment findings link to the report.
 
@@ -66,7 +66,8 @@ configurations include that snapshot, so template edits change run identity and
 replay uses the saved format. The report/archive cutover removes obsolete
 history and alternatives templates. Publication retries using the old saved
 template schema may fail and require a newly requested review. There is no
-automatic replay, migration or fallback. Completed runs retain their saved text.
+automatic replay, migration or fallback. Completed runs retain their saved text in the canonical JSON; human pages use
+the approved structured fields and current layout.
 
 `render()` produces the bounded PR comment. `render_report()` produces the
 human review stored in pipeline content. `render_github()` formats findings the

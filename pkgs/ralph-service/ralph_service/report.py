@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import nh3
+from final_comment import render_report
 from markdown_it import MarkdownIt
 
 from ralph import trace as core_trace
@@ -581,10 +582,13 @@ def _public_record(
     exports = (result.get("output") or {}).get("exports") or {}
     assessment = exports.get("backport_assessment")
     if isinstance(assessment, dict):
-        record["backport_assessment"] = _filtered(
-            assessment,
-            ("verdict", "summary", "evidence", "required_fixes", "limitations"),
-        )
+        record["backport_assessment"] = {
+            **_filtered(assessment, ("verdict", "summary")),
+            **{
+                key: _strings(assessment.get(key))
+                for key in ("evidence", "required_fixes", "limitations")
+            },
+        }
     if debug:
         config = engine.get("config")
         profile = config.get("profile") if isinstance(config, dict) else None
@@ -1165,34 +1169,29 @@ def _html_report(record, archive_url, history_url):
     coverage = record.get("coverage") or {}
     verification = coverage.get("verification") or {}
     failed = status == "failed" or verification.get("status") == "failed"
-    notice = (
-        "Review failed. Required verification did not complete."
-        if failed
-        else f"Review status: {status}."
+    incomplete = (
+        coverage.get("status") != "complete" or verification.get("status") != "complete"
     )
-    limitations = list(coverage.get("limitations") or [])
-    for name in ("context", "verification", "experiments"):
-        for limitation in (coverage.get(name) or {}).get("limitations") or []:
-            if limitation not in limitations:
-                limitations.append(limitation)
-    coverage_html = ""
-    if limitations:
-        coverage_html = (
-            "<section><h2>Review limitations</h2><ul>"
-            + _summary_list(limitations)
-            + "</ul></section>"
+    concept = record.get("concept_assessment") or {}
+    backport = record.get("backport_assessment")
+    if record.get("findings_export_status") != "supported":
+        review = "No approved findings export is available. See the Run archive."
+        if failed:
+            review = "Review failed. " + review
+    else:
+        review = render_report(
+            record["findings"],
+            limitations=("incomplete",) if incomplete else (),
+            concept_summary=concept.get("summary")
+            if concept.get("status") == "verified"
+            else None,
+            backport=backport if not failed else None,
+            review_memory=record.get("review_memory"),
+            verification_failed=failed,
+            head_sha=record["head"],
         )
-    elif coverage.get("status") in ("partial", "failed", "unknown"):
-        coverage_html = (
-            '<p class="notice">Review coverage was incomplete or unrecorded.</p>'
-        )
-    review = record.get("review") or ""
-    content = (
-        nh3.clean(
-            MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(review)
-        )
-        if review.strip()
-        else "<p>No approved review text is available for this run.</p>"
+    content = nh3.clean(
+        MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(review)
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -1211,10 +1210,9 @@ def _html_report(record, archive_url, history_url):
 Head: <code>{_escape(record["head"])}</code><br>
 Base: <code>{_escape(record["base"])}</code><br>
 Completed: {_escape(record.get("review_completed_at") or "unknown")}</p>
-<p class="notice">{_escape(notice)}</p>
 <p><a href="{_escape(archive_url)}">Run archive</a> · <a href="{_escape(history_url)}">Previous runs</a></p>
 </header>
-<main>{content}{coverage_html}</main>
+<main>{content}</main>
 </body>
 </html>
 """

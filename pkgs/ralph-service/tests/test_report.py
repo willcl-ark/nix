@@ -7,6 +7,69 @@ from ralph_service import report
 
 
 class ReportTests(unittest.TestCase):
+    @staticmethod
+    def review_result(body):
+        return {
+            "schema_version": 1,
+            "engine": {"name": "current"},
+            "content": body,
+            "run": {"status": "completed"},
+            "output": {
+                "schema_version": 2,
+                "data": {
+                    "schema_version": 2,
+                    "coverage": {
+                        "status": "complete",
+                        "verification": {"status": "complete"},
+                    },
+                },
+                "exports": {
+                    "findings": [
+                        {
+                            "id": "finding:1",
+                            "severity": "minor",
+                            "title": "Approved finding",
+                            "summary": "Approved summary.",
+                            "body": body,
+                            "path": "src/example.cpp",
+                            "line": 12,
+                            "side": "head",
+                        }
+                    ]
+                },
+            },
+        }
+
+    def test_empty_report_excludes_old_prose_and_raw_coverage(self):
+        result = self.review_result("Alternative approach: old optional proposal")
+        result["output"]["exports"]["findings"] = []
+        result["output"]["data"]["coverage"] = {
+            "status": "partial",
+            "verification": {"status": "partial"},
+            "limitations": [
+                "tests: unreviewed.cpp " * 300,
+                "design: caller not checked",
+            ],
+        }
+        result["output"]["data"]["concept_assessment"] = {
+            "status": "no_concern",
+            "summary": "Not approved for publication.",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, result, "empty-review")
+            human = (root / "reports" / name).read_text()
+            archive = (root / name).read_text()
+            saved = json.loads((root / "empty-review.json").read_text())
+        self.assertIn("No verified findings", human)
+        self.assertIn("Review coverage was incomplete", human)
+        self.assertNotIn("Alternative approach", human)
+        self.assertNotIn("unreviewed.cpp", human)
+        self.assertNotIn("caller not checked", human)
+        self.assertNotIn("Not approved for publication", human)
+        self.assertIn("unreviewed.cpp", archive)
+        self.assertEqual(saved["review"], result["content"])
+
     def test_challenger_comparison_preserves_disagreement_and_safe_evidence(self):
         evidence = {
             "path": "src/example.cpp",
@@ -127,17 +190,16 @@ class ReportTests(unittest.TestCase):
     def test_retry_preserves_snapshot_and_recovers_missing_html(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = {
-                "content": "Original review",
-                "head_sha": "a" * 40,
-                "run": {"review_completed_at": "2026-10-30T12:00:00Z"},
-            }
+            result = self.review_result("Original review")
+            result["head_sha"] = "a" * 40
+            result["run"]["review_completed_at"] = "2026-10-30T12:00:00Z"
             name = report.save_report(root, 123, result, "123-first")
             original_html = (root / name).read_bytes()
             original_review = (root / "reports" / name).read_bytes()
             original_json = (root / "123-first.json").read_bytes()
             self.assertIn(b'href="123/"', original_html)
             result["content"] = "Changed on retry"
+            result["output"]["exports"]["findings"][0]["body"] = "Changed on retry"
             report.save_report(root, 123, result, "123-first")
             self.assertEqual((root / name).read_bytes(), original_html)
             self.assertEqual((root / "123-first.json").read_bytes(), original_json)
@@ -195,11 +257,13 @@ class ReportTests(unittest.TestCase):
             )
             review = (root / "reports" / name).read_text()
             archive = (root / name).read_text()
-            self.assertIn("Approved finding explanation.", review)
+            self.assertNotIn("Approved finding explanation.", review)
+            self.assertIn("No verified findings", review)
             self.assertNotIn("Approved finding explanation.", archive)
             self.assertIn("Rejected candidate claim.", archive)
             self.assertNotIn("Rejected candidate claim.", review)
-            self.assertIn("The integration suite was unavailable.", review)
+            self.assertNotIn("The integration suite was unavailable.", review)
+            self.assertIn("The integration suite was unavailable.", archive)
             self.assertIn('href="https://example.org/traces/gui/paired.html"', review)
             self.assertIn('href="https://example.org/traces/gui/123/"', review)
             self.assertIn('href="https://example.org/report/gui/paired.html"', archive)
@@ -225,7 +289,9 @@ if (value < 1) return;
 """
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            name = report.save_report(root, 123, {"content": review}, "markdown-review")
+            name = report.save_report(
+                root, 123, self.review_result(review), "markdown-review"
+            )
             rendered = (root / "reports" / name).read_text()
             public = json.loads((root / "markdown-review.json").read_text())
         self.assertIn('<a href="https://example.org/fix"', rendered)
@@ -243,6 +309,7 @@ if (value < 1) return;
     def test_finding_summary_and_explanation_survive_public_report(self):
         finding = {
             "id": "finding:1",
+            "severity": "major",
             "title": "Handle a zero divisor",
             "summary": "A zero divisor crashes the operation.",
             "body": "Reject zero before dividing the supplied value.",
@@ -458,7 +525,12 @@ if (value < 1) return;
                 "exports": {
                     "findings": [],
                     "review_memory": [
-                        {"title": "Prior concern", "status": "unclear", "body": hostile}
+                        {
+                            "key": "prior:1",
+                            "title": "Prior concern",
+                            "status": "unclear",
+                            "body": hostile,
+                        }
                     ],
                     "backport_assessment": {
                         "verdict": "Needs clarification",
@@ -490,6 +562,10 @@ if (value < 1) return;
         )
         self.assertEqual(
             json.loads(public)["backport_assessment"]["verdict"], "Needs clarification"
+        )
+        self.assertEqual(
+            json.loads(public)["backport_assessment"]["limitations"],
+            ["Original PR unavailable"],
         )
 
 

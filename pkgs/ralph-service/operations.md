@@ -6,8 +6,8 @@ publication holds and state backups. NixOS settings belong in the
 
 ## Reports and statistics
 
-The Review report contains approved findings, explanations and material coverage
-limitations. The Run archive contains preliminary agent replies, decisions,
+The Review report contains approved findings, their explanations and qualifications,
+and a brief coverage notice. The Run archive contains preliminary agent replies, decisions,
 coverage diagnostics, retained history and usage. Intermediate claims in the
 archive are not published findings. Both views use one saved public JSON record;
 private request payloads, configuration and private traces remain private.
@@ -44,9 +44,10 @@ python -m ralph_service.backfill --state-dir STATE --report-dir PUBLIC \
 ```
 
 Add `--apply` to generate both views and refresh navigation from saved public
-snapshots, or recover missing snapshots from completed jobs. This makes no model
-calls or comment updates. Historical approved prose is preserved, so older
-reviews can remain verbose. Inspect reported failures before cutover. Rebuild
+snapshots, or recover missing snapshots from completed jobs. Add `--refresh`
+to regenerate existing pages with the current renderer from their saved JSON. This makes no model
+calls or comment updates. Human pages use structured approved findings; the original Markdown and raw
+coverage messages stay in the archive JSON. Inspect reported failures before cutover. Rebuild
 statistics with `--full` afterward. Deploy the engine, service, module options and
 static routes together; old workers retain their pinned configuration and should
 finish before the one-time presentation backfill. The template schema changes

@@ -323,7 +323,7 @@ def render_report(
             ("required_fixes", "Required fixes"),
             ("limitations", "Limitations"),
         ):
-            if backport[key]:
+            if backport.get(key):
                 details.append(
                     heading + ":\n\n" + "\n".join(f"- {item}" for item in backport[key])
                 )
