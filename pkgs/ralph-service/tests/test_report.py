@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 
 from ralph_service import report
@@ -40,6 +41,35 @@ class ReportTests(unittest.TestCase):
             },
         }
 
+    def test_human_report_links_saved_revision_and_preserves_literal_code(self):
+        result = self.review_result("Add an explicit `#include <span>`. ")
+        result["head_sha"] = "a" * 40
+        result["base_sha"] = "b" * 40
+        result["run"]["pr_title"] = "Add <span> tests"
+        result["output"]["exports"]["findings"][0]["summary"] = (
+            "Relies on a transitive <span> inclusion."
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(
+                root,
+                123,
+                result,
+                "linked-review",
+                repository_url="https://github.com/bitcoin/bitcoin",
+            )
+            human = (root / "reports" / name).read_text()
+            saved = json.loads((root / "linked-review.json").read_text())
+            report.save_report(root, 123, {}, "linked-review", refresh=True)
+            self.assertEqual(human, (root / "reports" / name).read_text())
+        self.assertEqual(saved["pr_title"], "Add <span> tests")
+        self.assertIn("<h1>Add &lt;span&gt; tests</h1>", human)
+        self.assertIn("transitive &lt;span&gt; inclusion", human)
+        self.assertIn("<details>", human)
+        self.assertIn(f"/commit/{'a' * 40}", human)
+        self.assertIn(f"/blob/{'a' * 40}/src/example.cpp#L12", human)
+        self.assertIn(f"<code>{'a' * 12}</code>", human)
+
     def test_empty_report_excludes_old_prose_and_raw_coverage(self):
         result = self.review_result("Alternative approach: old optional proposal")
         result["output"]["exports"]["findings"] = []
@@ -61,7 +91,7 @@ class ReportTests(unittest.TestCase):
             human = (root / "reports" / name).read_text()
             archive = (root / name).read_text()
             saved = json.loads((root / "empty-review.json").read_text())
-        self.assertIn("No verified findings", human)
+        self.assertIn("review is inconclusive", human)
         self.assertNotIn("Review coverage was incomplete", human)
         self.assertIn('href="/traces/empty-review.html#coverage"', human)
         self.assertIn('id="coverage"', archive)
@@ -260,7 +290,7 @@ class ReportTests(unittest.TestCase):
             review = (root / "reports" / name).read_text()
             archive = (root / name).read_text()
             self.assertNotIn("Approved finding explanation.", review)
-            self.assertIn("No verified findings", review)
+            self.assertIn("review is inconclusive", review)
             self.assertNotIn("Approved finding explanation.", archive)
             self.assertIn("Rejected candidate claim.", archive)
             self.assertNotIn("Rejected candidate claim.", review)
@@ -303,9 +333,17 @@ if (value < 1) return;
         self.assertNotIn(
             "<script", rendered.replace('<script src="theme.js" defer></script>', "")
         )
-        self.assertNotIn("javascript:", rendered)
-        self.assertNotIn("onclick", rendered)
-        self.assertNotIn("onerror", rendered)
+        attributes = []
+
+        class Tags(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                attributes.extend(attrs)
+
+        Tags().feed(rendered)
+        self.assertFalse(any(key.startswith("on") for key, _ in attributes))
+        self.assertFalse(
+            any(value and value.startswith("javascript:") for _, value in attributes)
+        )
         self.assertEqual(public["review"], review)
 
     def test_finding_summary_and_explanation_survive_public_report(self):
@@ -467,10 +505,10 @@ if (value < 1) return;
             html = (root / name).read_text()
             human = (root / "reports" / name).read_text()
             public = json.loads((root / "failed-review.json").read_text())
-        self.assertIn(
-            "Review failed because required verification did not complete", human
-        )
+        self.assertIn("Review failed during source verification", human)
         self.assertIn('href="/traces/failed-review.html#coverage"', human)
+        self.assertIn("Run ended:", human)
+        self.assertNotIn("Completed:", human)
         self.assertEqual(public["status"], "failed")
         self.assertEqual(public["stages"]["verifier"]["http_status"], 400)
         self.assertIn("Review failed", html)

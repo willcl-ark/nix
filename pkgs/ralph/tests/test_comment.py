@@ -122,6 +122,55 @@ class CommentTests(unittest.TestCase):
             rendered.index(minor["title"]), rendered.index(suggestion["title"])
         )
 
+    def test_report_links_source_revision_and_prior_explanation(self):
+        finding = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())[
+            "findings"
+        ][0]
+        memory = {
+            **finding,
+            "key": "old:1",
+            "status": "still_present",
+            "checked_head": "current",
+            "reason": "Current trigger and qualification.\n\nCurrent explanation and fix.",
+            "source_report_url": "https://example.org/report/previous",
+            "source_evidence": [{"path": "current.cpp", "line": 12, "side": "head"}],
+        }
+        rendered = final_comment.render_report(
+            [],
+            review_memory=[memory],
+            head_sha="current",
+            repository_url="https://forge.example/repo/project",
+            base_sha="base",
+        )
+        summary, details = rendered.split("<details>", 1)
+        self.assertIn("Current trigger and qualification.", summary)
+        self.assertNotIn("Current explanation and fix.", summary)
+        self.assertIn("Current explanation and fix.", details)
+        self.assertIn(memory["source_report_url"], details)
+        self.assertIn("against this revision", details)
+        self.assertNotIn(finding["body"], rendered)
+        self.assertIn("/blob/current/current.cpp#L12", rendered)
+        self.assertEqual(
+            len(final_comment.report_findings([], [memory], head_sha="current")), 1
+        )
+        self.assertEqual(
+            final_comment.report_findings([], [memory], head_sha="different"), []
+        )
+        self.assertEqual(
+            final_comment.report_findings(
+                [finding], [memory], head_sha="current", verification_failed=True
+            ),
+            [],
+        )
+        finding.update(side="base", path="src/file name.cpp", line=17)
+        rendered = final_comment.render_report(
+            [finding],
+            repository_url="https://github.com/example/project",
+            base_sha="base-revision",
+            head_sha="head-revision",
+        )
+        self.assertIn("/blob/base-revision/src/file%20name.cpp#L17", rendered)
+
     def test_github_uses_verified_summary_without_full_explanation(self):
         example = json.loads((COMMENT_DIR / "examples" / "github.json").read_text())
         example["findings"][0].update(

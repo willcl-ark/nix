@@ -137,6 +137,15 @@ def _current_findings(findings, memory, head_sha):
         source = next(
             source for source in entry["source_evidence"] if source["side"] == "head"
         )
+        summary, _, body = entry["reason"].partition("\n\n")
+        previous_url = entry.get("source_report_url") or ""
+        if previous_url.startswith(("https://", "http://")):
+            previous_url = quote(previous_url, safe=":/?#[]@!$&'()*+,;=%")
+            previous = (
+                f"[Earlier report and explanation](<{previous_url}>). "
+                "Check its locations and suggested fix against this revision."
+            )
+            body = "\n\n".join(part for part in (body, previous) if part)
         current.append(
             {
                 "id": entry["key"],
@@ -144,8 +153,8 @@ def _current_findings(findings, memory, head_sha):
                 "title": entry.get("presented_title") or entry["title"],
                 # Reconciliation describes the claim at this head; old wording and
                 # old line numbers need not still be accurate.
-                "summary": entry["reason"],
-                "body": entry["reason"],
+                "summary": summary,
+                "body": body,
                 "path": source["path"],
                 "line": source["line"],
                 "side": "head",
@@ -153,6 +162,16 @@ def _current_findings(findings, memory, head_sha):
         )
         included.update(entry["key"] for entry in group)
     return current, included
+
+
+def report_findings(
+    findings, review_memory=None, *, head_sha=None, verification_failed=False
+):
+    """Return the findings eligible for the report, including reverified history."""
+    if verification_failed:
+        return []
+    current, _ = _current_findings(findings, review_memory or [], head_sha)
+    return current
 
 
 def _unconfirmed_history(memory, included_history, verification_failed):
@@ -277,6 +296,9 @@ def render_report(
     review_tier=None,
     head_sha=None,
     coverage_url=None,
+    repository_url=None,
+    base_sha=None,
+    failure_reason=None,
 ):
     """Render the approved review; diagnostic detail belongs in the run archive."""
     comment_format = (
@@ -292,29 +314,43 @@ def render_report(
     findings = [] if verification_failed else _ordered_findings(findings)
     if verification_failed:
         sections["verification_failed"] = (
-            "Review failed because required verification did not complete."
+            failure_reason
+            or "Review failed because required verification did not complete."
         )
 
     def finding_text(finding):
         summary = finding.get("presented_summary") or finding["summary"]
         body = finding.get("presented_body") or finding.get("body", "")
+        location = source_location(finding, repository_url, base_sha, head_sha)
         if not body or body == summary:
-            return _brief_finding(finding, comment_format)
+            return _brief_finding(finding, comment_format, location)
         return fill(
             "finding",
             severity=severity_label(finding["severity"]),
             title=finding.get("presented_title") or finding["title"],
             summary=summary,
-            location=source_location(finding),
+            location=location,
             side=finding.get("side", "head"),
             body=body,
         )
 
     if findings:
-        sections["findings"] = fill(
-            "findings",
-            findings="\n\n".join(finding_text(finding) for finding in findings),
-        )
+        groups = []
+        for heading, suggestions in (
+            ("Findings", False),
+            ("Optional improvements", True),
+        ):
+            selected = [
+                finding
+                for finding in findings
+                if (finding["severity"] == "suggestion") == suggestions
+            ]
+            if selected:
+                groups.append(
+                    f"## {heading}\n\n"
+                    + "\n\n".join(finding_text(finding) for finding in selected)
+                )
+        sections["findings"] = fill("findings", findings="\n\n".join(groups))
     if concept_summary and not verification_failed:
         sections["design"] = fill("design", design=concept_summary)
     if backport is not None:
@@ -369,9 +405,9 @@ def render_report(
         and not verification_failed
     ):
         sections["empty"] = (
-            "No verified findings are available from this review."
+            "The review is inconclusive; no findings were verified."
             if limitations or unconfirmed
-            else "I found no actionable issues in this static review."
+            else "Review completed with no actionable findings."
         )
     content = _render_sections(comment_format["comment"], sections)
     if review_tier:

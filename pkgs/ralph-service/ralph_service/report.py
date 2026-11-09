@@ -6,7 +6,7 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import nh3
 from final_comment import render_report
@@ -552,6 +552,9 @@ def _public_record(
         "review_completed_at": (result.get("run") or {}).get("review_completed_at"),
         "status": (result.get("run") or {}).get("status", "unknown"),
         "pr": number,
+        "pr_title": (result.get("run") or {}).get("pr_title")
+        if isinstance((result.get("run") or {}).get("pr_title"), str)
+        else None,
         "base": result.get("base_sha"),
         "head": result.get("head_sha"),
         "review": result.get("content", ""),
@@ -1164,6 +1167,32 @@ Base: <code>{_escape(record["base"])}</code></p>
 """
 
 
+def _commit_link(record, sha):
+    if not isinstance(sha, str) or not sha:
+        return "unknown"
+    label = f"<code>{_escape(sha[:12])}</code>"
+    repository_url = _safe_http_url(record.get("repository_url"))
+    if not repository_url:
+        return label
+    url = f"{repository_url.rstrip('/')}/commit/{quote(sha, safe='')}"
+    return f'<a href="{_escape(url)}">{label}</a>'
+
+
+def _failure_reason(record, verification):
+    stage_labels = {
+        "verifier": "source verification",
+        "write_verifier": "experimental verification",
+        "judge": "the final assessment",
+        "concept_verifier": "concept verification",
+    }
+    for name, stage in (record.get("stages") or {}).items():
+        if stage.get("status") in {"failed", "invalid"} and name in stage_labels:
+            return f"Review failed during {stage_labels[name]}."
+    if verification.get("status") == "failed":
+        return "Review failed because required verification did not complete."
+    return "Review failed before an assessment could be completed."
+
+
 def _html_report(record, archive_url, history_url):
     status = record.get("status", "unknown")
     coverage = record.get("coverage") or {}
@@ -1188,11 +1217,17 @@ def _html_report(record, archive_url, history_url):
             backport=backport if not failed else None,
             review_memory=record.get("review_memory"),
             verification_failed=failed,
+            failure_reason=_failure_reason(record, verification) if failed else None,
+            repository_url=record.get("repository_url"),
+            base_sha=record.get("base"),
             head_sha=record["head"],
             coverage_url=archive_url + "#coverage",
         )
     content = nh3.clean(
-        MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(review)
+        MarkdownIt("commonmark")
+        .enable(["table", "strikethrough"])
+        .disable("html_inline")
+        .render(review)
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -1206,11 +1241,10 @@ def _html_report(record, archive_url, history_url):
 <body>
 {theme.BUTTON}
 <header>
-<h1>Review report</h1>
-<p>{_escape(record.get("repository") or record.get("repository_id") or "core")}: {_pr_link(record)}<br>
-Head: <code>{_escape(record["head"])}</code><br>
-Base: <code>{_escape(record["base"])}</code><br>
-Completed: {_escape(record.get("review_completed_at") or "unknown")}</p>
+<h1>{_escape(record.get("pr_title") or "Review report")}</h1>
+<p>{_escape(record.get("repository") or record.get("repository_id") or "core")}: {_pr_link(record)}</p>
+<p class="report-metadata">Head: {_commit_link(record, record.get("head"))} · Base: {_commit_link(record, record.get("base"))}<br>
+{"Run ended" if failed else "Completed"}: {_escape(record.get("review_completed_at") or "unknown")}</p>
 <p><a href="{_escape(archive_url)}">Run archive</a> · <a href="{_escape(history_url)}">Previous runs</a></p>
 </header>
 <main>{content}</main>
@@ -1259,6 +1293,7 @@ def _style():
         + """
 body { margin: 2rem auto; max-width: 76rem; padding: 0 1rem; font-size: 16px; overflow-wrap: anywhere; }
 .notice { border-left: 4px solid var(--accent); background: var(--raised); padding: .75rem 1rem; }
+.report-metadata { font-size: .875rem; }
 pre { white-space: pre-wrap; }
 th, td { vertical-align: top; }
 details { border-top: 1px solid var(--border); padding: .75rem 0; }

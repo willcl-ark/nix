@@ -647,7 +647,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
             with self.subTest(status=status):
                 memory["status"] = status
                 rendered = final_comment.render_report([], review_memory=[memory])
-                self.assertIn("I found no actionable issues", rendered)
+                self.assertIn("no actionable findings", rendered)
                 self.assertNotIn(memory["body"], rendered)
                 self.assertNotIn("remain unresolved", rendered)
 
