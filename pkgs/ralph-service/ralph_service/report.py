@@ -1053,7 +1053,7 @@ def _pr_link(record):
     return f'<a href="{_escape(url)}">{label}</a>'
 
 
-def _html_report(record, json_name):
+def _html_archive(record, json_name, report_url):
     status = record.get("status", "unknown")
     outcome = (
         '<p class="notice"><strong>Review failed.</strong> '
@@ -1112,7 +1112,7 @@ def _html_report(record, json_name):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Review report PR #{_escape(record["pr"])}</title>
+<title>Run archive PR #{_escape(record["pr"])}</title>
 <style>{_style()}
 </style>
 <script src="theme.js" defer></script>
@@ -1120,7 +1120,7 @@ def _html_report(record, json_name):
 <body>
 {theme.BUTTON}
 <header>
-<h1>Review Report</h1>
+<h1>Run archive</h1>
 <p>Repository: {
         _escape(record.get("repository") or record.get("repository_id") or "core")
     }</p>
@@ -1128,23 +1128,21 @@ def _html_report(record, json_name):
 <p>{_pr_link(record)} at <code>{_escape(record["head"])}</code><br>
 Base: <code>{_escape(record["base"])}</code></p>
 {profile}
-<p><a href="{_escape(json_name)}" download>Download JSON report</a></p>
-<p><a href="{_escape(record["pr"])}/">Previous reports</a> · <a href="{
+<p><a href="{_escape(json_name)}" download>Download run JSON</a></p>
+<p><a href="{_escape(record["pr"])}/">Previous runs</a> · <a href="{
         "../" if record.get("repository_id", "core") != "core" else ""
     }stats/">Review statistics</a></p>
 </header>
 <p class="notice">{_escape(record["notice"])}</p>
-<section>
-<h2>Review</h2>
-{
-        nh3.clean(
-            MarkdownIt("commonmark")
-            .enable(["table", "strikethrough"])
-            .render(record["review"])
-        )
-    }
-</section>
+<p><a href="{_escape(report_url)}">Read the Review report</a></p>
 {engine_sections}
+{
+        "<section><h2>Previous findings and replies</h2>"
+        + _json_html(record["review_memory"])
+        + "</section>"
+        if record.get("review_memory")
+        else ""
+    }
 <section>
 <h2>Usage</h2>
 {
@@ -1157,6 +1155,66 @@ Base: <code>{_escape(record["base"])}</code></p>
         )
     }
 </section>
+</body>
+</html>
+"""
+
+
+def _html_report(record, archive_url, history_url):
+    status = record.get("status", "unknown")
+    coverage = record.get("coverage") or {}
+    verification = coverage.get("verification") or {}
+    failed = status == "failed" or verification.get("status") == "failed"
+    notice = (
+        "Review failed. Required verification did not complete."
+        if failed
+        else f"Review status: {status}."
+    )
+    limitations = list(coverage.get("limitations") or [])
+    for name in ("context", "verification", "experiments"):
+        for limitation in (coverage.get(name) or {}).get("limitations") or []:
+            if limitation not in limitations:
+                limitations.append(limitation)
+    coverage_html = ""
+    if limitations:
+        coverage_html = (
+            "<section><h2>Review limitations</h2><ul>"
+            + _summary_list(limitations)
+            + "</ul></section>"
+        )
+    elif coverage.get("status") in ("partial", "failed", "unknown"):
+        coverage_html = (
+            '<p class="notice">Review coverage was incomplete or unrecorded.</p>'
+        )
+    review = record.get("review") or ""
+    content = (
+        nh3.clean(
+            MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(review)
+        )
+        if review.strip()
+        else "<p>No approved review text is available for this run.</p>"
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review report PR #{_escape(record["pr"])}</title>
+<style>{_style()}</style>
+<script src="theme.js" defer></script>
+</head>
+<body>
+{theme.BUTTON}
+<header>
+<h1>Review report</h1>
+<p>{_escape(record.get("repository") or record.get("repository_id") or "core")}: {_pr_link(record)}<br>
+Head: <code>{_escape(record["head"])}</code><br>
+Base: <code>{_escape(record["base"])}</code><br>
+Completed: {_escape(record.get("review_completed_at") or "unknown")}</p>
+<p class="notice">{_escape(notice)}</p>
+<p><a href="{_escape(archive_url)}">Run archive</a> · <a href="{_escape(history_url)}">Previous runs</a></p>
+</header>
+<main>{content}{coverage_html}</main>
 </body>
 </html>
 """
@@ -1253,8 +1311,11 @@ def save_report(
     repository_id="core",
     repository=None,
     repository_url=None,
+    report_base_url="/report",
+    archive_base_url="/traces",
+    refresh=False,
 ):
-    """Write a static HTML report and matching public JSON, returning the HTML name."""
+    """Render report and archive from one public snapshot; return their relative name."""
     if not isinstance(report_id, str) or not REPORT_ID.fullmatch(report_id):
         raise ValueError("report_id must be a safe filename stem")
     if not isinstance(repository_id, str) or not re.fullmatch(
@@ -1262,16 +1323,18 @@ def save_report(
     ):
         raise ValueError("repository_id must be a safe repository key")
     prefix = "" if repository_id == "core" else repository_id + "/"
-    report_dir = Path(report_dir) / prefix
-    theme.save_assets(report_dir)
-    report_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+    root = Path(report_dir)
+    report_dir = root / prefix
+    review_dir = root / "reports" / prefix
+    for directory in (report_dir, review_dir):
+        directory.mkdir(mode=0o755, parents=True, exist_ok=True)
+        theme.save_assets(directory)
     html_name = f"{report_id}.html"
     json_name = f"{report_id}.json"
     json_path, html_path = report_dir / json_name, report_dir / html_name
-    if html_path.exists():
-        if not json_path.exists():
-            raise OSError(f"Existing report has no JSON snapshot: {html_name}")
-        return prefix + html_name
+    review_path = review_dir / html_name
+    if (html_path.exists() or review_path.exists()) and not json_path.exists():
+        raise OSError(f"Existing report has no JSON snapshot: {html_name}")
     if not json_path.exists():
         record = _public_record(
             number,
@@ -1286,5 +1349,23 @@ def save_report(
     # A retry, including recovery after writing JSON alone, must render the
     # saved snapshot rather than a potentially changed result or projection.
     record = json.loads(json_path.read_text(encoding="utf-8"))
-    _write_public_file(html_path, _html_report(record, json_name), replace=False)
-    return prefix + html_name
+    name = prefix + html_name
+    report_url = report_base_url.rstrip("/") + "/" + name
+    archive_url = archive_base_url.rstrip("/") + "/" + name
+    history_url = archive_base_url.rstrip("/") + "/" + prefix + str(number) + "/"
+    # Write the archive first: the new human page marks completed backfill of
+    # an older combined page, including recovery after an interrupted refresh.
+    refresh_archive = refresh or not review_path.exists()
+    _write_public_file(
+        html_path,
+        _html_archive(record, json_name, report_url),
+        replace=refresh_archive,
+        skip_unchanged=refresh_archive,
+    )
+    _write_public_file(
+        review_path,
+        _html_report(record, archive_url, history_url),
+        replace=refresh,
+        skip_unchanged=refresh,
+    )
+    return name

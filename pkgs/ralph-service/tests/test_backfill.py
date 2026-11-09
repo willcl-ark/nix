@@ -3,6 +3,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from ralph_service import backfill, report
 
@@ -115,6 +116,50 @@ class BackfillTests(unittest.TestCase):
             self.assertEqual(
                 backfill.backfill(root, reports, apply=True)["existing"], 2
             )
+
+    def test_public_snapshot_recovers_pages_without_job_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "archive"
+            name = report.save_report(
+                reports,
+                123,
+                {"content": "Original approved wording."},
+                "saved-run",
+                repository_id="gui",
+            )
+            snapshot = reports / "gui/saved-run.json"
+            original = snapshot.read_bytes()
+            (reports / "reports" / name).unlink()
+            (reports / name).write_text("Old combined report")
+            dry = backfill.backfill(root, reports)
+            self.assertEqual(dry["eligible"], 1)
+            self.assertFalse((reports / "reports" / name).exists())
+            self.assertEqual((reports / name).read_text(), "Old combined report")
+            write = report._write_public_file
+
+            def interrupt_human_page(path, *args, **kwargs):
+                if path == reports / "reports" / name:
+                    raise OSError("Interrupted before human page")
+                return write(path, *args, **kwargs)
+
+            with patch.object(
+                report, "_write_public_file", side_effect=interrupt_human_page
+            ):
+                interrupted = backfill.backfill(root, reports, apply=True)
+            self.assertEqual(interrupted["unrecoverable"], 1)
+            self.assertFalse((reports / "reports" / name).exists())
+            self.assertIn("Run archive", (reports / name).read_text())
+            applied = backfill.backfill(root, reports, apply=True)
+            self.assertEqual(applied["written"], 1)
+            self.assertEqual(snapshot.read_bytes(), original)
+            self.assertIn(
+                "Original approved wording.", (reports / "reports" / name).read_text()
+            )
+            self.assertNotIn("Original approved wording.", (reports / name).read_text())
+            self.assertIn("Run archive", (reports / name).read_text())
+            self.assertEqual(backfill.backfill(root, reports)["existing"], 1)
+            self.assertFalse((root / "jobs.sqlite3").exists())
 
     def test_missing_and_unsupported_results_are_reported_without_publication(self):
         with tempfile.TemporaryDirectory() as directory:

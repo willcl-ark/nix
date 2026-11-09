@@ -134,22 +134,77 @@ class ReportTests(unittest.TestCase):
             }
             name = report.save_report(root, 123, result, "123-first")
             original_html = (root / name).read_bytes()
+            original_review = (root / "reports" / name).read_bytes()
             original_json = (root / "123-first.json").read_bytes()
             self.assertIn(b'href="123/"', original_html)
             result["content"] = "Changed on retry"
             report.save_report(root, 123, result, "123-first")
             self.assertEqual((root / name).read_bytes(), original_html)
             self.assertEqual((root / "123-first.json").read_bytes(), original_json)
+            (root / "reports" / name).unlink()
+            (root / name).write_text("Old combined report")
+            report.save_report(root, 123, result, "123-first")
+            self.assertEqual((root / name).read_bytes(), original_html)
+            self.assertEqual((root / "reports" / name).read_bytes(), original_review)
             (root / name).unlink()
             report.save_report(root, 123, result, "123-first")
             self.assertEqual((root / name).read_bytes(), original_html)
             second = report.save_report(root, 123, result, "123-rerun")
-            self.assertIn("Changed on retry", (root / second).read_text())
+            self.assertIn("Changed on retry", (root / "reports" / second).read_text())
             self.assertEqual((root / name).read_bytes(), original_html)
             self.assertEqual(
                 json.loads(original_json)["review_completed_at"],
                 "2026-10-30T12:00:00Z",
             )
+
+    def test_report_and_archive_share_run_without_republishing_diagnostics(self):
+        result = {
+            "schema_version": 1,
+            "content": "Approved finding explanation.",
+            "head_sha": "a" * 40,
+            "engine": {"name": "current"},
+            "run": {"status": "completed"},
+            "output": {
+                "schema_version": 2,
+                "data": {
+                    "schema_version": 2,
+                    "coverage": {
+                        "status": "partial",
+                        "limitations": ["The integration suite was unavailable."],
+                    },
+                    "stages": {
+                        "independent": {
+                            "status": "completed",
+                            "raw_output": "Rejected candidate claim.",
+                        },
+                    },
+                },
+                "exports": {"findings": []},
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(
+                root,
+                123,
+                result,
+                "paired",
+                repository_id="gui",
+                report_base_url="https://example.org/report",
+                archive_base_url="https://example.org/traces",
+            )
+            review = (root / "reports" / name).read_text()
+            archive = (root / name).read_text()
+            self.assertIn("Approved finding explanation.", review)
+            self.assertNotIn("Approved finding explanation.", archive)
+            self.assertIn("Rejected candidate claim.", archive)
+            self.assertNotIn("Rejected candidate claim.", review)
+            self.assertIn("The integration suite was unavailable.", review)
+            self.assertIn('href="https://example.org/traces/gui/paired.html"', review)
+            self.assertIn('href="https://example.org/traces/gui/123/"', review)
+            self.assertIn('href="https://example.org/report/gui/paired.html"', archive)
+            self.assertEqual(len(list(root.rglob("paired.json"))), 1)
+            self.assertTrue((root / "reports/gui/theme.js").is_file())
 
     def test_review_markdown_is_rendered_and_sanitized(self):
         review = """See [the fix](https://example.org/fix).
@@ -171,7 +226,7 @@ if (value < 1) return;
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             name = report.save_report(root, 123, {"content": review}, "markdown-review")
-            rendered = (root / name).read_text()
+            rendered = (root / "reports" / name).read_text()
             public = json.loads((root / "markdown-review.json").read_text())
         self.assertIn('<a href="https://example.org/fix"', rendered)
         self.assertIn("<details>", rendered)
