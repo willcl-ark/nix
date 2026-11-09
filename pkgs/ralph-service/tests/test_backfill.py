@@ -127,6 +127,8 @@ class BackfillTests(unittest.TestCase):
                 {
                     "schema_version": 1,
                     "content": "Original approved wording.",
+                    "head_sha": "a" * 40,
+                    "base_sha": "b" * 40,
                     "engine": {"name": "current"},
                     "run": {"status": "completed"},
                     "output": {
@@ -204,6 +206,16 @@ class BackfillTests(unittest.TestCase):
             self.assertEqual(refreshed["written"], 1)
             self.assertEqual((reports / "reports" / name).read_bytes(), expected_review)
             self.assertEqual((reports / name).read_bytes(), expected_archive)
+            self.assertEqual(snapshot.read_bytes(), original)
+            upstream = {"gui": {"github_repository": "bitcoin-core/gui-qml"}}
+            refreshed = backfill.backfill(
+                root, reports, refresh=True, apply=True, repositories=upstream
+            )
+            self.assertEqual(refreshed["written"], 1)
+            self.assertIn(
+                "https://github.com/bitcoin-core/gui-qml/blob/",
+                (reports / "reports" / name).read_text(),
+            )
             self.assertEqual(snapshot.read_bytes(), original)
             self.assertFalse((root / "jobs.sqlite3").exists())
 

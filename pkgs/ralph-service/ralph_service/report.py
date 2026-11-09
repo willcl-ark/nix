@@ -539,6 +539,7 @@ def _public_record(
     repository_id="core",
     repository=None,
     repository_url=None,
+    github_repository=None,
 ):
     debug = core_trace.current_diagnostics(result)
     engine = core_trace.result_engine(result)
@@ -549,6 +550,7 @@ def _public_record(
         "repository_id": repository_id,
         "repository": repository or repository_id,
         "repository_url": _safe_http_url(repository_url),
+        "github_repository": github_repository,
         "review_completed_at": (result.get("run") or {}).get("review_completed_at"),
         "status": (result.get("run") or {}).get("status", "unknown"),
         "pr": number,
@@ -1167,11 +1169,20 @@ Base: <code>{_escape(record["base"])}</code></p>
 """
 
 
+def _source_repository_url(record):
+    upstream = record.get("github_repository")
+    if isinstance(upstream, str) and re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", upstream
+    ):
+        return f"https://github.com/{upstream}"
+    return _safe_http_url(record.get("repository_url"))
+
+
 def _commit_link(record, sha):
     if not isinstance(sha, str) or not sha:
         return "unknown"
     label = f"<code>{_escape(sha[:12])}</code>"
-    repository_url = _safe_http_url(record.get("repository_url"))
+    repository_url = _source_repository_url(record)
     if not repository_url:
         return label
     url = f"{repository_url.rstrip('/')}/commit/{quote(sha, safe='')}"
@@ -1193,7 +1204,9 @@ def _failure_reason(record, verification):
     return "Review failed before an assessment could be completed."
 
 
-def _html_report(record, archive_url, history_url):
+def _html_report(record, archive_url, history_url, *, github_repository=None):
+    if github_repository and not record.get("github_repository"):
+        record = {**record, "github_repository": github_repository}
     status = record.get("status", "unknown")
     coverage = record.get("coverage") or {}
     verification = coverage.get("verification") or {}
@@ -1218,7 +1231,7 @@ def _html_report(record, archive_url, history_url):
             review_memory=record.get("review_memory"),
             verification_failed=failed,
             failure_reason=_failure_reason(record, verification) if failed else None,
-            repository_url=record.get("repository_url"),
+            repository_url=_source_repository_url(record),
             base_sha=record.get("base"),
             head_sha=record["head"],
             coverage_url=archive_url + "#coverage",
@@ -1346,6 +1359,7 @@ def save_report(
     repository_id="core",
     repository=None,
     repository_url=None,
+    github_repository=None,
     report_base_url="/report",
     archive_base_url="/traces",
     refresh=False,
@@ -1378,6 +1392,7 @@ def save_report(
             repository_id=repository_id,
             repository=repository,
             repository_url=repository_url,
+            github_repository=github_repository,
         )
         json_text = json.dumps(record, ensure_ascii=False, indent=2)
         _write_public_file(json_path, json_text + "\n", replace=False)
@@ -1399,7 +1414,9 @@ def save_report(
     )
     _write_public_file(
         review_path,
-        _html_report(record, archive_url, history_url),
+        _html_report(
+            record, archive_url, history_url, github_repository=github_repository
+        ),
         replace=refresh,
         skip_unchanged=refresh,
     )

@@ -53,7 +53,15 @@ def backfill(
             ):
                 counts["existing"] += 1
                 continue
-            report._html_report(public, archive_base_url, archive_base_url)
+            github_repository = (repositories.get(repository_id) or {}).get(
+                "github_repository"
+            )
+            report._html_report(
+                public,
+                archive_base_url,
+                archive_base_url,
+                github_repository=github_repository,
+            )
             report._html_archive(public, path.name, report_base_url)
             counts["eligible"] += 1
             if apply:
@@ -63,6 +71,7 @@ def backfill(
                     {},
                     report_id,
                     repository_id=repository_id,
+                    github_repository=github_repository,
                     report_base_url=report_base_url,
                     archive_base_url=archive_base_url,
                     refresh=True,
@@ -111,6 +120,7 @@ def backfill(
                         "repository": run.get("repository")
                         or metadata.get("repository")
                         or repository_id,
+                        "github_repository": metadata.get("github_repository"),
                         "repository_url": scope.get("repository")
                         or metadata.get("repository_url"),
                     }

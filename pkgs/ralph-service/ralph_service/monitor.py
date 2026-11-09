@@ -144,6 +144,9 @@ class NotificationStore:
                                     repository_id=repo_id,
                                     repository=repository["repository"],
                                     repository_url=repository_url,
+                                    github_repository=repository.get(
+                                        "github_repository"
+                                    ),
                                     report_base_url=report_base_url,
                                     archive_base_url=archive_base_url,
                                 )

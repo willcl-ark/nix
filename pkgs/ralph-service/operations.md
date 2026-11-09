@@ -19,6 +19,11 @@ repeating inference. Native Forgejo publication can continue without a report
 link if saving fails; GitHub comment creation and updates require a Review
 report URL.
 
+Report source and commit links use the configured `github_repository` upstream
+when present. PR-discussion links retain their original repository URL. New
+snapshots save the upstream mapping; refreshing older snapshots with
+`--repositories` supplies it without modifying their JSON.
+
 PR comments reuse approved finding summaries. Telegram sends a notification
 with metadata and a report link, never review prose. Neither delivery channel
 rewrites the judge's wording.

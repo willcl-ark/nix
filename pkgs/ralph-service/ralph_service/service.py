@@ -489,6 +489,7 @@ def process_job(
                         repository_id=bot_config.repo_id,
                         repository=bot_config.repository,
                         repository_url=bot_config.repository_url,
+                        github_repository=bot_config.github_repository,
                         report_base_url=bot_config.report_base_url,
                         archive_base_url=bot_config.archive_base_url,
                     )

@@ -56,12 +56,22 @@ class ReportTests(unittest.TestCase):
                 123,
                 result,
                 "linked-review",
-                repository_url="https://github.com/bitcoin/bitcoin",
+                repository_url="https://forge.example/mirrors/core",
+                github_repository="bitcoin/bitcoin",
             )
             human = (root / "reports" / name).read_text()
             saved = json.loads((root / "linked-review.json").read_text())
             report.save_report(root, 123, {}, "linked-review", refresh=True)
             self.assertEqual(human, (root / "reports" / name).read_text())
+        self.assertEqual(saved["github_repository"], "bitcoin/bitcoin")
+        self.assertIn('href="https://forge.example/mirrors/core/pulls/123"', human)
+        self.assertIn(
+            f'href="https://github.com/bitcoin/bitcoin/commit/{"a" * 40}"', human
+        )
+        self.assertIn(
+            f'href="https://github.com/bitcoin/bitcoin/blob/{"a" * 40}/src/example.cpp#L12"',
+            human,
+        )
         self.assertEqual(saved["pr_title"], "Add <span> tests")
         self.assertIn("<h1>Add &lt;span&gt; tests</h1>", human)
         self.assertIn("transitive &lt;span&gt; inclusion", human)
