@@ -78,14 +78,24 @@ class CommentTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, r"comment\.md"):
                         final_comment.load_format(directory)
 
-    def test_failed_verification_retains_references_without_republishing_bodies(self):
+    def test_failed_verification_keeps_coverage_notice_without_republishing_claims(
+        self,
+    ):
         example = json.loads(
             (COMMENT_DIR / "examples" / "verification-failed.json").read_text()
         )
+        example["findings"] = json.loads(
+            (COMMENT_DIR / "examples" / "mixed.json").read_text()
+        )["findings"]
         rendered = final_comment.render_report(**example)
+        self.assertIn("Review failed", rendered)
+        self.assertIn("Review coverage was incomplete", rendered)
+        self.assertNotIn("I found no actionable issues", rendered)
+        for finding in example["findings"]:
+            self.assertNotIn(finding["title"], rendered)
+            self.assertNotIn(finding["body"], rendered)
         for previous in example["review_memory"]:
-            self.assertIn(previous["title"], rendered)
-            self.assertIn(previous["status"], rendered)
+            self.assertNotIn(previous["title"], rendered)
             self.assertNotIn(previous["body"], rendered)
         for limitation in example["limitations"]:
             self.assertNotIn(limitation, rendered)
@@ -95,14 +105,6 @@ class CommentTests(unittest.TestCase):
         rendered = final_comment.render_report(**example)
         for limitation in example["limitations"]:
             self.assertNotIn(limitation, rendered)
-        for alternative in example["alternatives"]:
-            self.assertIn(alternative["concept"], rendered)
-            self.assertIn(
-                "<summary>Alternative approach: "
-                + final_comment.summary_label(alternative["name"])
-                + "</summary>",
-                rendered,
-            )
         finding = example["findings"][0]
         before, details = rendered.split("<details>", 1)
         self.assertIn(finding["title"], before)
@@ -173,7 +175,7 @@ class CommentTests(unittest.TestCase):
                 self.assertIn(finding["body"], report)
         for memory in example["review_memory"]:
             self.assertNotIn(memory["title"], rendered)
-            self.assertIn(memory["title"], report)
+            self.assertNotIn(memory["title"], report)
         # Repeated but currently verified findings still compete for the six slots.
         example["review_memory"] = [
             {
@@ -216,6 +218,10 @@ class CommentTests(unittest.TestCase):
         self.assertNotIn("999", rendered)
         self.assertNotIn("Earlier concerns remain unresolved", rendered)
         self.assertIn("current.cpp:1", rendered)
+        report = final_comment.render_report([], review_memory=history, head_sha="head")
+        for entry in history:
+            self.assertEqual(report.count(entry["reason"]), 1)
+        self.assertNotIn("999", report)
 
         duplicate = {**history[0], "key": "old:duplicate", "duplicate_of": "old:0"}
         current = [
@@ -266,6 +272,7 @@ class CommentTests(unittest.TestCase):
         )
         rendered = final_comment.render(**example)
         self.assertIn("Review failed", rendered)
+        self.assertIn("Review coverage was incomplete", rendered)
         self.assertNotIn("I found no actionable issues", rendered)
         for previous in example["review_memory"]:
             self.assertNotIn(previous["title"], rendered)
@@ -276,7 +283,7 @@ class CommentTests(unittest.TestCase):
         self.assertIn("Review coverage was incomplete", rendered)
         self.assertNotIn("I found no actionable issues", rendered)
 
-    def test_history_without_severity_stays_in_the_report(self):
+    def test_unconfirmed_history_is_only_a_notice_in_the_report(self):
         history = {
             "key": "old:1",
             "title": "Historical fee conversion concern",
@@ -292,8 +299,8 @@ class CommentTests(unittest.TestCase):
             "source_evidence": [{"path": "current.cpp", "line": 1, "side": "head"}],
         }
         rendered = final_comment.render_report([], review_memory=[history])
-        self.assertIn(history["title"], rendered)
-        self.assertIn("resolved", rendered)
+        self.assertNotIn(history["title"], rendered)
+        self.assertNotIn("unresolved", rendered)
         self.assertNotIn("Suggestion", rendered)
         self.assertNotIn("None", rendered)
 
@@ -301,8 +308,8 @@ class CommentTests(unittest.TestCase):
         rendered = final_comment.render_report(
             [], review_memory=[history], head_sha="head"
         )
-        self.assertIn(history["title"], rendered)
-        self.assertIn("unconfirmed previous finding", rendered)
+        self.assertNotIn(history["title"], rendered)
+        self.assertIn("Earlier concerns remain unresolved", rendered)
         self.assertNotIn("Suggestion", rendered)
         comment = final_comment.render([], review_memory=[history], head_sha="head")
         self.assertNotIn(history["title"], comment)

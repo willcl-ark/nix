@@ -1,1 +1,1 @@
-${coverage_notice}${limitations}
+${coverage_notice}

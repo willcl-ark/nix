@@ -4,4 +4,4 @@ ${retained_notice}
 
 ${findings}
 
-[Full report](${report_url})
+[Review report](${report_url})

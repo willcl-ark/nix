@@ -106,7 +106,7 @@ proof. A passing test alone does not refute a finding.
 
 See [experiment setup](usage.md#optional-reproduction-experiments) for isolation,
 resource limits and the standalone command. The [rendering guide](../final_comment/README.md)
-describes comment limits, ordering, full reports and retained history.
+describes comment limits, ordering, Review reports and Run archives.
 
 ## Coverage and failures
 

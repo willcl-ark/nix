@@ -24,7 +24,7 @@ def main():
         "--github", action="store_true", help="preview the GitHub comment"
     )
     parser.add_argument(
-        "--report", action="store_true", help="preview the detailed full report"
+        "--report", action="store_true", help="preview the Review report"
     )
     args = parser.parse_args()
     example = args.example or Path(__file__).parent / "examples" / (

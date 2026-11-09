@@ -8,10 +8,6 @@ ${findings}
 
 ${design}
 
-${alternatives}
-
 ${empty}
-
-${history}
 
 ${limitations}

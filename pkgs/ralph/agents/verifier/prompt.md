@@ -303,4 +303,5 @@ Order supported findings by severity, then concrete impact and strength of
 evidence. Preserve this priority order within each severity. Merge candidates
 that describe the same failure mechanism and consequence into one finding.
 Include every source-supported issue for the judge; the caller caps the comment
-at six and keeps the complete review in the full report. Do not fill a quota.
+at six; the Review report includes all current verified findings. Diagnostic
+analysis and historical detail stay in the Run archive. Do not fill a quota.

@@ -61,6 +61,10 @@ inventing a production impact.
 
 The summary must stand alone, normally in one sentence of at most 40 words.
 Explain the trigger, mechanism and one sufficient correction in the body.
+Use one short explanation when sufficient. Add evidence and qualifications to
+what the summary says rather than restating it. Avoid repeating the finding in
+an introduction, conclusion, or separate recommendation. Use extra detail when
+needed to substantiate the claim; never shorten away a material qualification.
 Keep an evidence-backed design recommendation direct, including a recommendation
 against the proposed approach when warranted. Do not turn it into a cosmetic
 suggestion or a personal judgment. Keep optional alternative details outside a

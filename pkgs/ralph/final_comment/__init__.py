@@ -1,11 +1,10 @@
 """Render verified review results with contributor-editable Markdown templates."""
 
-import re
 from collections import Counter
 from html import escape
 from pathlib import Path
 from string import Template
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 _PLACEHOLDERS = {
     "comment": (
@@ -14,8 +13,6 @@ _PLACEHOLDERS = {
         "backport",
         "findings",
         "design",
-        "alternatives",
-        "history",
         "empty",
         "limitations",
     ),
@@ -23,14 +20,8 @@ _PLACEHOLDERS = {
     "findings": ("findings",),
     "finding": ("severity", "title", "summary", "location", "side", "body"),
     "brief_finding": ("severity", "title", "summary", "location", "side"),
-    "retained": ("label", "summary", "location", "side", "body", "provenance"),
-    "provenance": ("provenance",),
-    "resolved": ("history",),
     "design": ("design",),
-    "alternatives": ("alternatives",),
-    "history": ("label", "history"),
-    "history_failed": ("history",),
-    "limitations": ("coverage_notice", "limitations"),
+    "limitations": ("coverage_notice",),
     "github": ("new_findings_notice", "retained_notice", "findings", "report_url"),
 }
 
@@ -40,11 +31,6 @@ def severity_label(severity):
         severity
     ]
     return f"{symbol} {severity.capitalize()}"
-
-
-def summary_label(text):
-    # HTML summaries do not parse Markdown. Escape text before adding code tags.
-    return re.sub(r"(`+)(.+?)\1", r"<code>\2</code>", escape(text))
 
 
 def source_location(finding, repository_url=None, base_sha=None, head_sha=None):
@@ -104,16 +90,16 @@ def _render_sections(template, sections):
     return "\n\n".join(paragraph for paragraph in paragraphs if paragraph.strip())
 
 
-# A display limit only. Full reports and structured exports retain every finding.
+# A display limit only. Review reports and structured exports retain every finding.
 COMMENT_FINDING_LIMIT = 6
 SEVERITY_ORDER = ("critical", "major", "minor", "suggestion")
 
 
-def _comment_findings(findings):
+def _ordered_findings(findings):
     # The verifier orders equally severe findings by impact and evidence.
     return sorted(
         findings, key=lambda finding: SEVERITY_ORDER.index(finding["severity"])
-    )[:COMMENT_FINDING_LIMIT]
+    )
 
 
 def _current_findings(findings, memory, head_sha):
@@ -169,6 +155,16 @@ def _current_findings(findings, memory, head_sha):
     return current, included
 
 
+def _unconfirmed_history(memory, included_history, verification_failed):
+    return [
+        entry
+        for entry in memory
+        if entry.get("status") not in {"fixed", "invalid"}
+        and not entry.get("current_finding_ids")
+        and (verification_failed or entry["key"] not in included_history)
+    ]
+
+
 def _brief_finding(finding, comment_format, location=None):
     return Template(comment_format["brief_finding"]).substitute(
         severity=severity_label(finding["severity"]),
@@ -183,7 +179,6 @@ def render(
     findings,
     limitations=(),
     concept_summary=None,
-    alternatives=(),
     backport=None,
     review_memory=None,
     verification_failed=False,
@@ -195,7 +190,7 @@ def render(
     repository_url=None,
     base_sha=None,
 ):
-    """Render a bounded current review; history and explanations live in the report."""
+    """Render a bounded PR comment using the approved finding summaries."""
     comment_format = (
         load_format() if comment_format is None else validate_format(comment_format)
     )
@@ -203,7 +198,11 @@ def render(
     findings, included_history = _current_findings(
         findings, review_memory or [], head_sha
     )
-    selected = [] if verification_failed else _comment_findings(findings)
+    selected = (
+        []
+        if verification_failed
+        else _ordered_findings(findings)[:COMMENT_FINDING_LIMIT]
+    )
     if verification_failed:
         sections["verification_failed"] = (
             "Review failed because required verification did not complete."
@@ -232,25 +231,21 @@ def render(
     notices = []
     if len(findings) > len(selected) and not verification_failed:
         count = len(findings) - len(selected)
-        label = f"{count} additional verified finding{'s' if count != 1 else ''} in the full report"
+        label = f"{count} additional verified finding{'s' if count != 1 else ''} in the Review report"
         notices.append(f"[{label}](<{report_url}>)." if report_url else label + ".")
     # Never replay unverified claims or infer that omitted history was resolved.
-    unlinked = [
-        entry
-        for entry in review_memory or []
-        if entry.get("status") not in {"fixed", "invalid"}
-        and not entry.get("current_finding_ids")
-        and (verification_failed or entry["key"] not in included_history)
-    ]
+    unlinked = _unconfirmed_history(
+        review_memory or [], included_history, verification_failed
+    )
     if unlinked:
         notices.append(
-            "Earlier concerns remain unresolved; see the full report for their current assessments."
+            "Earlier concerns remain unresolved; see the Run archive linked from the Review report."
         )
     if limitations or any(
         entry.get("status") == "unclear" for entry in review_memory or []
     ):
         sections["limitations"] = Template(comment_format["limitations"]).substitute(
-            coverage_notice="Review coverage was incomplete.", limitations=""
+            coverage_notice="Review coverage was incomplete."
         )
     if (
         not selected
@@ -274,7 +269,6 @@ def render_report(
     findings,
     limitations=(),
     concept_summary=None,
-    alternatives=(),
     backport=None,
     review_memory=None,
     verification_failed=False,
@@ -283,19 +277,45 @@ def render_report(
     review_tier=None,
     head_sha=None,
 ):
-    if comment_format is None:
-        comment_format = load_format()
-    else:
-        comment_format = validate_format(comment_format)
+    """Render the approved review; diagnostic detail belongs in the run archive."""
+    comment_format = (
+        load_format() if comment_format is None else validate_format(comment_format)
+    )
 
     def fill(name, **values):
         return Template(comment_format[name]).substitute(values)
 
     sections = dict.fromkeys(_PLACEHOLDERS["comment"], "")
+    memory = review_memory or []
+    findings, included_history = _current_findings(findings, memory, head_sha)
+    findings = [] if verification_failed else _ordered_findings(findings)
     if verification_failed:
         sections["verification_failed"] = (
             "Review failed because required verification did not complete."
         )
+
+    def finding_text(finding):
+        summary = finding.get("presented_summary") or finding["summary"]
+        body = finding.get("presented_body") or finding.get("body", "")
+        if not body or body == summary:
+            return _brief_finding(finding, comment_format)
+        return fill(
+            "finding",
+            severity=severity_label(finding["severity"]),
+            title=finding.get("presented_title") or finding["title"],
+            summary=summary,
+            location=source_location(finding),
+            side=finding.get("side", "head"),
+            body=body,
+        )
+
+    if findings:
+        sections["findings"] = fill(
+            "findings",
+            findings="\n\n".join(finding_text(finding) for finding in findings),
+        )
+    if concept_summary and not verification_failed:
+        sections["design"] = fill("design", design=concept_summary)
     if backport is not None:
         details = []
         for key, heading in (
@@ -313,248 +333,39 @@ def render_report(
             summary=backport["summary"],
             details="\n\n" + "\n\n".join(details) if details else "",
         )
-    memory = review_memory or []
-    findings, included_history = _current_findings(
-        findings, memory, None if verification_failed else head_sha
-    )
-    memory_groups = {}
-    for index, entry in enumerate(memory):
-        key = entry.get("duplicate_of") or entry.get("key") or index
-        memory_groups.setdefault(key, []).append(entry)
-
-    def active_entries(group):
-        return [
-            entry for entry in group if entry.get("status") not in ("fixed", "invalid")
-        ]
-
-    finding_groups = {}
-    current_counts = Counter()
-
-    def finding_text(finding):
-        return fill(
-            "finding",
-            severity=severity_label(finding["severity"]),
-            title=finding.get("title", ""),
-            summary=finding["summary"],
-            location=f"{finding.get('path', '')}:{finding.get('line', '')}",
-            side=finding.get("side", "head"),
-            body=finding.get("body", ""),
-        )
-
-    def previous_report(entry):
-        status = entry.get("status", "unclear")
-        parts = []
-        if status == "unclear":
-            parts.append("Not confirmed against this revision.")
-        elif status == "fixed":
-            parts.append("Fixed.")
-        elif status == "invalid":
-            parts.append("No longer considered actionable.")
-        if entry.get("source_head"):
-            parts.append(f"First reported at `{entry['source_head']}`.")
-        report_url = entry.get("source_report_url", "")
-        if urlsplit(report_url).scheme in ("https", "http"):
-            report_url = report_url.replace("(", "%28").replace(")", "%29")
-            parts.append(f"[Original review]({report_url}).")
-        if entry.get("checked_head"):
-            parts.append(f"Last checked at `{entry['checked_head']}`.")
-        if entry.get("reason") and status != "still_present":
-            parts.append(entry["reason"])
-        position = {
-            "address_elsewhere": "The author plans to address this separately.",
-            "wontfix": "The author does not plan to fix this.",
-            "rejected": "The author disagrees with this finding.",
-        }.get(entry.get("author_position"))
-        if position:
-            parts.append(position)
-        for comment in entry.get("author_comments", []):
-            url = comment.get("url", "")
-            if urlsplit(url).scheme in ("https", "http"):
-                url = url.replace("(", "%28").replace(")", "%29")
-                parts.append(
-                    f"[Author reply]({url}) {comment.get('updated_at', '')}".rstrip()
-                )
-        return " ".join(parts)
-
-    severity_order = ("critical", "major", "minor", "suggestion")
-
-    def published_findings(entry):
-        if entry.get("last_presented_findings"):
-            return entry["last_presented_findings"]
-        finding = dict(entry)
-        for field in ("title", "summary", "body"):
-            if entry.get("presented_" + field):
-                finding[field] = entry["presented_" + field]
-        return [finding]
-
-    def representative(group):
-        return min(
-            group,
-            key=lambda entry: min(
-                severity_order.index(finding["severity"])
-                if finding.get("severity") in severity_order
-                else len(severity_order)
-                for finding in published_findings(entry)
-            ),
-        )
-
-    def provenance(group):
-        if len(group) == 1:
-            return previous_report(group[0])
-        reports = [
-            f"- {entry.get('path', '')}:{entry.get('line', '')}. {previous_report(entry)}"
-            for entry in group
-        ]
-        return "Previous reports of the same concern:\n\n" + "\n".join(reports)
-
-    def memory_text(groups, finding, status=None):
-        active = [entry for group in groups for entry in active_entries(group)]
-        status = status or ("not confirmed" if active else "resolved")
-        severity = finding.get("severity")
-        label = f"{severity.capitalize()} · {status}" if severity else status
-        return fill(
-            "retained",
-            label=summary_label(f"[{label}] {finding['title']}"),
-            summary=finding.get("summary") or "",
-            location=f"{finding.get('path') or ''}:{finding.get('line') or ''}",
-            side=finding.get("side") or "head",
-            body=finding.get("body") or "",
-            provenance="\n\n".join(provenance(group) for group in groups),
-        )
-
-    matched_groups = set()
-    history = []
-    resolved_history = []
-    unresolved_history = []
-    for finding in findings:
-        text = finding_text(finding)
-        linked = {
-            key: group
-            for key, group in memory_groups.items()
-            if any(
-                finding["id"] in entry.get("current_finding_ids", [])
-                or (entry["key"] in included_history and finding["id"] == entry["key"])
-                for entry in active_entries(group)
+    unconfirmed = _unconfirmed_history(memory, included_history, verification_failed)
+    counts = Counter(finding["severity"] for finding in findings)
+    overview = [
+        f"{counts[severity]} {severity}{' finding' if severity != 'suggestion' else ''}{'s' if counts[severity] != 1 else ''}"
+        for severity in SEVERITY_ORDER
+        if counts[severity]
+    ]
+    sections["overview"] = " · ".join(overview)
+    if unconfirmed:
+        sections["overview"] = "\n\n".join(
+            part
+            for part in (
+                sections["overview"],
+                "Earlier concerns remain unresolved; see the Run archive for their assessments.",
             )
-        }
-        if linked:
-            matched_groups.update(linked)
-            reports = []
-            for key, group in linked.items():
-                if key in included_history:
-                    for old in published_findings(
-                        representative(active_entries(group))
-                    ):
-                        reports.append(memory_text([group], old, "previously reported"))
-                else:
-                    reports.append(provenance(group))
-            text += "\n\n" + fill("provenance", provenance="\n\n".join(reports))
-        current_counts[finding["severity"]] += 1
-        finding_groups.setdefault(finding["severity"], []).append(text)
-    for key, group in memory_groups.items():
-        if key in matched_groups:
-            continue
-        active = active_entries(group)
-        eligible = active or group
-        entry = representative(eligible)
-        for finding in published_findings(entry):
-            if verification_failed:
-                history.append(
-                    f"- **{finding.get('title', '')}** ({finding.get('path', '')}:"
-                    f"{finding.get('line', '')}, {finding.get('side', 'head')}). "
-                    f"Status: {entry.get('status', 'unclear')}."
-                )
-            elif active:
-                history.append(memory_text([group], finding))
-                unresolved_history.append(finding)
-            else:
-                resolved_history.append(memory_text([group], finding))
-    rendered_findings = []
-    for severity in severity_order:
-        group = finding_groups.get(severity, [])
-        if group:
-            rendered_findings.extend(group)
-    if rendered_findings:
-        visible = rendered_findings[:COMMENT_FINDING_LIMIT]
-        extra = rendered_findings[COMMENT_FINDING_LIMIT:]
-        if extra:
-            visible.append(
-                fill(
-                    "history",
-                    label=f"Additional verified findings ({len(extra)})",
-                    history="\n\n".join(extra),
-                )
-            )
-        sections["findings"] = fill("findings", findings="\n\n".join(visible))
-    rendered_design = []
-    if concept_summary:
-        rendered_design.append(f"**Concept and approach.** {concept_summary}")
-    if rendered_design:
-        sections["design"] = fill("design", design="\n\n".join(rendered_design))
-    if alternatives:
-        rendered_alternatives = []
-        for alternative in alternatives:
-            text = (
-                f"**{alternative['name']}.** {alternative['concept']} "
-                f"Benefit: {alternative['benefit']} "
-                f"Trade-off: {alternative['cost']}"
-            )
-            if alternative["unresolved"]:
-                text += f" Unresolved: {alternative['unresolved']}"
-            if alternative["citations"]:
-                text += " " + " ".join(
-                    f"[Source {index}]({citation})"
-                    for index, citation in enumerate(alternative["citations"], 1)
-                )
-            rendered_alternatives.append(
-                "<details>\n<summary>Alternative approach: "
-                + summary_label(alternative["name"])
-                + "</summary>\n\n"
-                + text
-                + "\n\n</details>"
-            )
-        sections["alternatives"] = fill(
-            "alternatives", alternatives="\n\n".join(rendered_alternatives)
+            if part
         )
-    if history or resolved_history:
-        history_label = f"Unconfirmed previous findings ({len(unresolved_history)})"
-        if not unresolved_history:
-            history_label = "Previous findings"
-        if resolved_history:
-            history.append(fill("resolved", history="\n\n".join(resolved_history)))
-        if verification_failed:
-            sections["history"] = fill("history_failed", history="\n\n".join(history))
-        else:
-            sections["history"] = fill(
-                "history",
-                label=history_label,
-                history="\n\n".join(history),
-            )
-    if not unresolved_history and not any(
-        value for name, value in sections.items() if name != "history"
-    ):
-        sections["empty"] = (
-            "I found no actionable issues in this static review."
-            if not limitations
-            else "No verified findings are available from this review."
-        )
-    if limitations:
+    if limitations or any(entry.get("status") == "unclear" for entry in memory):
         sections["limitations"] = fill(
             "limitations",
             coverage_notice="Review coverage was incomplete.",
-            limitations="",
         )
-    counts = [
-        f"{current_counts[severity]} {severity}{' finding' if severity != 'suggestion' else ''}{'s' if current_counts[severity] != 1 else ''}"
-        for severity in severity_order
-        if current_counts[severity]
-    ]
-    if unresolved_history:
-        count = len(unresolved_history)
-        counts.append(
-            f"{count} unconfirmed previous finding{'s' if count != 1 else ''}"
+    if (
+        not findings
+        and not concept_summary
+        and not backport
+        and not verification_failed
+    ):
+        sections["empty"] = (
+            "No verified findings are available from this review."
+            if limitations or unconfirmed
+            else "I found no actionable issues in this static review."
         )
-    sections["overview"] = " · ".join(counts)
     content = _render_sections(comment_format["comment"], sections)
     if review_tier:
         content += f"\n\n<!-- Review tier: {escape(review_tier)} -->"
@@ -576,7 +387,7 @@ def render_github(
     comment_format = (
         load_format() if comment_format is None else validate_format(comment_format)
     )
-    selected = _comment_findings(findings)
+    selected = _ordered_findings(findings)[:COMMENT_FINDING_LIMIT]
     rendered = [
         _brief_finding(
             finding,
@@ -591,7 +402,7 @@ def render_github(
             "new_findings_notice": (
                 f"{len(selected)} major or critical finding{'s' if len(selected) != 1 else ''}."
                 + (
-                    f" {len(findings) - len(selected)} additional verified findings in the full report."
+                    f" {len(findings) - len(selected)} additional verified findings in the Review report."
                     if len(findings) > len(selected)
                     else ""
                 )
@@ -600,7 +411,7 @@ def render_github(
             ),
             "retained_notice": (
                 "Previously discussed major concerns remain unresolved. "
-                "Their original findings and current assessments are retained in the full report."
+                "Their assessments are in the Run archive linked from the Review report."
                 if has_retained
                 else ""
             ),

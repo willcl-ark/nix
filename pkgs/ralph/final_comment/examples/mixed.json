@@ -35,16 +35,6 @@
     }
   ],
   "concept_summary": "Replacing the index in one operation reduces the recovery states that callers must handle. The writer still needs a clear rule for when the replacement becomes durable.",
-  "alternatives": [
-    {
-      "name": "Commit through a temporary file",
-      "concept": "Write the replacement beside the existing index and rename it after commit.",
-      "benefit": "A failed write leaves the current index available.",
-      "cost": "The update temporarily needs space for both copies.",
-      "unresolved": "Directory synchronization still needs to be checked on each supported platform.",
-      "citations": ["https://example.invalid/index-design"]
-    }
-  ],
   "review_memory": [
     {
       "key": "prior:1",

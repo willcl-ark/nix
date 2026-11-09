@@ -839,7 +839,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(entry["severity"], self.published["severity"])
         self.assertEqual(entry["status"], "unclear")
         self.assertFalse(entry["collapsed"])
-        self.assertIn(self.published["title"], self.result.content)
+        self.assertNotIn(self.published["title"], self.result.content)
+        self.assertIn("Earlier concerns remain unresolved", self.result.content)
         self.assertNotIn("Previous findings and author responses", self.result.content)
 
     def test_verified_repeat_preserves_finding_and_links_memory(self):
@@ -1117,7 +1118,7 @@ class PipelineTests(unittest.TestCase):
                     )
                 )
 
-    def test_failed_verifier_retains_compact_history_and_fails_run(self):
+    def test_failed_verifier_retains_history_in_diagnostics_and_fails_run(self):
         self.tier, self.audits = "routine", []
         packet = {
             "repository": self.source["repository"],
@@ -1142,7 +1143,8 @@ class PipelineTests(unittest.TestCase):
         self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(self.result.findings, [])
         self.assertTrue(self.result.content.startswith("Review failed"))
-        self.assertIn(self.published["title"], self.result.content)
+        self.assertNotIn(self.published["title"], self.result.content)
+        self.assertIn("Earlier concerns remain unresolved", self.result.content)
         self.assertNotIn(self.published["body"], self.result.content)
         self.assertNotIn("##### Findings", self.result.content)
         self.assertEqual(self.debug["review_memory"][0]["body"], self.published["body"])
@@ -1508,7 +1510,7 @@ class PipelineTests(unittest.TestCase):
             ["independent:1", "symbol_usage:1"],
         )
         self.assertEqual(self.debug["coverage"]["status"], "complete")
-        self.assertIn("Concept and approach", content)
+        self.assertIn("Design and approach", content)
         self.assertIn("process cost", content)
         self.assertIn("https://example.invalid/o/r/pulls/42", content)
         self.assertNotIn("Alternatives considered", content)
