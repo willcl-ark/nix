@@ -43,7 +43,8 @@ PR comments show at most six findings, each with its approved summary and source
 location. The Review report includes every current verified finding with its
 explanation, plus approved concept/backport conclusions and a coverage notice.
 The service renders approved structured fields with the same renderer. Detailed
-coverage logs stay in the Run archive; the report retains a brief coverage notice.
+coverage logs stay in the Run archive. Web reports link to its coverage section;
+CLI previews retain a brief notice. Failed verification remains explicit.
 Both use the same severity ordering and preserve the supplied impact order on
 ties. Additional comment findings link to the report.
 

@@ -276,6 +276,7 @@ def render_report(
     comment_format=None,
     review_tier=None,
     head_sha=None,
+    coverage_url=None,
 ):
     """Render the approved review; diagnostic detail belongs in the run archive."""
     comment_format = (
@@ -350,10 +351,16 @@ def render_report(
             )
             if part
         )
-    if limitations or any(entry.get("status") == "unclear" for entry in memory):
+    if (
+        coverage_url
+        or limitations
+        or any(entry.get("status") == "unclear" for entry in memory)
+    ):
         sections["limitations"] = fill(
             "limitations",
-            coverage_notice="Review coverage was incomplete.",
+            coverage_notice=f"[Coverage details](<{coverage_url}>)"
+            if coverage_url
+            else "Review coverage was incomplete.",
         )
     if (
         not findings

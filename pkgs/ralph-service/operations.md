@@ -7,7 +7,7 @@ publication holds and state backups. NixOS settings belong in the
 ## Reports and statistics
 
 The Review report contains approved findings, their explanations and qualifications,
-and a brief coverage notice. The Run archive contains preliminary agent replies, decisions,
+and a coverage link into the Run archive. Failed verification remains explicit. The Run archive contains preliminary agent replies, decisions,
 coverage diagnostics, retained history and usage. Intermediate claims in the
 archive are not published findings. Both views use one saved public JSON record;
 private request payloads, configuration and private traces remain private.

@@ -62,7 +62,9 @@ class ReportTests(unittest.TestCase):
             archive = (root / name).read_text()
             saved = json.loads((root / "empty-review.json").read_text())
         self.assertIn("No verified findings", human)
-        self.assertIn("Review coverage was incomplete", human)
+        self.assertNotIn("Review coverage was incomplete", human)
+        self.assertIn('href="/traces/empty-review.html#coverage"', human)
+        self.assertIn('id="coverage"', archive)
         self.assertNotIn("Alternative approach", human)
         self.assertNotIn("unreviewed.cpp", human)
         self.assertNotIn("caller not checked", human)
@@ -355,6 +357,7 @@ if (value < 1) return;
                 root = Path(directory)
                 name = report.save_report(root, 123, result, "finding-review")
                 rendered = (root / name).read_text()
+                self.assertIn('id="coverage"', rendered)
                 public = json.loads((root / "finding-review.json").read_text())
                 for field in ("summary", "body"):
                     self.assertIn(finding[field], rendered)
@@ -462,7 +465,12 @@ if (value < 1) return;
             root = Path(directory)
             name = report.save_report(root, 123, result, "failed-review")
             html = (root / name).read_text()
+            human = (root / "reports" / name).read_text()
             public = json.loads((root / "failed-review.json").read_text())
+        self.assertIn(
+            "Review failed because required verification did not complete", human
+        )
+        self.assertIn('href="/traces/failed-review.html#coverage"', human)
         self.assertEqual(public["status"], "failed")
         self.assertEqual(public["stages"]["verifier"]["http_status"], 400)
         self.assertIn("Review failed", html)

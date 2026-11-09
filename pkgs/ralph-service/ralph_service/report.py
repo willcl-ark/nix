@@ -1092,8 +1092,6 @@ def _html_archive(record, json_name, report_url):
         engine_sections = f"""
 <section><h2>Concept and Approach</h2>
 {_concept_assessment_html(record.get("concept_assessment"))}</section>
-<section><h2>Coverage</h2>
-{_coverage_html(record.get("coverage"), detailed=True)}</section>
 <section><h2>Findings</h2>
 {_findings_html(record.get("finding_attribution") or [])}</section>
 <section id="challenger"><h2>Challenger outcomes</h2>
@@ -1139,6 +1137,8 @@ Base: <code>{_escape(record["base"])}</code></p>
 </header>
 <p class="notice">{_escape(record["notice"])}</p>
 <p><a href="{_escape(report_url)}">Read the Review report</a></p>
+<section id="coverage"><h2>Coverage</h2>
+{_coverage_html(record.get("coverage"), detailed=True)}</section>
 {engine_sections}
 {
         "<section><h2>Previous findings and replies</h2>"
@@ -1189,6 +1189,7 @@ def _html_report(record, archive_url, history_url):
             review_memory=record.get("review_memory"),
             verification_failed=failed,
             head_sha=record["head"],
+            coverage_url=archive_url + "#coverage",
         )
     content = nh3.clean(
         MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(review)
@@ -1261,6 +1262,7 @@ body { margin: 2rem auto; max-width: 76rem; padding: 0 1rem; font-size: 16px; ov
 pre { white-space: pre-wrap; }
 th, td { vertical-align: top; }
 details { border-top: 1px solid var(--border); padding: .75rem 0; }
+main > details { border-top: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
 summary { cursor: pointer; font-weight: 600; }
 """
     )
