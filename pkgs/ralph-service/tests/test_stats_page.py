@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from ralph.usage import Ledger
-from ralph_service import jobs, report, stats, stats_page
+from ralph_service import history, jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
@@ -379,6 +379,68 @@ class StatsPageTests(unittest.TestCase):
         from html import unescape
 
         counts = json.loads(unescape(re.search(r'data-severities="([^"]+)"', html)[1]))
+        self.assertEqual(summary["reviews"][0]["report_severities"], {})
+        self.assertEqual(sum(counts.values()), 0)
+
+    def test_report_counts_include_only_retained_findings_checked_at_head(self):
+        head = "a" * 40
+        retained = {
+            "key": "prior:1",
+            "title": "Retained concern",
+            "severity": "minor",
+            "status": "still_present",
+            "checked_head": head,
+            "reason": "The failure still occurs at this revision.",
+            "source_evidence": [{"path": "src/test.cpp", "line": 12, "side": "head"}],
+        }
+        result = {
+            "schema_version": 1,
+            "engine": {"name": "current"},
+            "head_sha": head,
+            "base_sha": "b" * 40,
+            "run": {"status": "completed"},
+            "output": {
+                "schema_version": 2,
+                "exports": {
+                    "findings": [],
+                    "review_memory": [
+                        retained,
+                        {**retained, "key": "prior:2", "checked_head": "c" * 40},
+                        {
+                            **retained,
+                            "key": "prior:3",
+                            "current_candidate_ids": ["candidate"],
+                        },
+                    ],
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = jobs.JobStore(root / "jobs.sqlite3")
+            store.enqueue(
+                42, "master", head, "opened", engine_identity={"name": "current"}
+            )
+            job = store.claim()
+            store.save_result(job, result)
+            store.complete(job)
+            reports = root / "reports"
+            name = report.save_report(reports, 42, result, "review")
+            history.save_history(reports)
+            catalog = json.loads((reports / "history.json").read_text())
+            summary = stats.collect_stats(root, reports)
+            human = (reports / "reports" / name).read_text()
+        self.assertIn("Retained concern", human)
+        self.assertEqual(catalog[0]["findings"], 1)
+        self.assertEqual(summary["reviews"][0]["report_severities"], {"minor": 1})
+        self.assertEqual(summary["reviews"][0]["findings"]["published"], 0)
+        self.assertEqual(summary["overview"]["published_findings"], 0)
+        rendered = stats_page._reviews_table(summary["reviews"], None, None)
+        from html import unescape
+
+        counts = json.loads(
+            unescape(re.search(r'data-severities="([^"]+)"', rendered)[1])
+        )
         self.assertEqual(counts["minor"], 1)
         self.assertEqual(sum(counts.values()), 1)
 

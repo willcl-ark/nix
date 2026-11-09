@@ -32,7 +32,10 @@ History remains at `archiveBaseUrl/<PR>/` for Core and
 to the Review report and Run archive. Add `?commit=<SHA>` to filter by a full
 commit hash or prefix. The archive root has the existing search form. History
 includes runs that were never posted, counts each run once, and labels reports
-unavailable until their human pages have been generated.
+unavailable until their human pages have been generated. History and the Reviews
+table count the findings shown in the Review report, including current-head
+confirmed retained findings. Agent attribution and publication metrics continue
+to count exported findings, rather than crediting retained findings again.
 
 Before switching links to `/report`, preview the offline backfill using the
 installed service Python environment:
@@ -48,7 +51,12 @@ snapshots, or recover missing snapshots from completed jobs. Add `--refresh`
 to regenerate existing pages with the current renderer from their saved JSON. This makes no model
 calls or comment updates. Human pages use structured approved findings; the original Markdown and raw
 coverage messages stay in the archive JSON. Inspect reported failures before cutover. Rebuild
-statistics with `--full` afterward. Deploy the engine, service, module options and
+statistics with `--full` afterward. Rendering changes apply to eligible saved
+records through this refresh, including source links, grouping and outcome text.
+PR titles appear when saved in the public record; refresh does not fetch missing
+metadata or rewrite approved prose. Judge and reconciliation prompt changes
+affect future reviews only. Retained findings link to their earlier report for
+context rather than treating an old explanation as newly verified. Deploy the engine, service, module options and
 static routes together; old workers retain their pinned configuration and should
 finish before the one-time presentation backfill. The template schema changes
 without compatibility handling. Publication retries holding an old template

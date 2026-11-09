@@ -1104,10 +1104,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
     if not reviews:
         return "<p>No saved reviews were recorded.</p>"
     levels = ["critical", "major", "minor", "suggestion"]
-    if any(
-        set(_mapping(_mapping(r.get("findings")).get("severities"))) - set(levels)
-        for r in reviews
-    ):
+    if any(set(_mapping(r.get("report_severities"))) - set(levels) for r in reviews):
         levels.append("unknown")
     labels = {"suggestion": "Suggestions", "unknown": "Unclassified"}
     rows = []
@@ -1125,8 +1122,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
         ):
             latest[key] = review
     for review in reviews:
-        findings = _mapping(review.get("findings"))
-        severities = findings.get("severities")
+        severities = review.get("report_severities")
         counts = _mapping(severities)
         counts = {
             level: sum(

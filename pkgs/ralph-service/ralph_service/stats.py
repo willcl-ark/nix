@@ -13,6 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
 
+from final_comment import report_findings
 from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
@@ -378,6 +379,13 @@ def _review_summary(row):
     research_completed = _archaeology_research_completed(debug)
     coverage = _coverage_summary(debug)
     routing = _routing_summary(debug)
+    displayed_findings = report_findings(
+        findings,
+        core_trace.review_memory_export(result),
+        head_sha=result.get("head_sha") or row["head"],
+        verification_failed=(result.get("run") or {}).get("status") == "failed"
+        or coverage["verification_status"] == "failed",
+    )
     metrics = _saved_review_metrics(debug, result)
     report_name = _report_name(None, row, result)
     _collect_limit_runs(limit_runs, debug, result, row, report_name)
@@ -443,6 +451,18 @@ def _review_summary(row):
         "coverage": coverage["status"],
         "context_coverage": coverage["context_status"],
         "verification_status": coverage["verification_status"],
+        # The report includes retained findings checked at this head. Keep its
+        # display counts separate from exported/published attribution metrics.
+        "report_severities": dict(
+            Counter(
+                finding.get("severity")
+                if isinstance(finding.get("severity"), str)
+                else "unknown"
+                for finding in displayed_findings
+            )
+        )
+        if exported_findings is not None
+        else None,
         "findings": {
             "export_status": "supported"
             if exported_findings is not None

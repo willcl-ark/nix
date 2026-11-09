@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
+from final_comment import report_findings
+
 from . import report, theme
 
 
@@ -29,7 +31,7 @@ def _report_time(record, path):
 
 
 # Increment when the compact record or timestamp calculation changes.
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 
 def save_history(
@@ -99,6 +101,7 @@ def _save_history(
             repository_id = value.get("repository_id", namespace)
             if repository_id != namespace:
                 continue
+            verification = (value.get("coverage") or {}).get("verification") or {}
             record = {
                 "repository_id": repository_id,
                 "repository": str(value.get("repository") or repository_id),
@@ -106,8 +109,16 @@ def _save_history(
                 "pr": pr,
                 "head": str(value.get("head") or "unknown"),
                 "status": str(value.get("status") or "unknown"),
-                "findings_count": len(value["findings"])
-                if isinstance(value.get("findings"), list)
+                "findings_count": len(
+                    report_findings(
+                        value["findings"],
+                        value.get("review_memory"),
+                        head_sha=value.get("head"),
+                        verification_failed=value.get("status") == "failed"
+                        or verification.get("status") == "failed",
+                    )
+                )
+                if value.get("findings_export_status") == "supported"
                 else "Unknown",
                 "timestamp": _report_time(value, path),
             }
