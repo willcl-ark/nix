@@ -58,7 +58,14 @@ def store_paths(value):
 
 class JobUnits:
     def __init__(
-        self, jobs, state_dir, entries, key_file, report_dir=None, report_base_url=None
+        self,
+        jobs,
+        state_dir,
+        entries,
+        key_file,
+        report_dir=None,
+        report_base_url=None,
+        archive_base_url=None,
     ):
         self.jobs = jobs
         self.root = Path(state_dir)
@@ -68,6 +75,7 @@ class JobUnits:
         self.key_file = str(key_file)
         self.report_dir = str(report_dir) if report_dir is not None else None
         self.report_base_url = report_base_url
+        self.archive_base_url = archive_base_url
         self.executable = os.environ["RALPH_JOB_EXECUTABLE"]
         if not re.fullmatch(r"/nix/store/[^/]+/bin/ralph-job", self.executable):
             raise ValueError("RALPH_JOB_EXECUTABLE must name a pinned package")
@@ -88,6 +96,7 @@ class JobUnits:
             "openai_key_file": self.key_file,
             "report_dir": self.report_dir,
             "report_base_url": self.report_base_url,
+            "archive_base_url": self.archive_base_url,
         }
         # Register every immutable dependency before systemd can start the job.
         for index, package in enumerate(sorted(store_paths(manifest))):

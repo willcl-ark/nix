@@ -32,6 +32,9 @@ class JobUnitTests(unittest.TestCase):
                     }
                 },
                 Path("/run/secrets/api"),
+                report_dir=self.root / "public",
+                report_base_url="https://review.example/report",
+                archive_base_url="https://review.example/traces",
             )
 
     def test_restart_preserves_live_attempt_and_capacity(self):
@@ -124,6 +127,8 @@ class JobUnitTests(unittest.TestCase):
         self.assertEqual(manifest["executable"], "/nix/store/old-package/bin/ralph-job")
         self.assertEqual(manifest["entry"]["forgejo_token_file"], "/run/secrets/token")
         self.assertEqual(manifest["token"], claim["token"])
+        self.assertEqual(manifest["report_base_url"], "https://review.example/report")
+        self.assertEqual(manifest["archive_base_url"], "https://review.example/traces")
         with patch("ralph_service.job_units.unit_state", return_value="live"):
             self.units.reconcile()
         self.assertTrue(self.jobs.is_current(claim))

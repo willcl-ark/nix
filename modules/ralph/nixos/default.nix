@@ -96,6 +96,8 @@ let
     cfg.reportDir
     "--report-base-url"
     cfg.reportBaseUrl
+    "--archive-base-url"
+    cfg.archiveBaseUrl
   ];
 in
 {
@@ -339,13 +341,19 @@ in
     reportDir = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Public directory for full HTML and JSON review reports. Serve it with a web server; keep it separate from stateDir.";
+      description = "Public directory for run archives and JSON records; human reports are in its reports subdirectory. Keep it separate from stateDir.";
     };
 
     reportBaseUrl = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Public HTTP URL serving reportDir. Enables full report links in review comments.";
+      description = "Public HTTP URL serving reportDir/reports. Used for Review report links.";
+    };
+
+    archiveBaseUrl = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Public HTTP URL serving reportDir. Used for Run archive links.";
     };
 
     openaiKeyFile = lib.mkOption {
@@ -428,8 +436,10 @@ in
           message = "services.ralph.stateDir must be under /var/lib so systemd can manage it with StateDirectory.";
         }
         {
-          assertion = (cfg.reportDir == null) == (cfg.reportBaseUrl == null);
-          message = "services.ralph.reportDir and reportBaseUrl must be set together.";
+          assertion =
+            (cfg.reportDir == null) == (cfg.reportBaseUrl == null)
+            && (cfg.reportDir == null) == (cfg.archiveBaseUrl == null);
+          message = "services.ralph.reportDir, reportBaseUrl and archiveBaseUrl must be set together.";
         }
         {
           assertion =
@@ -483,6 +493,8 @@ in
               registryFile
               "--report-base-url"
               cfg.reportBaseUrl
+              "--archive-base-url"
+              cfg.archiveBaseUrl
             ]
             ++ lib.optionals cfg.subscriptionUsage.enable [
               "--proxy-management-url"

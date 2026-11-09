@@ -40,6 +40,7 @@ def run_manifest(path):
             root,
             Path(manifest["report_dir"]) if manifest["report_dir"] else None,
             manifest["report_base_url"],
+            manifest["archive_base_url"],
         )
         api_key = Path(manifest["openai_key_file"]).read_text().strip()
         if not api_key:

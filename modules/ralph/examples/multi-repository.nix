@@ -5,7 +5,8 @@
     workers = 3;
     openaiKeyFile = "/run/secrets/ralph/proxy-key";
     reportDir = "/var/www/ralph";
-    reportBaseUrl = "https://reviews.example.org";
+    reportBaseUrl = "https://reviews.example.org/report";
+    archiveBaseUrl = "https://reviews.example.org/traces";
     repositories = {
       core = {
         origin = "https://git.example.org/bitcoin/bitcoin.git";

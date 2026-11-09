@@ -27,7 +27,8 @@ let
             enable = true;
             openaiKeyFile = "/run/secrets/key";
             reportDir = "/var/www/ralph";
-            reportBaseUrl = "https://reviews.example.org";
+            reportBaseUrl = "https://reviews.example.org/report";
+            archiveBaseUrl = "https://reviews.example.org/traces";
             repositories = {
               core = repository "core";
               gui = repository "gui" // {
@@ -49,6 +50,10 @@ let
       && lib.hasInfix "--repositories" cfg.systemd.services.ralph.serviceConfig.ExecStart
       && lib.hasInfix "--repositories" cfg.systemd.services.ralph-stats.serviceConfig.ExecStart
       && lib.hasInfix "--repositories" cfg.systemd.services.ralph-followup.serviceConfig.ExecStart;
+    archiveUrlRequired =
+      failures (evaluate {
+        services.ralph.archiveBaseUrl = lib.mkForce null;
+      }) != [ ];
     publicationRequiresCredentials =
       failures (evaluate {
         services.ralph.repositories.gui.githubPublication = "full";

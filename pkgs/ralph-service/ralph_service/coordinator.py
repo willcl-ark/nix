@@ -208,13 +208,17 @@ def migrate(state_dir, legacy_repo_id, entries):
     _write_manifest(manifest, legacy_repo_id, "complete")
 
 
-def load_contexts(entries, root, report_dir=None, report_base_url=None):
+def load_contexts(
+    entries, root, report_dir=None, report_base_url=None, archive_base_url=None
+):
     """Load the same repository configuration in coordinator and job processes."""
     contexts = {}
     for repo_id, entry in entries.items():
         if not entry.get("bot_login"):
             raise ValueError(f"{repo_id}: bot_login is required")
-        bot = config.repository_config(entry, report_dir, report_base_url)
+        bot = config.repository_config(
+            entry, report_dir, report_base_url, archive_base_url
+        )
         if entry.get("github_publication", "off") != "off" and report_dir is None:
             raise ValueError("GitHub publication requires public reports")
         engine_name = entry.get("engine", "current")
@@ -256,6 +260,7 @@ def main(resources):
     parser.add_argument("--repositories", type=Path, required=True)
     parser.add_argument("--report-dir", type=Path)
     parser.add_argument("--report-base-url")
+    parser.add_argument("--archive-base-url")
     parser.add_argument("--openai-key-file", type=Path)
     parser.add_argument("--migrate-state", action="store_true")
     parser.add_argument("--legacy-repository")
@@ -355,7 +360,11 @@ def main(resources):
         if not args.openai_key_file.read_text().strip():
             raise ValueError("OpenAI key must not be empty")
         contexts = load_contexts(
-            entries, args.state_dir, args.report_dir, args.report_base_url
+            entries,
+            args.state_dir,
+            args.report_dir,
+            args.report_base_url,
+            args.archive_base_url,
         )
         command_store = monitor.NotificationStore(args.state_dir / "telegram.sqlite3")
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
@@ -370,6 +379,7 @@ def main(resources):
         args.openai_key_file,
         args.report_dir,
         args.report_base_url,
+        args.archive_base_url,
     )
     logging.info(
         "review scheduler workers=%d repositories=%s", args.workers, ",".join(contexts)

@@ -95,6 +95,30 @@ class CoordinatorTests(unittest.TestCase):
                 "engine": SimpleNamespace(identity={"name": "test", "config": {}}),
             }
 
+    def test_report_configuration_requires_both_public_views(self):
+        entry = {
+            "origin": "https://git.example/owner/repo.git",
+            "repository": "owner/repo",
+            "forgejo_api": "https://git.example/api/v1/repos/owner/repo",
+        }
+        config.repository_config(entry)
+        with self.assertRaisesRegex(ValueError, "must be set together"):
+            config.repository_config(entry, self.root, "https://review.example/report")
+        bot = config.repository_config(
+            entry,
+            self.root,
+            "https://review.example/report/",
+            "https://review.example/traces/",
+        )
+        self.assertEqual(bot.report_base_url, "https://review.example/report")
+        self.assertEqual(bot.archive_base_url, "https://review.example/traces")
+        for report_url, archive_url in (
+            ("https://review.example/report?token=secret", bot.archive_base_url),
+            (bot.report_base_url, "https://user:secret@review.example/traces"),
+        ):
+            with self.assertRaisesRegex(ValueError, "must be an HTTP URL"):
+                config.repository_config(entry, self.root, report_url, archive_url)
+
     def test_registry_requires_explicit_valid_publication_mode(self):
         path = self.root / "repositories.json"
         entry = {

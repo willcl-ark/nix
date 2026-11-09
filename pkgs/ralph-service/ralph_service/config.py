@@ -34,6 +34,7 @@ class BotConfig:
     comment_marker: str | None = None
     report_dir: Path | None = None
     report_base_url: str | None = None
+    archive_base_url: str | None = None
     github_repository: str | None = None
     repo_id: str = "core"
     submodules: dict = field(default_factory=dict)
@@ -59,27 +60,36 @@ class BotConfig:
             "comment_marker",
             self.comment_marker or default_comment_marker(self.repository),
         )
-        if (self.report_dir is None) != (self.report_base_url is None):
-            raise ValueError("report_dir and report_base_url must be set together")
-        if self.report_base_url is not None:
-            report_url = urlsplit(self.report_base_url)
+        if not (
+            (self.report_dir is None)
+            == (self.report_base_url is None)
+            == (self.archive_base_url is None)
+        ):
+            raise ValueError(
+                "report_dir, report_base_url and archive_base_url must be set together"
+            )
+        for name in ("report_base_url", "archive_base_url"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            public_url = urlsplit(value)
             if (
-                report_url.scheme not in {"http", "https"}
-                or not report_url.netloc
-                or report_url.username
-                or report_url.password
-                or report_url.query
-                or report_url.fragment
+                public_url.scheme not in {"http", "https"}
+                or not public_url.netloc
+                or public_url.username
+                or public_url.password
+                or public_url.query
+                or public_url.fragment
             ):
                 raise ValueError(
-                    "report_base_url must be an HTTP URL without credentials, query or fragment"
+                    f"{name} must be an HTTP URL without credentials, query or fragment"
                 )
-            object.__setattr__(
-                self, "report_base_url", self.report_base_url.rstrip("/")
-            )
+            object.__setattr__(self, name, value.rstrip("/"))
 
 
-def repository_config(entry, report_dir=None, report_base_url=None):
+def repository_config(
+    entry, report_dir=None, report_base_url=None, archive_base_url=None
+):
     """Construct review context without reading runtime credentials."""
     return BotConfig(
         **{
@@ -99,6 +109,7 @@ def repository_config(entry, report_dir=None, report_base_url=None):
         },
         report_dir=report_dir,
         report_base_url=report_base_url,
+        archive_base_url=archive_base_url,
     )
 
 
