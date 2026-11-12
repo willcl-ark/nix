@@ -39,7 +39,7 @@ def request(data):
     effort = data.get("reasoning", {}).get("effort")
     if effort and effort != "none":
         payload["thinking"] = {"type": "adaptive"}
-        output_config["effort"] = "max" if effort == "xhigh" else effort
+        output_config["effort"] = effort
     format_ = data.get("text", {}).get("format")
     if format_ and format_.get("type") == "json_schema":
         output_config["format"] = {"type": "json_schema", "schema": format_["schema"]}

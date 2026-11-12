@@ -717,7 +717,7 @@ class ModelUsageTests(unittest.TestCase):
             [request["tool_choice"] for request in sent],
             [{"type": "auto"}, {"type": "none"}],
         )
-        self.assertEqual(sent[0]["output_config"]["effort"], "max")
+        self.assertEqual(sent[0]["output_config"]["effort"], "xhigh")
         self.assertEqual(sent[1]["messages"][1]["content"][0], thinking)
         self.assertEqual(sent[1]["messages"][-1]["content"][0]["type"], "tool_result")
 

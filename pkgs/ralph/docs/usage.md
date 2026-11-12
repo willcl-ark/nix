@@ -67,6 +67,15 @@ Treat a model, endpoint or proxy change as a schema compatibility change until
 checked. It may require schema changes; a successful simple JSON request does
 not establish compatibility with Ralph's actual stage outputs.
 
+Claude effort values pass through unchanged. In particular, `xhigh` must not
+be promoted to `max`: they are distinct native settings on Opus 5.5 and Haiku
+5.5. Check supported effort levels when changing models.
+
+The output token ceiling includes thinking as well as answer text. A provider
+`max_tokens` stop is not an HTTP timeout or an input context-window limit.
+Ralph retains partial answer text in stage diagnostics but rejects incomplete
+stage output; streaming alone does not make that output a finished review.
+
 Before deployment:
 
 - Test the actual stage schemas through the configured endpoint and proxy,
