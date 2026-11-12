@@ -90,6 +90,20 @@ class HealthTests(unittest.TestCase):
             self.assertEqual(len(messages()), 1)
             self.assertIn("3/5", messages()[0][0])
             self.assertIn("https://reviews.example/stats/health/", messages()[0][0])
+            delayed = monitor.NotificationStore(root / "delayed.sqlite3")
+            delayed.observe_health(
+                root, "https://reviews.example/traces", now=now + 366
+            )
+            with closing(delayed._connect()) as db:
+                self.assertEqual(
+                    db.execute("SELECT count(*) FROM outbox").fetchone()[0], 1
+                )
+            stale = monitor.NotificationStore(root / "stale.sqlite3")
+            stale.observe_health(root, "https://reviews.example/traces", now=now + 900)
+            with closing(stale._connect()) as db:
+                self.assertEqual(
+                    db.execute("SELECT count(*) FROM outbox").fetchone()[0], 0
+                )
             store = monitor.NotificationStore(store.path)
             observe(now + 7)
             self.assertEqual(len(messages()), 1)

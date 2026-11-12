@@ -215,7 +215,7 @@ class NotificationStore:
         try:
             summary = json.loads((Path(report_dir) / "stats/stats.json").read_text())
             generated = datetime.fromisoformat(summary["generated_at"]).timestamp()
-            if not 0 <= now - generated <= 300:
+            if not 0 <= now - generated <= 600:
                 return
             groups = summary["health"]["groups"]
         except (OSError, ValueError, KeyError, TypeError):

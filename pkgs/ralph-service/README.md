@@ -395,7 +395,7 @@ Ordinary partial coverage and merely reaching a tool cap do not trigger alerts.
 
 Each incident produces one alert, persisted across monitor restarts. Three
 fresh consecutive successful runs produce a recovery notification. A missing
-or more than five-minute-old stats snapshot cannot start or recover incidents.
+or more than ten-minute-old stats snapshot cannot start or recover incidents.
 The summary uses saved terminal results and dates them from usage-ledger stage
 completion timestamps. It excludes live work, cancelled/stale reviews,
 undated results and overwritten retry attempts; it does not assess whether
