@@ -39,7 +39,21 @@ LOCATION = {
     "line": {"type": "integer"},
     "side": {"type": "string", "enum": ["head", "base"]},
 }
-SOURCE_EVIDENCE = object_schema({**LOCATION, "excerpt": STRING})
+SOURCE_EVIDENCE = object_schema(
+    {
+        **LOCATION,
+        "excerpt": {
+            "type": "string",
+            "description": (
+                "Exact contiguous full source lines starting at the given 1-based line "
+                "in the specified head/base file. Preserve indentation and newlines; "
+                "omit displayed line-number prefixes. No prose summaries, omitted "
+                "lines, inserted ellipses or reformatted code. At most 150 lines and 12000 "
+                "UTF-8 bytes."
+            ),
+        },
+    }
+)
 CANDIDATE = object_schema(
     {
         "kind": {"type": "string", "enum": ["defect", "design", "suggestion"]},
@@ -435,6 +449,7 @@ def tests_discovery(text, snapshot, required_paths, *, stage="tests"):
     assessments = value.pop("test_coverage")
     result = discovery(json.dumps(value), stage, snapshot)
     result["test_coverage"] = []
+    result["rejected_test_coverage"] = []
     limitations = result["coverage"]["limitations"]
     accounted = set()
     if not isinstance(assessments, list):
@@ -467,6 +482,9 @@ def tests_discovery(text, snapshot, required_paths, *, stage="tests"):
         except InvalidReview as exc:
             # An unsupported coverage claim must not erase separately valid leads.
             limitations.append(f"Test coverage assessment {index}: {exc}")
+            result["rejected_test_coverage"].append(
+                {"assessment": assessment, "error": str(exc)}
+            )
             continue
         result["test_coverage"].append(assessment)
         accounted.update(paths)
@@ -506,7 +524,10 @@ def _source_evidence(evidence, snapshot):
             f"{number}: {line}\n" for number, line in enumerate(lines, source["line"])
         )
         if not actual.partition("\n")[2].startswith(expected):
-            raise InvalidReview("Source evidence does not match the snapshot")
+            raise InvalidReview(
+                "Source evidence does not match the snapshot: "
+                f"{source['path']}:{source['line']} ({source['side']})"
+            )
 
 
 def _concept_assessment(value):

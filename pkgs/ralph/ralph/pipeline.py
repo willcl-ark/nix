@@ -746,6 +746,9 @@ def review_with_independent_passes(
                     "previous_test_coverage": stages.get("tests", {}).get(
                         "test_coverage", []
                     ),
+                    "rejected_test_coverage": stages.get("tests", {}).get(
+                        "rejected_test_coverage", []
+                    ),
                     "candidates": candidates,
                 }
             )
@@ -761,6 +764,9 @@ def review_with_independent_passes(
                     answer, snapshot, required_test_paths, stage=name
                 )
                 stages[name]["test_coverage"] = result["test_coverage"]
+                stages[name]["rejected_test_coverage"] = result[
+                    "rejected_test_coverage"
+                ]
             else:
                 result = protocol.discovery(answer, name, snapshot)
             stages[name]["coverage"] = result["coverage"]

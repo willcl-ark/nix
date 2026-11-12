@@ -103,8 +103,10 @@ inspection is unfinished. Not-applicable needs a concrete reason.
 
 One `tests_followup` pass starts as soon as tests completes when required
 paths remain omitted or deferred, while other audits may still run. It reuses the tests
-prompt and resolved settings. It receives the remaining assignments and prior
-assessments and candidates. It does not repeat the whole review. Checked
+prompt and resolved settings. It receives the remaining assignments, accepted
+assessments, rejected assessments with validation errors, and candidates. It
+rereads and repairs rejected evidence without weakening exact snapshot matching.
+It does not repeat the whole review. Checked
 assignments from both passes are combined; original model replies and their
 limitations remain in the trace. Unfinished work stays a visible coverage
 limitation after this bounded follow-up. There is no separate follow-up agent

@@ -143,6 +143,60 @@ class PipelineTests(unittest.TestCase):
             )
         )
 
+    def test_followup_repairs_rejected_test_evidence_without_losing_candidates(self):
+        self.tier, self.audits = "standard", ["tests"]
+        assessment = {
+            "paths": ["src/example.cpp"],
+            "status": "checked",
+            "reason": "The setup assertion was inspected.",
+            "regression": "Removing setup leaves the fixture uninitialized.",
+            "evidence": [
+                {
+                    **self.published["source_evidence"][0],
+                    "excerpt": "Sets up the fixture.",
+                }
+            ],
+        }
+        repaired = {**assessment, "evidence": self.published["source_evidence"]}
+        calls = []
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            calls.append(stage)
+            if stage == "tests":
+                return discovery([candidate()], test_coverage=[assessment])
+            if stage == "tests_followup":
+                payload = json.loads(args[1].split("Test coverage follow-up:\n")[1])
+                self.assertEqual(payload["paths"], ["src/example.cpp"])
+                self.assertEqual(payload["previous_test_coverage"], [])
+                rejection = payload["rejected_test_coverage"][0]
+                self.assertEqual(rejection["assessment"], assessment)
+                self.assertIn("src/example.cpp:3 (head)", rejection["error"])
+                return discovery(test_coverage=[repaired])
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            if stage == "verifier":
+                return verification(
+                    [
+                        {
+                            "candidate_ids": ["tests:1"],
+                            "disposition": "supported",
+                            "reason": "The candidate is independent of coverage formatting.",
+                            "finding": self.published,
+                        }
+                    ]
+                )
+            return discovery()
+
+        self.run_review(review)
+        self.assertEqual(calls.count("tests_followup"), 1)
+        self.assertEqual(len(self.result.findings), 1)
+        record = self.debug["stages"]["tests"]
+        self.assertEqual(record["initial_test_coverage"], [])
+        self.assertEqual(record["test_coverage"], [repaired])
+        self.assertEqual(record["coverage_before_followup"]["status"], "partial")
+        self.assertEqual(self.debug["coverage"]["status"], "complete")
+
     def test_selected_audit_passes_suggestions_through_publication(self):
         for audit in ("gui", "commit_flow"):
             with self.subTest(audit=audit):

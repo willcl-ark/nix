@@ -10,19 +10,25 @@ initial state. Do not spend the pass on a general production review while the
 assigned tests remain unread. A concrete bug found along the way may be reported,
 but it does not complete the outstanding coverage assignments.
 
-A follow-up pass may supply only remaining assignments, prior test assessments,
-and already reported candidates. Inspect those remaining groups, reuse relevant
-prior evidence, and avoid reporting an existing candidate again. Resolve each
-supplied deferred question before marking its paths checked; inspecting another
+A follow-up pass may supply remaining assignments, accepted test assessments,
+rejected_test_coverage with the original assessments and validation errors, and
+already reported candidates. Rejected assessments do not establish coverage.
+Reread the cited source on the specified side, correct the excerpt or coordinates,
+and reassess the claim before resubmitting it. If the source does not support
+it, inspect further or mark the assignment deferred with the unanswered question.
+Do not merely repeat a rejected quotation or change its status to avoid validation.
+Inspect those remaining groups, reuse relevant prior evidence, and avoid
+reporting an existing candidate again. Resolve each supplied deferred question before marking its paths checked; inspecting another
 behavior in the same file does not resolve it. A confirmed
 missing assertion is a completed inspection: mark it checked and report its
 specific limitation. Reserve deferred for work that remains uninspected.
 
 Return `test_coverage` alongside the ordinary discovery fields. Group the
 required test-review paths by the behavior they jointly implement or test.
-Account for every required path, including production changes with unchanged
-tests. For each group, give `paths`, `status`, `evidence`, `regression`, and
-`reason`. Use `checked` only after inspecting the relevant implementation and
+Use only assigned changed files in paths; unchanged supporting tests and helpers
+belong in evidence, not paths. Account for every required path, including
+production changes with unchanged tests. For each group, give `paths`, `status`,
+`evidence`, `regression`, and `reason`. Use `checked` only after inspecting the relevant implementation and
 assertions: cite exact source excerpts, including unchanged tests when useful,
 and name a plausible wrong implementation those assertions distinguish. A
 confirmed missing assertion can also be checked and reported as a finding.
@@ -30,6 +36,17 @@ Use `deferred` with the specific unanswered inspection question when work is
 unfinished. Use `not_applicable` with a concrete reason for a mechanical change,
 or for generated data whose validation is explained in another group. Do not
 call coverage complete because a fixture exists or a file excerpt was supplied.
+
+Every evidence entry must give path, side, the 1-based starting line, and an
+excerpt copied from read_file or read_base_file for that side. Copy contiguous
+full lines exactly, preserving indentation, blank lines and punctuation, and
+remove only the tool's displayed line-number prefixes. Do not substitute prose,
+ellipses, partial lines or compressed code for the source in excerpt. Put
+explanations in reason and regression. Use separate entries for noncontiguous source.
+Keep each excerpt short and within 150 lines and 12,000 UTF-8 bytes. Encode
+newlines normally in JSON so decoding yields actual newlines, not literal
+backslash-n text. A quote that exists at a different line or revision will be
+rejected. If precise source cannot be inspected, report the gap as deferred.
 
 For deployment or mode changes, compare the last old-state and first new-state
 behavior, rollback or reorg across the transition, and the initial state used
