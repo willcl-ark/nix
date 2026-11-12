@@ -60,6 +60,38 @@ Failed attempts remain in diagnostics even when a retry succeeds. HTTP failures
 retain the status and a bounded, redacted provider message, without the raw
 error response or request body.
 
+### Changing models, endpoints or proxies
+
+Treat a model, endpoint or proxy change as a schema compatibility change until
+checked. It may require schema changes; a successful simple JSON request does
+not establish compatibility with Ralph's actual stage outputs.
+
+Before deployment:
+
+- Test the actual stage schemas through the configured endpoint and proxy,
+  including verifier reconciliation of old findings and backport assessment.
+  Check that the provider enforces the schema rather than turning it into prompt
+  instructions. A coding CLI's successful response alone does not prove this.
+- Exercise the review loop with its configured reasoning effort, a source tool
+  call and result, and constrained final output. Check thinking-signature replay
+  where applicable, usage accounting, and refusal or truncated-output handling.
+- Run the affected validation and pipeline tests, including re-review of stored
+  findings. Record the tested model, endpoint/proxy version and schema variants.
+
+Keep one shared schema per task across providers. If a schema exceeds a provider's
+limits, simplify its output or split responsibilities. Do not silently retry with
+unconstrained output or weaken semantic validation. Constrained JSON guarantees
+structure, not accurate findings or valid source references.
+
+The November 2026 Claude migration established why these checks matter. The
+Responses proxy path converted schemas into prompt instructions. Native Messages
+enforced them, but rejected the full verifier grammar even below the documented
+explicit complexity limits. Compact concept and alternative verdicts made normal
+verification and historical reconciliation fit. Combining backport assessment
+with reconciliation still failed, so backport fidelity now uses a separate
+request with the existing verifier settings. Stored findings and report history
+retain their existing format.
+
 ## Context and research
 
 Archaeology defaults off for local changes. `--context FILE` can supply versioned
