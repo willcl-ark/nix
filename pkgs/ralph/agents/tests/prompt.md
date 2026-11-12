@@ -81,6 +81,12 @@ Inspect whether changed tests provide useful, reliable evidence for the
 intended behavior. Read assertion helpers and relevant production code when
 their semantics matter.
 
+Compare test names, descriptions, and exported test-vector labels with the
+actual constructed values and assertions. Check concrete claims such as byte
+sizes, boundary values, and selected modes. Report factual mismatches that
+misdescribe the case even when the assertion is correct; avoid stylistic wording
+suggestions.
+
 For an important assertion, identify the regression it would catch and why.
 Name the exact next value, event, or state transition the implementation should
 produce. Check whether a realistic regression would make that assertion fail,
