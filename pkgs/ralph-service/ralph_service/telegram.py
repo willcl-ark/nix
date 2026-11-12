@@ -7,6 +7,7 @@ from collections import Counter
 from http.client import HTTPException
 from urllib.parse import quote
 
+from final_comment import report_findings
 from ralph import trace
 
 from .config import pull_request_url
@@ -66,8 +67,11 @@ def review_message(repository_url, number, result, *, repository_id):
     )
     counts = Counter(
         finding.get("severity")
-        for finding in findings
-        if finding.get("id") not in collapsed
+        for finding in report_findings(
+            findings,
+            trace.review_memory_export(result),
+            head_sha=result.get("head_sha"),
+        )
     )
     labels = [("major", "Major"), ("minor", "Minor"), ("suggestion", "Suggestions")]
     if counts["critical"]:

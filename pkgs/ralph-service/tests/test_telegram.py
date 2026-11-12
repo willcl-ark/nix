@@ -59,6 +59,7 @@ class TelegramTests(unittest.TestCase):
         result = self.result(findings=[{"id": "new:1", "severity": "major"}])
         result["output"]["exports"]["review_memory"] = [
             {
+                "key": "old:1",
                 "severity": "major",
                 "status": "still_present",
                 "collapsed": True,
@@ -69,7 +70,7 @@ class TelegramTests(unittest.TestCase):
         self.assertIn("Previously reported major concern", self.render(result))
         self.assertNotIn("🚨 Major finding", self.render(result))
         self.assertIn(
-            "Current findings: Major: 0 · Minor: 0 · Suggestions: 0",
+            "Current findings: Major: 1 · Minor: 0 · Suggestions: 0",
             self.render(result),
         )
         result["output"]["exports"]["findings"].append(
@@ -80,6 +81,30 @@ class TelegramTests(unittest.TestCase):
         self.assertIn("Previously reported major concern", self.render(result))
         result["output"]["exports"]["review_memory"][0]["status"] = "fixed"
         self.assertNotIn("major concern", self.render(result))
+
+    def test_counts_include_reverified_history_from_the_report(self):
+        result = self.result(findings=[{"id": "new:1", "severity": "major"}])
+        result["head_sha"] = "current-head"
+        historical = {
+            "key": "old:1",
+            "severity": "minor",
+            "title": "Earlier concern",
+            "status": "still_present",
+            "checked_head": "current-head",
+            "reason": "Still reproducible",
+            "source_evidence": [{"side": "head", "path": "file.cpp", "line": 1}],
+        }
+        result["output"]["exports"]["review_memory"] = [
+            historical,
+            {**historical, "key": "old:2", "duplicate_of": "old:1"},
+            {**historical, "key": "old:3", "status": "fixed"},
+            {**historical, "key": "old:4", "checked_head": "previous-head"},
+            {**historical, "key": "old:5", "current_finding_ids": ["new:1"]},
+        ]
+        self.assertIn(
+            "Current findings: Major: 1 · Minor: 1 · Suggestions: 0",
+            self.render(result),
+        )
 
     def test_short_reviews_use_counts_and_links_without_body(self):
         result = self.result(
