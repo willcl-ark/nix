@@ -19,9 +19,9 @@ Build the package from this flake:
 nix build .#ralph
 ```
 
-The current engine needs an OpenAI-compatible endpoint serving its configured
-Codex and Claude models. Configure CLIProxyAPI with both accounts and save an
-engine configuration such as:
+The current engine uses CLIProxyAPI with Codex Responses and native Claude
+Messages endpoints. Configure both accounts and save an engine configuration
+such as:
 
 ```json
 {"openai_api_base": "http://127.0.0.1:8317/v1"}

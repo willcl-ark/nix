@@ -666,23 +666,24 @@ class ModelUsageTests(unittest.TestCase):
 
     def test_claude_uses_auto_tools_preserves_thinking_and_requires_inspection(self):
         thinking = {
-            "type": "reasoning",
-            "id": "thinking-1",
-            "encrypted_content": "opaque-signed-thinking",
-            "summary": [],
+            "type": "thinking",
+            "thinking": "Inspect source",
+            "signature": "opaque-signed-thinking",
         }
-        first = {
-            "status": "completed",
-            "output": [
-                thinking,
-                {
-                    "type": "function_call",
-                    "call_id": "call-1",
-                    "name": "read_file",
-                    "arguments": '{"path":"src/a.cpp","start_line":1}',
-                },
-            ],
-        }
+        first = model.claude.response(
+            {
+                "stop_reason": "tool_use",
+                "content": [
+                    thinking,
+                    {
+                        "type": "tool_use",
+                        "id": "call-1",
+                        "name": "read_file",
+                        "input": {"path": "src/a.cpp", "start_line": 1},
+                    },
+                ],
+            }
+        )
         final = {
             "status": "completed",
             "output": [
@@ -712,10 +713,13 @@ class ModelUsageTests(unittest.TestCase):
         self.assertEqual(json.loads(answer), {"findings": []})
         read.assert_called_once()
         sent = [json.loads(call.args[1]) for call in send.call_args_list]
-        self.assertEqual([request["tool_choice"] for request in sent], ["auto", "none"])
-        self.assertEqual(sent[0]["reasoning"]["effort"], "xhigh")
-        self.assertEqual(sent[1]["input"][1], thinking)
-        self.assertEqual(sent[1]["input"][-1]["type"], "function_call_output")
+        self.assertEqual(
+            [request["tool_choice"] for request in sent],
+            [{"type": "auto"}, {"type": "none"}],
+        )
+        self.assertEqual(sent[0]["output_config"]["effort"], "max")
+        self.assertEqual(sent[1]["messages"][1]["content"][0], thinking)
+        self.assertEqual(sent[1]["messages"][-1]["content"][0]["type"], "tool_result")
 
         with (
             patch.object(model.transport, "request", return_value=final) as send,

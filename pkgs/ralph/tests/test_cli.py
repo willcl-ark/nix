@@ -268,7 +268,7 @@ class CLITest(unittest.TestCase):
             [call.args[0] for call in send.call_args_list],
             [
                 proxy + "/responses",
-                proxy + "/responses",
+                proxy + "/messages",
                 proxy + "/responses",
             ],
         )

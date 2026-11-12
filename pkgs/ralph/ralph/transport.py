@@ -7,6 +7,8 @@ import urllib.error
 
 import aiohttp
 
+from . import claude
+
 
 class RequestCancelled(Exception):
     """Local cancellation stopped an attempt with unknown remote execution."""
@@ -27,7 +29,8 @@ class StreamError(Exception):
             status == 429
             or 500 <= status < 600
             or code in ("server_error", "rate_limit_exceeded")
-            or self.error.get("type") in ("server_error", "rate_limit_error")
+            or self.error.get("type")
+            in ("server_error", "rate_limit_error", "overloaded_error", "api_error")
         )
 
 
@@ -49,11 +52,14 @@ async def _events(content):
                 event = json.loads(payload)
                 if not isinstance(event, dict):
                     raise ValueError("Model stream event was not a JSON object")
+                if event.get("type") == "error":
+                    raise StreamError(event.get("error", event))
                 yield event
 
 
 async def _request(url, payload, api_key, timeout):
     # Disable deadline rounding so the configured allowance is a real limit.
+    native_claude = url.rstrip("/").endswith("/messages")
     deadline = aiohttp.ClientTimeout(total=timeout, ceil_threshold=float("inf"))
     async with aiohttp.ClientSession(timeout=deadline, trust_env=True) as session:
         async with session.post(
@@ -61,6 +67,11 @@ async def _request(url, payload, api_key, timeout):
             data=payload,
             headers={
                 "Authorization": f"Bearer {api_key}",
+                **(
+                    {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+                    if native_claude
+                    else {}
+                ),
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
             },
@@ -83,10 +94,10 @@ async def _request(url, payload, api_key, timeout):
                 )
             if response.content_type != "text/event-stream":
                 raise ValueError("Model response was not an event stream")
+            if native_claude:
+                return await claude.read_stream(_events(response.content))
             async for event in _events(response.content):
                 kind = event.get("type")
-                if kind == "error":
-                    raise StreamError(event.get("error", event))
                 if kind in (
                     "response.completed",
                     "response.incomplete",

@@ -21,9 +21,10 @@ Use `--help` for tool limits and trusted local engine options.
 
 ## Provider configuration and request limits
 
-The current engine sends Codex and Claude requests through the same
-OpenAI-compatible endpoint and access key. Configure CLIProxyAPI with both
-accounts and put its URL in an engine configuration:
+The current engine uses one CLIProxyAPI base URL and access key for Codex and
+Claude. Codex uses `/responses`; model names starting with `claude-` use native
+Anthropic `/messages`. Configure CLIProxyAPI with both accounts and put its base
+URL in an engine configuration:
 
 ```json
 {"openai_api_base": "http://127.0.0.1:8317/v1"}
@@ -33,15 +34,19 @@ Pass this file with `--engine-config` and use the proxy's access-key file with
 `--openai-key-file`. Ralph still supplies the prompts and executes tools; no
 coding CLI is launched. The URL is recorded in engine identity, so keep
 credentials out of it. Review stages and audits use this URL without falling
-back to the OpenAI endpoint on failure. Claude strict JSON schemas become
-prompt guidance at the proxy; Ralph parses and validates returned results.
+back to the OpenAI endpoint on failure. Claude receives the shared JSON schema
+through `output_config.format`, so the provider constrains its output. Ralph
+also validates returned results. Native Claude tools use ordinary `input_schema`
+parameters; their schemas do not consume the strict-output grammar budget.
+Thinking signatures and tool blocks are preserved between tool rounds.
 
 Ralph records request attempts and provider-reported token usage without pricing
 it or using monetary admission limits. Missing usage remains unknown.
 CLIProxyAPI removes `max_output_tokens` before forwarding Codex requests, so the
 requested output allowance is not an enforced cap on that path. Ralph omits
-`max_tool_calls` from outgoing requests because Codex rejects it, and enforces
-its own tool limits. Hosted search counts are recorded even when a response
+`max_tool_calls` from Codex requests because Codex rejects it, and enforces
+its own tool limits. Claude receives `max_tokens` and native hosted-search
+`max_uses` limits. Hosted search counts are recorded even when a response
 exceeds the configured allowance. The proxy/provider enforces subscription
 limits.
 

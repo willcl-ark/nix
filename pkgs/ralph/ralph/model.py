@@ -9,7 +9,7 @@ import time
 import urllib.error
 from email.utils import parsedate_to_datetime
 
-from . import progress, research, transport, upstream
+from . import claude, progress, research, transport, upstream
 from .evidence import ToolFailure
 from .repository import (
     find_paths,
@@ -421,6 +421,8 @@ class StaleReview(Exception):
 
 
 def _request_payload(data):
+    if data.get("model", "").startswith("claude-"):
+        return json.dumps(claude.request(data)).encode()
     # Codex rejects this field; keep it out of provider requests.
     payload = {k: v for k, v in data.items() if k != "max_tool_calls"}
     payload["stream"] = True
@@ -478,7 +480,10 @@ def request_response(
     is_cancelled=None,
 ):
     payload = _request_payload(data)
-    url = f"{api_base.rstrip('/')}/responses"
+    endpoint = (
+        "messages" if data.get("model", "").startswith("claude-") else "responses"
+    )
+    url = f"{api_base.rstrip('/')}/{endpoint}"
     for attempt in range(MAX_REQUEST_ATTEMPTS):
         if is_cancelled is not None and is_cancelled():
             raise StaleReview("review cancelled before model request")
