@@ -17,6 +17,7 @@ from final_comment import report_findings
 from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
+from . import health
 from .report import public_limits
 
 
@@ -133,6 +134,7 @@ def collect_stats(
     }
     stages = defaultdict(_new_stage)
     limit_runs = []
+    health_runs = []
     routing_tiers = Counter()
     review_records = []
     review_time_records = []
@@ -159,6 +161,7 @@ def collect_stats(
                 stages[_stage_key(stage["stage"], stage["configured_model"])], stage
             )
         limit_runs.extend(contribution["limits"])
+        health_runs.extend(contribution["health"])
         routing_tiers.update(contribution["routing"])
         for record in contribution["reviews"]:
             ledger = _observed_review_totals(
@@ -226,6 +229,7 @@ def collect_stats(
         "stage_model_leaderboard": _stage_leaderboard(stages),
         "stages": _stage_records(stages),
         "limits": _limit_summary(limit_runs),
+        "health": health.summarize(health_runs, requests, now.timestamp()),
         "routing_tiers": dict(sorted(routing_tiers.items())),
         "distributions": {
             "saved_review_tools": _distribution(tool_values),
@@ -317,6 +321,7 @@ def _review_summary(row):
     }
     stages = defaultdict(_new_stage)
     limit_runs = []
+    health_runs = []
     routing_tiers = Counter()
     review_records = []
     review_time_records = []
@@ -342,6 +347,7 @@ def _review_summary(row):
             "overview": overview,
             "stages": list(stages.values()),
             "limits": limit_runs,
+            "health": health_runs,
             "routing": dict(routing_tiers),
             "reviews": review_records,
             "review_times": review_time_records,
@@ -389,6 +395,7 @@ def _review_summary(row):
     metrics = _saved_review_metrics(debug, result)
     report_name = _report_name(None, row, result)
     _collect_limit_runs(limit_runs, debug, result, row, report_name)
+    health_runs.extend(health.stage_runs(debug, result, row, report_name))
 
     if not skipped:
         overview["saved_reviews"] += 1

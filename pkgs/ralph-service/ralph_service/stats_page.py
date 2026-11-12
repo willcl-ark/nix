@@ -1702,8 +1702,10 @@ def _header(summary, page_prefix="", active="Overview"):
         ("addressed/", "Outcomes"),
         ("usage/", "Usage"),
         ("limits/", "Limits"),
+        ("health/", "Review health"),
     ]
     icons = {
+        "Review health": "M3 12h4l3-8 4 16 3-8h4",
         "Overview": "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
         "Agents": "M8 21v-3a4 4 0 0 1 8 0v3 M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M3 18v-2a4 4 0 0 1 3-4 M21 18v-2a4 4 0 0 0-3-4",
         "Reviews": "M5 3h14v18H5z M8 7h8 M8 11h8 M8 15h5",
@@ -2273,6 +2275,75 @@ def _limits_html(summary, repository_url, archive_base_url):
     return _page("Limits", summary, body, "../", "Limits")
 
 
+def _health_html(summary, archive_base_url):
+    health = _mapping(summary.get("health"))
+    rows = []
+    for group in health.get("groups", []):
+        runs = group["runs"]
+        examples = " ".join(
+            _report_name_link(
+                run.get("archive_name"), archive_base_url, f"#{run['number']}"
+            )
+            for run in runs
+            if run["reasons"]
+        )
+        rows.append(
+            [
+                _escape(group["repository_id"]),
+                _escape(group["stage"]),
+                _escape(group["model"]),
+                _escape(group["configuration"]),
+                "Alert"
+                if group["alert"]
+                else "Insufficient samples"
+                if len(runs) < 5
+                else "Below threshold",
+                f"{group['affected']}/{len(runs)}",
+                _escape(
+                    ", ".join(
+                        f"{reason}: {count}"
+                        for reason, count in group["reasons"].items()
+                    )
+                    or "None"
+                ),
+                examples,
+            ]
+        )
+    body = (
+        "<section><h2>Review health</h2>"
+        + _section_note(
+            "Telegram alerts when at least three of the last five eligible stage runs are affected, "
+            "within 24 hours, grouped by repository, stage, model and saved configuration. "
+            "Failures, output truncation and unrepaired coverage evidence count. "
+            "Ordinary partial coverage and tool-cap saturation do not."
+        )
+        + _data_table(
+            [
+                "Repository",
+                "Stage",
+                "Model",
+                "Configuration",
+                "Rule",
+                "Affected",
+                "Reasons",
+                "Examples",
+            ],
+            [_cells(row) for row in rows],
+        )
+        + _section_note(
+            "Saved results only; live work and overwritten retry attempts are excluded. "
+            "Dates use the last completed usage request for each stage. "
+            f"{health.get('undated_runs', 0)} saved stage runs lack a usable date. "
+            "No samples means unknown health. Initial rejected evidence that was repaired does not trigger an alert. "
+            "An incident recovers after three fresh consecutive successful runs."
+        )
+        + "</section>"
+    )
+    return _page(
+        "Review health", summary, body, page_prefix="../", active="Review health"
+    )
+
+
 def save_stats(
     output_dir: Path,
     summary: dict,
@@ -2305,6 +2376,7 @@ def save_stats(
         write(name, render(summary, repository_url, report_base_url))
     write("limits/index.html", _limits_html(summary, repository_url, archive_base_url))
     write("usage/index.html", _usage_html(summary))
+    write("health/index.html", _health_html(summary, archive_base_url))
     stage_names = set()
     for stage in _list(summary.get("stages")):
         if isinstance(stage, dict):

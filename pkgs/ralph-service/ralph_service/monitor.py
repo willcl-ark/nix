@@ -9,7 +9,7 @@ import time
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 from . import commands, config, report, telegram
 
@@ -209,6 +209,82 @@ class NotificationStore:
                 (str(period_day),),
             )
 
+    def observe_health(self, report_dir, archive_base_url, *, now=None):
+        """Enqueue incident transitions from fresh stats without rescanning traces."""
+        now = time.time() if now is None else now
+        try:
+            summary = json.loads((Path(report_dir) / "stats/stats.json").read_text())
+            generated = datetime.fromisoformat(summary["generated_at"]).timestamp()
+            if not 0 <= now - generated <= 300:
+                return
+            groups = summary["health"]["groups"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            for group in groups:
+                key = "health:" + group["key"]
+                previous = db.execute(
+                    "SELECT value FROM metadata WHERE key = ?", (key,)
+                ).fetchone()
+                incident = json.loads(previous[0]) if previous else None
+                runs = group["runs"]
+                if not runs:
+                    continue
+                if incident and incident["active"]:
+                    fresh = [
+                        run for run in runs if run["timestamp"] > incident["since"]
+                    ]
+                    if len(fresh) < 3 or any(run["reasons"] for run in fresh[:3]):
+                        continue
+                    incident["active"] = False
+                    transition = "recovered"
+                    detail = "Three fresh consecutive runs returned usable results."
+                elif group["alert"]:
+                    incident = {
+                        "active": True,
+                        "since": runs[0]["timestamp"],
+                        "id": runs[0]["id"],
+                    }
+                    transition = "alert"
+                    detail = (
+                        f"{group['affected']}/5 recent runs affected within 24 hours.\n"
+                    )
+                    detail += ", ".join(
+                        f"{reason}: {count}"
+                        for reason, count in group["reasons"].items()
+                    )
+                else:
+                    continue
+                text = (
+                    f"Ralph review health {transition}: {group['repository_id']} / "
+                    f"{group['stage']} / {group['model']}\n{detail}\n"
+                    f"Configuration: {group['configuration']}"
+                )
+                for run in [run for run in runs if run["reasons"]][:2]:
+                    name = run.get("archive_name")
+                    if name:
+                        text += (
+                            "\nExample: "
+                            + archive_base_url.rstrip("/")
+                            + "/"
+                            + quote(name, safe="")
+                        )
+                text += "\nHealth: " + urljoin(
+                    archive_base_url.rstrip("/"), "stats/health/"
+                )
+                db.execute(
+                    "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
+                    (
+                        f"{key}:{incident['id']}:{transition}",
+                        telegram.truncate_message(text),
+                    ),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO metadata VALUES (?, ?)",
+                    (key, json.dumps(incident)),
+                )
+
     def deliver(self, token, chat_id, *, now=None, commands_only=False):
         """Prioritize command replies while honoring backoff across all messages."""
         now = time.time() if now is None else now
@@ -300,6 +376,7 @@ def run_monitor(
             except (OSError, sqlite3.Error):
                 LOGGER.warning("Telegram monitor could not read state; will retry")
             try:
+                store.observe_health(report_dir, archive_base_url)
                 store.deliver(token, chat_id)
             except (OSError, sqlite3.Error):
                 LOGGER.warning("Telegram notification state unavailable; will retry")

@@ -383,3 +383,20 @@ captures retain the same evidence. Historical captures exclude older results
 without a trustworthy completion timestamp; ordinary captures retain legacy
 history. Feedback acquisition failures retain prior findings for reconciliation
 without treating unavailable replies as author acceptance or rejection.
+
+### Review health
+
+`stats/health/` shows operational health separately from review outcomes. The
+Telegram monitor reads the same cached stats summary and alerts when three of
+the last five eligible stage runs within 24 hours have failed, exhausted their
+output budget, or retained invalid coverage evidence after repair. Runs are
+grouped by repository, stage, model and saved engine/configuration/budget hash.
+Ordinary partial coverage and merely reaching a tool cap do not trigger alerts.
+
+Each incident produces one alert, persisted across monitor restarts. Three
+fresh consecutive successful runs produce a recovery notification. A missing
+or more than five-minute-old stats snapshot cannot start or recover incidents.
+The summary uses saved terminal results and dates them from usage-ledger stage
+completion timestamps. It excludes live work, cancelled/stale reviews,
+undated results and overwritten retry attempts; it does not assess whether
+review conclusions are correct.
