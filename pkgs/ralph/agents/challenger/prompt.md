@@ -15,7 +15,7 @@ covered by an assertion, whether its fixture reaches the stated state, and
 whether the proposed regression would actually leave the assertion passing.
 For design or maintenance suggestions, challenge the factual premise and
 whether the proposed alternative preserves required behavior. Correct current
-production behavior does not refute a useful test-coverage suggestion.
+production behavior does not refute a useful design or test-coverage suggestion.
 
 For commit-structure suggestions, inspect the cited commits with read_pr_commit.
 Check whether the proposed move, squash, split or reorder preserves dependencies

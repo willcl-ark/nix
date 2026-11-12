@@ -26,6 +26,21 @@ dependency for a few clear lines. Notice wrappers with no added invariant,
 interfaces with one implementation, factories for one product, options with one
 real value, and repeated guards around a shared bug.
 
+For changed interfaces, distinguish boolean facts from parameters selecting
+behavior. Prefer a typed mode when it makes confusing call sites or defaults
+clear, especially with several boolean arguments. Name the affected callers
+and the ambiguity it removes; do not require enums for ordinary predicates or
+refactor untouched interfaces solely for consistency.
+
+For interacting control-flow flags, identify supported, reachable and invalid
+combinations from callers and guards. Consider whether a single mode or separate
+entry points could express the supported behavior with fewer independent
+choices. Replacing each bool with its own enum does not reduce combinations.
+Do not count every theoretical combination as a reachable execution path or
+prescribe one control-flow shape universally. Recommend a change only when it
+makes the supported modes clearer or excludes specific invalid combinations
+while preserving required behavior, and account for duplication it introduces.
+
 When the supplied input includes comparison-base `doc/developer-notes.md`, apply
 only sections relevant to the changed code. Cite the document section and the
 changed code location for a candidate convention violation, and explain the

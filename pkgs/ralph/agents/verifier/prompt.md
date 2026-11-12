@@ -187,6 +187,14 @@ merely because the current implementation is correct. Do not promote a design
 preference to a bug. An uncheckable factual premise is unresolved; the judge
 decides whether a source-supported suggestion is useful to publish.
 
+Reduced ambiguity at existing call sites or exclusion of specific invalid mode
+combinations can establish a present design benefit without a runtime failure.
+Verify the affected callers, supported modes and guards, and that the proposed
+interface preserves required behavior. Likewise, assess an invariant or reorg
+test suggestion against the actual entry paths, graph states and bounds at the
+reviewed revision. Require a concrete clarification or distinguishing assertion;
+a preference for enums, fewer flags or more tests alone is insufficient.
+
 For a dead-code removal suggestion, verify that the PR introduced the unused
 code or removed its last use, including in unchanged files. Check indirect uses,
 supported build configurations, and side effects before accepting deletion.

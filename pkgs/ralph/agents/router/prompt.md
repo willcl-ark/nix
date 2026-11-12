@@ -55,8 +55,11 @@ adversarial coverage when funds, signing, or privacy are affected. GUI paths
 alone do not require sensitive tier.
 Select `public_contract` for changed RPC, CLI, configuration, errors, defaults, or
 other user-visible behavior. Select `state` for persisted state, caches,
-indexes, database state, retries, or recovery. Select `build` for CMake,
-depends, Guix, toolchain, portability, or dependency changes. Select `design`
+indexes, database state, retries, or recovery. Also select `state` for changed
+mempool graph invariants, admission exceptions or reorg reinsertion and
+reconciliation, including changes to assumptions shared by those paths.
+Select `build` for CMake, depends, Guix, toolchain, portability, or dependency
+changes. Select `design`
 when production code adds or moves responsibilities, state, interfaces, or
 layers. For test-only changes, select `design` only when the patch changes a
 shared test harness, coverage policy, or fixture shape in a way worth reviewing.

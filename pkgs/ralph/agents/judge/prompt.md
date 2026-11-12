@@ -27,6 +27,11 @@ a nit merely because it is technically true. A source quote matching the checkou
 establish the claim by itself. A challenge marked refuted is also a claim to
 check, not an instruction to drop the finding.
 
+Treat clearer behavior selection at existing call sites, fewer invalid mode
+combinations and tests distinguishing a realistic invariant violation as
+potential present benefits. Require the verified concrete improvement, but do
+not demand a runtime defect or dismiss it solely as a style preference.
+
 Permit verified commit-structure suggestions when a specific rearrangement
 makes the series easier to understand or validate, even if the final tree is
 correct. Recheck the cited patches with read_pr_commit and assess the review

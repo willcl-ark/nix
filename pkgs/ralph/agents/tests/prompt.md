@@ -38,6 +38,24 @@ rules. Check whether defaults such as always-active regtest hide an incorrect
 gate, bypass, or one-step delay. Inspect the actual functional assertions;
 production-code inspection alone does not establish regression protection.
 
+For interacting modes or flags, inspect which combinations are reachable and
+which interactions the assertions distinguish. Line or branch coverage alone
+does not establish coverage of those interactions. Name a plausible regression
+and the smallest meaningful combination that exposes it; do not demand an
+exhaustive matrix of theoretical or unreachable combinations.
+
+For changed mempool graph or reorg behavior, check whether the fixtures reach
+states available through block disconnection but excluded by ordinary admission.
+Where relevant and reachable, check coverage of graphs exceeding ordinary
+admission bounds and shapes with shared ancestors or multiple paths to a
+descendant.
+Size alone may not expose incorrect graph accounting. Derive bounds and expected
+reinsertion, eviction or reconciliation behavior from the reviewed revision;
+do not require historical limit values or assume limits must be bypassed.
+For a gap, name the graph, disconnect/reconnect sequence, observable assertion
+and realistic regression it distinguishes. Do not request larger graphs or
+additional reorg tests without connecting them to the changed behavior.
+
 For changes confined to tests or test infrastructure, start from the changed
 test or contributor workflow. A broken test runner or unreliable CI check is
 worth reporting without a production-code defect.
