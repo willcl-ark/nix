@@ -869,7 +869,17 @@ class PipelineTests(unittest.TestCase):
             "repository": self.source["repository"],
             "number": self.source["number"],
             "revisions": {"new_head": self.snapshot.head_sha},
-            "findings": [{"key": "previous:1", **self.published}],
+            "findings": [
+                {
+                    "key": "previous:1",
+                    **self.published,
+                    "id": "finding:1",
+                    "finding_id": "finding:1",
+                    "current_candidate_ids": ["old_stage:1"],
+                    "assessment_history": [{"current_candidate_ids": ["old_stage:2"]}],
+                    "last_presented_findings": [{"title": "Latest published wording"}],
+                }
+            ],
             "comments": [
                 {
                     "id": "reply:1",
@@ -878,6 +888,8 @@ class PipelineTests(unittest.TestCase):
             ],
         }
         calls = []
+        mapper_inputs = []
+        verifier_inputs = []
 
         def reviewer(*args, **kwargs):
             stage = kwargs["stage_name"]
@@ -886,6 +898,9 @@ class PipelineTests(unittest.TestCase):
                 self.assertNotIn("previous:1", args[1])
                 return discovery()
             self.assertEqual(stage, "verifier")
+            verifier_inputs.append(
+                json.loads(args[1].split("Verification input:\n", 1)[1])
+            )
             self.assertIn("SECRET_AUTHOR_REPLY", args[1])
             self.assertIn(
                 "review_reconciliation", kwargs["response_schema"]["properties"]
@@ -896,12 +911,31 @@ class PipelineTests(unittest.TestCase):
 
         def audit(api_key, name, prompt, input_text, **kwargs):
             calls.append(name)
+            mapper_inputs.append(json.loads(input_text))
             self.assertEqual(name, "feedback")
             self.assertLessEqual(kwargs["max_output_tokens"], 4000)
             raise ValueError("Invalid or unavailable feedback agent")
 
         self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(calls, ["feedback"])
+        prior = mapper_inputs[0]["review_feedback"]["findings"][0]
+        self.assertEqual(prior["key"], "previous:1")
+        self.assertEqual(prior["title"], self.published["title"])
+        self.assertEqual(
+            prior["last_presented_findings"][0]["title"], "Latest published wording"
+        )
+        for field in (
+            "id",
+            "finding_id",
+            "current_candidate_ids",
+            "assessment_history",
+        ):
+            self.assertNotIn(field, prior)
+        self.assertEqual(mapper_inputs[0]["candidate_findings"], [])
+        self.assertEqual(
+            mapper_inputs[0]["review_feedback"]["comments"], packet["comments"]
+        )
+        self.assertEqual(verifier_inputs[0]["review_feedback"], packet)
         entry = self.debug["review_memory"][0]
         self.assertEqual(entry["key"], "previous:1")
         self.assertEqual(entry["severity"], self.published["severity"])
@@ -972,6 +1006,12 @@ class PipelineTests(unittest.TestCase):
         def audit(api_key, name, prompt, input_text, **kwargs):
             self.assertEqual(name, "feedback")
             order.append(name)
+            mapped_candidates = json.loads(input_text)["candidate_findings"]
+            self.assertEqual(mapped_candidates[0]["id"], "independent:1")
+            self.assertEqual(mapped_candidates[0]["claim"], candidate()["claim"])
+            self.assertEqual(
+                mapped_candidates[0]["consequence"], candidate()["consequence"]
+            )
             return json.dumps(
                 {
                     "mappings": [

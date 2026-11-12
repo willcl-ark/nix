@@ -1024,12 +1024,7 @@ def review_with_independent_passes(
             answer, response = runtime.audit(
                 "feedback",
                 prompt_config.audit_prompts["feedback"],
-                json.dumps(
-                    {
-                        "review_feedback": feedback_packet,
-                        "candidate_findings": candidates,
-                    }
-                ),
+                json.dumps(feedback.mapping_input(feedback_packet, candidates)),
                 model_name=settings.model,
                 max_output_tokens=record["max_output_tokens"],
                 response_schema=feedback.FEEDBACK_SCHEMA,

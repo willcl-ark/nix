@@ -92,6 +92,38 @@ def validate_packet(packet, source, snapshot):
         raise InvalidReview("Duplicate author comment identity")
 
 
+def mapping_input(packet, candidates):
+    """Expose claim text and reference targets without old run-local identities."""
+
+    def claim(finding):
+        return {
+            field: finding.get(f"presented_{field}") or finding[field]
+            for field in ("title", "summary", "body", "path", "line", "side")
+            if field in finding or finding.get(f"presented_{field}")
+        }
+
+    return {
+        "review_feedback": {
+            "findings": [
+                {
+                    "key": finding["key"],
+                    **claim(finding),
+                    "last_presented_findings": [
+                        claim(presented)
+                        for presented in finding.get("last_presented_findings", [])
+                    ],
+                }
+                for finding in packet["findings"]
+            ],
+            "comments": [
+                {"id": comment["id"], "body": comment["body"]}
+                for comment in packet["comments"]
+            ],
+        },
+        "candidate_findings": candidates,
+    }
+
+
 def _references(value, allowed):
     _strings(value)
     if len(value) != len(set(value)) or not set(value) <= allowed:
