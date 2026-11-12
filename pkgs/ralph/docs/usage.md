@@ -37,7 +37,8 @@ credentials out of it. Review stages and audits use this URL without falling
 back to the OpenAI endpoint on failure. Claude receives the shared JSON schema
 through `output_config.format`, so the provider constrains its output. Ralph
 also validates returned results. Native Claude tools use ordinary `input_schema`
-parameters; their schemas do not consume the strict-output grammar budget.
+parameters. Test tool definitions together with the output schema: native
+requests can exceed internal grammar limits even when tools are not strict.
 Thinking signatures and tool blocks are preserved between tool rounds.
 
 Ralph records request attempts and provider-reported token usage without pricing
@@ -69,7 +70,8 @@ not establish compatibility with Ralph's actual stage outputs.
 Before deployment:
 
 - Test the actual stage schemas through the configured endpoint and proxy,
-  including verifier reconciliation of old findings and backport assessment.
+  with the full tool set and reasoning configuration used by each stage. Include
+  current findings, concept verification, old-finding reconciliation and backports.
   Check that the provider enforces the schema rather than turning it into prompt
   instructions. A coding CLI's successful response alone does not prove this.
 - Exercise the review loop with its configured reasoning effort, a source tool
@@ -86,11 +88,16 @@ structure, not accurate findings or valid source references.
 The November 2026 Claude migration established why these checks matter. The
 Responses proxy path converted schemas into prompt instructions. Native Messages
 enforced them, but rejected the full verifier grammar even below the documented
-explicit complexity limits. Compact concept and alternative verdicts made normal
-verification and historical reconciliation fit. Combining backport assessment
-with reconciliation still failed, so backport fidelity now uses a separate
-request with the existing verifier settings. Stored findings and report history
-retain their existing format.
+explicit complexity limits. Compact verdicts passed schema-only probes, but the
+same verifier/reconciliation schema failed with even one ordinary source tool.
+A separate tiny-schema tool test had missed this combination.
+
+Verification is now split by responsibility: current findings, concepts and
+alternatives, historical reconciliation, and backport fidelity. Each uses a small
+shared schema and the existing verifier settings and source tools. Concept and
+history failures leave those results unresolved without discarding independently
+verified code findings. Historical author replies go only to reconciliation.
+Stored findings and report history retain their existing format.
 
 ## Context and research
 
