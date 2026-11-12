@@ -29,6 +29,7 @@ SHARED_PROMPTS = {
     "common": "shared/discovery.md",
     "backport": "shared/backport.md",
     "reconciliation": "verifier/reconciliation.md",
+    "concept_verifier": "verifier/concept.md",
     **{name: f"adversarial/domains/{name}.md" for name in ADVERSARIAL_PROFILES},
 }
 PROMPT_NAMES = (

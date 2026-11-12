@@ -153,13 +153,6 @@ class LocalRepositoryTests(unittest.TestCase):
         }
         verification = {
             "coverage": coverage,
-            "alternatives": [],
-            "concept": {
-                "disposition": "no_concern",
-                "reason": "No concern",
-                "proposed_review": "continue",
-                "review_reason": "Useful change",
-            },
             "decisions": [
                 {
                     "candidate_ids": ["commit_flow:1"],

@@ -236,11 +236,16 @@ ALTERNATIVE_VERIFICATION = object_schema(
         "reason": STRING,
     }
 )
-VERIFIER_SCHEMA = object_schema(
+CONCEPT_VERIFIER_SCHEMA = object_schema(
     {
         "coverage": COVERAGE,
         "concept": CONCEPT_VERIFICATION,
         "alternatives": {"type": "array", "items": ALTERNATIVE_VERIFICATION},
+    }
+)
+VERIFIER_SCHEMA = object_schema(
+    {
+        "coverage": COVERAGE,
         "decisions": {
             "type": "array",
             "items": object_schema(
@@ -804,18 +809,14 @@ def _verified_finding(finding, snapshot, *, allow_commit=False):
     _source_evidence(finding["source_evidence"], snapshot, allow_commit=allow_commit)
 
 
-def verification(
-    text, candidates, snapshot, concept_assessment=None, blind_alternatives=None
-):
+def concept_verification(text, concept_candidate=None, blind_alternatives=None):
     result = json.loads(text)
-    _object(result, VERIFIER_SCHEMA["properties"])
+    _object(result, CONCEPT_VERIFIER_SCHEMA["properties"])
     _coverage(result["coverage"])
-    if not isinstance(result["decisions"], list):
-        raise InvalidReview("Invalid verifier decisions")
     result["alternatives_validation_error"] = None
     try:
         _alternative_decisions(
-            result["alternatives"], concept_assessment, blind_alternatives
+            result["alternatives"], concept_candidate, blind_alternatives
         )
     except InvalidReview as exc:
         result["alternatives_validation_error"] = str(exc)
@@ -829,7 +830,7 @@ def verification(
     concept = result["concept"]
     result["concept_validation_error"] = None
     try:
-        _concept_decision(concept, concept_assessment)
+        _concept_decision(concept, concept_candidate)
     except InvalidReview as exc:
         error = str(exc)
         concept = {
@@ -843,6 +844,15 @@ def verification(
     if concept["disposition"] == "unresolved":
         result["coverage"]["status"] = "partial"
         result["coverage"]["limitations"].append(concept["reason"])
+    return result
+
+
+def verification(text, candidates, snapshot):
+    result = json.loads(text)
+    _object(result, VERIFIER_SCHEMA["properties"])
+    _coverage(result["coverage"])
+    if not isinstance(result["decisions"], list):
+        raise InvalidReview("Invalid verifier decisions")
     expected_order = [candidate["id"] for candidate in candidates]
     expected = set(expected_order)
     records = []

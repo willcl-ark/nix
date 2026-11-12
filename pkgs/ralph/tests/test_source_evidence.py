@@ -72,13 +72,6 @@ class SourceEvidenceTests(unittest.TestCase):
     def verify(self, finding):
         payload = {
             "coverage": {"status": "complete", "limitations": []},
-            "concept": {
-                "disposition": "no_concern",
-                "reason": "No concern",
-                "proposed_review": "continue",
-                "review_reason": "No concept concern",
-            },
-            "alternatives": [],
             "decisions": [
                 {
                     "candidate_ids": ["independent:1"],

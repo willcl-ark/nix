@@ -10,6 +10,23 @@ from ralph.protocol import InvalidReview
 
 
 class FeedbackTests(unittest.TestCase):
+    def test_reconciliation_response_requires_coverage_and_decisions(self):
+        response = {
+            "coverage": {"status": "complete", "limitations": []},
+            "review_reconciliation": [],
+        }
+        self.assertEqual(
+            feedback.reconciliation_response(json.dumps(response)), response
+        )
+        for invalid in (
+            {"review_reconciliation": []},
+            {**response, "review_reconciliation": None},
+            {**response, "coverage": {"status": "complete", "limitations": "none"}},
+            {**response, "decisions": []},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(InvalidReview):
+                feedback.reconciliation_response(json.dumps(invalid))
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

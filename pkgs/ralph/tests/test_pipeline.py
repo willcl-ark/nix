@@ -5,7 +5,16 @@ from pathlib import Path
 from threading import Barrier
 from unittest.mock import Mock, patch
 
-from ralph import config, engine, model, pipeline, protocol, repository, runner
+from ralph import (
+    config,
+    coverage,
+    engine,
+    model,
+    pipeline,
+    protocol,
+    repository,
+    runner,
+)
 
 COMPLETE = {"status": "complete", "limitations": []}
 
@@ -53,7 +62,11 @@ def archaeology(concept=None):
     return json.dumps({"coverage": COMPLETE, "assessment": concept or assessment()})
 
 
-def verification(decisions=(), concept=None, alternatives=()):
+def verification(decisions=()):
+    return json.dumps({"coverage": COMPLETE, "decisions": list(decisions)})
+
+
+def concept_verification(concept=None, alternatives=()):
     return json.dumps(
         {
             "coverage": COMPLETE,
@@ -62,10 +75,9 @@ def verification(decisions=(), concept=None, alternatives=()):
                 "disposition": "no_concern",
                 "reason": "No material concept concern",
                 "proposed_review": "continue",
-                "review_reason": "The verifier found no material concept concern.",
+                "review_reason": "No material concept concern.",
             },
             "alternatives": list(alternatives),
-            "decisions": list(decisions),
         }
     )
 
@@ -83,6 +95,36 @@ def candidate(title="Simplify fixture"):
         "correction": "Reuse the fixture",
         "uncertainty": "",
     }
+
+
+class CoverageTests(unittest.TestCase):
+    def test_shared_concept_limitation_keeps_code_verification_partial(self):
+        reason = "The external caller contract could not be established."
+        debug = {
+            "stages": {
+                name: {
+                    "status": "completed",
+                    "coverage": {"status": "partial", "limitations": [reason]},
+                }
+                for name in ("verifier", "concept_verifier")
+            },
+            "concept_assessment": {
+                "verification": {"disposition": "unresolved", "reason": reason}
+            },
+        }
+
+        result = coverage.summarize(debug)
+
+        self.assertEqual(result["verification"]["status"], "partial")
+        self.assertEqual(result["verification"]["limitations"], [reason])
+        self.assertEqual(result["context"]["status"], "partial")
+        self.assertEqual(
+            result["issues"],
+            [
+                {"stage": "verifier", "category": "verification", "reason": reason},
+                {"stage": "concept_verifier", "category": "context", "reason": reason},
+            ],
+        )
 
 
 class PipelineTests(unittest.TestCase):
@@ -890,9 +932,24 @@ class PipelineTests(unittest.TestCase):
         calls = []
         mapper_inputs = []
         verifier_inputs = []
+        concept_inputs = []
+        reconciliation_inputs = []
 
         def reviewer(*args, **kwargs):
             stage = kwargs["stage_name"]
+            if stage == "archaeologist":
+                return archaeology({**assessment(), "alternatives": []})
+            if stage == "concept_verifier":
+                concept_inputs.append(
+                    json.loads(args[1].split("Concept verification input:\n", 1)[1])
+                )
+                self.assertNotIn("SECRET_AUTHOR_REPLY", args[1])
+                return concept_verification()
+            if stage == "reconciliation":
+                reconciliation_inputs.append(
+                    json.loads(args[1].split("Reconciliation input:\n", 1)[1])
+                )
+                return json.dumps({"coverage": COMPLETE, "review_reconciliation": []})
             if stage == "independent":
                 self.assertNotIn("SECRET_AUTHOR_REPLY", args[1])
                 self.assertNotIn("previous:1", args[1])
@@ -917,13 +974,11 @@ class PipelineTests(unittest.TestCase):
             verifier_inputs.append(
                 json.loads(args[1].split("Verification input:\n", 1)[1])
             )
-            self.assertIn("SECRET_AUTHOR_REPLY", args[1])
-            self.assertIn(
-                "review_reconciliation", kwargs["response_schema"]["properties"]
+            self.assertNotIn("SECRET_AUTHOR_REPLY", args[1])
+            self.assertEqual(
+                set(kwargs["response_schema"]["properties"]), {"coverage", "decisions"}
             )
-            result = json.loads(verification())
-            result["review_reconciliation"] = []
-            return json.dumps(result)
+            return verification()
 
         def audit(api_key, name, prompt, input_text, **kwargs):
             calls.append(name)
@@ -937,6 +992,7 @@ class PipelineTests(unittest.TestCase):
             audit=audit,
             review_feedback=packet,
             backport_evidence={"complete": True, "limitations": []},
+            archaeology_enabled=True,
         )
         self.assertEqual(calls, ["feedback"])
         prior = mapper_inputs[0]["review_feedback"]["findings"][0]
@@ -956,7 +1012,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             mapper_inputs[0]["review_feedback"]["comments"], packet["comments"]
         )
-        self.assertEqual(verifier_inputs[0]["review_feedback"], packet)
+        self.assertNotIn("review_feedback", verifier_inputs[0])
+        self.assertNotIn("review_feedback", concept_inputs[0])
+        self.assertEqual(reconciliation_inputs[0]["review_feedback"], packet)
+        self.assertIsNone(reconciliation_inputs[0]["feedback_mappings"])
         entry = self.debug["review_memory"][0]
         self.assertEqual(entry["key"], "previous:1")
         self.assertEqual(
@@ -968,6 +1027,19 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn(self.published["title"], self.result.content)
         self.assertIn("Earlier concerns remain unresolved", self.result.content)
         self.assertNotIn("Previous findings and author responses", self.result.content)
+
+        case = engine.ReviewCase(
+            "PR diff", self.snapshot, self.source, review_feedback=packet
+        )
+        runtime = engine.Runtime(case=case, api_key="key", attempt=self.debug)
+        with patch.object(
+            pipeline, "review_with_independent_passes", return_value=self.result
+        ):
+            saved = runner.run_review(case, runtime, engine.load())
+        self.assertEqual(
+            saved["output"]["exports"]["review_memory"][0]["source_report_url"],
+            "https://review.example/old-report.html",
+        )
 
     def test_verified_repeat_preserves_finding_and_links_memory(self):
         self.tier, self.audits = "routine", []
@@ -989,8 +1061,8 @@ class PipelineTests(unittest.TestCase):
                 return discovery([candidate()])
             if stage == "challenger":
                 return self.challenge(*args, **kwargs)
-            result = json.loads(
-                verification(
+            if kwargs["stage_name"] == "verifier":
+                return verification(
                     [
                         {
                             "candidate_ids": ["independent:1"],
@@ -1000,7 +1072,8 @@ class PipelineTests(unittest.TestCase):
                         }
                     ]
                 )
-            )
+            self.assertEqual(kwargs["stage_name"], "reconciliation")
+            result = {"coverage": COMPLETE}
             result["review_reconciliation"] = [
                 {
                     "prior_key": "previous:1",
@@ -1114,8 +1187,8 @@ class PipelineTests(unittest.TestCase):
                 return discovery([candidate()])
             if kwargs["stage_name"] == "challenger":
                 return self.challenge(*args, **kwargs)
-            result = json.loads(
-                verification(
+            if kwargs["stage_name"] == "verifier":
+                return verification(
                     [
                         {
                             "candidate_ids": ["independent:1"],
@@ -1125,7 +1198,8 @@ class PipelineTests(unittest.TestCase):
                         }
                     ]
                 )
-            )
+            self.assertEqual(kwargs["stage_name"], "reconciliation")
+            result = {"coverage": COMPLETE}
             result["review_reconciliation"] = reconciliations
             return json.dumps(result)
 
@@ -1136,10 +1210,8 @@ class PipelineTests(unittest.TestCase):
         self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(len(self.result.findings), 1)
         self.assertEqual(self.debug["review_memory"][0]["status"], "unclear")
-        self.assertEqual(
-            self.debug["stages"]["verifier"]["reconciliation_validation_errors"],
-            [{"prior_key": "previous:1", "error": "Missing reconciliation"}],
-        )
+        self.assertEqual(self.debug["stages"]["reconciliation"]["status"], "invalid")
+        self.assertEqual(self.debug["coverage"]["verification"]["status"], "complete")
 
         packet["findings"].append({"key": "previous:2", **self.published})
         reconciliations = [
@@ -1172,7 +1244,7 @@ class PipelineTests(unittest.TestCase):
             ["still_present", "unclear"],
         )
         self.assertEqual(
-            self.debug["stages"]["verifier"]["reconciliation_validation_errors"],
+            self.debug["stages"]["reconciliation"]["reconciliation_validation_errors"],
             [
                 {
                     "prior_key": "previous:2",
@@ -1221,6 +1293,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.debug["coverage"]["status"], "complete")
         self.assertNotIn("feedback", self.debug["stages"])
         self.assertNotIn("review_memory", self.debug)
+        for stage in ("concept_verifier", "reconciliation"):
+            self.assertEqual(self.debug["stages"][stage]["status"], "skipped")
 
     def test_challenger_failure_preserves_verified_findings(self):
         self.tier, self.audits = "routine", []
@@ -1250,6 +1324,98 @@ class PipelineTests(unittest.TestCase):
                     )
                 )
 
+    def test_context_verification_failures_cannot_discard_supported_findings(self):
+        self.tier, self.audits = "routine", []
+        packet = {
+            "repository": self.source["repository"],
+            "number": self.source["number"],
+            "revisions": {"new_head": self.snapshot.head_sha},
+            "findings": [{"key": "previous:1", **self.published}],
+            "comments": [{"id": "reply:1", "body": "PRIVATE_AUTHOR_REPLY"}],
+        }
+        for failed_stage in ("concept_verifier", "reconciliation"):
+            for failure in (TimeoutError("Provider unavailable"), "{}"):
+                with self.subTest(stage=failed_stage, failure=type(failure).__name__):
+                    self.debug = {}
+                    calls = {}
+
+                    def review(*args, **kwargs):
+                        stage = kwargs["stage_name"]
+                        calls[stage] = (args[1], kwargs)
+                        if stage == "archaeologist":
+                            return archaeology({**assessment(), "alternatives": []})
+                        if stage == "alternatives":
+                            return json.dumps(
+                                {"coverage": COMPLETE, "alternatives": []}
+                            )
+                        if stage == "independent":
+                            return discovery([candidate()])
+                        if stage == "challenger":
+                            return self.challenge(*args, **kwargs)
+                        if stage == "verifier":
+                            return verification(
+                                [
+                                    {
+                                        "candidate_ids": ["independent:1"],
+                                        "disposition": "supported",
+                                        "reason": "Checked source",
+                                        "finding": self.published,
+                                    }
+                                ]
+                            )
+                        if stage == failed_stage:
+                            if isinstance(failure, Exception):
+                                raise failure
+                            return failure
+                        if stage == "concept_verifier":
+                            return concept_verification()
+                        if stage == "reconciliation":
+                            return json.dumps(
+                                {"coverage": COMPLETE, "review_reconciliation": []}
+                            )
+                        self.fail(f"Unexpected stage: {stage}")
+
+                    def audit(api_key, name, prompt, input_text, **kwargs):
+                        self.assertEqual(name, "feedback")
+                        return json.dumps({"mappings": []}), {"status": "completed"}
+
+                    self.run_review(
+                        review,
+                        audit=audit,
+                        archaeology_enabled=True,
+                        review_feedback=packet,
+                    )
+                    self.assertEqual(len(self.result.findings), 1)
+                    self.assertEqual(
+                        self.debug["stages"]["judge"]["status"], "completed"
+                    )
+                    self.assertEqual(
+                        self.debug["coverage"]["verification"]["status"], "complete"
+                    )
+                    self.assertEqual(
+                        self.debug["coverage"]["context"]["status"], "failed"
+                    )
+                    self.assertTrue(
+                        any(
+                            issue["stage"] == failed_stage
+                            and issue["category"] == "context"
+                            for issue in self.debug["coverage"]["issues"]
+                        )
+                    )
+                    for stage in ("verifier", "concept_verifier"):
+                        self.assertNotIn("PRIVATE_AUTHOR_REPLY", calls[stage][0])
+                    self.assertIn("PRIVATE_AUTHOR_REPLY", calls["reconciliation"][0])
+                    for stage in ("concept_verifier", "reconciliation"):
+                        for setting in (
+                            "model",
+                            "reasoning_effort",
+                            "max_output_tokens",
+                            "max_tool_calls",
+                        ):
+                            self.assertEqual(
+                                calls[stage][1][setting], calls["verifier"][1][setting]
+                            )
+
     def test_failed_verifier_retains_history_in_diagnostics_and_fails_run(self):
         self.tier, self.audits = "routine", []
         packet = {
@@ -1265,6 +1431,8 @@ class PipelineTests(unittest.TestCase):
                 return discovery([candidate()])
             if kwargs["stage_name"] == "challenger":
                 return self.challenge(*args, **kwargs)
+            if kwargs["stage_name"] == "reconciliation":
+                return json.dumps({"coverage": COMPLETE, "review_reconciliation": []})
             self.assertEqual(kwargs["stage_name"], "verifier")
             raise TimeoutError("Provider unavailable")
 
@@ -1297,12 +1465,6 @@ class PipelineTests(unittest.TestCase):
 
         with self.assertRaises(model.StaleReview):
             pipeline._assess_backport(cancelled, "input", {}, {})
-
-    def test_feedback_and_backport_verifier_schema_compose(self):
-        properties = pipeline._verifier_schema({"findings": []})["properties"]
-        self.assertNotIn("backport_assessment", properties)
-        self.assertIn("review_reconciliation", properties)
-        self.assertIn("decisions", properties)
 
     def test_backport_fidelity_is_withheld_on_failed_verification_or_review(self):
         self.tier, self.audits = "routine", []
@@ -1361,6 +1523,17 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("target release branch", kwargs["prompt"])
             if stage == "archaeologist":
                 return archaeology()
+            if stage == "concept_verifier":
+                return concept_verification(
+                    alternatives=[
+                        {
+                            "source": "concept_candidate",
+                            "index": 0,
+                            "disposition": "drop",
+                            "reason": "Not relevant to backport fidelity",
+                        }
+                    ]
+                )
             if stage == "challenger":
                 return self.challenge(*args, **kwargs)
             if stage in {"independent", "build"}:
@@ -1413,6 +1586,7 @@ class PipelineTests(unittest.TestCase):
                 "build",
                 "challenger",
                 "verifier",
+                "concept_verifier",
                 "backport_assessment",
                 "judge",
             },
@@ -1643,6 +1817,9 @@ class PipelineTests(unittest.TestCase):
                         }
                         for source in ("independent", "symbol_usage")
                     ],
+                )
+            if stage == "concept_verifier":
+                return concept_verification(
                     alternatives=[
                         {
                             "source": source,

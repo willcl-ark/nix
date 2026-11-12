@@ -87,18 +87,10 @@ class ProtocolTests(unittest.TestCase):
         self.addCleanup(reader.stop)
         self.coverage = {"status": "complete", "limitations": []}
 
-    def verification(self, decisions, coverage=None, concept=None):
+    def verification(self, decisions, coverage=None):
         return json.dumps(
             {
                 "coverage": coverage or self.coverage,
-                "concept": concept
-                or {
-                    "disposition": "no_concern",
-                    "reason": "No material concept concern",
-                    "proposed_review": "continue",
-                    "review_reason": "The verifier found no material concept concern.",
-                },
-                "alternatives": [],
                 "decisions": decisions,
             }
         )
@@ -121,11 +113,19 @@ class ProtocolTests(unittest.TestCase):
         }
 
         def verify(decisions):
-            payload = json.loads(self.verification([]))
-            payload["alternatives"] = decisions
-            return protocol.verification(
-                json.dumps(payload), [], self.snapshot, blind_alternatives=[option]
-            )[0]
+            payload = {
+                "coverage": self.coverage,
+                "concept": {
+                    "disposition": "no_concern",
+                    "reason": "No concept candidate",
+                    "proposed_review": "continue",
+                    "review_reason": "No material concern",
+                },
+                "alternatives": decisions,
+            }
+            return protocol.concept_verification(
+                json.dumps(payload), blind_alternatives=[option]
+            )
 
         result = verify([decision])
         self.assertIsNone(result["alternatives_validation_error"])
@@ -307,6 +307,28 @@ class ProtocolTests(unittest.TestCase):
             "technical_assumptions": ["Verifier should check the call path."],
             "citations": citations or ["https://code.example.org/org/repo/pulls/1"],
         }
+
+    def test_concept_verification_requires_supplied_publishable_assessment(self):
+        candidate = {**self.concept_assessment(), "alternatives": []}
+        payload = {
+            "coverage": self.coverage,
+            "concept": {
+                "disposition": "publish",
+                "reason": "The original objection is supported as written.",
+                "proposed_review": "would_stop",
+                "review_reason": "The maintenance burden outweighs the benefit.",
+            },
+            "alternatives": [],
+        }
+        checked = protocol.concept_verification(json.dumps(payload), candidate)
+        self.assertEqual(checked["concept"], payload["concept"])
+        self.assertIsNone(checked["concept_validation_error"])
+        for supplied in (None, {**candidate, "assessment": "worth_pursuing"}):
+            checked = protocol.concept_verification(json.dumps(payload), supplied)
+            self.assertEqual(checked["concept"]["disposition"], "unresolved")
+            self.assertEqual(checked["coverage"]["status"], "partial")
+        with self.assertRaises(protocol.InvalidReview):
+            protocol.verification(json.dumps(payload), [], self.snapshot)
 
     def test_judge_withholds_missing_duplicate_and_invented_finding_decisions(self):
         verified = [

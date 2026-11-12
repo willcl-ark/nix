@@ -5,10 +5,12 @@ import json
 from collections import Counter
 
 from .protocol import (
+    COVERAGE,
     REVIEW_EVIDENCE,
     STRING,
     STRINGS,
     InvalidReview,
+    _coverage,
     _object,
     _source_evidence,
     _strings,
@@ -42,6 +44,18 @@ ASSESSMENT = object_schema(
     }
 )
 RECONCILIATION_SCHEMA = {"type": "array", "items": ASSESSMENT}
+RECONCILIATION_RESPONSE_SCHEMA = object_schema(
+    {"coverage": COVERAGE, "review_reconciliation": RECONCILIATION_SCHEMA}
+)
+
+
+def reconciliation_response(text):
+    result = json.loads(text)
+    _object(result, RECONCILIATION_RESPONSE_SCHEMA["properties"])
+    _coverage(result["coverage"])
+    if not isinstance(result["review_reconciliation"], list):
+        raise InvalidReview("Invalid review reconciliation")
+    return result
 
 
 def validate_packet(packet, source, snapshot):

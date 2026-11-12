@@ -16,7 +16,13 @@ _SCOPE_NOTE = re.compile(
     re.IGNORECASE,
 )
 
-CONTEXT_STAGES = {"archaeologist", "alternatives", "feedback"}
+CONTEXT_STAGES = {
+    "archaeologist",
+    "alternatives",
+    "feedback",
+    "concept_verifier",
+    "reconciliation",
+}
 FAILURES = {"failed", "invalid"}
 
 
@@ -116,8 +122,6 @@ def summarize(debug):
                 if _SCOPE_NOTE.fullmatch(reason.strip()):
                     if reason not in notes:
                         notes.append(reason)
-                elif name == "verifier" and reason == concept_reason:
-                    issue(name, "context", reason)
                 else:
                     limitations.append(reason)
                     issue(name, category, reason)
@@ -125,8 +129,8 @@ def summarize(debug):
             if limitations:
                 status = "partial"
             elif coverage.get("limitations"):
-                # The stage's partial flag came solely from expected scope or
-                # advisory concept evidence. Its original response is retained.
+                # The stage's partial flag came solely from expected scope.
+                # Its original response is retained.
                 status = "complete"
             elif status == "partial":
                 issue(
@@ -198,7 +202,7 @@ def summarize(debug):
             issue("backport_assessment", "verification", backport["summary"])
             verifications.append("partial")
     if concept_reason:
-        issue("verifier", "context", concept_reason)
+        issue("concept_verifier", "context", concept_reason)
         contexts.append("partial")
     limitations = [
         f"{item['stage']}: {item['reason']}"
