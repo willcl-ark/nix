@@ -756,6 +756,8 @@ def review_with_independent_passes(
             schema = (
                 protocol.TESTS_DISCOVERY_SCHEMA
                 if prompt_name == "tests"
+                else protocol.COMMIT_DISCOVERY_SCHEMA
+                if name == "commit_flow"
                 else protocol.DISCOVERY_SCHEMA
             )
             answer = run_stage(name, input_text, prompt, schema)
@@ -1168,7 +1170,11 @@ def review_with_independent_passes(
     debug["finding_attribution"] = [
         {
             "finding_id": finding["id"],
-            **{key: finding[key] for key in ("title", "path", "line", "side")},
+            **{
+                key: finding[key]
+                for key in ("title", "path", "line", "side", "commit", "parent")
+                if key in finding
+            },
             "presented_body": finding["body"],
             "presented_summary": finding["summary"],
             "candidate_ids": finding_candidates[finding["id"]],

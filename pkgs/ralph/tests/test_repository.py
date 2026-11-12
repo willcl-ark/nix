@@ -1,5 +1,6 @@
 """Committed local comparisons never depend on a checkout or a remote."""
 
+import json
 import os
 import re
 import tempfile
@@ -7,7 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ralph import repository
+import final_comment
+from ralph import repository, protocol, feedback
 
 
 class LocalRepositoryTests(unittest.TestCase):
@@ -41,6 +43,263 @@ class LocalRepositoryTests(unittest.TestCase):
         return self.git(
             "for-each-ref", "--format=%(refname)", "refs/ralph/local"
         ).splitlines()
+
+    def test_intermediate_commit_location_survives_verification_and_rendering(self):
+        self.git("checkout", "-q", "topic")
+        (self.repo / "code.txt").write_text("original\n")
+        (self.repo / "other.txt").write_text("unrelated final change\n")
+        self.git("add", ".")
+        self.git("commit", "-qam", "restore original")
+        restored = self.git("rev-parse", "HEAD").strip()
+        snapshot = repository.snapshot_repository(self.repo, self.ancestor, restored)
+        self.assertNotIn("code.txt", snapshot.changed_paths)
+        location = {
+            "path": "code.txt",
+            "line": 1,
+            "side": "commit",
+            "commit": self.head,
+            "parent": None,
+        }
+        candidate = {
+            "kind": "suggestion",
+            **location,
+            **dict.fromkeys(
+                (
+                    "title",
+                    "claim",
+                    "consequence",
+                    "evidence",
+                    "correction",
+                    "uncertainty",
+                ),
+                "Intermediate change",
+            ),
+        }
+        coverage = {"status": "complete", "limitations": []}
+        discovery = {
+            "coverage": coverage,
+            "requires_sensitive_review": False,
+            "findings": [candidate],
+        }
+        parsed = protocol.discovery(json.dumps(discovery), "commit_flow", snapshot)
+        candidates = parsed["findings"]
+        self.assertIn(
+            "1: head",
+            repository.read_pr_commit_file(
+                self.repo, self.ancestor, restored, self.head, None, "code.txt", 1
+            ),
+        )
+        self.assertIn(
+            "1: original",
+            repository.read_pr_commit_file(
+                self.repo,
+                self.ancestor,
+                restored,
+                self.head,
+                self.ancestor,
+                "code.txt",
+                1,
+            ),
+        )
+        # Normal implementation reviews still cannot cite this net-unchanged file,
+        # or escape that rule by supplying a commit-specific location.
+        with self.assertRaises(protocol.InvalidReview):
+            protocol.discovery(json.dumps(discovery), "independent", snapshot)
+        with self.assertRaises(protocol.InvalidReview):
+            protocol.discovery(
+                json.dumps(
+                    {
+                        **discovery,
+                        "findings": [
+                            {
+                                k: v
+                                for k, v in {**candidate, "side": "head"}.items()
+                                if k not in {"commit", "parent"}
+                            }
+                        ],
+                    }
+                ),
+                "independent",
+                snapshot,
+            )
+        for invalid in (
+            {"commit": self.ancestor},
+            {"commit": self.base},
+            {"parent": restored},
+            {"line": 2},
+            {"path": "missing.cpp"},
+        ):
+            with (
+                self.subTest(invalid=invalid),
+                self.assertRaises(protocol.InvalidReview),
+            ):
+                protocol.discovery(
+                    json.dumps({**discovery, "findings": [{**candidate, **invalid}]}),
+                    "commit_flow",
+                    snapshot,
+                )
+        finding = {
+            "kind": "suggestion",
+            "severity": "suggestion",
+            **location,
+            "security": {
+                "classification": "non_security",
+                "reason": "Commit structure",
+            },
+            "title": "Intermediate change",
+            "summary": "Review intermediate behavior",
+            "body": "Keep related changes together",
+            "source_evidence": [{**location, "excerpt": "head"}],
+        }
+        verification = {
+            "coverage": coverage,
+            "alternatives": [],
+            "concept": {
+                "disposition": "no_concern",
+                "assessment": None,
+                "reason": "No concern",
+                "proposed_review": "continue",
+                "review_reason": "Useful change",
+            },
+            "decisions": [
+                {
+                    "candidate_ids": ["commit_flow:1"],
+                    "disposition": "supported",
+                    "reason": "Checked commit",
+                    "finding": finding,
+                }
+            ],
+        }
+        _, accepted = protocol.verification(
+            json.dumps(verification), candidates, snapshot
+        )
+        self.assertEqual(len(accepted), 1)
+        # Even a head anchor cannot turn commit-flow evidence into a runtime defect.
+        unsupported = {
+            **finding,
+            "kind": "defect",
+            "severity": "major",
+            "side": "head",
+            "path": "other.txt",
+        }
+        unsupported.pop("commit")
+        unsupported.pop("parent")
+        verification["decisions"][0]["finding"] = unsupported
+        _, withheld = protocol.verification(
+            json.dumps(verification), candidates, snapshot
+        )
+        self.assertEqual(withheld, [])
+        judgment = {
+            "coverage": coverage,
+            "concept": None,
+            "decisions": [
+                {
+                    "finding_id": "finding:1",
+                    "disposition": "publish",
+                    "reason": "Useful sequencing change",
+                    "source_evidence": finding["source_evidence"],
+                    **{key: finding[key] for key in ("title", "summary", "body")},
+                }
+            ],
+        }
+        judged = protocol.judgment(json.dumps(judgment), accepted, None, snapshot)
+        # The published result retains its commit identity and renders immutable links.
+        published = judged[1]
+        self.assertEqual(published[0]["commit"], self.head)
+        report = final_comment.render_report(
+            published,
+            repository_url="https://github.com/o/r",
+            head_sha=restored,
+            base_sha=self.ancestor,
+        )
+        self.assertIn(f"/blob/{self.head}/code.txt#L1", report)
+        parent_link = final_comment.source_location(
+            {**finding, "parent": self.ancestor},
+            "https://github.com/o/r",
+            self.ancestor,
+            restored,
+        )
+        self.assertIn(f"/blob/{self.ancestor}/code.txt#L1", parent_link)
+        self.assertIn(f"parent of {self.head[:12]}", parent_link)
+
+    def test_commit_finding_is_reverified_on_later_run(self):
+        location = {
+            "path": "code.txt",
+            "line": 1,
+            "side": "commit",
+            "commit": self.head,
+            "parent": self.ancestor,
+        }
+        finding = {
+            **location,
+            "key": "old:1",
+            "title": "Commit sequence",
+            "severity": "suggestion",
+            "source_evidence": [{**location, "excerpt": "original"}],
+        }
+        assessment = {
+            "prior_key": "old:1",
+            "status": "still_present",
+            "duplicate_of": None,
+            "candidate_ids": [],
+            "unchanged": True,
+            "unchanged_since_report": True,
+            "reason": "The intermediate sequencing problem remains.",
+            "source_evidence": [{**location, "excerpt": "original"}],
+        }
+        snapshot = repository.snapshot_repository(self.repo, self.ancestor, self.head)
+        head_finding = {**finding, "side": "head"}
+        head_finding.pop("commit")
+        head_finding.pop("parent")
+        invalid_packet = {
+            "findings": [{**head_finding, "severity": "major"}],
+            "comments": [],
+        }
+        rejected = feedback.reconcile(invalid_packet, [assessment], [], snapshot)
+        self.assertEqual(rejected[0]["status"], "unclear")
+        for prior in (finding, head_finding):
+            with self.subTest(side=prior["side"]):
+                packet = {"findings": [prior], "comments": []}
+                memory = feedback.reconcile(packet, [assessment], [], snapshot)
+                self.assertEqual(memory[0]["status"], "still_present")
+                rendered = final_comment.render_report(
+                    [],
+                    review_memory=memory,
+                    head_sha=self.head,
+                    repository_url="https://github.com/o/r",
+                )
+                self.assertIn(f"/blob/{self.ancestor}/code.txt#L1", rendered)
+                self.assertIn(f"parent of {self.head[:12]}", rendered)
+                # A rewritten PR no longer contains the cited commit; history must not
+                # resurrect it solely because its source blob remains in the repository.
+                rewritten = repository.snapshot_repository(
+                    self.repo, self.ancestor, self.base
+                )
+                stale = feedback.reconcile(packet, [assessment], [], rewritten)
+                self.assertEqual(stale[0]["status"], "unclear")
+                self.assertEqual(
+                    final_comment.report_findings([], stale, head_sha=self.base), []
+                )
+
+    def test_commit_source_selects_merge_parent_explicitly(self):
+        self.git("checkout", "-q", "topic")
+        self.git("merge", "--no-ff", "-qm", "merge target", "target")
+        merge = self.git("rev-parse", "HEAD").strip()
+        for parent, expected in (
+            (None, "head"),
+            (self.head, "head"),
+            (self.base, "original"),
+        ):
+            self.assertIn(
+                f"1: {expected}",
+                repository.read_pr_commit_file(
+                    self.repo, self.ancestor, merge, merge, parent, "code.txt", 1
+                ),
+            )
+        with self.assertRaises(repository.ToolFailure):
+            repository.read_pr_commit_file(
+                self.repo, self.ancestor, merge, merge, self.ancestor, "code.txt", 1
+            )
 
     def test_divergent_exact_range_and_branch_have_different_baselines(self):
         with repository.local_snapshot(self.repo, "target..topic") as exact:

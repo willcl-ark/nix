@@ -173,10 +173,11 @@ that fewer commits would be easier to review.
 Keep verified commit SHAs and their roles in the body and decision reason.
 Use kind suggestion, severity suggestion and non_security for a review-flow
 improvement. A problem fixed later in the series is not a defect at the head.
-Anchor to relevant changed code or tests with normal head/base source_evidence;
-those excerpts establish the location, while inspected commit patches establish
-the sequencing claim. Missing decisive commit evidence means unresolved, and
-must not be replaced by a matching final-tree quote or an invented anchor.
+Use the candidate's commit-specific location and source_evidence when the
+relevant code exists only at an intermediate commit or its parent. Head/base
+anchors remain available for net-changed code. Source excerpts establish the
+location, while inspected commit patches establish the sequencing claim. Missing
+decisive commit evidence means unresolved, and must not be replaced by a matching final-tree quote or an invented anchor.
 
 Evaluate defect claims and improvement suggestions using appropriate evidence.
 For a defect, verify the conditional trigger and consequence, distinguishing
@@ -291,8 +292,8 @@ For a supported defect, verify its trigger and consequence, and include the
 production-evidence qualification above when needed. For a supported
 suggestion, verify the present cost, concrete alternative, and why it preserves
 required behavior, or the material decision a grounded design question would
-settle. A supported finding must point to a changed file and a source line on
-the correct side of the diff (head for added or changed code,
+settle. Apart from commit-flow locations, a supported finding must point to a
+changed file and a source line on the correct side of the diff (head for added or changed code,
 base for removed code). Verify that the path and line match the claim. Evidence
 from unchanged policy or documentation belongs in the body; anchor the finding
 to the relevant changed code. Use unresolved when the checkout cannot settle a
@@ -308,13 +309,13 @@ comment; do not add decorative language, an ACK, or a standalone merge verdict.
 
 Every supported finding must include a nonempty `source_evidence` array. Each
 entry has `path`, `line`, `side`, and `excerpt`: the repository-relative path,
-positive starting line, `head` or `base` side, and exact contiguous full source
-lines copied without line-number prefixes. Keep each excerpt within 150 lines
+positive starting line, `head`, `base` or commit-specific side, and exact contiguous
+full source lines copied without line-number prefixes. Keep each excerpt within 150 lines
 and 12,000 UTF-8 bytes, as supported by `read_file`; a final newline is optional.
 Include the decisive caller when claiming that a triggering call occurs.
 Evidence may come from an unchanged
-file even though the finding itself must anchor to changed code. Excerpts are
-checked against immutable snapshot blobs before reaching the judge; a mismatched or
+file even though implementation findings must anchor to changed code. Excerpts
+are checked against immutable snapshot blobs before reaching the judge; a mismatched or
 missing excerpt makes the finding unresolved. Copy the source exactly, including
 indentation and argument names. This check proves that quoted lines exist, not
 that they establish the claim. You must still verify the trigger, consequence,
@@ -329,3 +330,10 @@ that describe the same failure mechanism and consequence into one finding.
 Include every source-supported issue for the judge; the caller caps the comment
 at six; the Review report includes all current verified findings. Diagnostic
 analysis and historical detail stay in the Run archive. Do not fill a quota.
+
+Commit-flow candidates may cite side `commit`, a full PR commit SHA and an
+explicit direct-parent SHA or null. Verify these source lines with
+read_pr_commit_file and preserve their commit/parent identity in findings and
+source evidence. They support sequencing suggestions, not defects in the final
+tree. Check the rationale for existing boundaries, including backportable fixes,
+and reject rearrangements that introduce intermediate safety or build failures.

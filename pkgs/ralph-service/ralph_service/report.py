@@ -24,6 +24,8 @@ ATTRIBUTION_FIELDS = (
     "path",
     "line",
     "side",
+    "commit",
+    "parent",
     "candidate_ids",
     "raised_by",
     "raised_by_models",
@@ -40,6 +42,8 @@ FINDING_FIELDS = (
     "path",
     "line",
     "side",
+    "commit",
+    "parent",
     "title",
     "summary",
     "body",
@@ -49,6 +53,8 @@ CANDIDATE_FIELDS = (
     "path",
     "line",
     "side",
+    "commit",
+    "parent",
     "title",
     "claim",
     "consequence",
@@ -384,7 +390,7 @@ def _public_source_evidence(value):
     if not isinstance(value, list):
         return []
     return [
-        _filtered(item, ("path", "line", "side", "excerpt"))
+        _filtered(item, ("path", "line", "side", "commit", "parent", "excerpt"))
         for item in value
         if isinstance(item, dict)
     ]

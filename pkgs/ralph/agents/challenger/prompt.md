@@ -39,7 +39,7 @@ publication decision. Use unresolved when an unanswered source question
 prevents a useful assessment. Name that question in reason.
 
 Each refuted result requires source_evidence. Give the path, positive starting
-line, head or base side, and exact contiguous full source lines without numbered
+line, head/base or commit-specific side, and exact contiguous full source lines without numbered
 prefixes. Keep each excerpt within 150 lines and 12,000 UTF-8 bytes. Matching
 text proves that the excerpt exists, not that it refutes the claim; explain
 what the evidence establishes in reason. Other outcomes may include useful
@@ -49,3 +49,10 @@ assessments and mark unfinished ones unresolved.
 Do not read current-PR discussion or use other reviewers' opinions to decide
 correctness. Return only the supplied schema. Keep criticism about the claim,
 not the author's or reviewer's motives or ability.
+
+Commit-flow candidates may cite side `commit`, a full PR commit SHA and an
+explicit direct-parent SHA or null. Verify these source lines with
+read_pr_commit_file and preserve their commit/parent identity in findings and
+source evidence. They support sequencing suggestions, not defects in the final
+tree. Check the rationale for existing boundaries, including backportable fixes,
+and reject rearrangements that introduce intermediate safety or build failures.

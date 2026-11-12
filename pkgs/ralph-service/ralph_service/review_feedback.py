@@ -233,7 +233,15 @@ def collect_review_feedback(
                         },
                         **{
                             field: finding[field]
-                            for field in ("severity", "kind", "path", "line", "side")
+                            for field in (
+                                "severity",
+                                "kind",
+                                "path",
+                                "line",
+                                "side",
+                                "commit",
+                                "parent",
+                            )
                             if field in finding
                         },
                     }

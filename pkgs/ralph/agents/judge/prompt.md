@@ -108,3 +108,10 @@ Do not use current-PR discussion or other reviewers' reputations to decide
 code correctness. Use plain prose and active voice. Avoid stock praise,
 reassurance, review-process narration, emoji, and em dashes. No later model
 will edit approved wording. Return only the supplied judge schema.
+
+Commit-flow candidates may cite side `commit`, a full PR commit SHA and an
+explicit direct-parent SHA or null. Verify these source lines with
+read_pr_commit_file and preserve their commit/parent identity in findings and
+source evidence. They support sequencing suggestions, not defects in the final
+tree. Check the rationale for existing boundaries, including backportable fixes,
+and reject rearrangements that introduce intermediate safety or build failures.

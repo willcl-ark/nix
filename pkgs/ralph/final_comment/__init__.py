@@ -38,6 +38,12 @@ def source_location(finding, repository_url=None, base_sha=None, head_sha=None):
     line = finding.get("line", "")
     label = f"{path}:{line}"
     revision = base_sha if finding.get("side", "head") == "base" else head_sha
+    if finding.get("side") == "commit":
+        revision = finding.get("parent") or finding.get("commit")
+        context = (
+            f"parent of {finding['commit'][:12]}" if finding.get("parent") else "commit"
+        )
+        label += f" at {revision[:12]} ({context})"
     if repository_url and revision and path:
         url = f"{repository_url}/blob/{quote(revision, safe='')}/{quote(path, safe='/')}#L{line}"
         return f"[{label}](<{url}>)"
@@ -103,6 +109,11 @@ def _ordered_findings(findings):
 
 
 def _current_findings(findings, memory, head_sha):
+    def current_source(entry, source):
+        return source.get("side") == "head" or (
+            entry.get("severity") == "suggestion" and source.get("side") == "commit"
+        )
+
     current = list(findings)
     groups = {}
     for entry in memory:
@@ -125,7 +136,7 @@ def _current_findings(findings, memory, head_sha):
             and entry.get("status") == "still_present"
             and entry.get("reason")
             and any(
-                source.get("side") == "head"
+                current_source(entry, source)
                 for source in entry.get("source_evidence", [])
             )
         ]
@@ -135,7 +146,9 @@ def _current_findings(findings, memory, head_sha):
             (entry for entry in confirmed if entry["key"] == key), confirmed[0]
         )
         source = next(
-            source for source in entry["source_evidence"] if source["side"] == "head"
+            source
+            for source in entry["source_evidence"]
+            if current_source(entry, source)
         )
         summary, _, body = entry["reason"].partition("\n\n")
         previous_url = entry.get("source_report_url") or ""
@@ -155,9 +168,11 @@ def _current_findings(findings, memory, head_sha):
                 # old line numbers need not still be accurate.
                 "summary": summary,
                 "body": body,
-                "path": source["path"],
-                "line": source["line"],
-                "side": "head",
+                **{
+                    field: source[field]
+                    for field in ("path", "line", "side", "commit", "parent")
+                    if field in source
+                },
             }
         )
         included.update(entry["key"] for entry in group)

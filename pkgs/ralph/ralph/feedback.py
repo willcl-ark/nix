@@ -5,7 +5,7 @@ import json
 from collections import Counter
 
 from .protocol import (
-    SOURCE_EVIDENCE,
+    REVIEW_EVIDENCE,
     STRING,
     STRINGS,
     InvalidReview,
@@ -38,7 +38,7 @@ ASSESSMENT = object_schema(
         "unchanged": {"type": "boolean"},
         "unchanged_since_report": {"type": "boolean"},
         "reason": STRING,
-        "source_evidence": {"type": "array", "items": SOURCE_EVIDENCE},
+        "source_evidence": {"type": "array", "items": REVIEW_EVIDENCE},
     }
 )
 RECONCILIATION_SCHEMA = {"type": "array", "items": ASSESSMENT}
@@ -98,7 +98,16 @@ def mapping_input(packet, candidates):
     def claim(finding):
         return {
             field: finding.get(f"presented_{field}") or finding[field]
-            for field in ("title", "summary", "body", "path", "line", "side")
+            for field in (
+                "title",
+                "summary",
+                "body",
+                "path",
+                "line",
+                "side",
+                "commit",
+                "parent",
+            )
             if field in finding or finding.get(f"presented_{field}")
         }
 
@@ -165,7 +174,7 @@ def reconcile(
 ):
     """Retain every historical finding; incomplete or invalid checks fail open."""
     entries = copy.deepcopy(packet.get("findings", []))
-    prior = {entry["key"] for entry in entries}
+    prior = {entry["key"]: entry for entry in entries}
     current = {entry["id"] for entry in candidates}
     decisions = {}
     errors = validation_errors if validation_errors is not None else []
@@ -213,10 +222,18 @@ def reconcile(
             evidence = assessment["source_evidence"]
             if not isinstance(evidence, list):
                 raise InvalidReview("Invalid reconciliation evidence")
+            commit_finding = prior[key].get("severity") == "suggestion" and (
+                prior[key].get("side") == "commit"
+                or any(
+                    source.get("side") == "commit"
+                    for source in prior[key].get("source_evidence", [])
+                )
+            )
             if evidence or assessment["status"] != "unclear":
-                _source_evidence(evidence, snapshot)
+                _source_evidence(evidence, snapshot, allow_commit=commit_finding)
             if assessment["status"] != "unclear" and not any(
-                item["side"] == "head" for item in evidence
+                item["side"] == "head" or (commit_finding and item["side"] == "commit")
+                for item in evidence
             ):
                 raise InvalidReview("Reconciliation requires current source evidence")
             decisions[key] = assessment

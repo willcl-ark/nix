@@ -16,8 +16,9 @@ only when that evidence could materially change the review; avoid a generic
 limitation or automatic partial status when the available evidence is adequate.
 Use kind `design` for approach, architecture, or workflow tradeoffs and grounded
 questions, `defect` for correctness failures, and `suggestion` for other useful
-improvements. For each lead, give a changed-file path and source line that
-supports it. Set the flag when the code or unresolved evidence raises a
+improvements. For implementation leads, give a changed-file path and source line that
+supports it. Commit-flow suggestions may instead use their commit-specific
+source-location schema. Set the flag when the code or unresolved evidence raises a
 credible consensus or security concern, and clear it otherwise.
 
 Review scope includes production code, tests, CI, build tooling, and contrib

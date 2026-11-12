@@ -762,6 +762,38 @@ def read_commit(checkout, base_files, base, commit, path):
     )
 
 
+def pr_commit_revision(checkout, base, head, commit, parent):
+    """Resolve a PR member or an explicitly selected direct parent."""
+    if not has_commit(checkout, commit):
+        raise ToolFailure("invalid_request", "Commit is not in the review range.")
+    for endpoint, must_be_ancestor in ((head, True), (base, False)):
+        result = subprocess.run(
+            git_command(checkout, "merge-base", "--is-ancestor", commit, endpoint),
+            capture_output=True,
+            check=False,
+            timeout=30,
+            env=git_environment(),
+        )
+        if result.returncode not in {0, 1}:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
+        if (result.returncode == 0) != must_be_ancestor:
+            raise ToolFailure("invalid_request", "Commit is not in the review range.")
+    if parent is not None:
+        if not isinstance(parent, str) or not SHA.fullmatch(parent):
+            raise ToolFailure("invalid_request", "Invalid parent commit SHA.")
+        parents = git(checkout, "show", "-s", "--format=%P", commit).split()
+        if parent not in parents:
+            raise ToolFailure(
+                "invalid_request", "Revision is not a direct parent of the PR commit."
+            )
+    return parent or commit
+
+
+def read_pr_commit_file(checkout, base, head, commit, parent, path, start_line):
+    revision = pr_commit_revision(checkout, base, head, commit, parent)
+    return read_file(checkout, tracked_files_at(checkout, revision), path, start_line)
+
+
 def read_pr_commit(checkout, base, head, commit, path, start_line, *, dependencies=()):
     """Inspect one pinned PR commit, including changes later reverted by the PR."""
     for dependency in dependencies:
@@ -788,20 +820,7 @@ def read_pr_commit(checkout, base, head, commit, path, start_line, *, dependenci
         or not 1 <= start_line <= 100_000
     ):
         raise ToolFailure("invalid_request", "Invalid PR commit, path, or diff line.")
-    if not has_commit(checkout, commit):
-        raise ToolFailure("invalid_request", "Commit is not in the review range.")
-    for endpoint, must_be_ancestor in ((head, True), (base, False)):
-        result = subprocess.run(
-            git_command(checkout, "merge-base", "--is-ancestor", commit, endpoint),
-            capture_output=True,
-            check=False,
-            timeout=30,
-            env=git_environment(),
-        )
-        if result.returncode not in {0, 1}:
-            raise subprocess.CalledProcessError(result.returncode, result.args)
-        if (result.returncode == 0) != must_be_ancestor:
-            raise ToolFailure("invalid_request", "Commit is not in the review range.")
+    pr_commit_revision(checkout, base, head, commit, None)
     changed = bounded_git(
         checkout,
         "diff-tree",

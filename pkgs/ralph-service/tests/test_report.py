@@ -41,6 +41,33 @@ class ReportTests(unittest.TestCase):
             },
         }
 
+    def test_commit_parent_location_survives_saved_report_refresh(self):
+        result = self.review_result(
+            "Reorder only if every intermediate commit remains safe."
+        )
+        result["head_sha"] = "a" * 40
+        finding = result["output"]["exports"]["findings"][0]
+        finding.update(
+            side="commit", commit="b" * 40, parent="c" * 40, severity="suggestion"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(
+                root,
+                123,
+                result,
+                "commit-review",
+                repository_url="https://forge.example/o/r",
+                github_repository="bitcoin/bitcoin",
+            )
+            human = (root / "reports" / name).read_text()
+            saved = json.loads((root / "commit-review.json").read_text())
+            report.save_report(root, 123, {}, "commit-review", refresh=True)
+            self.assertEqual(human, (root / "reports" / name).read_text())
+        self.assertEqual(saved["findings"][0]["parent"], "c" * 40)
+        self.assertIn(f"/blob/{'c' * 40}/src/example.cpp#L12", human)
+        self.assertIn(f"parent of {'b' * 12}", human)
+
     def test_human_report_links_saved_revision_and_preserves_literal_code(self):
         result = self.review_result("Add an explicit `#include <span>`. ")
         result["head_sha"] = "a" * 40

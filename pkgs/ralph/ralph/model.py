@@ -19,6 +19,7 @@ from .repository import (
     blame_base,
     read_commit,
     read_pr_commit,
+    read_pr_commit_file,
 )
 from .usage import web_search_calls
 
@@ -355,8 +356,25 @@ PR_COMMIT_TOOL = {
         "additionalProperties": False,
     },
 }
-FOCUSED_TOOLS = [*TOOLS[:5], PR_COMMIT_TOOL]
-TOOLS.append(PR_COMMIT_TOOL)
+PR_COMMIT_FILE_TOOL = {
+    "type": "function",
+    "name": "read_pr_commit_file",
+    "strict": True,
+    "description": "Read numbered source lines at a pinned PR commit or an explicitly selected direct parent. Use this to verify intermediate commit locations; parent is null for the commit itself.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "commit": {"type": "string"},
+            "parent": {"type": ["string", "null"]},
+            "path": {"type": "string"},
+            "start_line": {"type": "integer"},
+        },
+        "required": ["commit", "parent", "path", "start_line"],
+        "additionalProperties": False,
+    },
+}
+FOCUSED_TOOLS = [*TOOLS[:5], PR_COMMIT_TOOL, PR_COMMIT_FILE_TOOL]
+TOOLS.extend([PR_COMMIT_TOOL, PR_COMMIT_FILE_TOOL])
 BASE_TOOLS = [
     tool
     for tool in TOOLS
@@ -1086,6 +1104,16 @@ def openai_review(
                                 args.get("path"),
                                 args.get("start_line"),
                                 dependencies=getattr(snapshot, "dependencies", ()),
+                            )
+                        elif call["name"] == "read_pr_commit_file":
+                            answer = read_pr_commit_file(
+                                checkout,
+                                snapshot.diff_base_sha,
+                                snapshot.head_sha,
+                                args.get("commit"),
+                                args.get("parent"),
+                                args.get("path"),
+                                args.get("start_line"),
                             )
                         elif call["name"] == "read_pr_commit":
                             answer = read_pr_commit(

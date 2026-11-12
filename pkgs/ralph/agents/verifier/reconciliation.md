@@ -46,3 +46,9 @@ most useful current source location first and use Markdown backticks for code.
 This assessment becomes the report explanation when discovery did not rediscover
 the issue; do not merely say it matches another report. Do not add detail that
 only repeats the first paragraph.
+
+For earlier commit-flow suggestions with side `commit`, recheck the cited commit
+against the current PR range and use read_pr_commit_file for commit or direct-parent
+source evidence. A still-present sequencing concern may retain commit-specific
+evidence instead of a head anchor. A commit removed by rewritten history is not
+current evidence; reassess the new series rather than retaining its old location.

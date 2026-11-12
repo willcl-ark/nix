@@ -35,10 +35,17 @@ preference for atomic commits. Return no findings when the sequence is clear.
 
 Report commit-flow improvements as kind suggestion. Name the relevant commit
 SHAs and purposes, the concrete review burden and one sufficient rearrangement.
-Anchor the finding to relevant changed code or tests at the pinned head, or the
-base for removed code, and put the commit evidence in the finding's evidence.
+For an intermediate source location, use side `commit`, the full PR commit SHA
+in `commit`, and `parent: null` for that commit's tree. To cite its prior tree,
+set `parent` to the full SHA of the relevant direct parent; select the parent
+explicitly for merges. Use read_pr_commit_file to confirm the actual source line.
+Head/base anchors remain available for files changed in the combined diff.
 Never invent a source location for a history-only observation. Distinguish an
 intermediate problem repaired later from a defect remaining at the head; the
 former may support a sequencing suggestion, not a current runtime-defect claim.
-Use read_file or read_base_file to confirm the final anchor. Report a specific
-inspection limitation if decisive commit evidence is unavailable.
+Before proposing a reorder, check why the existing order was chosen. Withhold a
+reorder that introduces an intermediate safety gap, broken build or unmet
+prerequisite. A fix followed by a refactor may intentionally keep a backportable
+fix separate; do not call that throwaway work merely because the refactor moves
+it. Require a concrete review or bisectability problem and a net improvement.
+Report a specific inspection limitation if decisive commit evidence is unavailable.

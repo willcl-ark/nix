@@ -81,7 +81,11 @@ def challenge_records(debug):
                 "candidate_id": identifier,
                 "source": sources.get(identifier),
                 "title": original.get("title") or identifier,
-                **{key: original.get(key) for key in ("path", "line", "side")},
+                **{
+                    key: original[key]
+                    for key in ("path", "line", "side", "commit", "parent")
+                    if key in original
+                },
                 "outcome": challenge["outcome"],
                 "reason": challenge["reason"],
                 "source_evidence": challenge.get("source_evidence", []),
