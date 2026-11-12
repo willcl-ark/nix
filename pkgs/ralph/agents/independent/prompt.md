@@ -22,9 +22,8 @@ state changes.
 Own the overview of the PR. Establish the user problem and required behavior,
 then trace how the changed code or contributor workflow relates to its callers,
 tests, and public documentation. Compare the change with the comparison base
-and report only observations supported by the checkout. Check whether the
-commits have coherent purposes and whether a later commit repairs a problem
-introduced earlier.
+and report only observations supported by the checkout. Leave commit structure
+and sequencing suggestions to the commit_flow audit.
 Assess whether the change addresses the stated problem. Raise scope, test,
 documentation, or release-note concerns only when there is a concrete gap with
 a practical consequence. Leave concept worth, prior-history judgment, detailed

@@ -39,6 +39,12 @@ untrusted inputs, permissions or secrets, dependency provenance, signing or
 artifact integrity, or another security boundary. A public-contract or build
 audit does not by itself require adversarial review.
 
+Select `commit_flow` for substantive multi-commit series to assess whether the
+sequence helps a reviewer understand and validate each step. Also select it for
+a single commit that mixes independent changes worth assessing separately.
+This audit covers commit cohesion, ordering and placement of existing tests;
+it does not require a suspected runtime defect or a higher review tier.
+
 Select focused audits based on the changed behavior. Select `tests` whenever
 tests or production behavior change. Select `concurrency` for changed shared
 objects, locks, callbacks, queues, teardown, or lifetime-sensitive ownership.

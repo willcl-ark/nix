@@ -24,12 +24,14 @@ DISCOVERY_ORDER = (
     "tests",
     "tests_followup",
     "symbol_usage",
+    "commit_flow",
     "design",
 )
 DISCOVERY_WORKERS = 6
 ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude")
 POOLED_STAGES = frozenset({*DISCOVERY_ORDER, "archaeologist", "alternatives"})
 FULL_CONTEXT_STAGES = {
+    "commit_flow",
     "script",
     "symbol_usage",
     "independent",

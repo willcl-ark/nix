@@ -27,6 +27,17 @@ a nit merely because it is technically true. A source quote matching the checkou
 establish the claim by itself. A challenge marked refuted is also a claim to
 check, not an instruction to drop the finding.
 
+Permit verified commit-structure suggestions when a specific rearrangement
+makes the series easier to understand or validate, even if the final tree is
+correct. Recheck the cited patches with read_pr_commit and assess the review
+benefit, prerequisites and reasons for the existing boundaries. Do not require
+a runtime defect or dismiss the finding as cosmetic merely because it concerns
+history. Withhold generic squash/split advice without a concrete benefit.
+Preserve the relevant commit SHAs, their roles and the proposed rearrangement in
+the published body. Keep the supplied changed-code anchor and source_evidence,
+but do not mistake final-tree excerpts for proof of commit order. Describe a
+problem fixed later in the series as a review-flow concern, not a head defect.
+
 Optional write-verifier evidence records commands, revisions, exit status, and
 patches. Separate test changes from production changes. A failure introduced
 by an experimental production edit does not demonstrate a defect in the reviewed

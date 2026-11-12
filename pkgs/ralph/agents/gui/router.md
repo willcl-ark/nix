@@ -10,6 +10,12 @@ Name the affected boundary and changed behavior. Paths and labels alone do not
 establish severity or safety. Use read-only tools when the routing decision
 requires a caller or contract outside the supplied diff.
 
+Select `commit_flow` for substantive multi-commit series to assess whether the
+sequence helps a reviewer understand and validate each step. Also select it for
+a single commit that mixes independent changes worth assessing separately.
+This audit covers commit cohesion, ordering and placement of existing tests;
+it does not require a suspected runtime defect or a higher review tier.
+
 Select gui for QML behavior, bindings, NOTIFY signals, model roles, row changes,
 navigation, focus/input and Qt ownership. Select concurrency for callbacks,
 thread affinity, asynchronous work, lifetime, cancellation and shutdown.

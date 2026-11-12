@@ -20,6 +20,7 @@ AUDIT_NAMES = (
     "public_contract",
     "tests",
     "symbol_usage",
+    "commit_flow",
     "design",
     "build",
 )

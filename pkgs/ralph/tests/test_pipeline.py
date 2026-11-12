@@ -143,36 +143,50 @@ class PipelineTests(unittest.TestCase):
             )
         )
 
-    def test_gui_audit_runs_and_passes_candidates_to_verification(self):
-        self.tier, self.audits = "standard", ["gui"]
-        stages = []
+    def test_selected_audit_passes_suggestions_through_publication(self):
+        for audit in ("gui", "commit_flow"):
+            with self.subTest(audit=audit):
+                self.debug = {}
+                self.tier, self.audits = "standard", [audit]
+                stages = []
 
-        def review(*args, **kwargs):
-            stage = kwargs["stage_name"]
-            stages.append(stage)
-            if stage == "gui":
-                return discovery([candidate()])
-            if stage == "challenger":
-                return self.challenge(*args, **kwargs)
-            if stage == "verifier":
-                return verification(
-                    [
-                        {
-                            "candidate_ids": ["gui:1"],
-                            "disposition": "supported",
-                            "reason": "The changed interaction uses stale state.",
-                            "finding": self.published,
-                        }
-                    ]
+                def review(*args, **kwargs):
+                    stage = kwargs["stage_name"]
+                    stages.append(stage)
+                    if stage == audit:
+                        if audit == "commit_flow":
+                            self.assertEqual(args[1], "PR diff")
+                            self.assertIn(
+                                "read_pr_commit",
+                                [tool["name"] for tool in kwargs["tools"]],
+                            )
+                        return discovery([candidate()])
+                    if stage == "challenger":
+                        return self.challenge(*args, **kwargs)
+                    if stage == "verifier":
+                        return verification(
+                            [
+                                {
+                                    "candidate_ids": [f"{audit}:1"],
+                                    "disposition": "supported",
+                                    "reason": "The suggestion preserves behavior.",
+                                    "finding": self.published,
+                                }
+                            ]
+                        )
+                    return discovery()
+
+                self.run_review(review)
+                self.assertEqual(stages.count(audit), 1)
+                self.assertEqual(len(self.result.findings), 1)
+                self.assertEqual(self.result.findings[0]["kind"], "suggestion")
+                self.assertEqual(self.debug["stages"]["judge"]["status"], "completed")
+                self.assertEqual(
+                    self.debug["finding_attribution"][0]["candidate_ids"],
+                    [f"{audit}:1"],
                 )
-            return discovery()
-
-        self.run_review(review)
-        self.assertEqual(stages.count("gui"), 1)
-        self.assertEqual(len(self.result.findings), 1)
-        self.assertEqual(
-            self.debug["finding_attribution"][0]["candidate_ids"], ["gui:1"]
-        )
+                unselected = "commit_flow" if audit == "gui" else "gui"
+                self.assertNotIn(unselected, stages)
 
     def test_consensus_routing_selects_frozen_high_settings(self):
         for domains in ([], ["consensus"]):

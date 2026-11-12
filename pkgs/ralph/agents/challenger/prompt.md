@@ -17,6 +17,14 @@ For design or maintenance suggestions, challenge the factual premise and
 whether the proposed alternative preserves required behavior. Correct current
 production behavior does not refute a useful test-coverage suggestion.
 
+For commit-structure suggestions, inspect the cited commits with read_pr_commit.
+Check whether the proposed move, squash, split or reorder preserves dependencies
+and actually reduces the stated review burden. A correct final tree does not
+refute a sequencing concern. Useful preparatory changes, reproducer-first tests
+or backport traceability may justify the existing boundaries. Do not refute a
+history claim from head-only source excerpts; state unresolved when decisive
+commit evidence is unavailable.
+
 Keep policy rejection separate from block invalidity, changed error reporting
 separate from changed acceptance, and conditional behavior separate from an
 observed production incident. Check activation conditions and helper semantics

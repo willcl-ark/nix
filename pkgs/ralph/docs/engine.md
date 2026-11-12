@@ -169,9 +169,9 @@ profile precedence. Hosted web actions count toward the stage limit, but the
 per-response search allowance is advisory. At limits, a final turn uses the
 collected evidence and must preserve uncertainty.
 
-Script, symbol_usage, independent, challenger, both adversarial passes, verifier
-and judge require a first inspection. Claude uses automatic tool selection;
-Ralph checks that inspection occurred.
+Script, symbol_usage, commit_flow, independent, challenger, both adversarial
+passes, verifier and judge require a first inspection. Claude uses automatic
+tool selection; Ralph checks that inspection occurred.
 
 ## Concept and history
 

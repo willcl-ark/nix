@@ -34,8 +34,8 @@ select the consensus domain.
 
 The [independent](independent/prompt.md) agent reviews the overall change.
 Specialists cover script, concurrency, state, public contracts, build changes,
-tests, dead code and design. Discovery agents run concurrently in a bounded
-pool and never receive each other's output; pooled candidates keep a fixed
+tests, dead code, commit flow and design. Discovery agents run concurrently in
+a bounded pool and never receive each other's output; pooled candidates keep a fixed
 stage order. Sensitive reviews add the two adversarial reviewers. They share a
 [prompt](adversarial/prompt.md) with selected consensus, wallet or P2P
 [domain instructions](adversarial/domains).
@@ -77,6 +77,15 @@ Reviewers must account for indirect uses, supported configurations, external
 contracts and side effects before recommending deletion. The design audit
 checks explanations of behavior and rationale. Documentation that names code
 can warrant either audit; spelling and formatting alone need neither.
+
+The [commit-flow audit](commit_flow/prompt.md) reviews cohesion, order and the
+placement of existing tests and explanations. Routers select it for substantive
+multi-commit series, or single commits mixing independent changes. It reads
+per-commit patches and proposes concrete regrouping only when that reduces
+review effort. Findings use the normal suggestion channel, anchored to relevant
+changed code with commit SHAs in the explanation. The challenger, verifier and
+judge inspect the commit evidence; a correct final tree does not by itself
+invalidate a useful sequencing suggestion.
 
 ## Test coverage and large changes
 

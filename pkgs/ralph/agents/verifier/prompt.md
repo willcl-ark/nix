@@ -162,6 +162,22 @@ contract can be established, use unresolved and identify the missing evidence.
 The production-evidence qualification above does not justify supporting an
 unsupported compatibility requirement.
 
+Commit-structure findings are eligible suggestions even when the final code is
+correct. Use read_pr_commit to verify the cited commits, their order and the
+placement of implementation, tests or explanations. Establish the specific
+review burden and whether the proposed move, squash, split or reorder preserves
+dependencies and final behavior. Do not require a runtime regression to support
+that benefit. Respect useful preparatory commits, reproducer-first tests and
+backport traceability. Reject generic atomicity advice or an unsupported claim
+that fewer commits would be easier to review.
+Keep verified commit SHAs and their roles in the body and decision reason.
+Use kind suggestion, severity suggestion and non_security for a review-flow
+improvement. A problem fixed later in the series is not a defect at the head.
+Anchor to relevant changed code or tests with normal head/base source_evidence;
+those excerpts establish the location, while inspected commit patches establish
+the sequencing claim. Missing decisive commit evidence means unresolved, and
+must not be replaced by a matching final-tree quote or an invented anchor.
+
 Evaluate defect claims and improvement suggestions using appropriate evidence.
 For a defect, verify the conditional trigger and consequence, distinguishing
 them from evidence of a current production occurrence. For a design or test-quality
