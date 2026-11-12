@@ -88,7 +88,7 @@ def summarize(debug):
             "context"
             if name in CONTEXT_STAGES
             else "verification"
-            if name in {"verifier", "judge"}
+            if name in {"verifier", "backport_assessment", "judge"}
             else "inspection"
         )
         for error in stage.get("reconciliation_validation_errors", []):
@@ -190,12 +190,12 @@ def summarize(debug):
     backport = debug.get("backport_assessment")
     if backport is not None:
         for reason in backport.get("limitations", []):
-            issue("verifier", "verification", reason)
+            issue("backport_assessment", "verification", reason)
             verifications.append("partial")
         if backport.get("verdict") == "Needs clarification" and not backport.get(
             "limitations"
         ):
-            issue("verifier", "verification", backport["summary"])
+            issue("backport_assessment", "verification", backport["summary"])
             verifications.append("partial")
     if concept_reason:
         issue("verifier", "context", concept_reason)

@@ -12,7 +12,7 @@ and security standards. Report source gaps without inventing changed-line anchor
 Use bounded upstream tools for source context at the resolved original commits.
 Ordinary repository tools remain restricted to the pinned target trees/history.
 State limitations when the available source context is insufficient.
-The verifier must return backport_assessment with a verdict, summary, concrete
+The separate backport assessment must give a verdict, summary, concrete
 commit/PR evidence, required_fixes, and limitations. Use Faithful only when fidelity,
 completeness and target-branch correctness are established. Missing source evidence
 requires Needs clarification unless a concrete defect is independently established.

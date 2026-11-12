@@ -38,6 +38,7 @@ FULL_CONTEXT_STAGES = {
     "challenger",
     *ADVERSARIAL_STAGES,
     "verifier",
+    "backport_assessment",
     "write_verifier",
     "judge",
 }
@@ -63,7 +64,11 @@ def _stage_tools(name, runtime, settings):
         tools = [tool for tool in tools if tool in model.BASE_TOOLS]
     if tools and runtime.case.backport_evidence is not None and name != "alternatives":
         tools = [*tools, *model.BACKPORT_TOOLS]
-    evidence = research_evidence if name in {"archaeologist", "verifier"} else None
+    evidence = (
+        research_evidence
+        if name in {"archaeologist", "verifier", "backport_assessment"}
+        else None
+    )
     return model.available_tools(
         tools,
         discussion_lookup
@@ -93,7 +98,7 @@ def _run_stage(
     if name not in POOLED_STAGES:
         debug["pipeline_stage"] = name
     settings = prompt_config.profile.stages[
-        "tests" if name == "tests_followup" else name
+        {"tests_followup": "tests", "backport_assessment": "verifier"}.get(name, name)
     ]
     stage_model = settings.model
     record = {"model": stage_model, "status": "running", "turns": [], "tools": []}
@@ -185,12 +190,8 @@ def _record_validation_failure(record, error):
         record["validation_error"] = str(error)
 
 
-def _verifier_schema(backport_evidence, feedback_packet):
-    schema = (
-        protocol.BACKPORT_VERIFIER_SCHEMA
-        if backport_evidence is not None
-        else protocol.VERIFIER_SCHEMA
-    )
+def _verifier_schema(feedback_packet):
+    schema = protocol.VERIFIER_SCHEMA
     if feedback_packet is not None:
         return protocol.object_schema(
             {
@@ -201,6 +202,31 @@ def _verifier_schema(backport_evidence, feedback_packet):
     return schema
 
 
+def _assess_backport(run_stage, input_text, evidence, debug):
+    """Assess fidelity separately so re-review schemas stay bounded."""
+    try:
+        answer = run_stage(
+            "backport_assessment",
+            input_text,
+            "Assess the supplied backport's fidelity and target-branch suitability. "
+            "Inspect the source evidence and account for every original commit. "
+            "Return only the supplied backport assessment schema; candidate findings "
+            "are unverified leads, not established defects.",
+            protocol.BACKPORT_ASSESSMENT,
+        )
+        assessment = protocol.backport_assessment(json.loads(answer), evidence)
+        debug["backport_assessment"] = assessment
+        debug["stages"]["backport_assessment"]["coverage"] = {
+            "status": "partial" if assessment["limitations"] else "complete",
+            "limitations": assessment["limitations"],
+        }
+    except model.StaleReview:
+        raise
+    except Exception as exc:
+        _record_validation_failure(debug["stages"]["backport_assessment"], exc)
+        debug["backport_assessment"]["limitations"].append(str(exc))
+
+
 def _verify_candidates(
     run_stage,
     input_text,
@@ -209,17 +235,16 @@ def _verify_candidates(
     snapshot,
     concept_candidate,
     debug,
-    backport_evidence=None,
     feedback_packet=None,
     feedback_mappings=None,
+    blind_alternatives=None,
 ):
     stages = debug["stages"]
     verified_concept = None
     verified_alternatives = []
     accepted = []
     finding_candidates = {}
-    assessed_backport = None
-    schema = _verifier_schema(backport_evidence, feedback_packet)
+    schema = _verifier_schema(feedback_packet)
     prompt = prompt_config.audit_prompts["verifier"]
     if feedback_packet is not None:
         prompt += "\n\n" + prompt_config.audit_prompts["reconciliation"]
@@ -230,23 +255,13 @@ def _verify_candidates(
             prompt,
             schema,
         )
-        if backport_evidence is not None:
-            payload = json.loads(verified)
-            assessment = payload.pop("backport_assessment", None)
-            try:
-                assessed_backport = protocol.backport_assessment(
-                    assessment, backport_evidence
-                )
-            except protocol.InvalidReview as exc:
-                debug["backport_assessment"]["limitations"].append(str(exc))
-            verified = json.dumps(payload)
         reconciliation = None
         if feedback_packet is not None:
             payload = json.loads(verified)
             reconciliation = payload.pop("review_reconciliation", None)
             verified = json.dumps(payload)
         result, accepted = protocol.verification(
-            verified, candidates, snapshot, concept_candidate
+            verified, candidates, snapshot, concept_candidate, blind_alternatives
         )
         if feedback_packet is not None:
             try:
@@ -264,8 +279,6 @@ def _verify_candidates(
                 )
             except Exception as exc:
                 stages["verifier"]["feedback_validation_error"] = str(exc)
-        if assessed_backport is not None:
-            debug["backport_assessment"] = assessed_backport
         stages["verifier"]["coverage"] = result["coverage"]
         stages["verifier"]["decisions"] = result["decisions"]
         debug["decisions"] = result["decisions"]
@@ -280,11 +293,43 @@ def _verify_candidates(
             "failed",
         }:
             concept_status = previous_concept["status"]
+        alternative_sources = {
+            "concept_candidate": (concept_candidate or {}).get("alternatives", []),
+            "blind_alternatives": blind_alternatives or [],
+        }
+        selected_alternatives = [
+            (
+                decision["source"],
+                alternative_sources[decision["source"]][decision["index"]],
+            )
+            for decision in result["alternatives"]
+            if decision["disposition"] == "publish"
+        ]
+        verified_concept = (
+            {
+                **concept_candidate,
+                "proposed_review": result["concept"]["proposed_review"],
+                "review_reason": result["concept"]["review_reason"],
+                "alternatives": [
+                    option
+                    for source, option in selected_alternatives
+                    if source == "concept_candidate"
+                ],
+            }
+            if result["concept"]["disposition"] == "publish"
+            else None
+        )
+        verified_alternatives = [
+            option
+            for source, option in selected_alternatives
+            if verified_concept is None or source != "concept_candidate"
+        ]
         debug["concept_assessment"] = {
             **previous_concept,
             "status": concept_status,
-            "verification": result["concept"],
+            "verification": {**result["concept"], "assessment": verified_concept},
         }
+        stages["verifier"]["alternative_decisions"] = result["alternatives"]
         if result["concept_validation_error"]:
             stages["verifier"]["concept_validation_error"] = result[
                 "concept_validation_error"
@@ -293,12 +338,6 @@ def _verify_candidates(
             stages["verifier"]["alternatives_validation_error"] = result[
                 "alternatives_validation_error"
             ]
-        verified_alternatives = result["alternatives"]
-        verified_concept = (
-            result["concept"]["assessment"]
-            if result["concept"]["disposition"] == "publish"
-            else None
-        )
         published = [
             decision
             for decision in result["decisions"]
@@ -1068,6 +1107,8 @@ def review_with_independent_passes(
 
     if is_current is not None and not is_current():
         raise model.StaleReview()
+    if backport_evidence is not None:
+        _assess_backport(run_stage, verifier_input(), backport_evidence, debug)
     verified = _verify_candidates(
         run_stage,
         verifier_input(),
@@ -1076,9 +1117,9 @@ def review_with_independent_passes(
         snapshot,
         concept_candidate,
         debug,
-        backport_evidence,
         feedback_packet,
         feedback_mappings,
+        alternatives_candidate,
     )
     _write_majors(
         run_stage, runtime, prompt_config, review, snapshot, verified.findings

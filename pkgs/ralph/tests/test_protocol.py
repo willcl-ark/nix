@@ -95,7 +95,6 @@ class ProtocolTests(unittest.TestCase):
                 or {
                     "disposition": "no_concern",
                     "reason": "No material concept concern",
-                    "assessment": None,
                     "proposed_review": "continue",
                     "review_reason": "The verifier found no material concept concern.",
                 },
@@ -103,6 +102,45 @@ class ProtocolTests(unittest.TestCase):
                 "decisions": decisions,
             }
         )
+
+    def test_alternative_verdicts_reference_supplied_originals(self):
+        option = {
+            "name": "Reuse existing fixture",
+            "concept": "Use the shared fixture for setup.",
+            "benefit": "Keep maintenance in one place.",
+            "cost": "Requires extracting the existing setup.",
+            "unresolved": "No remaining questions.",
+            "provenance": "agent_inference",
+            "citations": [],
+        }
+        decision = {
+            "source": "blind_alternatives",
+            "index": 0,
+            "disposition": "publish",
+            "reason": "The existing fixture supports the proposed reuse.",
+        }
+
+        def verify(decisions):
+            payload = json.loads(self.verification([]))
+            payload["alternatives"] = decisions
+            return protocol.verification(
+                json.dumps(payload), [], self.snapshot, blind_alternatives=[option]
+            )[0]
+
+        result = verify([decision])
+        self.assertIsNone(result["alternatives_validation_error"])
+        self.assertEqual(result["alternatives"], [decision])
+        for decisions in (
+            [],
+            [decision, decision],
+            [{**decision, "index": 1}],
+            [{**decision, "source": "invented"}],
+            [{**decision, "index": True}],
+        ):
+            with self.subTest(decisions=decisions):
+                result = verify(decisions)
+                self.assertIsNotNone(result["alternatives_validation_error"])
+                self.assertEqual(result["alternatives"], [])
 
     def coverage_response(self, assessments, findings=()):
         return json.dumps(

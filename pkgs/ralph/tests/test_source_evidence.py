@@ -75,7 +75,6 @@ class SourceEvidenceTests(unittest.TestCase):
             "concept": {
                 "disposition": "no_concern",
                 "reason": "No concern",
-                "assessment": None,
                 "proposed_review": "continue",
                 "review_reason": "No concept concern",
             },

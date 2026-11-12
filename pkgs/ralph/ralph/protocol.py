@@ -105,7 +105,7 @@ FINDING = object_schema(
         "security": SECURITY_ASSESSMENT,
         **REVIEW_LOCATION,
         "title": STRING,
-        "summary": {"type": "string", "minLength": 1},
+        "summary": {"type": "string"},
         "body": STRING,
         "source_evidence": {"type": "array", "items": REVIEW_EVIDENCE, "minItems": 1},
     }
@@ -221,23 +221,33 @@ CONCEPT_VERIFICATION = object_schema(
             "enum": ["publish", "drop", "unresolved", "no_concern"],
         },
         "reason": STRING,
-        "assessment": {"anyOf": [CONCEPT_ASSESSMENT, {"type": "null"}]},
         "proposed_review": CONCEPT_ASSESSMENT["properties"]["proposed_review"],
         "review_reason": STRING,
+    }
+)
+ALTERNATIVE_VERIFICATION = object_schema(
+    {
+        "source": {
+            "type": "string",
+            "enum": ["concept_candidate", "blind_alternatives"],
+        },
+        "index": {"type": "integer"},
+        "disposition": {"type": "string", "enum": ["publish", "drop", "unresolved"]},
+        "reason": STRING,
     }
 )
 VERIFIER_SCHEMA = object_schema(
     {
         "coverage": COVERAGE,
         "concept": CONCEPT_VERIFICATION,
-        "alternatives": {"type": "array", "items": CONCEPT_ALTERNATIVE},
+        "alternatives": {"type": "array", "items": ALTERNATIVE_VERIFICATION},
         "decisions": {
             "type": "array",
             "items": object_schema(
                 {
                     "candidate_ids": {
                         "type": "array",
-                        "items": {"type": "string", "minLength": 1},
+                        "items": {"type": "string"},
                         "minItems": 1,
                     },
                     "disposition": {
@@ -268,9 +278,6 @@ BACKPORT_ASSESSMENT = object_schema(
         "required_fixes": STRINGS,
         "limitations": STRINGS,
     }
-)
-BACKPORT_VERIFIER_SCHEMA = object_schema(
-    {**VERIFIER_SCHEMA["properties"], "backport_assessment": BACKPORT_ASSESSMENT}
 )
 
 
@@ -332,7 +339,7 @@ JUDGE_SCHEMA = object_schema(
             "type": "array",
             "items": object_schema(
                 {
-                    "finding_id": {"type": "string", "minLength": 1},
+                    "finding_id": {"type": "string"},
                     "disposition": {
                         "type": "string",
                         "enum": ["publish", "drop", "unresolved"],
@@ -708,6 +715,44 @@ def blind_alternatives(text):
     return result
 
 
+def _alternative_decisions(decisions, concept_assessment, blind_alternatives):
+    if not isinstance(decisions, list):
+        raise InvalidReview("Invalid alternative decisions")
+    sources = {
+        "concept_candidate": (concept_assessment or {}).get("alternatives", []),
+        "blind_alternatives": blind_alternatives or [],
+    }
+    expected = {
+        (source, index)
+        for source, options in sources.items()
+        for index in range(len(options))
+    }
+    seen = set()
+    published = 0
+    for decision in decisions:
+        _object(decision, ALTERNATIVE_VERIFICATION["properties"])
+        source, index = decision["source"], decision["index"]
+        if (
+            not isinstance(source, str)
+            or type(index) is not int
+            or (source, index) not in expected
+        ):
+            raise InvalidReview("Alternative decision must identify a supplied option")
+        if (source, index) in seen:
+            raise InvalidReview("Duplicate alternative decision")
+        seen.add((source, index))
+        _text(decision, ("reason",))
+        if decision["disposition"] not in {"publish", "drop", "unresolved"}:
+            raise InvalidReview("Invalid alternative disposition")
+        if decision["disposition"] == "publish":
+            _concept_alternatives([sources[source][index]], limit=1)
+            published += 1
+    if seen != expected:
+        raise InvalidReview("Verifier omitted alternative decisions")
+    if published > 1:
+        raise InvalidReview("Public feedback may include at most one alternative")
+
+
 def _concept_decision(concept, concept_assessment):
     _object(concept, CONCEPT_VERIFICATION["properties"])
     if concept["disposition"] not in ("publish", "drop", "unresolved", "no_concern"):
@@ -716,17 +761,13 @@ def _concept_decision(concept, concept_assessment):
     if concept["disposition"] == "publish":
         if concept_assessment is None:
             raise InvalidReview("Concept assessment had no archaeology candidate")
-        _concept_assessment(concept["assessment"])
-        if concept["assessment"]["assessment"] == "worth_pursuing":
+        _concept_assessment(concept_assessment)
+        if concept_assessment["assessment"] == "worth_pursuing":
             raise InvalidReview("Favorable concept assessments are not public feedback")
-        if len(concept["assessment"]["alternatives"]) > 1:
-            raise InvalidReview(
-                "Public concept feedback may include at most one alternative"
-            )
-    elif concept["assessment"] is not None:
-        raise InvalidReview("Only publish may include a concept assessment")
     _review_proposal(
-        concept["proposed_review"], concept["review_reason"], concept["assessment"]
+        concept["proposed_review"],
+        concept["review_reason"],
+        concept_assessment if concept["disposition"] == "publish" else None,
     )
 
 
@@ -763,7 +804,9 @@ def _verified_finding(finding, snapshot, *, allow_commit=False):
     _source_evidence(finding["source_evidence"], snapshot, allow_commit=allow_commit)
 
 
-def verification(text, candidates, snapshot, concept_assessment=None):
+def verification(
+    text, candidates, snapshot, concept_assessment=None, blind_alternatives=None
+):
     result = json.loads(text)
     _object(result, VERIFIER_SCHEMA["properties"])
     _coverage(result["coverage"])
@@ -771,10 +814,18 @@ def verification(text, candidates, snapshot, concept_assessment=None):
         raise InvalidReview("Invalid verifier decisions")
     result["alternatives_validation_error"] = None
     try:
-        _concept_alternatives(result["alternatives"], limit=1)
+        _alternative_decisions(
+            result["alternatives"], concept_assessment, blind_alternatives
+        )
     except InvalidReview as exc:
         result["alternatives_validation_error"] = str(exc)
         result["alternatives"] = []
+        result["coverage"]["status"] = "partial"
+        result["coverage"]["limitations"].append(f"Alternatives withheld: {exc}")
+    for decision in result["alternatives"]:
+        if decision["disposition"] == "unresolved":
+            result["coverage"]["status"] = "partial"
+            result["coverage"]["limitations"].append(decision["reason"])
     concept = result["concept"]
     result["concept_validation_error"] = None
     try:
@@ -783,7 +834,6 @@ def verification(text, candidates, snapshot, concept_assessment=None):
         error = str(exc)
         concept = {
             "disposition": "unresolved",
-            "assessment": None,
             "reason": f"Concept assessment withheld: {error}",
             "proposed_review": "undetermined",
             "review_reason": "The verifier output did not satisfy the concept schema.",

@@ -156,7 +156,6 @@ class LocalRepositoryTests(unittest.TestCase):
             "alternatives": [],
             "concept": {
                 "disposition": "no_concern",
-                "assessment": None,
                 "reason": "No concern",
                 "proposed_review": "continue",
                 "review_reason": "Useful change",

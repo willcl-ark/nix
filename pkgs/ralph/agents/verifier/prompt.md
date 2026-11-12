@@ -34,61 +34,40 @@ an alternative. Gaps do not authorize new code findings. If a material gap
 remains unanswered, retain it in your coverage limitations.
 
 If a concept candidate is supplied, verify it separately from code findings.
-If `blind_alternatives` is supplied, those options came from a reader that saw
-only the problem, goal, and baseline code. Check their assumptions against the
-actual PR before using them. They are hypotheses, not additional votes or
-established improvements. Evaluate them for the separate public `alternatives`
-field as well as for any concept objection.
-Check the decisive source claims, cited PR comments, linked prior discussions,
-and stated alternatives. Check the candidate's `goal`, advisory `assessment`,
-`proposed_review`, and `review_reason` when those fields are supplied. Record
-the checked `proposed_review` and `review_reason` even when no public concept
-assessment is published. Do not treat popularity, author identity, reviewer
-status, or silence as evidence.
+Check its decisive source claims, cited discussions, goal, advisory assessment,
+recommendation and review proposal against the actual PR. A `publish` verdict
+approves the supplied assessment's substantive non-alternative fields as written;
+do not publish it if those fields need correction. Return the checked
+`proposed_review` and `review_reason` even when no concept objection is supported.
+Do not recopy the assessment. The caller retains the approved original.
 
-Publish a concept assessment only for a supported, actionable objection to the
-PR's premise or approach. Favorable assessments, reassurance, rejected options,
-and inconclusive comparisons belong in the review trace, not the public comment.
-An alternative that supports this objection may appear in the concept
-assessment. Keep the concept assessment focused on the objection; avoid
-repeating details that will appear in the separate alternatives section.
+Use `publish` only for a supported, actionable objection to the premise or
+approach. Use `no_concern` when the approach is reasonable, `drop` when the
+supplied assessment is unsupported or not useful, and `unresolved` when decisive
+evidence is unavailable. If no concept candidate is supplied, return `drop` with
+a short reason. A concept verdict does not decide merge readiness. Do not let a
+weak concept assessment affect verified code findings.
 
-Separately return at most one best alternative in the verifier's top-level
-`alternatives` field, even when the PR's premise and approach are sound. Publish
-it when checkout evidence supports a concrete improvement in at least one
-meaningful dimension, such as simpler code, less maintenance burden, or better
-ergonomics for common callers. It need not dominate the PR across every
-dimension, but it must preserve actual requirements and explain its costs and
-tradeoffs. Do not publish a preference, a line-count reduction by itself, a
-speculative future option, or a minor variation. If no option meets this bar,
-return an empty list. Do not repeat the same option in both the concept
-assessment and top-level alternatives field.
+Independently assess every supplied alternative, including those in
+`concept_candidate.alternatives` and `blind_alternatives`. Reference each option
+by `source` (`concept_candidate` or `blind_alternatives`) and its zero-based
+`index`. Return exactly one `publish`, `drop` or `unresolved` verdict with a
+nonempty reason for each option; do not repeat its body. Blind alternatives are
+hypotheses from a reader without the PR diff, not established improvements.
 
-Check technical assumptions against the checkout, especially claims that an
-alternative preserves required behavior, removes a risk, enforces an invariant
-by construction, or moves the fix to the right layer. Also inspect code
-evidence from design or other stages that could defeat the concept assessment.
-Compare costs and describe evidence separately from judgment.
+Publish at most one alternative across both sources. It must preserve actual
+requirements and have a concrete benefit supported by the checkout; verify its
+claimed costs, tradeoffs and unresolved questions as written. Drop preferences,
+minor variations, speculative options, and alternatives needing substantive
+correction. Return `unresolved` when decisive evidence is unavailable.
+An approved concept-candidate alternative appears with a published concept
+assessment; otherwise the approved option appears in the separate alternatives
+section. Unapproved alternatives are removed from the retained assessment.
 
-Use `no_concern` with null assessment when the submitted approach is reasonable
-and no actionable concept objection is established, even when the separate
-alternatives field contains an optional improvement. Record why the initial
-objection or concept alternatives were rejected in `reason`.
-If an alternative verifies a supplied candidate for a material design problem
-that needs correction, support it once as a design finding and omit it from the
-alternatives field. Do not create a code finding from an alternative.
-Do not duplicate a design finding in the concept assessment or alternatives.
-For a published assessment, choose a critical assessment label and make its
-`recommendation` a concise statement of the objection and correction. Keep
-optional improvement details in the separate alternatives section. Retain only
-citations needed to support the concept objection. Use
-`drop` with null assessment when the archaeology brief itself is unsupported or
-not useful, and `unresolved` with null assessment when a decisive source or
-technical assumption cannot be checked. Do not equate `publish` with stopping
-review, and do not equate `no_concern` with merge readiness. Preserve HTTP(S)
-citations when publishing. If no concept candidate is supplied, set concept
-disposition to `drop` with a short reason and no assessment. Do not let a weak
-or malformed concept assessment affect verified code findings.
+A change may improve common workloads without improving every supported mode.
+Do not require universal gains or recommend extra policy without evidence that
+its benefit warrants the complexity. Do not create code findings from alternative
+ideas or duplicate an established design finding as a concept objection.
 
 For each defect, establish the changed behavior and triggering input, then
 actively check the strongest code-based reason the claim might be false. Refute

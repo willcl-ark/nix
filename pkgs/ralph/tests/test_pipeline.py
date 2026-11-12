@@ -53,7 +53,7 @@ def archaeology(concept=None):
     return json.dumps({"coverage": COMPLETE, "assessment": concept or assessment()})
 
 
-def verification(decisions=(), concept=None):
+def verification(decisions=(), concept=None, alternatives=()):
     return json.dumps(
         {
             "coverage": COMPLETE,
@@ -61,11 +61,10 @@ def verification(decisions=(), concept=None):
             or {
                 "disposition": "no_concern",
                 "reason": "No material concept concern",
-                "assessment": None,
                 "proposed_review": "continue",
                 "review_reason": "The verifier found no material concept concern.",
             },
-            "alternatives": [],
+            "alternatives": list(alternatives),
             "decisions": list(decisions),
         }
     )
@@ -873,6 +872,7 @@ class PipelineTests(unittest.TestCase):
                 {
                     "key": "previous:1",
                     **self.published,
+                    "source_report_url": "https://review.example/old-report.html",
                     "id": "finding:1",
                     "finding_id": "finding:1",
                     "current_candidate_ids": ["old_stage:1"],
@@ -897,7 +897,23 @@ class PipelineTests(unittest.TestCase):
                 self.assertNotIn("SECRET_AUTHOR_REPLY", args[1])
                 self.assertNotIn("previous:1", args[1])
                 return discovery()
+            if stage == "backport_assessment":
+                self.assertNotIn(
+                    "review_reconciliation", kwargs["response_schema"]["properties"]
+                )
+                return json.dumps(
+                    {
+                        "verdict": "Faithful",
+                        "summary": "Original checked",
+                        "evidence": ["Original mapped"],
+                        "required_fixes": [],
+                        "limitations": [],
+                    }
+                )
             self.assertEqual(stage, "verifier")
+            self.assertNotIn(
+                "backport_assessment", kwargs["response_schema"]["properties"]
+            )
             verifier_inputs.append(
                 json.loads(args[1].split("Verification input:\n", 1)[1])
             )
@@ -916,7 +932,12 @@ class PipelineTests(unittest.TestCase):
             self.assertLessEqual(kwargs["max_output_tokens"], 4000)
             raise ValueError("Invalid or unavailable feedback agent")
 
-        self.run_review(reviewer, audit=audit, review_feedback=packet)
+        self.run_review(
+            reviewer,
+            audit=audit,
+            review_feedback=packet,
+            backport_evidence={"complete": True, "limitations": []},
+        )
         self.assertEqual(calls, ["feedback"])
         prior = mapper_inputs[0]["review_feedback"]["findings"][0]
         self.assertEqual(prior["key"], "previous:1")
@@ -938,6 +959,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(verifier_inputs[0]["review_feedback"], packet)
         entry = self.debug["review_memory"][0]
         self.assertEqual(entry["key"], "previous:1")
+        self.assertEqual(
+            entry["source_report_url"], "https://review.example/old-report.html"
+        )
         self.assertEqual(entry["severity"], self.published["severity"])
         self.assertEqual(entry["status"], "unclear")
         self.assertFalse(entry["collapsed"])
@@ -1267,9 +1291,16 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(saved["content"], self.result.content)
         self.assertEqual(saved["output"]["exports"]["findings"], [])
 
+    def test_backport_assessment_propagates_cancellation(self):
+        def cancelled(*args):
+            raise model.StaleReview()
+
+        with self.assertRaises(model.StaleReview):
+            pipeline._assess_backport(cancelled, "input", {}, {})
+
     def test_feedback_and_backport_verifier_schema_compose(self):
-        properties = pipeline._verifier_schema({}, {"findings": []})["properties"]
-        self.assertIn("backport_assessment", properties)
+        properties = pipeline._verifier_schema({"findings": []})["properties"]
+        self.assertNotIn("backport_assessment", properties)
         self.assertIn("review_reconciliation", properties)
         self.assertIn("decisions", properties)
 
@@ -1284,18 +1315,25 @@ class PipelineTests(unittest.TestCase):
                         if failure == "discovery":
                             raise TimeoutError()
                         return discovery()
+                    if kwargs["stage_name"] == "backport_assessment":
+                        self.assertEqual(
+                            kwargs["response_schema"], protocol.BACKPORT_ASSESSMENT
+                        )
+                        if failure == "assessment":
+                            return "null"
+                        return json.dumps(
+                            {
+                                "verdict": "Faithful",
+                                "summary": "All originals checked",
+                                "evidence": ["Original mapped"],
+                                "required_fixes": [],
+                                "limitations": [],
+                            }
+                        )
+                    self.assertEqual(kwargs["stage_name"], "verifier")
                     result = json.loads(verification())
-                    result["backport_assessment"] = {
-                        "verdict": "Faithful",
-                        "summary": "All originals checked",
-                        "evidence": ["Original mapped"],
-                        "required_fixes": [],
-                        "limitations": [],
-                    }
                     if failure == "verification":
                         result["decisions"] = "invalid"
-                    if failure == "assessment":
-                        result["backport_assessment"] = None
                     return json.dumps(result)
 
                 self.run_review(
@@ -1328,7 +1366,7 @@ class PipelineTests(unittest.TestCase):
             if stage in {"independent", "build"}:
                 return discovery([candidate()] if stage == "independent" else [])
             if stage == "verifier":
-                self.assertIn(
+                self.assertNotIn(
                     "backport_assessment", kwargs["response_schema"]["properties"]
                 )
                 result = json.loads(
@@ -1347,14 +1385,17 @@ class PipelineTests(unittest.TestCase):
                         ]
                     )
                 )
-                result["backport_assessment"] = {
-                    "verdict": "Faithful",
-                    "summary": "Claimed faithful",
-                    "evidence": ["Compared commits"],
-                    "required_fixes": [],
-                    "limitations": [],
-                }
                 return json.dumps(result)
+            if stage == "backport_assessment":
+                return json.dumps(
+                    {
+                        "verdict": "Faithful",
+                        "summary": "Claimed faithful",
+                        "evidence": ["Compared commits"],
+                        "required_fixes": [],
+                        "limitations": [],
+                    }
+                )
             self.assertEqual(stage, "judge")
             return self.judge(*args, **kwargs)
 
@@ -1372,6 +1413,7 @@ class PipelineTests(unittest.TestCase):
                 "build",
                 "challenger",
                 "verifier",
+                "backport_assessment",
                 "judge",
             },
         )
@@ -1601,10 +1643,18 @@ class PipelineTests(unittest.TestCase):
                         }
                         for source in ("independent", "symbol_usage")
                     ],
+                    alternatives=[
+                        {
+                            "source": source,
+                            "index": 0,
+                            "disposition": "drop",
+                            "reason": "The concept objection is sufficient without a public alternative.",
+                        }
+                        for source in ("concept_candidate", "blind_alternatives")
+                    ],
                     concept={
                         "disposition": "publish",
                         "reason": "The cited discussion supports a material process cost.",
-                        "assessment": concern,
                         "proposed_review": "would_stop",
                         "review_reason": "The verified process cost would stop the review.",
                     },
@@ -1625,6 +1675,14 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("**Do nothing**", content)
         self.assertEqual(self.debug["concept_assessment"]["status"], "verified")
         self.assertTrue(self.result.concept_concern)
+        approved = self.debug["concept_assessment"]["verification"]["assessment"]
+        self.assertEqual(approved["recommendation"], concern["recommendation"])
+        self.assertEqual(approved["alternatives"], [])
+        self.assertEqual(len(concern["alternatives"]), 1)
+        self.assertEqual(
+            approved["review_reason"],
+            "The verified process cost would stop the review.",
+        )
 
         self.debug = {}
         self.run_review(
