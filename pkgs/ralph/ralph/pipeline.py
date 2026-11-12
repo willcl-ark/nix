@@ -244,41 +244,50 @@ def _verify_candidates(
     stages = debug["stages"]
     accepted = []
     finding_candidates = {}
-    finding_input = {
-        "candidate_findings": candidates,
-        "challenges": debug.get("challenges", []),
-        "inspection_gaps": [
-            issue
-            for issue in coverage.summarize(debug)["issues"]
-            if issue["category"] == "inspection"
-        ],
-    }
-    try:
-        answer = run_stage(
-            "verifier",
-            input_text + "\n\nVerification input:\n" + json.dumps(finding_input),
-            prompt_config.audit_prompts["verifier"],
-            protocol.VERIFIER_SCHEMA,
-        )
-        result, accepted = protocol.verification(answer, candidates, snapshot)
-        stages["verifier"]["coverage"] = result["coverage"]
-        stages["verifier"]["decisions"] = result["decisions"]
-        debug["decisions"] = result["decisions"]
-        published = [
-            decision
-            for decision in result["decisions"]
-            if decision["disposition"] == "supported"
-        ]
-        finding_candidates = {
-            finding["id"]: decision["candidate_ids"]
-            for finding, decision in zip(accepted, published)
+    if not candidates:
+        stages["verifier"] = {
+            "status": "skipped",
+            "reason": "No candidate findings",
+            "required": False,
+            "decisions": [],
         }
-        if result["validation_errors"]:
-            stages["verifier"]["validation_errors"] = result["validation_errors"]
-    except model.StaleReview:
-        raise
-    except Exception as exc:
-        _record_validation_failure(stages["verifier"], exc)
+        debug["decisions"] = []
+    else:
+        finding_input = {
+            "candidate_findings": candidates,
+            "challenges": debug.get("challenges", []),
+            "inspection_gaps": [
+                issue
+                for issue in coverage.summarize(debug)["issues"]
+                if issue["category"] == "inspection"
+            ],
+        }
+        try:
+            answer = run_stage(
+                "verifier",
+                input_text + "\n\nVerification input:\n" + json.dumps(finding_input),
+                prompt_config.audit_prompts["verifier"],
+                protocol.VERIFIER_SCHEMA,
+            )
+            result, accepted = protocol.verification(answer, candidates, snapshot)
+            stages["verifier"]["coverage"] = result["coverage"]
+            stages["verifier"]["decisions"] = result["decisions"]
+            debug["decisions"] = result["decisions"]
+            published = [
+                decision
+                for decision in result["decisions"]
+                if decision["disposition"] == "supported"
+            ]
+            finding_candidates = {
+                finding["id"]: decision["candidate_ids"]
+                for finding, decision in zip(accepted, published)
+            }
+            if result["validation_errors"]:
+                stages["verifier"]["validation_errors"] = result["validation_errors"]
+        except model.StaleReview:
+            raise
+        except Exception as exc:
+            _record_validation_failure(stages["verifier"], exc)
     verified_concept, verified_alternatives = _verify_concept(
         run_stage,
         input_text,

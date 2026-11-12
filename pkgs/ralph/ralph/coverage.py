@@ -77,6 +77,12 @@ def summarize(debug):
             issues.append(item)
 
     for name, stage in stages.items():
+        if (
+            name == "verifier"
+            and stage.get("status") == "skipped"
+            and stage.get("required") is False
+        ):
+            verifications.append("complete")
         if name == "router" or stage.get("status") == "skipped":
             continue
         if name == "write_verifier":

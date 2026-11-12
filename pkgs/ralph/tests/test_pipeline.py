@@ -297,7 +297,11 @@ class PipelineTests(unittest.TestCase):
                     return (
                         verification()
                         if kwargs["stage_name"] == "verifier"
-                        else discovery()
+                        else discovery(
+                            [candidate()]
+                            if kwargs["stage_name"] == "independent"
+                            else []
+                        )
                     )
 
                 self.run_review(review)
@@ -953,7 +957,12 @@ class PipelineTests(unittest.TestCase):
             if stage == "independent":
                 self.assertNotIn("SECRET_AUTHOR_REPLY", args[1])
                 self.assertNotIn("previous:1", args[1])
-                return discovery()
+                result = json.loads(discovery())
+                result["coverage"] = {
+                    "status": "partial",
+                    "limitations": ["Caller inspection was incomplete."],
+                }
+                return json.dumps(result)
             if stage == "backport_assessment":
                 self.assertNotIn(
                     "review_reconciliation", kwargs["response_schema"]["properties"]
@@ -1012,7 +1021,12 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             mapper_inputs[0]["review_feedback"]["comments"], packet["comments"]
         )
-        self.assertNotIn("review_feedback", verifier_inputs[0])
+        self.assertEqual(verifier_inputs, [])
+        self.assertEqual(self.debug["stages"]["verifier"]["status"], "skipped")
+        self.assertIn(
+            "independent: Caller inspection was incomplete.",
+            coverage.summarize(self.debug)["limitations"],
+        )
         self.assertNotIn("review_feedback", concept_inputs[0])
         self.assertEqual(reconciliation_inputs[0]["review_feedback"], packet)
         self.assertIsNone(reconciliation_inputs[0]["feedback_mappings"])
@@ -1289,11 +1303,11 @@ class PipelineTests(unittest.TestCase):
             return verification()
 
         self.run_review(reviewer)
-        self.assertEqual(list(seen), ["independent", "verifier"])
+        self.assertEqual(list(seen), ["independent"])
         self.assertEqual(self.debug["coverage"]["status"], "complete")
         self.assertNotIn("feedback", self.debug["stages"])
         self.assertNotIn("review_memory", self.debug)
-        for stage in ("concept_verifier", "reconciliation"):
+        for stage in ("verifier", "concept_verifier", "reconciliation"):
             self.assertEqual(self.debug["stages"][stage]["status"], "skipped")
 
     def test_challenger_failure_preserves_verified_findings(self):
@@ -1476,7 +1490,9 @@ class PipelineTests(unittest.TestCase):
                     if kwargs["stage_name"] == "independent":
                         if failure == "discovery":
                             raise TimeoutError()
-                        return discovery()
+                        return discovery(
+                            [candidate()] if failure == "verification" else []
+                        )
                     if kwargs["stage_name"] == "backport_assessment":
                         self.assertEqual(
                             kwargs["response_schema"], protocol.BACKPORT_ASSESSMENT
@@ -1492,6 +1508,8 @@ class PipelineTests(unittest.TestCase):
                                 "limitations": [],
                             }
                         )
+                    if kwargs["stage_name"] == "challenger":
+                        return self.challenge(*args, **kwargs)
                     self.assertEqual(kwargs["stage_name"], "verifier")
                     result = json.loads(verification())
                     if failure == "verification":
