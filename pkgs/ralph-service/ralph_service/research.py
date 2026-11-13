@@ -1,7 +1,7 @@
 """Capture remote discussion evidence for offline review."""
 
 from datetime import datetime, timezone
-from . import forgejo
+from . import bkb, forgejo
 from ralph.evidence import ToolFailure
 from ralph.research import SCHEMA_VERSION, _args, _entry_key, _parse_time, validate
 
@@ -24,7 +24,16 @@ def _capture_call(
     arguments = _args(name, request.get("arguments", {}))
     outcome = "success"
     try:
-        if name == "search_discussions":
+        if name in {"bkb_search", "bkb_get_document"}:
+            if cutoff and _parse_time(cutoff) < _parse_time(captured_at):
+                raise ToolFailure(
+                    "unavailable", "BKB cannot reconstruct historical index content."
+                )
+            if name == "bkb_search":
+                output = bkb.search(**arguments)
+            else:
+                output = bkb.get_document(**arguments)
+        elif name == "search_discussions":
             output = forgejo.search_discussions(
                 bot_config, arguments["query"], current_pr, cutoff=cutoff
             )

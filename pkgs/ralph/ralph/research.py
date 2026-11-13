@@ -3,6 +3,7 @@
 from datetime import datetime
 import hashlib
 import json
+import urllib.parse
 
 from .evidence import ToolFailure
 
@@ -44,6 +45,15 @@ def _entry_key(name, arguments):
 def _args(name, arguments):
     if not isinstance(arguments, dict):
         raise ValueError("research tool arguments must be an object")
+    if name == "bkb_search":
+        return {
+            "query": arguments.get("query"),
+            "source_type": arguments.get("source_type", ""),
+            "source_repo": arguments.get("source_repo", ""),
+            "limit": arguments.get("limit", 5),
+        }
+    if name == "bkb_get_document":
+        return {"id": arguments.get("id")}
     if name == "search_discussions":
         return {"query": arguments.get("query")}
     if name == "read_discussion":
@@ -154,3 +164,80 @@ def inventory(evidence):
             f"key {entry['key'][:12]}"
         )
     return "\n".join(lines)
+
+
+def _discussion_identity(url):
+    if not isinstance(url, str):
+        return None
+    parsed = urllib.parse.urlsplit(url)
+    parts = urllib.parse.unquote(parsed.path).strip("/").split("/")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or len(parts) < 4
+        or parts[2] not in {"pull", "pulls", "issues"}
+        or not parts[3].isdigit()
+    ):
+        return None
+    return (parsed.hostname, parts[0].lower(), parts[1].lower(), int(parts[3]))
+
+
+def filter_current_pr(name, args, output, current_url):
+    """Exclude current-PR discussion ownership, not links mentioned in passages."""
+    current = _discussion_identity(current_url)
+    if current is None:
+        return output
+
+    def excluded(record):
+        if not isinstance(record, dict):
+            return False
+        if _discussion_identity(record.get("url")) == current:
+            return True
+        # Github issue and PR records use the shared issue number. Comment IDs
+        # are unrelated numbers, so comments must match through their source URL.
+        if current[0] == "github.com":
+            ids = {
+                f"{kind}:{current[1]}/{current[2]}:{current[3]}"
+                for kind in ("github_pr", "github_issue")
+            }
+            if any(
+                record.get(key) in ids
+                for key in ("id", "matched_source_id", "parent_id")
+            ):
+                return True
+        return False
+
+    def owned(record):
+        return excluded(record) or any(
+            excluded(origin) for origin in record.get("provenance", [])
+        )
+
+    if name == "read_current_pr_discussion" or (
+        name == "read_github_discussion"
+        and _discussion_identity(args.get("url")) == current
+    ):
+        raise ToolFailure(
+            "invalid_request",
+            "Current PR discussion is excluded from historical research.",
+        )
+    if name not in {"bkb_search", "bkb_get_document"}:
+        return output
+    try:
+        value = json.loads(output)
+    except ValueError as exc:
+        # A truncated record cannot reliably establish which PR owns it.
+        raise ToolFailure(
+            "unavailable", "Cannot exclude current PR from truncated BKB evidence."
+        ) from exc
+    if name == "bkb_get_document":
+        if owned(value["document"]) or excluded(args):
+            raise ToolFailure(
+                "invalid_request",
+                "Current PR discussion is excluded from historical research.",
+            )
+        return output
+    results = value["results"]
+    value["results"] = [record for record in results if not owned(record)]
+    if len(value["results"]) == len(results):
+        return output
+    value["current_pr_results_omitted"] = len(results) - len(value["results"])
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))

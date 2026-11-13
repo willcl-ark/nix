@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from ralph import research as frozen_research
 from ralph.evidence import ToolFailure
-from ralph_service import forgejo, research
+from ralph_service import bkb, forgejo, research
 
 
 class ResearchEvidenceTests(unittest.TestCase):
@@ -24,6 +24,46 @@ class ResearchEvidenceTests(unittest.TestCase):
         with self.assertRaises(ToolFailure) as missing:
             frozen_research.lookup(evidence, "read_discussion", {"number": 99})
         self.assertEqual(missing.exception.outcome, "unavailable")
+
+    def test_bkb_live_lookup_and_frozen_replay(self):
+        request = {"name": "bkb_search", "arguments": {"query": "cluster mempool"}}
+        with patch.object(bkb, "search", return_value="Retrieved evidence") as search:
+            self.assertEqual(
+                research.discussion_lookup(self.bot_config, 42)(**request),
+                "Retrieved evidence",
+            )
+            search.assert_called_once_with(
+                query="cluster mempool", source_type="", source_repo="", limit=5
+            )
+        with (
+            patch.object(bkb, "search", return_value="Frozen evidence"),
+            patch.object(
+                forgejo, "read_current_pr_discussion", return_value="Comments"
+            ),
+        ):
+            evidence = research.capture(
+                self.bot_config, 42, [request], captured_at="2026-10-01T00:00:00Z"
+            )
+        with patch.object(
+            bkb, "search", side_effect=AssertionError("network on replay")
+        ):
+            self.assertEqual(
+                frozen_research.lookup(evidence, request["name"], request["arguments"]),
+                "Frozen evidence",
+            )
+
+    def test_historical_bkb_capture_is_unavailable_without_network(self):
+        with patch.object(bkb, "get_document") as get_document:
+            entry = research._capture_call(
+                self.bot_config,
+                42,
+                {"name": "bkb_get_document", "arguments": {"id": "bip:125"}},
+                "2026-09-30T00:00:00Z",
+                "2026-10-01T00:00:00Z",
+            )
+        get_document.assert_not_called()
+        self.assertEqual(entry["outcome"], "unavailable")
+        self.assertIn("historical", entry["output"])
 
     def setUp(self):
         self.bot_config = SimpleNamespace(

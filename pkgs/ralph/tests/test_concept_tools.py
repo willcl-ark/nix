@@ -198,6 +198,126 @@ class ConceptToolTests(unittest.TestCase):
             )
             self.assertEqual(requests[-1]["input"][-1]["output"], "Frozen discussion")
 
+    def test_bkb_calls_share_context_budget_and_capture_passages(self):
+        debug = {}
+        live = Mock(
+            return_value='{"url":"https://delvingbitcoin.org/t/1","body":"Rationale"}'
+        )
+        requests = self.run_tools(
+            [
+                ("bkb_search", {"query": "replacement incentives"}),
+                ("bkb_get_document", {"id": "delving_topic:1"}),
+            ],
+            tools=model.ARCHAEOLOGY_TOOLS,
+            discussion_lookup=live,
+            max_context_calls=1,
+            debug=debug,
+        )
+        live.assert_called_once()
+        self.assertEqual(
+            debug["research_entries"][0]["arguments"],
+            {
+                "query": "replacement incentives",
+                "source_type": "",
+                "source_repo": "",
+                "limit": 5,
+            },
+        )
+        self.assertIn("Rationale", debug["research_entries"][0]["output"])
+        self.assertEqual(debug["research_entries"][1]["outcome"], "unavailable")
+        self.assertIn("limit reached", requests[-1]["input"][-1]["output"])
+
+    def test_bkb_outage_stops_remote_retries_but_keeps_other_research(self):
+        from ralph.evidence import ToolFailure
+
+        live = Mock(
+            side_effect=[ToolFailure("unavailable", "BKB timeout"), "GitHub rationale"]
+        )
+        debug = {}
+        self.run_tools(
+            [
+                ("bkb_search", {"query": "incentives"}),
+                ("bkb_search", {"query": "fees"}),
+                ("read_discussion", {"number": 99}),
+            ],
+            tools=model.ARCHAEOLOGY_TOOLS,
+            discussion_lookup=live,
+            debug=debug,
+        )
+        self.assertEqual(live.call_count, 2)
+        self.assertEqual(debug["research_entries"][1]["outcome"], "unavailable")
+        self.assertEqual(debug["research_entries"][2]["output"], "GitHub rationale")
+
+    def test_repeated_live_research_is_stable_and_replayable(self):
+        from ralph import research
+
+        live = Mock(side_effect=["First passage", "Second passage"])
+        debug = {}
+        self.run_tools(
+            [
+                ("bkb_get_document", {"id": "one"}),
+                ("bkb_get_document", {"id": "one"}),
+                ("bkb_get_document", {"id": "two"}),
+            ],
+            tools=model.ARCHAEOLOGY_TOOLS,
+            discussion_lookup=live,
+            debug=debug,
+        )
+        self.assertEqual(live.call_count, 2)
+        self.assertEqual(len(debug["tools"]), 3)
+        entries = debug["research_entries"]
+        self.assertEqual(len(entries), 2)
+        evidence = {
+            "schema_version": research.SCHEMA_VERSION,
+            "captured_at": entries[0]["captured_at"],
+            "cutoff": entries[0]["cutoff"],
+            "entries": entries,
+        }
+        research.validate(evidence)
+        self.assertEqual(
+            research.lookup(evidence, "bkb_get_document", {"id": "one"}),
+            "First passage",
+        )
+
+    def test_bkb_frozen_replay_never_falls_back_to_network(self):
+        from ralph import research
+
+        timestamp = "2026-11-13T12:00:00Z"
+        args = {"id": "delving_topic:1"}
+        evidence = {
+            "schema_version": research.SCHEMA_VERSION,
+            "captured_at": timestamp,
+            "cutoff": timestamp,
+            "entries": [
+                {
+                    "key": research._entry_key("bkb_get_document", args),
+                    "name": "bkb_get_document",
+                    "arguments": args,
+                    "output": "Captured rationale",
+                    "outcome": "success",
+                    "captured_at": timestamp,
+                    "cutoff": timestamp,
+                }
+            ],
+        }
+        live = Mock()
+        debug = {}
+        requests = self.run_tools(
+            [("bkb_get_document", args), ("bkb_get_document", {"id": "missing"})],
+            tools=model.ARCHAEOLOGY_TOOLS,
+            discussion_lookup=live,
+            research_evidence=evidence,
+            debug=debug,
+        )
+        live.assert_not_called()
+        self.assertEqual(debug["research_entries"][0]["output"], "Captured rationale")
+        self.assertEqual(debug["research_entries"][0]["captured_at"], timestamp)
+        self.assertEqual(debug["research_entries"][1]["outcome"], "unavailable")
+        self.assertIn(
+            "Frozen research evidence is unavailable",
+            requests[-1]["input"][-1]["output"],
+        )
+
     def test_experiment_dispatch_requires_writer_and_advertised_tool(self):
         from ralph.experiments import TOOLS
 
