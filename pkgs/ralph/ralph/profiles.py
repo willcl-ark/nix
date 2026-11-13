@@ -11,6 +11,7 @@ PROFILE_NAMES = ("default", "high")
 TIERS = ("routine", "standard", "sensitive")
 STAGE_NAMES = (
     "router",
+    "historical_context",
     "independent",
     "adversarial",
     "adversarial_claude",

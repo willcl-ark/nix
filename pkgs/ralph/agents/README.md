@@ -8,8 +8,9 @@ Major findings before that decision.
 
 ```mermaid
 flowchart TD
-    router[Router] --> discovery[Discovery pool: overview, script, adversarial pair and selected audits]
-    router --> history[Archaeologist and blind alternatives, when enabled]
+    router[Router] --> context[Historical design context, when archaeology enabled]
+    context --> discovery[Discovery pool: overview, script, adversarial pair and selected audits]
+    context --> history[Archaeologist and blind alternatives, when enabled]
     discovery --> followup[Test coverage follow-up, when needed]
     discovery --> escalation[Escalation adds audits to the running pool]
     followup --> challenger[Attempt to refute supplied candidates]
@@ -40,7 +41,16 @@ stage order. Sensitive reviews add the two adversarial reviewers. They share a
 [prompt](adversarial/prompt.md) with selected consensus, wallet or P2P
 [domain instructions](adversarial/domains).
 
-Archaeology runs only when enabled with PR context and discussion evidence.
+Archaeology runs only when enabled. First, [historical context](historical_context/prompt.md)
+researches the system-design rationale through the Bitcoin knowledge base and
+primary discussions. Its cited briefing separates documented rationale, inference
+and unresolved disagreement. Discovery and later assessment receive this briefing
+and up to 64 KB of captured source records. Full records remain in the stage trace;
+omitted passages are an explicit context limitation. Failed research is nonfatal
+and recorded as context coverage, without stopping code inspection.
+Only this early stage can use remote research tools. The archaeologist evaluates
+the concept using captured context and pinned source, concurrently with discovery.
+Its opinions never enter discovery.
 Blind alternatives see the problem, goal and baseline code, not the proposed
 solution or discussion. Backport reviews skip blind alternatives. Neither
 research result can stop the selected code-review stages.

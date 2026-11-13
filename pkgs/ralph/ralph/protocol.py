@@ -202,6 +202,17 @@ CONCEPT_ASSESSMENT = object_schema(
         "citations": STRINGS,
     }
 )
+RATIONALE = object_schema({"claim": STRING, "relevance": STRING, "citations": STRINGS})
+HISTORICAL_CONTEXT_SCHEMA = object_schema(
+    {
+        "coverage": COVERAGE,
+        "documented_rationale": {"type": "array", "items": RATIONALE},
+        "inferred_rationale": {"type": "array", "items": RATIONALE},
+        "unresolved_disagreements": {"type": "array", "items": RATIONALE},
+    }
+)
+
+
 ARCHAEOLOGY_SCHEMA = object_schema(
     {
         "coverage": COVERAGE,
@@ -699,6 +710,75 @@ def concept_summary(assessment, reason):
         )
     )
     return f"{assessment['recommendation']} {reason}{source_text}"
+
+
+def historical_context(text, captured_sources):
+    result = json.loads(text)
+    source_urls = set()
+    for entry in captured_sources:
+        output = entry.get("output", "")
+        if entry.get("outcome") != "success" or not isinstance(output, str):
+            continue
+        if entry.get("name") == "bkb_get_document":
+            try:
+                document = json.loads(output)["document"]
+            except (ValueError, KeyError, TypeError):
+                # The bounded adapter puts source metadata before the body.
+                # Truncation may cut JSON mid-body; only read complete URL
+                # fields from that metadata, never links in the passage.
+                metadata = re.split(r'^\s*"body":', output, maxsplit=1, flags=re.M)[0]
+                source_urls.update(
+                    json.loads(url)
+                    for url in re.findall(
+                        r'^\s*"url":\s*("(?:[^"\\]|\\.)*")', metadata, re.M
+                    )
+                )
+            else:
+                if isinstance(document, dict):
+                    origins = [document, *document.get("provenance", [])]
+                    source_urls.update(
+                        origin["url"]
+                        for origin in origins
+                        if isinstance(origin, dict)
+                        and isinstance(origin.get("url"), str)
+                    )
+        elif entry.get("name") in {
+            "read_discussion",
+            "read_current_pr_discussion",
+            "read_github_discussion",
+        }:
+            # These tools identify the fetched discussion in their header.
+            # Links inside its body do not establish that a source was read.
+            header = output.split("\nDescription:\n", 1)[0]
+            source_urls.update(
+                re.findall(
+                    r"^(https?://[^\s]+)\n(?:Retrieved at|Cutoff):", header, re.M
+                )
+            )
+    _object(result, HISTORICAL_CONTEXT_SCHEMA["properties"])
+    _coverage(result["coverage"])
+    for field in (
+        "documented_rationale",
+        "inferred_rationale",
+        "unresolved_disagreements",
+    ):
+        if not isinstance(result[field], list) or len(result[field]) > 12:
+            raise InvalidReview(
+                "Historical context must contain at most 12 entries per category"
+            )
+        for item in result[field]:
+            _object(item, RATIONALE["properties"])
+            _text(item, ("claim", "relevance"))
+            _citations(item["citations"])
+            if any(url not in source_urls for url in item["citations"]):
+                raise InvalidReview(
+                    "Historical citations must occur in captured source outputs"
+                )
+            if field != "inferred_rationale" and not item["citations"]:
+                raise InvalidReview(
+                    "Documented rationale and disagreements require citations"
+                )
+    return result
 
 
 def archaeology(text):

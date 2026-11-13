@@ -148,6 +148,7 @@ class PromptConfig:
                 "judge",
                 "write_verifier",
                 "archaeologist",
+                "historical_context",
                 "alternatives",
                 "feedback",
             }

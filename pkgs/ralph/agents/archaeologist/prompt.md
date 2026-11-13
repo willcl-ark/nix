@@ -12,16 +12,10 @@ Do not run a full defect audit, produce code findings, assign severity, or claim
 implementation correctness. Use code evidence only to check the concept,
 required behavior, enforcement boundaries, and possible alternatives.
 
-Use the current PR discussion when available, then follow explicit links or
-search for specific prior proposals, issue numbers, feature names, error
-messages, policy names, or reviewer concerns that could change the concept
-assessment. If a mirror lacks useful discussion, look for the original upstream
-PR or issue by project, title, author, or distinctive terms; do not assume the
-mirror's PR number is the same upstream. Prefer primary discussion sources over
-second-hand summaries. Keep research bounded, and skip history searches when
-the answer is already clear from the rationale and code. When discussion lookup
-is unavailable, say exactly what history was missing and finish from the
-available evidence.
+Use the supplied historical design briefing and captured source passages for
+prior rationale and discussion. Remote research is confined to the earlier
+historical_context stage. Check the briefing's claims against its captured
+passages and pinned source, and state when decisive evidence is missing.
 
 Build the concept assessment from the goal, not from the proposed mechanism:
 

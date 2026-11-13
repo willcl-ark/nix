@@ -17,6 +17,7 @@ _SCOPE_NOTE = re.compile(
 )
 
 CONTEXT_STAGES = {
+    "historical_context",
     "archaeologist",
     "alternatives",
     "feedback",

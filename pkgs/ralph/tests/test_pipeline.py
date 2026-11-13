@@ -828,8 +828,20 @@ class PipelineTests(unittest.TestCase):
         review_feedback=None,
         writer=None,
         judge=None,
+        historian=None,
     ):
         def review_with_experiments(*args, **kwargs):
+            if kwargs["stage_name"] == "historical_context":
+                if historian is not None:
+                    return historian(*args, **kwargs)
+                return json.dumps(
+                    {
+                        "coverage": COMPLETE,
+                        "documented_rationale": [],
+                        "inferred_rationale": [],
+                        "unresolved_disagreements": [],
+                    }
+                )
             if kwargs["stage_name"] == "judge":
                 return (judge or self.judge)(*args, **kwargs)
             if kwargs["stage_name"] == "write_verifier":
@@ -907,6 +919,92 @@ class PipelineTests(unittest.TestCase):
                 archaeology=archaeology_enabled,
             )
             return self.result.content
+
+    def test_historical_context_precedes_discovery_and_preserves_blindness(self):
+        self.tier, self.audits = "routine", []
+        seen = []
+
+        def historian(*args, **kwargs):
+            seen.append("historical_context")
+            self.assertIn("Current PR excluded from historical research", args[1])
+            self.assertIn(self.source["url"], args[1])
+            args[3]["research_entries"] = [
+                {
+                    "name": "bkb_get_document",
+                    "outcome": "success",
+                    "output": json.dumps(
+                        {
+                            "document": {
+                                "url": "https://example.invalid/design",
+                                "body": "Design rationale",
+                            }
+                        }
+                    ),
+                }
+            ]
+            return json.dumps(
+                {
+                    "coverage": COMPLETE,
+                    "documented_rationale": [
+                        {
+                            "claim": "Historical incentive premise",
+                            "relevance": "Affects the changed policy",
+                            "citations": ["https://example.invalid/design"],
+                        }
+                    ],
+                    "inferred_rationale": [],
+                    "unresolved_disagreements": [],
+                }
+            )
+
+        def reviewer(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            seen.append(stage)
+            self.assertEqual(seen[0], "historical_context")
+            if stage == "alternatives":
+                self.assertNotIn("Historical incentive premise", args[1])
+                return json.dumps({"coverage": COMPLETE, "alternatives": []})
+            self.assertIn("Historical incentive premise", args[1])
+            if stage == "archaeologist":
+                return archaeology({**assessment(), "alternatives": []})
+            if stage == "concept_verifier":
+                return concept_verification()
+            return discovery()
+
+        self.run_review(reviewer, archaeology_enabled=True, historian=historian)
+        self.assertIn("independent", seen)
+        self.assertIn("alternatives", seen)
+        self.assertIn("concept_verifier", seen)
+
+    def test_failed_historical_context_is_nonfatal_and_visible(self):
+        self.tier, self.audits = "routine", []
+        seen = []
+
+        def reviewer(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            seen.append(stage)
+            if stage == "archaeologist":
+                return archaeology({**assessment(), "alternatives": []})
+            if stage == "alternatives":
+                return json.dumps({"coverage": COMPLETE, "alternatives": []})
+            if stage == "concept_verifier":
+                return concept_verification()
+            self.assertIn("Historical design research did not complete", args[1])
+            return discovery()
+
+        self.run_review(
+            reviewer,
+            archaeology_enabled=True,
+            historian=Mock(side_effect=TimeoutError()),
+        )
+        self.assertIn("independent", seen)
+        self.assertEqual(self.debug["stages"]["historical_context"]["status"], "failed")
+        self.assertTrue(
+            any(
+                issue["stage"] == "historical_context"
+                for issue in self.debug["coverage"]["issues"]
+            )
+        )
 
     def test_feedback_isolated_and_failed_mapping_retains_previous_findings(self):
         self.tier, self.audits = "routine", []

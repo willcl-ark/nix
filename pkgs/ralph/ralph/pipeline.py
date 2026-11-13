@@ -53,39 +53,26 @@ def _backport_input(input_text, evidence):
 
 
 def _stage_tools(name, runtime, settings):
-    research_evidence = runtime.case.research_evidence
-    discussion_lookup = runtime.discussion_lookup if research_evidence is None else None
-    allow_web_search = (
-        runtime.allow_web_search
-        and research_evidence is None
-        and name != "write_verifier"
+    historical = name == "historical_context"
+    research_evidence = runtime.case.research_evidence if historical else None
+    discussion_lookup = (
+        runtime.discussion_lookup if historical and research_evidence is None else None
     )
     tools = model.TOOL_SETS[settings.tool_set]
+    if historical:
+        tools = [
+            tool for tool in tools if tool.get("name") != "read_current_pr_discussion"
+        ]
     if name == "alternatives":
         # Blind alternatives can only inspect the comparison base.
         tools = [tool for tool in tools if tool in model.BASE_TOOLS]
     if tools and runtime.case.backport_evidence is not None and name != "alternatives":
         tools = [*tools, *model.BACKPORT_TOOLS]
-    evidence = (
-        research_evidence
-        if name
-        in {
-            "archaeologist",
-            "verifier",
-            "concept_verifier",
-            "reconciliation",
-            "backport_assessment",
-        }
-        else None
-    )
     return model.available_tools(
         tools,
-        discussion_lookup
-        if name
-        not in {"script", "symbol_usage", "write_verifier", "challenger", "judge"}
-        else None,
-        evidence,
-        allow_web_search,
+        discussion_lookup,
+        research_evidence,
+        False,  # Remote evidence must have captured passages, unlike hosted web.
     )
 
 
@@ -142,7 +129,7 @@ def _run_stage(
                 first_tool_required=bool(available_tools)
                 and (
                     name in FULL_CONTEXT_STAGES
-                    or name in {"archaeologist", "alternatives"}
+                    or name in {"historical_context", "archaeologist", "alternatives"}
                 ),
                 response_schema=schema,
                 timeout=settings.timeout,
@@ -795,6 +782,7 @@ def review_with_independent_passes(
 
     select_profile()
     log_plan("routing", mode=routing_mode, strategy=strategy.name)
+    historical_context = None
     notes = None
     test_paths = sorted(
         path
@@ -805,6 +793,16 @@ def review_with_independent_passes(
     def run_stage(
         name, input_text, prompt, schema, *, tools=True, experiment_session=None
     ):
+        if historical_context is not None and name not in {
+            "historical_context",
+            "alternatives",
+        }:
+            input_text = (
+                "Historical design context and captured sources:\n"
+                + json.dumps(historical_context)
+                + "\n\n"
+                + input_text
+            )
         if backport_evidence is not None:
             input_text = _backport_input(input_text, backport_evidence)
             prompt += "\n\n" + prompt_config.audit_prompts["backport"]
@@ -907,7 +905,6 @@ def review_with_independent_passes(
             f"Changed paths: {json.dumps(sorted(snapshot.changed_paths))}\n\n"
             f"{review}"
         )
-        input_text = with_research_inventory(input_text)
         try:
             answer = run_stage(
                 "archaeologist", input_text, prompt, protocol.ARCHAEOLOGY_SCHEMA
@@ -1071,6 +1068,85 @@ def review_with_independent_passes(
         record["coverage"] = result["coverage"]
         record["test_coverage"] = result["test_coverage"]
 
+    if archaeology:
+        try:
+            answer = run_stage(
+                "historical_context",
+                with_research_inventory(
+                    f"Current PR excluded from historical research: {case.source['url']}\n\n"
+                    + review
+                ),
+                prompt_config.audit_prompts["historical_context"],
+                protocol.HISTORICAL_CONTEXT_SCHEMA,
+            )
+            historical_context = protocol.historical_context(
+                answer, stages["historical_context"].get("research_entries", [])
+            )
+            stages["historical_context"]["coverage"] = historical_context["coverage"]
+        except model.StaleReview:
+            raise
+        except Exception as exc:
+            _record_validation_failure(stages["historical_context"], exc)
+            historical_context = {
+                "coverage": {
+                    "status": "partial",
+                    "limitations": [
+                        "Historical design research did not complete; rationale is unavailable."
+                    ],
+                },
+                "documented_rationale": [],
+                "inferred_rationale": [],
+                "unresolved_disagreements": [],
+            }
+        # Preserve exact captured passages for checking claims. Keep the model
+        # input bounded; the full evidence remains in the stage trace.
+        captured = []
+        size = 0
+        entries = stages["historical_context"].get("research_entries", [])
+        citations = {
+            citation
+            for field in (
+                "documented_rationale",
+                "inferred_rationale",
+                "unresolved_disagreements",
+            )
+            for item in historical_context[field]
+            for citation in item["citations"]
+        }
+
+        def source_priority(entry):
+            successful = entry.get("outcome") == "success"
+            document = entry.get("name") in {
+                "bkb_get_document",
+                "read_discussion",
+                "read_github_discussion",
+            }
+            cited = any(url in entry.get("output", "") for url in citations)
+            return (not successful, not (document and cited), not document)
+
+        for entry in sorted(entries, key=source_priority):
+            encoded_size = len(json.dumps(entry).encode())
+            if size + encoded_size <= 64000:
+                captured.append(entry)
+                size += encoded_size
+        historical_context["captured_sources"] = captured
+        historical_context["omitted_sources"] = len(entries) - len(captured)
+        if historical_context["omitted_sources"]:
+            historical_context["coverage"]["status"] = "partial"
+            historical_context["coverage"]["limitations"].append(
+                "Some captured sources exceeded the downstream context budget; "
+                "claims depending on omitted passages remain unverified."
+            )
+        debug["historical_context"] = historical_context
+    else:
+        stages["historical_context"] = {
+            "model": prompt_config.models["historical_context"],
+            "status": "skipped",
+            "reason": "Archaeology was not requested.",
+            "turns": [],
+            "tools": [],
+        }
+
     running = {}
     completed = set()
 
@@ -1081,7 +1157,7 @@ def review_with_independent_passes(
 
     # Discovery stages never see each other's output, so they share a pool.
     # Escalation only adds stages; newly selected ones start as soon as the
-    # completed stage requests them. Research feeds only the verifier.
+    # completed stage requests them. Concept opinions feed only verification.
     debug["pipeline_stage"] = "discovery"
     with ThreadPoolExecutor(max_workers=DISCOVERY_WORKERS) as executor:
         research = executor.submit(run_research)
@@ -1180,12 +1256,10 @@ def review_with_independent_passes(
     if is_current is not None and not is_current():
         raise model.StaleReview()
     if backport_evidence is not None:
-        _assess_backport(
-            run_stage, with_research_inventory(review), backport_evidence, debug
-        )
+        _assess_backport(run_stage, review, backport_evidence, debug)
     verified = _verify_candidates(
         run_stage,
-        with_research_inventory(review),
+        review,
         prompt_config,
         candidates,
         snapshot,

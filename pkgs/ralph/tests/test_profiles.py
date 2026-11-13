@@ -10,6 +10,37 @@ from ralph import config, current_engine, engine, pipeline
 
 
 class StageConfigurationTests(unittest.TestCase):
+    def test_remote_research_is_confined_to_historical_context(self):
+        prompts = config.PromptConfig.load()
+        for frozen in (None, {"entries": []}):
+            runtime = SimpleNamespace(
+                case=SimpleNamespace(research_evidence=frozen, backport_evidence=None),
+                discussion_lookup=lambda *args: "discussion",
+                allow_web_search=True,
+            )
+            for name in prompts.profile.stages:
+                tools = pipeline._stage_tools(
+                    name, runtime, prompts.profile.stages[name]
+                )
+                names = {tool.get("name") for tool in tools}
+                self.assertNotIn("web_search", {tool.get("type") for tool in tools})
+                if name == "historical_context":
+                    self.assertIn("bkb_search", names)
+                    self.assertIn("read_discussion", names)
+                    self.assertNotIn("read_current_pr_discussion", names)
+                else:
+                    self.assertFalse(
+                        names
+                        & {
+                            "bkb_search",
+                            "bkb_get_document",
+                            "read_discussion",
+                            "search_discussions",
+                            "read_current_pr_discussion",
+                            "read_github_discussion",
+                        }
+                    )
+
     def test_gui_strategy_is_frozen_and_independent_of_compute_profile(self):
         with tempfile.TemporaryDirectory() as directory:
             agents_dir = Path(directory) / "agents"

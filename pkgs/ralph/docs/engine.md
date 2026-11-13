@@ -154,19 +154,16 @@ Code tools find paths, read head/base files, read diffs and search code.
 range, including intermediate changes absent from the final net diff. A merge
 commit is compared with its first parent. Reviewers finish against the combined
 head, since separately sound commits can interact. The full
-tool set also reads base history and, when a live discussion reader is supplied,
-other PR discussions. Current PR discussion is excluded from code discovery.
-In frozen runs, discussion tools are available only to the archaeologist and
-verifier. These stages can read current discussion and original upstream review
-threads from the supplied evidence. Frozen evaluations replay only
-captured research evidence and disable live discussion or web fallback. If a
-research call is missing from the frozen manifest, the tool returns an
-unavailable-evidence message and the model continues from code and frozen input.
+tool set also reads base history. Only historical_context can read remote
+research through Bitcoin knowledge base and discussion tools. Discovery receives
+its design briefing and captured passages, never the concept assessment.
+Frozen evaluations replay captured research without live fallback. Missing calls
+return unavailable-evidence messages. Hosted web search is disabled because it
+does not provide captured passages for downstream verification.
 
 Each agent's [config.toml](../agents/) defines its tool allowances and request
 timeouts. [Contributing](../CONTRIBUTING.md#settings) explains their units and
-profile precedence. Hosted web actions count toward the stage limit, but the
-per-response search allowance is advisory. At limits, a final turn uses the
+profile precedence. At limits, a final turn uses the
 collected evidence and must preserve uncertainty.
 
 Script, symbol_usage, commit_flow, independent, challenger, both adversarial
@@ -175,9 +172,16 @@ tool selection; Ralph checks that inspection occurred.
 
 ## Concept and history
 
-Optional archaeology researches the proposal's goal, benefit, prior attempts
-and alternatives. It runs alongside discovery and supplies context only to the
-verifier. Historical claims need source links, and earlier objections must be
+Optional archaeology first runs historical_context to research why the affected
+system behavior exists. The structured briefing separates documented rationale,
+inference and unresolved disagreement. Citations must appear in captured tool
+outputs. Up to 64 KB of captured source records accompany the briefing; omissions
+remain explicit limitations, and full records remain in the trace. Failure is
+nonfatal and counts as context coverage, not failed code inspection.
+
+The concept archaeologist then assesses the proposal's goal, benefit, prior
+attempts and alternatives from captured research and pinned source. It runs
+alongside discovery and supplies concept opinions only to verification. Historical claims need source links, and earlier objections must be
 checked for later answers. Promised follow-ups do not count as delivered benefits.
 See the [archaeologist prompt](../agents/archaeologist/prompt.md) for review criteria.
 

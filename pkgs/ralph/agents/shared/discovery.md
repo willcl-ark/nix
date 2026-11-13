@@ -112,3 +112,10 @@ or unanswered behavior that could change this review. Keep ordinary scope
 statements out of limitations: static analysis, tests not run, unchanged code
 not audited, and completing only your assigned responsibility are expected.
 Do not mark partial merely because further investigation is imaginable.
+
+When a historical design briefing is supplied, use it to understand incentives,
+adversarial assumptions and protocol tradeoffs. It is evidence to check against
+the captured passages and current code, not a concept verdict or a list of bugs.
+Separate documented rationale from inference and unresolved disagreement. Remote
+research is confined to historical_context; missing historical evidence must not
+be invented or treated as proof of a defect.

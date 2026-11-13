@@ -127,6 +127,11 @@ class Runtime:
                 usage=selected_usage,
                 response_schema=response_schema,
                 discussion_lookup=self.discussion_lookup,
+                excluded_discussion_url=(
+                    (self.case.source or {}).get("url")
+                    if stage_name == "historical_context"
+                    else None
+                ),
                 allow_web_search=self.allow_web_search,
                 is_current=self.is_current,
                 is_cancelled=self.is_cancelled,
