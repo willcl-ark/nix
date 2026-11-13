@@ -39,6 +39,18 @@ missed. Changed feedback returns to the queue; withdrawn feedback is removed.
 Reviewing feedback does not change votes or counts. Curate confirmed examples
 manually before using them to evaluate review changes.
 
+When Telegram monitoring is enabled, Ralph sends a reminder once per UTC calendar
+week if unreviewed feedback exists. It queues the first reminder when pending
+feedback is observed, then at most one in each subsequent week, starting Monday
+00:00 UTC. Empty queues produce no reminder. The message includes only the
+pending entry count and local triage command, never explanations or finding
+titles. The existing durable Telegram outbox deduplicates reminders across
+restarts and retries delivery. Counts reflect the time the reminder was queued.
+
+Feedback records contain the latest vote and explanation, not an edit history.
+Edits replace previous text and withdrawal deletes the record. Reviewed entries
+remain stored but are omitted from the pending list.
+
 ### Report rendering
 
 The Review report contains approved findings, their explanations and qualifications,

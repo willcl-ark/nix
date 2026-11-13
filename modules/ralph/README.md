@@ -372,6 +372,9 @@ Use `/status` for service and queue status, `/review gui 1049` to request a
 fresh default-profile review, and `/high gui 1049` for the high profile.
 Repository IDs are required; `/help` lists the commands. Requests survive
 reviewer downtime. Preserve `stateDir/telegram.sqlite3` with the other state.
+The monitor also reminds maintainers once per UTC calendar week when finding
+feedback awaits triage. Reminders contain a count and local command; private
+explanations stay off Telegram. See [feedback triage](../../pkgs/ralph-service/operations.md#finding-feedback).
 See [Telegram operations](../../pkgs/ralph-service/README.md#telegram) for
 publication, command authorization and delivery behavior.
 

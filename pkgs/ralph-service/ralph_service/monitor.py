@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import shlex
 import sqlite3
 import threading
 import time
@@ -209,6 +210,32 @@ class NotificationStore:
                 (str(period_day),),
             )
 
+    def observe_feedback(self, state_dir, *, now=None):
+        """Remind maintainers once per UTC calendar week when feedback is pending."""
+        path = Path(state_dir) / "feedback.sqlite3"
+        if not path.exists():
+            return
+        with closing(_readonly(path)) as feedback:
+            pending = feedback.execute(
+                "SELECT count(*) FROM feedback WHERE reviewed_at IS NULL"
+            ).fetchone()[0]
+        if not pending:
+            return
+        now = time.time() if now is None else now
+        year, week, _ = datetime.fromtimestamp(now, UTC).isocalendar()
+        text = (
+            "Ralph weekly feedback reminder\n"
+            f"Unreviewed feedback entries: {pending}\n"
+            "Triage on the service host:\n"
+            f"ralph-feedback --state-dir {shlex.quote(str(state_dir))} list\n"
+            "Explanations are private; inspect them locally."
+        )
+        with closing(self._connect()) as db, db:
+            db.execute(
+                "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
+                (f"feedback:{year}-W{week:02}", text),
+            )
+
     def observe_health(self, report_dir, archive_base_url, *, now=None):
         """Enqueue incident transitions from fresh stats without rescanning traces."""
         now = time.time() if now is None else now
@@ -375,6 +402,10 @@ def run_monitor(
                 )
             except (OSError, sqlite3.Error):
                 LOGGER.warning("Telegram monitor could not read state; will retry")
+            try:
+                store.observe_feedback(state_dir)
+            except (OSError, sqlite3.Error):
+                LOGGER.warning("Telegram feedback state unavailable; will retry")
             try:
                 store.observe_health(report_dir, archive_base_url)
                 store.deliver(token, chat_id)

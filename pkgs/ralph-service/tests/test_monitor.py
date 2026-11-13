@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from ralph.usage import Ledger
 
-from ralph_service import monitor
+from ralph_service import finding_feedback, monitor
 
 
 def timestamp(value):
@@ -65,6 +65,54 @@ class MonitorTests(unittest.TestCase):
     def messages(self):
         with closing(sqlite3.connect(self.store.path)) as db:
             return dict(db.execute("SELECT key, text FROM outbox ORDER BY rowid"))
+
+    def test_feedback_reminder_is_private_and_once_per_utc_week(self):
+        self.store.observe_feedback(self.root, now=self.day)
+        self.assertEqual(self.messages(), {})
+        feedback = finding_feedback.FeedbackStore(self.root / "feedback.sqlite3")
+        self.store.observe_feedback(self.root, now=self.day)
+        self.assertEqual(self.messages(), {})
+        record = {
+            "repository_id": "core",
+            "repository": "owner/core",
+            "report_id": "run",
+            "head": "a" * 40,
+        }
+        finding = {"id": "finding:1", "title": "Private finding title"}
+        feedback.save(
+            record,
+            finding,
+            "https://reports.example/run.html",
+            "voter",
+            -1,
+            "Private explanation",
+        )
+        first = timestamp("2026-12-31T23:59:00")
+        self.store.observe_feedback(self.root, now=first)
+        self.store = monitor.NotificationStore(self.store.path)
+        self.store.observe_feedback(self.root, now=timestamp("2027-01-01T12:00:00"))
+        messages = self.messages()
+        self.assertEqual(len(messages), 1)
+        text = next(iter(messages.values()))
+        self.assertIn("Unreviewed feedback entries: 1", text)
+        self.assertIn("ralph-feedback --state-dir", text)
+        self.assertNotIn("Private", text)
+        row = feedback.pending()[0]
+        feedback.mark_reviewed(row["id"], row["revision"])
+        monday = timestamp("2027-01-04T00:00:00")
+        self.store.observe_feedback(self.root, now=monday)
+        self.assertEqual(self.messages(), messages)
+        feedback.save(
+            record,
+            finding,
+            "https://reports.example/run.html",
+            "voter",
+            1,
+            "Changed private explanation",
+        )
+        self.store.observe_feedback(self.root, now=monday)
+        self.store.observe_feedback(self.root, now=monday)
+        self.assertEqual(len(self.messages()), 2)
 
     def test_complete_review_enqueued_once_after_baseline(self):
         self.observe()
