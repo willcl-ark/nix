@@ -93,9 +93,7 @@ class ReportTests(unittest.TestCase):
             rendered = (root / "reports" / name).read_text()
             self.assertNotIn('class="finding-feedback"', rendered)
 
-    def test_feedback_tracks_retained_finding_key_without_reviving_unconfirmed_history(
-        self,
-    ):
+    def test_feedback_only_tracks_approved_findings(self):
         result = self.review_result("Current explanation.")
         result["head_sha"] = "a" * 40
         record = report._public_record(123, result, "retained-feedback")
@@ -115,9 +113,9 @@ class ReportTests(unittest.TestCase):
         rendered = report._html_report(
             record, "/traces/retained-feedback.html", "/traces/123/"
         )
-        self.assertIn('data-finding-id="history:123"', rendered)
+        self.assertNotIn('data-finding-id="history:123"', rendered)
         self.assertNotIn('data-finding-id="history:unconfirmed"', rendered)
-        self.assertEqual(rendered.count('class="finding-feedback"'), 2)
+        self.assertEqual(rendered.count('class="finding-feedback"'), 1)
 
     def test_commit_parent_location_survives_saved_report_refresh(self):
         result = self.review_result(

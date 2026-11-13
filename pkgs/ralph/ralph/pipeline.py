@@ -242,6 +242,29 @@ def _verify_candidates(
     blind_alternatives=None,
 ):
     stages = debug["stages"]
+    if feedback_packet is not None:
+        _reconcile_history(
+            run_stage,
+            input_text,
+            prompt_config,
+            feedback_packet,
+            feedback_mappings,
+            candidates,
+            snapshot,
+            debug,
+        )
+    else:
+        stages["reconciliation"] = {
+            "status": "skipped",
+            "reason": "No previous findings",
+        }
+    history_candidates = feedback.publication_candidates(
+        debug.get("review_memory", []), snapshot
+    )
+    candidates.extend(history_candidates)
+    debug.setdefault("candidate_sources", {}).update(
+        (candidate["id"], "reconciliation") for candidate in history_candidates
+    )
     accepted = []
     finding_candidates = {}
     if not candidates:
@@ -296,22 +319,6 @@ def _verify_candidates(
         blind_alternatives,
         debug,
     )
-    if feedback_packet is not None:
-        _reconcile_history(
-            run_stage,
-            input_text,
-            prompt_config,
-            feedback_packet,
-            feedback_mappings,
-            candidates,
-            snapshot,
-            debug,
-        )
-    else:
-        stages["reconciliation"] = {
-            "status": "skipped",
-            "reason": "No previous findings",
-        }
     return VerifiedReview(
         accepted, finding_candidates, verified_concept, verified_alternatives
     )
@@ -1227,7 +1234,7 @@ def review_with_independent_passes(
             finding["id"]
             for finding in published
             if candidate_ids
-            and set(verified.candidate_ids[finding["id"]]) <= candidate_ids
+            and candidate_ids.intersection(verified.candidate_ids[finding["id"]])
         ]
         if entry["current_finding_ids"] and entry["status"] in {"fixed", "invalid"}:
             entry.update(

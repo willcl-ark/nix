@@ -254,14 +254,14 @@ class LocalRepositoryTests(unittest.TestCase):
                 packet = {"findings": [prior], "comments": []}
                 memory = feedback.reconcile(packet, [assessment], [], snapshot)
                 self.assertEqual(memory[0]["status"], "still_present")
-                rendered = final_comment.render_report(
-                    [],
-                    review_memory=memory,
-                    head_sha=self.head,
-                    repository_url="https://github.com/o/r",
+                candidates = feedback.publication_candidates(memory, snapshot)
+                self.assertEqual(len(candidates), 1)
+                self.assertEqual(
+                    {field: candidates[0][field] for field in location}, location
                 )
-                self.assertIn(f"/blob/{self.ancestor}/code.txt#L1", rendered)
-                self.assertIn(f"parent of {self.head[:12]}", rendered)
+                self.assertEqual(
+                    final_comment.report_findings([], memory, head_sha=self.head), []
+                )
                 # A rewritten PR no longer contains the cited commit; history must not
                 # resurrect it solely because its source blob remains in the repository.
                 rewritten = repository.snapshot_repository(

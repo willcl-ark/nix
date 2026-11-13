@@ -108,94 +108,21 @@ def _ordered_findings(findings):
     )
 
 
-def _current_findings(findings, memory, head_sha):
-    def current_source(entry, source):
-        return source.get("side") == "head" or (
-            entry.get("severity") == "suggestion" and source.get("side") == "commit"
-        )
-
-    current = list(findings)
-    groups = {}
-    for entry in memory:
-        groups.setdefault(entry.get("duplicate_of") or entry["key"], []).append(entry)
-    included = set()
-    for key, group in groups.items():
-        # A current candidate may have been withheld by a later verifier. Do not
-        # resurrect it from memory just because no published finding survived.
-        if any(
-            entry.get("current_candidate_ids") or entry.get("current_finding_ids")
-            for entry in group
-        ):
-            continue
-        confirmed = [
-            entry
-            for entry in group
-            if head_sha
-            and entry.get("severity") in SEVERITY_ORDER
-            and entry.get("checked_head") == head_sha
-            and entry.get("status") == "still_present"
-            and entry.get("reason")
-            and any(
-                current_source(entry, source)
-                for source in entry.get("source_evidence", [])
-            )
-        ]
-        if not confirmed:
-            continue
-        entry = next(
-            (entry for entry in confirmed if entry["key"] == key), confirmed[0]
-        )
-        source = next(
-            source
-            for source in entry["source_evidence"]
-            if current_source(entry, source)
-        )
-        summary, _, body = entry["reason"].partition("\n\n")
-        previous_url = entry.get("source_report_url") or ""
-        if previous_url.startswith(("https://", "http://")):
-            previous_url = quote(previous_url, safe=":/?#[]@!$&'()*+,;=%")
-            previous = (
-                f"[Earlier report and explanation](<{previous_url}>). "
-                "Check its locations and suggested fix against this revision."
-            )
-            body = "\n\n".join(part for part in (body, previous) if part)
-        current.append(
-            {
-                "id": entry["key"],
-                "severity": entry["severity"],
-                "title": entry.get("presented_title") or entry["title"],
-                # Reconciliation describes the claim at this head; old wording and
-                # old line numbers need not still be accurate.
-                "summary": summary,
-                "body": body,
-                **{
-                    field: source[field]
-                    for field in ("path", "line", "side", "commit", "parent")
-                    if field in source
-                },
-            }
-        )
-        included.update(entry["key"] for entry in group)
-    return current, included
-
-
 def report_findings(
     findings, review_memory=None, *, head_sha=None, verification_failed=False
 ):
-    """Return the findings eligible for the report, including reverified history."""
+    """Return only findings approved by the publication pipeline."""
     if verification_failed:
         return []
-    current, _ = _current_findings(findings, review_memory or [], head_sha)
-    return current
+    return list(findings)
 
 
-def _unconfirmed_history(memory, included_history, verification_failed):
+def _unconfirmed_history(memory):
     return [
         entry
         for entry in memory
         if entry.get("status") not in {"fixed", "invalid"}
         and not entry.get("current_finding_ids")
-        and (verification_failed or entry["key"] not in included_history)
     ]
 
 
@@ -229,9 +156,6 @@ def render(
         load_format() if comment_format is None else validate_format(comment_format)
     )
     sections = dict.fromkeys(_PLACEHOLDERS["comment"], "")
-    findings, included_history = _current_findings(
-        findings, review_memory or [], head_sha
-    )
     selected = (
         []
         if verification_failed
@@ -268,9 +192,7 @@ def render(
         label = f"{count} additional verified finding{'s' if count != 1 else ''} in the Review report"
         notices.append(f"[{label}](<{report_url}>)." if report_url else label + ".")
     # Never replay unverified claims or infer that omitted history was resolved.
-    unlinked = _unconfirmed_history(
-        review_memory or [], included_history, verification_failed
-    )
+    unlinked = _unconfirmed_history(review_memory or [])
     if unlinked:
         notices.append(
             "Earlier concerns remain unresolved; see the Run archive linked from the Review report."
@@ -326,7 +248,6 @@ def render_report(
 
     sections = dict.fromkeys(_PLACEHOLDERS["comment"], "")
     memory = review_memory or []
-    findings, included_history = _current_findings(findings, memory, head_sha)
     findings = [] if verification_failed else _ordered_findings(findings)
     if verification_failed:
         sections["verification_failed"] = (
@@ -392,7 +313,7 @@ def render_report(
             summary=backport["summary"],
             details="\n\n" + "\n\n".join(details) if details else "",
         )
-    unconfirmed = _unconfirmed_history(memory, included_history, verification_failed)
+    unconfirmed = _unconfirmed_history(memory)
     counts = Counter(finding["severity"] for finding in findings)
     overview = [
         f"{counts[severity]} {severity}{' finding' if severity != 'suggestion' else ''}{'s' if counts[severity] != 1 else ''}"

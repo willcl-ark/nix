@@ -122,46 +122,10 @@ class CommentTests(unittest.TestCase):
             rendered.index(minor["title"]), rendered.index(suggestion["title"])
         )
 
-    def test_report_links_source_revision_and_prior_explanation(self):
+    def test_report_links_source_revision(self):
         finding = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())[
             "findings"
         ][0]
-        memory = {
-            **finding,
-            "key": "old:1",
-            "status": "still_present",
-            "checked_head": "current",
-            "reason": "Current trigger and qualification.\n\nCurrent explanation and fix.",
-            "source_report_url": "https://example.org/report/previous",
-            "source_evidence": [{"path": "current.cpp", "line": 12, "side": "head"}],
-        }
-        rendered = final_comment.render_report(
-            [],
-            review_memory=[memory],
-            head_sha="current",
-            repository_url="https://forge.example/repo/project",
-            base_sha="base",
-        )
-        summary, details = rendered.split("<details>", 1)
-        self.assertIn("Current trigger and qualification.", summary)
-        self.assertNotIn("Current explanation and fix.", summary)
-        self.assertIn("Current explanation and fix.", details)
-        self.assertIn(memory["source_report_url"], details)
-        self.assertIn("against this revision", details)
-        self.assertNotIn(finding["body"], rendered)
-        self.assertIn("/blob/current/current.cpp#L12", rendered)
-        self.assertEqual(
-            len(final_comment.report_findings([], [memory], head_sha="current")), 1
-        )
-        self.assertEqual(
-            final_comment.report_findings([], [memory], head_sha="different"), []
-        )
-        self.assertEqual(
-            final_comment.report_findings(
-                [finding], [memory], head_sha="current", verification_failed=True
-            ),
-            [],
-        )
         finding.update(side="base", path="src/file name.cpp", line=17)
         rendered = final_comment.render_report(
             [finding],
@@ -238,82 +202,45 @@ class CommentTests(unittest.TestCase):
         self.assertIn("Issue 7", final_comment.render(**example))
         self.assertEqual(len(findings), 8)
 
-    def test_confirmed_history_competes_with_new_findings_for_the_same_slots(self):
+    def test_reconciled_history_cannot_publish_without_an_approved_finding(self):
         original = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())[
             "findings"
         ][0]
-        history = [
-            {
-                **original,
-                "key": f"old:{i}",
-                "title": f"Earlier issue {i}",
-                "severity": "minor",
-                "status": "still_present",
-                "checked_head": "head",
-                "reason": f"Current consequence {i}.",
-                "line": 999,
-                "current_candidate_ids": [],
-                "current_finding_ids": [],
-                "source_evidence": [
-                    {"path": "current.cpp", "line": i + 1, "side": "head"}
-                ],
-            }
-            for i in range(5)
-        ]
-        rendered = final_comment.render([], review_memory=history, head_sha="head")
-        for entry in history:
-            self.assertIn(entry["title"], rendered)
-            self.assertIn(entry["reason"], rendered)
-        self.assertNotIn("999", rendered)
-        self.assertNotIn("Earlier concerns remain unresolved", rendered)
-        self.assertIn("current.cpp:1", rendered)
-        report = final_comment.render_report([], review_memory=history, head_sha="head")
-        for entry in history:
-            self.assertEqual(report.count(entry["reason"]), 1)
-        self.assertNotIn("999", report)
-
-        duplicate = {**history[0], "key": "old:duplicate", "duplicate_of": "old:0"}
-        current = [
-            {
-                **original,
-                "id": f"new:{i}",
-                "title": f"New issue {i}",
-                "severity": "suggestion",
-            }
-            for i in range(3)
-        ]
-        rendered = final_comment.render(
-            current, review_memory=[*history, duplicate], head_sha="head"
+        retained = {
+            **original,
+            "key": "old:1",
+            "title": "Earlier issue",
+            "status": "still_present",
+            "checked_head": "head",
+            "reason": "Current consequence.",
+            "source_evidence": [{"path": "current.cpp", "line": 1, "side": "head"}],
+        }
+        history = [retained, {**retained, "key": "old:2", "duplicate_of": "old:1"}]
+        for render in (final_comment.render, final_comment.render_report):
+            with self.subTest(render=render.__name__):
+                rendered = render([], review_memory=history, head_sha="head")
+                self.assertNotIn(retained["title"], rendered)
+                self.assertNotIn(retained["reason"], rendered)
+                self.assertIn("Earlier concerns remain unresolved", rendered)
+                approved = {**original, "id": "current:1"}
+                linked = [{**retained, "current_finding_ids": ["current:1"]}]
+                rendered = render([approved], review_memory=linked, head_sha="head")
+                self.assertIn(approved["title"], rendered)
+                self.assertNotIn(retained["title"], rendered)
+                self.assertNotIn("Earlier concerns remain unresolved", rendered)
+        self.assertEqual(
+            final_comment.report_findings([], history, head_sha="head"), []
         )
-        self.assertEqual(rendered.count("Earlier issue 0"), 1)
-        self.assertIn("New issue 0", rendered)
-        self.assertNotIn("New issue 1", rendered)
-        self.assertIn("2 additional verified findings", rendered)
-        self.assertLess(
-            rendered.index("Earlier issue 4"), rendered.index("New issue 0")
+        self.assertEqual(
+            final_comment.report_findings([original], history, head_sha="head"),
+            [original],
         )
-
-        # A rejected current candidate cannot be revived via an unlinked duplicate.
-        duplicate["current_candidate_ids"] = ["independent:1"]
-        rendered = final_comment.render(
-            [], review_memory=[history[0], duplicate], head_sha="head"
+        self.assertEqual(
+            final_comment.report_findings(
+                [original], history, verification_failed=True
+            ),
+            [],
         )
-        self.assertNotIn("Earlier issue 0", rendered)
-        for changes in (
-            {"status": "unclear"},
-            {"status": "fixed"},
-            {"status": "invalid"},
-            {"checked_head": "old"},
-        ):
-            with self.subTest(changes=changes):
-                rendered = final_comment.render(
-                    [], review_memory=[{**history[0], **changes}], head_sha="head"
-                )
-                self.assertNotIn("Earlier issue 0", rendered)
-        rendered = final_comment.render(
-            [], review_memory=history, head_sha="head", verification_failed=True
-        )
-        self.assertNotIn("Earlier issue 0", rendered)
 
     def test_unverified_history_does_not_look_like_a_clean_review(self):
         example = json.loads(

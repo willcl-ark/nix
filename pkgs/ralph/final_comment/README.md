@@ -48,9 +48,9 @@ CLI previews retain a brief notice. Failed verification remains explicit.
 Both use the same severity ordering and preserve the supplied impact order on
 ties. Additional comment findings link to the report.
 
-Historical concerns join the current findings only after verification at the
-reviewed head, using current evidence and reconciliation wording. A history
-entry linked to a withheld current candidate cannot resurrect that candidate.
+Historical concerns join the current findings only after the pipeline verifies
+the current claim and the judge approves publication. Reconciliation alone
+cannot publish a finding, and the renderer never adds findings from history.
 Unconfirmed history gets a brief notice; its original claims, author replies
 and resolved history belong in the Run archive. Failed verification suppresses
 finding bodies and retains explicit failure and incomplete-coverage notices.

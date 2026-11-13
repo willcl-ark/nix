@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ralph import feedback, repository
+from ralph import feedback, protocol, repository
 from ralph.protocol import InvalidReview
 
 
@@ -72,6 +72,59 @@ class FeedbackTests(unittest.TestCase):
                 }
             ]
         }
+
+    def test_historical_commit_suggestion_passes_normal_verification(self):
+        location = {
+            "path": "index.cpp",
+            "line": 2,
+            "side": "commit",
+            "commit": self.snapshot.head_sha,
+            "parent": None,
+        }
+        evidence = [{**location, "excerpt": "new_trigger();"}]
+        self.packet["findings"][0].update(severity="suggestion", **location)
+        memory = feedback.reconcile(
+            self.packet,
+            [self.assessment(candidate_ids=[], source_evidence=evidence)],
+            [],
+            self.snapshot,
+        )
+        candidates = feedback.publication_candidates(memory, self.snapshot)
+        self.assertEqual(len(candidates), 1)
+        finding = {
+            "kind": "suggestion",
+            "severity": "suggestion",
+            **location,
+            "security": {
+                "classification": "non_security",
+                "reason": "Commit organization",
+            },
+            "title": "Keep related changes together",
+            "summary": "Improve commit organization",
+            "body": "This intermediate change belongs with its caller.",
+            "source_evidence": evidence,
+        }
+        result = {
+            "coverage": {"status": "complete", "limitations": []},
+            "decisions": [
+                {
+                    "candidate_ids": [candidates[0]["id"]],
+                    "disposition": "supported",
+                    "reason": "Current commit evidence supports this suggestion.",
+                    "finding": finding,
+                }
+            ],
+        }
+        _, accepted = protocol.verification(
+            json.dumps(result), candidates, self.snapshot
+        )
+        self.assertEqual(len(accepted), 1)
+        # A historical commit anchor cannot authorize a runtime defect.
+        finding.update(kind="defect", severity="major")
+        _, accepted = protocol.verification(
+            json.dumps(result), candidates, self.snapshot
+        )
+        self.assertEqual(accepted, [])
 
     def assessment(self, **kwargs):
         return {

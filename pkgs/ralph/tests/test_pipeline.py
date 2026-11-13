@@ -1055,6 +1055,116 @@ class PipelineTests(unittest.TestCase):
             "https://review.example/old-report.html",
         )
 
+    def test_history_candidates_receive_current_verification_and_judgment(self):
+        self.tier, self.audits = "routine", []
+        packet = {
+            "repository": self.source["repository"],
+            "number": self.source["number"],
+            "revisions": {"new_head": self.snapshot.head_sha},
+            "findings": [
+                {"key": key, **self.published, "severity": "major"}
+                for key in ("previous:1", "previous:2")
+            ],
+            "comments": [],
+        }
+        fresh = False
+        disposition = "publish"
+        verifier_disposition = "supported"
+        order = []
+
+        def reviewer(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            order.append(stage)
+            if stage == "independent":
+                return discovery([candidate()] if fresh else [])
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            if stage == "reconciliation":
+                return json.dumps(
+                    {
+                        "coverage": COMPLETE,
+                        "review_reconciliation": [
+                            {
+                                "prior_key": key,
+                                "duplicate_of": None
+                                if key == "previous:1"
+                                else "previous:1",
+                                "status": "still_present",
+                                "candidate_ids": [],
+                                "unchanged": False,
+                                "unchanged_since_report": False,
+                                "reason": "Current source supports a fixture cleanup only.",
+                                "source_evidence": self.published["source_evidence"],
+                            }
+                            for key in ("previous:1", "previous:2")
+                        ],
+                    }
+                )
+            self.assertEqual(stage, "verifier")
+            payload = json.loads(args[1].split("Verification input:\n")[1])
+            candidates = payload["candidate_findings"]
+            self.assertEqual(len(candidates), 2 if fresh else 1)
+            self.assertNotIn("severity", candidates[-1])
+            return verification(
+                [
+                    {
+                        "candidate_ids": [item["id"] for item in candidates],
+                        "disposition": verifier_disposition,
+                        "reason": "Current impact is a suggestion.",
+                        "finding": self.published
+                        if verifier_disposition == "supported"
+                        else None,
+                    }
+                ]
+            )
+
+        def judge(*args, **kwargs):
+            order.append("judge")
+            result = json.loads(self.judge(*args, **kwargs))
+            result["decisions"][0]["disposition"] = disposition
+            return json.dumps(result)
+
+        self.run_review(reviewer, review_feedback=packet, judge=judge)
+        self.assertLess(order.index("reconciliation"), order.index("verifier"))
+        self.assertEqual(order.count("judge"), 1)
+        self.assertEqual(self.result.findings[0]["severity"], "suggestion")
+        self.assertTrue(
+            all(
+                entry["current_finding_ids"] == ["finding:1"]
+                for entry in self.debug["review_memory"]
+            )
+        )
+        self.assertEqual(self.result.findings[0]["raised_by"], ["reconciliation"])
+
+        # Combining a new discovery with the historical claim keeps both links.
+        fresh = True
+        self.run_review(reviewer, review_feedback=packet, judge=judge)
+        self.assertEqual(len(self.result.findings), 1)
+        self.assertTrue(
+            all(
+                entry["current_finding_ids"] == ["finding:1"]
+                for entry in self.debug["review_memory"]
+            )
+        )
+
+        disposition = "drop"
+        self.run_review(reviewer, review_feedback=packet, judge=judge)
+        self.assertEqual(self.result.findings, [])
+        self.assertTrue(
+            all(
+                entry["status"] == "still_present" and not entry["current_finding_ids"]
+                for entry in self.debug["review_memory"]
+            )
+        )
+
+        fresh = False
+        verifier_disposition = "refuted"
+        order.clear()
+        self.run_review(reviewer, review_feedback=packet, judge=judge)
+        self.assertEqual(self.result.findings, [])
+        self.assertNotIn("judge", order)
+        self.assertEqual(self.debug["review_memory"][0]["status"], "still_present")
+
     def test_verified_repeat_preserves_finding_and_links_memory(self):
         self.tier, self.audits = "routine", []
         packet = {
@@ -1140,7 +1250,7 @@ class PipelineTests(unittest.TestCase):
         self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertEqual(order[0], "independent")
         self.assertEqual(set(order[1:3]), {"challenger", "feedback"})
-        self.assertEqual(order[3], "verifier")
+        self.assertEqual(order[3:5], ["reconciliation", "verifier"])
         self.assertEqual(len(self.result.findings), 1)
         self.assertEqual(self.result.findings[0]["severity"], "suggestion")
         entry = self.debug["review_memory"][0]
@@ -1181,6 +1291,12 @@ class PipelineTests(unittest.TestCase):
         self.run_review(reviewer, audit=audit, review_feedback=packet)
         self.assertTrue(all(not e["collapsed"] for e in self.debug["review_memory"]))
         self.assertEqual(self.debug["review_memory"][1]["duplicate_of"], "previous:1")
+        self.assertTrue(
+            all(
+                entry["current_finding_ids"] == ["finding:1"]
+                for entry in self.debug["review_memory"]
+            )
+        )
         self.assertTrue(
             all(e["unchanged_since_report"] for e in self.debug["review_memory"])
         )

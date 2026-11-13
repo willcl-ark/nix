@@ -855,6 +855,7 @@ def verification(text, candidates, snapshot):
         raise InvalidReview("Invalid verifier decisions")
     expected_order = [candidate["id"] for candidate in candidates]
     expected = set(expected_order)
+    candidate_by_id = {candidate["id"]: candidate for candidate in candidates}
     records = []
     candidate_uses = {}
     unsafe_indexes = set()
@@ -929,7 +930,9 @@ def verification(text, candidates, snapshot):
                     finding,
                     snapshot,
                     allow_commit=all(
-                        identifier.startswith("commit_flow:") for identifier in ids
+                        identifier.startswith("commit_flow:")
+                        or candidate_by_id[identifier].get("side") == "commit"
+                        for identifier in ids
                     ),
                 )
             except InvalidReview as exc:

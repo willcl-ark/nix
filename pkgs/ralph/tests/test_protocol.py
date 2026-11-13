@@ -648,11 +648,8 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         rendered = final_comment.render_report([finding], review_memory=[memory])
         self.assertIn(finding["summary"], rendered.split("<details>", 1)[0])
 
-    def test_report_includes_all_current_findings_and_only_verified_history(self):
-        memory = self.memory(
-            current_finding_ids=[],
-            source_evidence=[{"path": "current.cpp", "line": 12, "side": "head"}],
-        )
+    def test_report_includes_all_current_findings_without_promoting_history(self):
+        memory = self.memory(current_finding_ids=[])
         findings = [
             self.finding(id=f"new:{i}", title=f"Suggestion {i}", severity="suggestion")
             for i in range(7)
@@ -660,40 +657,11 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         rendered = final_comment.render_report(
             findings, review_memory=[memory], head_sha="current-revision"
         )
-        self.assertIn(memory["title"], rendered)
-        self.assertIn(memory["reason"], rendered)
-        self.assertIn("current.cpp:12", rendered)
+        self.assertNotIn(memory["title"], rendered)
+        self.assertNotIn(memory["reason"], rendered)
+        self.assertIn("Earlier concerns remain unresolved", rendered)
         for finding in findings:
             self.assertIn(finding["title"], rendered)
-            self.assertLess(
-                rendered.index(memory["title"]), rendered.index(finding["title"])
-            )
-
-        duplicate = {**memory, "key": "old:duplicate", "duplicate_of": memory["key"]}
-        rendered = final_comment.render_report(
-            [],
-            review_memory=[{**memory, "status": "unclear"}, duplicate],
-            head_sha="current-revision",
-        )
-        self.assertEqual(rendered.count(memory["title"]), 1)
-        self.assertNotIn(memory["body"], rendered)
-        self.assertNotIn("Earlier concerns remain unresolved", rendered)
-
-        for changes in (
-            {"checked_head": "stale-revision"},
-            {"status": "unclear"},
-            {"source_evidence": []},
-            {"current_candidate_ids": ["withheld:1"]},
-        ):
-            with self.subTest(changes=changes):
-                rendered = final_comment.render_report(
-                    [],
-                    review_memory=[{**memory, **changes}],
-                    head_sha="current-revision",
-                )
-                self.assertNotIn(memory["title"], rendered)
-                self.assertNotIn(memory["body"], rendered)
-                self.assertIn("Earlier concerns remain unresolved", rendered)
 
     def test_history_is_not_republished_without_current_verification(self):
         memory = self.memory(

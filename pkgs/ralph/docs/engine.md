@@ -238,15 +238,17 @@ verifier checks the technical claims against current source.
 
 An author saying "addressing elsewhere" or "won't fix" does not resolve a
 finding. Fixed and invalid decisions require source evidence. Historical
-concerns must be verified at the current head before joining published findings,
-and cannot restore a rejected current candidate. Suppressing a repeated upstream
+concerns marked `still_present` enter the ordinary verifier and judge before
+joining published findings. The verifier assigns severity from the current
+claim and can merge it with fresh candidates; the judge decides publication.
+Reconciliation alone cannot publish a concern or restore a rejected candidate. Suppressing a repeated upstream
 finding requires an explicit author response and base/head evidence that the PR
 does not introduce or worsen it.
 
 Findings retain their original identity and assessment history. Missing or
 invalid reconciliation leaves affected entries unresolved; malformed rows do
-not discard valid siblings. Confirmed duplicates share one displayed concern
-while retaining each report's provenance and status. Similar wording or a
+not discard valid siblings. Confirmed duplicates enter verification as one
+candidate while retaining each report's provenance and status. Similar wording or a
 shared current candidate does not establish duplication. Existing duplicate
 links survive unavailable verification, and unanswered active reports remain
 unresolved.

@@ -382,7 +382,7 @@ class StatsPageTests(unittest.TestCase):
         self.assertEqual(summary["reviews"][0]["report_severities"], {})
         self.assertEqual(sum(counts.values()), 0)
 
-    def test_report_counts_include_only_retained_findings_checked_at_head(self):
+    def test_report_counts_exclude_history_without_publication_approval(self):
         head = "a" * 40
         retained = {
             "key": "prior:1",
@@ -430,9 +430,9 @@ class StatsPageTests(unittest.TestCase):
             catalog = json.loads((reports / "history.json").read_text())
             summary = stats.collect_stats(root, reports)
             human = (reports / "reports" / name).read_text()
-        self.assertIn("Retained concern", human)
-        self.assertEqual(catalog[0]["findings"], 1)
-        self.assertEqual(summary["reviews"][0]["report_severities"], {"minor": 1})
+        self.assertNotIn("Retained concern", human)
+        self.assertEqual(catalog[0]["findings"], 0)
+        self.assertEqual(summary["reviews"][0]["report_severities"], {})
         self.assertEqual(summary["reviews"][0]["findings"]["published"], 0)
         self.assertEqual(summary["overview"]["published_findings"], 0)
         rendered = stats_page._reviews_table(summary["reviews"], None, None)
@@ -441,8 +441,8 @@ class StatsPageTests(unittest.TestCase):
         counts = json.loads(
             unescape(re.search(r'data-severities="([^"]+)"', rendered)[1])
         )
-        self.assertEqual(counts["minor"], 1)
-        self.assertEqual(sum(counts.values()), 1)
+        self.assertEqual(counts["minor"], 0)
+        self.assertEqual(sum(counts.values()), 0)
 
     def test_latest_marker_tracks_the_latest_available_report_per_pr(self):
         reviews = [

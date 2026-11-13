@@ -360,3 +360,52 @@ def reconcile(
         ):
             entry["duplicate_of"] = None
     return entries
+
+
+def publication_candidates(memory, snapshot):
+    """Submit reconciled claims to normal verification without inherited severity."""
+    groups = {}
+    for entry in memory:
+        if (
+            entry.get("status") != "still_present"
+            or entry.get("checked_head") != snapshot.head_sha
+        ):
+            continue
+        groups.setdefault(entry.get("duplicate_of") or entry["key"], []).append(entry)
+    candidates = []
+    for key, entries in groups.items():
+        linked = sorted(
+            {
+                candidate_id
+                for entry in entries
+                for candidate_id in entry.get("current_candidate_ids", [])
+            }
+        )
+        if linked:
+            for entry in entries:
+                entry["current_candidate_ids"] = linked
+            continue
+        canonical = next((entry for entry in entries if entry["key"] == key), None)
+        if canonical is None:
+            continue
+        evidence = canonical["source_evidence"]
+        location = next(item for item in evidence if item["side"] in {"head", "commit"})
+        candidate_id = f"reconciliation:{len(candidates) + 1}"
+        candidates.append(
+            {
+                "id": candidate_id,
+                "kind": canonical.get("kind", "defect"),
+                **{field: location[field] for field in ("path", "line", "side")},
+                "commit": location.get("commit"),
+                "parent": location.get("parent"),
+                "title": "Reassessed historical concern",
+                "claim": canonical["reason"],
+                "consequence": "Reassess the consequence of the current claim.",
+                "evidence": json.dumps(evidence),
+                "correction": "Determine whether the current claim warrants a correction.",
+                "uncertainty": "Historical publication does not establish current severity or usefulness.",
+            }
+        )
+        for entry in entries:
+            entry["current_candidate_ids"] = [candidate_id]
+    return candidates

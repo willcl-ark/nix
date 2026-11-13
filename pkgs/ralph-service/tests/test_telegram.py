@@ -82,7 +82,7 @@ class TelegramTests(unittest.TestCase):
         result["output"]["exports"]["review_memory"][0]["status"] = "fixed"
         self.assertNotIn("major concern", self.render(result))
 
-    def test_counts_include_reverified_history_from_the_report(self):
+    def test_counts_exclude_history_without_publication_approval(self):
         result = self.result(findings=[{"id": "new:1", "severity": "major"}])
         result["head_sha"] = "current-head"
         historical = {
@@ -102,7 +102,7 @@ class TelegramTests(unittest.TestCase):
             {**historical, "key": "old:5", "current_finding_ids": ["new:1"]},
         ]
         self.assertIn(
-            "Current findings: Major: 1 · Minor: 1 · Suggestions: 0",
+            "Current findings: Major: 1 · Minor: 0 · Suggestions: 0",
             self.render(result),
         )
 
