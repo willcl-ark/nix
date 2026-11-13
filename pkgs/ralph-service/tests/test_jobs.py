@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -167,14 +168,79 @@ class JobStoreTests(unittest.TestCase):
             self.assertGreater(row["next_attempt"], 0)
             db.execute("UPDATE jobs SET next_attempt = 0")
         self.store.retry_base_seconds = 0
-        for _ in range(2):
-            job = self.store.claim()
-            self.store.release_attempt(job["id"], job["token"])
+        job = self.store.claim()
+        self.store.release_attempt(job["id"], job["token"])
         self.assertIsNone(self.store.claim())
         self.assertEqual(self.store.active_attempts(), [])
         with self.store._connection() as db:
             row = db.execute("SELECT status, attempts FROM jobs").fetchone()
-            self.assertEqual(tuple(row), ("failed", 3))
+            self.assertEqual(tuple(row), ("failed", 2))
+
+    def test_configuration_refresh_uses_persisted_retry_limit(self):
+        self.store.retry_base_seconds = 0
+        self.enqueue()
+        original = self.store.claim()
+        refreshed = {**ENGINE, "config_sha256": "c" * 64}
+        self.assertEqual(
+            self.store.retry(
+                original, ValueError("old config"), engine_identity=refreshed
+            ),
+            "retry",
+        )
+        self.store.release_attempt(original["id"], original["token"])
+        restarted = jobs.JobStore(self.path, retry_base_seconds=0)
+        retried = restarted.claim()
+        self.assertEqual(retried["engine_identity"], refreshed)
+        self.assertEqual(retried["attempts"], 1)
+        self.assertIsNone(
+            restarted.retry(original, ValueError("stale"), engine_identity=ENGINE)
+        )
+        self.assertEqual(
+            restarted.retry(
+                retried, ValueError("still invalid"), engine_identity=ENGINE
+            ),
+            "failed",
+        )
+        restarted.release_attempt(retried["id"], retried["token"])
+        self.assertIsNone(restarted.claim())
+        with restarted._connection() as db:
+            row = db.execute("SELECT engine_identity, attempts FROM jobs").fetchone()
+        self.assertEqual(json.loads(row["engine_identity"]), refreshed)
+        self.assertEqual(row["attempts"], 2)
+
+    def test_configuration_refresh_preserves_saved_result(self):
+        self.enqueue()
+        job = self.store.claim()
+        self.store.save_result(job, {"content": "saved"})
+        self.assertIsNone(
+            self.store.retry(
+                job,
+                ValueError("old config"),
+                engine_identity={**ENGINE, "config_sha256": "c" * 64},
+            )
+        )
+        claimed = self.store.get_claim(job["id"], job["token"])
+        self.assertEqual(claimed["engine_identity"], ENGINE)
+        self.assertEqual(claimed["review_result"], {"content": "saved"})
+        self.assertEqual(claimed["attempts"], 0)
+
+    def test_configuration_refresh_preserves_superseded_identity(self):
+        self.enqueue()
+        job = self.store.claim()
+        self.enqueue("b" * 40)
+        self.assertEqual(
+            self.store.retry(
+                job,
+                ValueError("old config"),
+                engine_identity={**ENGINE, "config_sha256": "c" * 64},
+            ),
+            "superseded",
+        )
+        with self.store._connection() as db:
+            row = db.execute(
+                "SELECT engine_identity FROM jobs WHERE id = ?", (job["id"],)
+            ).fetchone()
+        self.assertEqual(json.loads(row["engine_identity"]), ENGINE)
 
     def test_worker_open_preserves_live_claim_and_does_not_migrate(self):
         self.enqueue()

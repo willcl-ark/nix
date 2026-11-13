@@ -594,12 +594,15 @@ def process_job(
                 job["id"],
                 exc,
             )
+        can_retry = retryable_error(exc) and (
+            stage != "model" or result_record is not None
+        )
         if (
             github_publication == "full"
             and result_record is None
             and job["review_result"] is None
             and (expected_context is not None or not base_ref.startswith("sha:"))
-            and (not retryable_error(exc) or job["attempts"] + 1 >= jobs.max_attempts)
+            and (not can_retry or job["attempts"] + 1 >= jobs.max_attempts)
             and jobs.is_current(job)
         ):
             # Persist a safe terminal result before releasing the claim. The saved
@@ -655,7 +658,7 @@ def process_job(
                 )
         outcome = (
             jobs.retry(job, exc)
-            if retryable_error(exc)
+            if can_retry
             else "failed"
             if jobs.fail(job, exc)
             else "lost-claim"
@@ -874,6 +877,34 @@ def run_job(job, jobs, api_key, ledger, contexts, allow_discussions=True):
                 or identity == review_engine.identity
                 else engine.load(identity["name"], identity["config"], configured=True)
             )
+            if job_engine.identity["name"] == "current":
+                from ralph.current_engine import validate_saved_configuration
+
+                try:
+                    validate_saved_configuration(job_engine.config)
+                except ValueError as exc:
+                    profile = job_engine.config.get("profile", {})
+                    profile_name = (
+                        profile.get("name") if isinstance(profile, dict) else profile
+                    )
+                    refreshed = (
+                        context.get(
+                            "high_engine"
+                            if profile_name == "high"
+                            else "default_engine"
+                        )
+                        or review_engine
+                    )
+                    outcome = job_store.retry(
+                        job, exc, engine_identity=refreshed.identity
+                    )
+                    logging.warning(
+                        "Saved review configuration rejected repo=%s pr=%d recovery=%s",
+                        job["repo_id"],
+                        job["number"],
+                        outcome,
+                    )
+                    return
             if not job_store.bind_engine(job, job_engine.identity):
                 return
         else:

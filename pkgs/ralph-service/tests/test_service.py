@@ -253,18 +253,18 @@ class ServiceTests(unittest.TestCase):
             patch.object(service.runner, "run_review") as run,
             self.assertLogs(level="WARNING") as logs,
         ):
-            for expected in ("retry", "retry", "failed"):
+            for expected in ("retry", "failed"):
                 self.assertEqual(self.process(job), expected)
                 self.jobs = JobStore(self.jobs.path, retry_base_seconds=0)
                 job = self.jobs.claim()
             self.assertIsNone(job)
         run.assert_not_called()
-        self.assertEqual(head.call_count, 3)
+        self.assertEqual(head.call_count, 2)
         with self.jobs._connection() as db:
             row = db.execute(
                 "SELECT attempts, error, review_result FROM jobs"
             ).fetchone()
-        self.assertEqual(row["attempts"], 3)
+        self.assertEqual(row["attempts"], 2)
         self.assertIsNone(row["review_result"])
         self.assertIn("HTTP 503", row["error"])
         self.assertNotIn("credential", row["error"])
@@ -414,14 +414,14 @@ class ServiceTests(unittest.TestCase):
             patch.object(service.runner, "run_review") as review,
             self.assertLogs(level="ERROR"),
         ):
-            for expected in ("retry", "retry", "failed"):
+            for expected in ("retry", "failed"):
                 self.assertEqual(
                     self.process(job, github_token="token", github_publication="full"),
                     expected,
                 )
                 job = self.jobs.claim()
         review.assert_not_called()
-        self.assertEqual(publish.call_count, 3)
+        self.assertEqual(publish.call_count, 2)
         self.assertTrue(
             all(
                 call.args[3]["run"]["status"] == "completed"
@@ -429,7 +429,7 @@ class ServiceTests(unittest.TestCase):
             )
         )
 
-    def test_uncertain_github_reconciles_after_restart_without_models(self):
+    def test_uncertain_github_stops_after_one_retry_without_models(self):
         from ralph_service import delivery
         from unittest.mock import Mock
 
@@ -461,40 +461,12 @@ class ServiceTests(unittest.TestCase):
         ):
             self.assertEqual(
                 self.process(job, github_token="token", github_publication="full"),
-                "retry",
+                "failed",
             )
         run.assert_not_called()
         publish.assert_not_called()
-        job = self.jobs.claim()
-        with (
-            patch.object(repository, "current_head", return_value="a" * 40),
-            patch.object(service.runner, "run_review") as run,
-            patch.object(
-                forgejo, "publish_review", return_value="unchanged"
-            ) as publish,
-            patch.object(service.github, "publish_review", return_value="unchanged"),
-            patch.object(
-                service.github,
-                "github_request",
-                side_effect=[
-                    {"id": 7},
-                    [
-                        {
-                            "id": 9,
-                            "user": {"id": 7},
-                            "body": "<!-- ralph-major:owner/repo -->\nsaved",
-                        }
-                    ],
-                ],
-            ),
-        ):
-            self.assertEqual(
-                self.process(job, github_token="token", github_publication="full"),
-                "unchanged",
-            )
-        run.assert_not_called()
-        publish.assert_not_called()
-        self.assertEqual(delivery.held(self.jobs), [])
+        self.assertIsNone(self.jobs.claim())
+        self.assertTrue(delivery.held(self.jobs))
 
     def test_publication_retry_reuses_saved_result(self):
         job = self.enqueue()
@@ -945,6 +917,65 @@ class ServiceTests(unittest.TestCase):
         ):
             self.assertEqual(self.process(old), "stale")
         self.assertEqual(self.jobs.claim()["head"], "b" * 40)
+
+    def test_incompatible_configuration_gets_one_fresh_attempt_before_collection(self):
+        high_engine = engine.load("current", {"profile": "high"})
+        previous = high_engine.identity
+        previous["config"]["profile"]["stages"].pop("historical_context")
+        self.jobs.enqueue(42, "master", "a" * 40, "opened", engine_identity=previous)
+        contexts = {
+            "core": {
+                "state_dir": self.state_dir,
+                "forgejo_token": "token",
+                "entry": {"bot_login": "ralph"},
+                "bot": self.bot_config,
+                "engine": self.review_engine,
+                "high_engine": high_engine,
+                "github_token": None,
+            }
+        }
+        job = self.jobs.claim()
+        with patch.object(service, "process_job") as process:
+            service.run_job(job, self.jobs, "key", self.ledger, contexts)
+            process.assert_not_called()
+            self.jobs.release_attempt(job["id"], job["token"])
+            self.jobs = JobStore(self.jobs.path, retry_base_seconds=0)
+            retry = self.jobs.claim()
+            self.assertEqual(retry["attempts"], 1)
+            self.assertEqual(retry["engine_identity"], high_engine.identity)
+            service.run_job(retry, self.jobs, "key", self.ledger, contexts)
+            process.assert_called_once()
+            self.assertEqual(process.call_args.args[8].identity, high_engine.identity)
+
+    def test_model_timeout_is_terminal_without_repeating_review(self):
+        job = self.enqueue()
+        with (
+            patch.object(repository, "current_head", return_value="a" * 40),
+            patch.object(forgejo, "find_comment", return_value=None),
+            patch.object(
+                repository,
+                "collect_review",
+                return_value=("b" * 40, "a" * 40, "input", None),
+            ),
+            patch.object(
+                local_repository,
+                "snapshot_repository",
+                return_value=SimpleNamespace(
+                    base_sha="b" * 40,
+                    head_sha="a" * 40,
+                    merge_base="c" * 40,
+                    diff_base_sha="c" * 40,
+                ),
+            ),
+            patch.object(
+                service.runner, "run_review", side_effect=TimeoutError("model timeout")
+            ) as run,
+            self.assertLogs(level="ERROR"),
+        ):
+            self.assertEqual(self.process(job), "failed")
+        run.assert_called_once()
+        self.assertIsNone(self.jobs.claim())
+        self.assertTrue(list((self.state_dir / "review-traces").rglob("*.json")))
 
     def test_worker_restarts_unfinished_review_with_saved_configuration(self):
         previous = {

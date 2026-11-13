@@ -230,6 +230,18 @@ and restarts. Each running attempt pins its package and configuration across
 deployments. New attempts use the deployed package; the engine hash is recorded
 on claim. Saved results retain their original identity and retry publication without running the engine again.
 
+Jobs get one automatic recovery attempt after a 30-second delay. The persisted
+failure counter is shared by transient failures, interrupted workers and saved
+configuration refreshes; restarts do not reset it. An incompatible saved current
+engine configuration is replaced with the deployed configuration before source
+collection or model calls, preserving the requested default/high profile.
+Compatible saved settings remain unchanged. Once model execution starts, a
+failed review is retained in the private trace rather than rerun automatically.
+A saved result can still retry delivery without spending more model tokens.
+After the allowance is consumed the job is terminal and requires an explicit
+rerun. Partial or invalid model results do not trigger a fresh review. This
+whole-job policy is separate from bounded retries of individual API requests.
+
 Switch the companion package, its core dependency, module commands and custom
 prompt/model configuration together. Before a deployment, stop timers and
 services and take SQLite-consistent backups, retaining refs and reports too.

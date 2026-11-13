@@ -39,7 +39,7 @@ class JobStore:
         repo_id="core",
         global_limit=None,
         repository_limits=None,
-        max_attempts=3,
+        max_attempts=2,
         retry_base_seconds=30,
         retry_max_seconds=300,
         initialize=True,
@@ -731,7 +731,7 @@ class JobStore:
             )
             return cursor.rowcount == 1
 
-    def retry(self, job, error):
+    def retry(self, job, error, *, engine_identity=None):
         """Schedule a retry, or record a terminal failure at the attempt cap."""
         self._check_job(job)
         with self._connection(write=True) as db:
@@ -744,7 +744,15 @@ class JobStore:
             ).fetchone()
             if row is None:
                 return None
-            return self._retry(db, row, error)
+            if engine_identity is not None and row["review_result"] is not None:
+                return None
+            status = self._retry(db, row, error)
+            if status == "retry" and engine_identity is not None:
+                db.execute(
+                    "UPDATE jobs SET engine_identity = ? WHERE id = ?",
+                    (json.dumps(engine_identity, sort_keys=True), job["id"]),
+                )
+            return status
 
     def _retry(self, db, job, error):
         """Record failure under the caller's claim/attempt transaction."""

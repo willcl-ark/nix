@@ -110,7 +110,8 @@ def configure(value):
     return normalized
 
 
-def run(case, runtime, configured):
+def validate_saved_configuration(configured):
+    """Validate saved settings before any source collection or model request."""
     if "high_profile" not in configured:
         raise ValueError(
             "Saved engine configuration has no high profile; "
@@ -123,7 +124,7 @@ def run(case, runtime, configured):
         )
     try:
         validate_format(configured["comment_format"])
-    except ValueError as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             "Saved comment format is incompatible; "
             "requeue the review or recapture the evaluation"
@@ -142,6 +143,11 @@ def run(case, runtime, configured):
             "Saved review stages are incompatible; "
             "requeue the review or recapture the evaluation"
         ) from exc
+    return prompt_config
+
+
+def run(case, runtime, configured):
+    prompt_config = validate_saved_configuration(configured)
     runtime.openai_api_base = configured["openai_api_base"]
     if configured["archaeology"]:
         if (
