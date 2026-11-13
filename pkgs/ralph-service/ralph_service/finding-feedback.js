@@ -83,7 +83,10 @@
     form.hidden = false;
     form.querySelector(".feedback-status").textContent = "Loading feedback…";
     for (const button of form.querySelectorAll("[data-vote]")) {
-      button.addEventListener("click", () => save(form, Number(button.dataset.vote)));
+      button.addEventListener("click", () => {
+        const vote = Number(button.dataset.vote);
+        save(form, saved.get(form)?.vote === vote ? null : vote);
+      });
     }
     form.addEventListener("submit", event => {
       event.preventDefault();
