@@ -1231,7 +1231,7 @@ def _feedback_form(finding, index):
 <button type="button" class="feedback-remove" hidden>Remove feedback</button>
 </fieldset>
 <p class="feedback-status" role="status" aria-live="polite"></p>
-</form>"""
+</form><hr class="finding-divider">"""
 
 
 def _html_report(record, archive_url, history_url, *, github_repository=None):
