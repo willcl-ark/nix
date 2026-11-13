@@ -314,6 +314,7 @@ def render_report(
     repository_url=None,
     base_sha=None,
     failure_reason=None,
+    finding_suffix=None,
 ):
     """Render the approved review; diagnostic detail belongs in the run archive."""
     comment_format = (
@@ -333,7 +334,7 @@ def render_report(
             or "Review failed because required verification did not complete."
         )
 
-    def finding_text(finding):
+    def finding_content(finding):
         summary = finding.get("presented_summary") or finding["summary"]
         body = finding.get("presented_body") or finding.get("body", "")
         location = source_location(finding, repository_url, base_sha, head_sha)
@@ -348,6 +349,12 @@ def render_report(
             side=finding.get("side", "head"),
             body=body,
         )
+
+    def finding_text(finding):
+        content = finding_content(finding)
+        if finding_suffix is not None:
+            content += finding_suffix(finding)
+        return content
 
     if findings:
         groups = []

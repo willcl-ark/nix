@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -1210,6 +1211,29 @@ def _failure_reason(record, verification):
     return "Review failed before an assessment could be completed."
 
 
+def _feedback_form(finding, index):
+    finding_id = _escape(finding["id"])
+    return f"""<form id="finding-{finding_id}" class="finding-feedback" data-finding-id="{finding_id}" hidden>
+<fieldset disabled>
+<legend>Was this finding useful?</legend>
+<div class="feedback-votes">
+<button type="button" data-vote="1" aria-pressed="false" aria-label="Useful">👍 <span data-count="up">—</span></button>
+<button type="button" data-vote="-1" aria-pressed="false" aria-label="Not useful">👎 <span data-count="down">—</span></button>
+<span class="feedback-selection"></span>
+</div>
+<details class="feedback-explanation">
+<summary>Why? <span class="feedback-optional">Optional</span></summary>
+<label for="feedback-comment-{index}">What made this finding useful or unhelpful?</label>
+<textarea id="feedback-comment-{index}" name="comment" maxlength="2000" rows="3" placeholder="For example, the PR description already explains this tradeoff."></textarea>
+<p class="feedback-hint">Your explanation is private feedback for maintainers. Votes are anonymous and remembered in this browser.</p>
+<button type="submit">Save explanation</button>
+</details>
+<button type="button" class="feedback-remove" hidden>Remove feedback</button>
+</fieldset>
+<p class="feedback-status" role="status" aria-live="polite"></p>
+</form>"""
+
+
 def _html_report(record, archive_url, history_url, *, github_repository=None):
     if github_repository and not record.get("github_repository"):
         record = {**record, "github_repository": github_repository}
@@ -1220,6 +1244,17 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
     incomplete = (
         coverage.get("status") != "complete" or verification.get("status") != "complete"
     )
+    feedback_markers = {}
+
+    def feedback_suffix(finding):
+        if not finding.get("id"):
+            return ""
+        # These unpredictable markers exist only during rendering. Substitute
+        # trusted forms after sanitizing all review prose.
+        marker = "ralphfeedback" + secrets.token_hex(24)
+        feedback_markers[marker] = _feedback_form(finding, len(feedback_markers))
+        return "\n\n" + marker
+
     concept = record.get("concept_assessment") or {}
     backport = record.get("backport_assessment")
     if record.get("findings_export_status") != "supported":
@@ -1241,12 +1276,21 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
             base_sha=record.get("base"),
             head_sha=record["head"],
             coverage_url=archive_url + "#coverage",
+            finding_suffix=feedback_suffix,
         )
     content = nh3.clean(
         MarkdownIt("commonmark")
         .enable(["table", "strikethrough"])
         .disable("html_inline")
         .render(review)
+    )
+    for marker, form in feedback_markers.items():
+        content = content.replace(f"<p>{marker}</p>", form)
+    feedback_url = (
+        "/feedback/"
+        + quote(record.get("repository_id") or "core", safe="")
+        + "/"
+        + quote(record["report_id"], safe="")
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -1255,7 +1299,9 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Review report PR #{_escape(record["pr"])}</title>
 <style>{_style()}</style>
+<link rel="stylesheet" href="finding-feedback.css">
 <script src="theme.js" defer></script>
+<script src="finding-feedback.js" defer></script>
 </head>
 <body>
 {theme.BUTTON}
@@ -1266,7 +1312,7 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
 {"Run ended" if failed else "Completed"}: {_escape(record.get("review_completed_at") or "unknown")}</p>
 <p><a href="{_escape(archive_url)}">Run archive</a> · <a href="{_escape(history_url)}">Previous runs</a></p>
 </header>
-<main>{content}</main>
+<main data-feedback-url="{_escape(feedback_url)}">{content}</main>
 </body>
 </html>
 """
@@ -1384,6 +1430,11 @@ def save_report(
     for directory in (report_dir, review_dir):
         directory.mkdir(mode=0o755, parents=True, exist_ok=True)
         theme.save_assets(directory)
+    for asset in ("finding-feedback.js", "finding-feedback.css"):
+        _write_public_file(
+            review_dir / asset,
+            (Path(__file__).parent / asset).read_text(encoding="utf-8"),
+        )
     html_name = f"{report_id}.html"
     json_name = f"{report_id}.json"
     json_path, html_path = report_dir / json_name, report_dir / html_name

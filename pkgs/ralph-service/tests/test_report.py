@@ -41,6 +41,84 @@ class ReportTests(unittest.TestCase):
             },
         }
 
+    def test_feedback_controls_follow_eligible_findings_and_saved_identity(self):
+        result = self.review_result("Approved explanation.")
+        result["head_sha"] = "a" * 40
+        first = result["output"]["exports"]["findings"][0]
+        first.update(
+            id="finding:suggestion", severity="suggestion", title="Optional change"
+        )
+        result["output"]["exports"]["findings"].append(
+            {
+                **first,
+                "id": "finding:major",
+                "severity": "major",
+                "title": "Important change",
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(
+                root, 123, result, "feedback-run", repository_id="gui"
+            )
+            rendered = (root / "reports" / name).read_text()
+            self.assertIn('data-feedback-url="/feedback/gui/feedback-run"', rendered)
+            self.assertLess(
+                rendered.index("Important change"),
+                rendered.index('data-finding-id="finding:major"'),
+            )
+            self.assertLess(
+                rendered.index('data-finding-id="finding:major"'),
+                rendered.index("Optional change"),
+            )
+            self.assertLess(
+                rendered.index("Optional change"),
+                rendered.index('data-finding-id="finding:suggestion"'),
+            )
+            self.assertEqual(rendered.count('class="finding-feedback"'), 2)
+            self.assertTrue((root / "reports/gui/finding-feedback.js").is_file())
+            self.assertTrue((root / "reports/gui/finding-feedback.css").is_file())
+            result["head_sha"] = "b" * 40
+            result["output"]["exports"]["findings"] = []
+            report.save_report(
+                root, 123, result, "feedback-run", repository_id="gui", refresh=True
+            )
+            self.assertEqual(rendered, (root / "reports" / name).read_text())
+
+        result = self.review_result("Unverified content.")
+        result["output"]["data"]["coverage"]["verification"]["status"] = "failed"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, result, "failed-feedback")
+            rendered = (root / "reports" / name).read_text()
+            self.assertNotIn('class="finding-feedback"', rendered)
+
+    def test_feedback_tracks_retained_finding_key_without_reviving_unconfirmed_history(
+        self,
+    ):
+        result = self.review_result("Current explanation.")
+        result["head_sha"] = "a" * 40
+        record = report._public_record(123, result, "retained-feedback")
+        retained = {
+            "key": "history:123",
+            "severity": "minor",
+            "title": "Retained concern",
+            "checked_head": "a" * 40,
+            "status": "still_present",
+            "reason": "Still present at this head.",
+            "source_evidence": [{"path": "a.cpp", "line": 1, "side": "head"}],
+        }
+        record["review_memory"] = [
+            retained,
+            {**retained, "key": "history:unconfirmed", "status": "unclear"},
+        ]
+        rendered = report._html_report(
+            record, "/traces/retained-feedback.html", "/traces/123/"
+        )
+        self.assertIn('data-finding-id="history:123"', rendered)
+        self.assertNotIn('data-finding-id="history:unconfirmed"', rendered)
+        self.assertEqual(rendered.count('class="finding-feedback"'), 2)
+
     def test_commit_parent_location_survives_saved_report_refresh(self):
         result = self.review_result(
             "Reorder only if every intermediate commit remains safe."
@@ -368,7 +446,10 @@ if (value < 1) return;
         self.assertIn("<summary>Details for <code>divide()</code></summary>", rendered)
         self.assertIn("if (value &lt; 1) return;", rendered)
         self.assertNotIn(
-            "<script", rendered.replace('<script src="theme.js" defer></script>', "")
+            "<script",
+            rendered.replace('<script src="theme.js" defer></script>', "").replace(
+                '<script src="finding-feedback.js" defer></script>', ""
+            ),
         )
         attributes = []
 

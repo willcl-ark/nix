@@ -222,16 +222,22 @@ redir /report /report/
 redir /report/ /traces/
 handle_path /report/* {
   root * /var/www/ralph/reports
-  header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'"
+  header Content-Security-Policy "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
   header X-Content-Type-Options nosniff
   file_server
+}
+handle /feedback/* {
+  reverse_proxy 127.0.0.1:8765
 }
 ```
 
 Serve directory indexes and redirect PR history paths to their trailing-slash
 form. History and stats pages require same-origin scripts and
-`connect-src 'self'`; history also requires same-origin form submissions. Keep
-the stricter report policy on individual report HTML files.
+`connect-src 'self'`; history also requires same-origin form submissions.
+Report voting also requires `connect-src 'self'` and the `/feedback/*` route to
+the coordinator. Use its configured listen port if different from the example.
+Feedback explanations remain in private state; never expose its database or
+maintainer triage output through the static report routes.
 
 With reports enabled, `ralph-stats.timer` refreshes `reportDir/stats/` and review
 history every five minutes. `ralph-followup.timer` checks whether later PR

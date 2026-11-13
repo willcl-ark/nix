@@ -6,6 +6,41 @@ publication holds and state backups. NixOS settings belong in the
 
 ## Reports and statistics
 
+### Finding feedback
+
+Report readers can vote on whether each finding was useful and optionally leave
+an explanation of up to 2,000 characters. The browser remembers a random token
+so readers can change or remove their feedback. Clearing browser storage loses
+that ability. Counts represent browser votes, not authenticated people.
+Explanations are private to maintainers and the originating browser; they are
+not public comments and do not change review findings or trigger model calls.
+
+The coordinator stores feedback in `STATE/feedback.sqlite3`, separately from
+saved reports, keyed by repository, run and finding, with the reviewed SHA.
+Keep this database in private state and include it in state backups. Serve the
+same-origin `/feedback/*` route through the coordinator and allow
+`connect-src 'self'` on reports, as shown in the module guide. Refresh existing
+reports with the backfill command below to add the controls without rerunning
+reviews.
+
+Run triage locally as the service account:
+
+```sh
+ralph-feedback --state-dir STATE list
+ralph-feedback --state-dir STATE list --html /private/path/feedback.html
+ralph-feedback --state-dir STATE review ID REVISION
+```
+
+The list and HTML contain unreviewed feedback and links to the exact report
+findings. The HTML file is private; do not copy it into the public report tree.
+Use the ID and revision from the listing to mark an entry reviewed. If the voter
+changes it meanwhile, acknowledgement fails so the new explanation is not
+missed. Changed feedback returns to the queue; withdrawn feedback is removed.
+Reviewing feedback does not change votes or counts. Curate confirmed examples
+manually before using them to evaluate review changes.
+
+### Report rendering
+
 The Review report contains approved findings, their explanations and qualifications,
 and a coverage link into the Run archive. Failed verification remains explicit. The Run archive contains preliminary agent replies, decisions,
 coverage diagnostics, retained history and usage. Intermediate claims in the

@@ -13,7 +13,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ralph import engine, progress
-from . import config, delivery, monitor
+from . import config, delivery, finding_feedback, monitor
 from .jobs import JobStore
 
 
@@ -72,6 +72,9 @@ def bind_repositories(jobs, entries):
 def make_handler(contexts, jobs):
     from . import service
 
+    feedback = finding_feedback.FeedbackStore(
+        Path(jobs.path).with_name("feedback.sqlite3")
+    )
     handlers = {
         repo_id: service.make_handler(
             ctx["secret"],
@@ -84,6 +87,8 @@ def make_handler(contexts, jobs):
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            if finding_feedback.handle_request(self, contexts, feedback):
+                return
             path = urllib.parse.urlsplit(self.path).path
             for repo_id, ctx in contexts.items():
                 if path.startswith(f"/assets/{ctx['bot'].repository}/"):
@@ -91,6 +96,8 @@ def make_handler(contexts, jobs):
             self.send_error(404)
 
         def do_POST(self):
+            if finding_feedback.handle_request(self, contexts, feedback):
+                return
             path = urllib.parse.urlsplit(self.path).path
             if path != "/webhooks/forgejo" and not path.startswith(
                 "/webhooks/forgejo/"

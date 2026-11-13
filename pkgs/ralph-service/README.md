@@ -11,6 +11,7 @@ The package installs:
 - `ralph-evaluate`, frozen capture/replay, usage inspection and offline summaries.
 - `ralph-followup`, background assessment of previously published findings.
 - `ralph-telegram`, independent Telegram publication, monitoring and channel commands.
+- `ralph-feedback`, local maintainer triage of anonymous finding feedback.
 
 The `ralph` command performs a local review and accepts no service flags.
 The service uses one repository registry and queue, with independent systemd
