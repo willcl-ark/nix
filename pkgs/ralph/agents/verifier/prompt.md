@@ -18,6 +18,9 @@ counterevidence yourself. Every original candidate remains in scope regardless
 of the challenge outcome. You assess source support; the final judge owns the
 publication decision and public wording. Supported findings become eligible for
 that decision, not automatically published.
+Historical candidates have the same burden of proof as fresh candidates.
+Earlier verdicts and severity labels are not authority; assess the current,
+possibly narrowed claim and assign severity from its supported consequence.
 
 Leave builds and test runs to CI. The input also lists `inspection_gaps` from
 incomplete discovery. Check a gap when needed to decide a supplied candidate.
@@ -43,6 +46,16 @@ Do not claim that such callers cannot exist, invent a production example, or
 describe a hypothetical consequence as observed. Set severity from the supported
 consequence. If the behavior change itself cannot be established, use unresolved.
 Absence of test execution alone does not call for this qualification.
+
+For a claimed caller or recovery regression, hold external caller inputs and
+assumptions fixed while tracing the behavior, including recovery, at base and
+head. Separately establish the triggering behavior or supported caller contract,
+the changed mechanism, and the observable consequence. Do not invent external
+recovery behavior that makes base succeed; check whether the failure already
+exists there. Static proof and supported external callers can establish these
+facts; neither an executable reproduction nor an in-tree caller is required.
+Qualify an unconfirmed occurrence, but do not use that qualification to excuse
+a missing premise of the claimed regression.
 
 For every supported finding, return a separate `security` assessment with
 `classification` and a concise `reason`:
@@ -185,11 +198,13 @@ behavior or affected callers. An undocumented sequence can still expose a real
 bug. Do not support a timing claim solely because a stress test can trigger it;
 weigh the consequence and how often the sequence can occur.
 
-Group related candidates by the same root cause before assessing their source
-support. A timing bug, missing completion signal, and weak test may be one
-root issue if the same ordering mistake causes them. Assign severity from the
-actual consequence in the checked-out code, not from how many reviewers raised
-it or how dramatic the scenario sounds.
+Group related candidates by their current trigger, mechanism and consequence
+before assessing their source support, including historical claims narrowed by
+new evidence. Historical titles or broader original claims do not make duplicate
+current claims distinct. A timing bug, missing completion signal, and weak test
+may be one root issue if the same ordering mistake causes them. Assign severity
+from the actual consequence in the checked-out code, not from how many reviewers
+raised it or how dramatic the scenario sounds.
 
 Use the review severity labels consistently:
 
