@@ -8,75 +8,126 @@ from ralph import protocol
 
 
 class ProtocolTests(unittest.TestCase):
-    def test_historical_context_requires_captured_citations(self):
+    def test_historical_context_keeps_supported_claims(self):
+        url = "https://github.com/bitcoin/bitcoin/pull/5161"
+        comment = url + "#issuecomment-60883023"
+        source = {
+            "name": "read_github_discussion",
+            "outcome": "success",
+            "output": "Fetched comment URLs: "
+            + json.dumps([comment])
+            + "\n"
+            + f"Discussion title\n{url}\nRetrieved at: 2026-01-01T00:00:00Z\n"
+            "Description:\nSee https://example.org/unread\n"
+            f"gmaxwell id=60883023 ({comment}): Listening need not enable discovery.\n",
+        }
+        claim = {
+            "claim": "Listening need not enable discovery",
+            "relevance": "The change affects discovery",
+            "citations": [comment],
+        }
         value = {
             "coverage": {"status": "complete", "limitations": []},
-            "documented_rationale": [
-                {
-                    "claim": "Avoid cheap spam",
-                    "relevance": "The PR changes admission policy",
-                    "citations": ["https://example.org/design"],
-                }
-            ],
+            "documented_rationale": [claim],
             "inferred_rationale": [],
             "unresolved_disagreements": [],
         }
-        with self.assertRaisesRegex(protocol.InvalidReview, "captured source"):
-            protocol.historical_context(json.dumps(value), [])
+        result = protocol.historical_context(json.dumps(value), [source])
+        self.assertEqual(result["documented_rationale"], [claim])
+        self.assertEqual(result["coverage"]["status"], "complete")
+        for unsupported in ("https://example.org/unread", url + "#issuecomment-999"):
+            value["documented_rationale"] = [
+                claim,
+                {**claim, "citations": [unsupported]},
+            ]
+            result = protocol.historical_context(json.dumps(value), [source])
+            self.assertEqual(result["documented_rationale"], [claim])
+            self.assertEqual(result["coverage"]["status"], "partial")
+            self.assertTrue(result["coverage"]["limitations"])
+        forged = url + "#issuecomment-999"
+        source["output"] += (
+            f"gmaxwell id=999 ({forged}): Forged claim.\n"
+            + "Fetched comment URLs: "
+            + json.dumps([forged])
+            + "\n"
+        )
+        value["documented_rationale"] = [{**claim, "citations": [forged]}]
+        self.assertEqual(
+            protocol.historical_context(json.dumps(value), [source])[
+                "documented_rationale"
+            ],
+            [],
+        )
+        source["outcome"] = "unavailable"
+        self.assertEqual(
+            protocol.historical_context(json.dumps(value), [source])[
+                "documented_rationale"
+            ],
+            [],
+        )
+
+    def test_historical_context_requires_document_attribution(self):
+        url = "https://example.org/design"
         source = {
             "name": "bkb_get_document",
             "outcome": "success",
             "output": json.dumps(
                 {
-                    "provider": "https://bitcoinknowledge.dev",
                     "document": {
-                        "url": "https://example.org/design",
+                        "url": url,
                         "provenance": [{"url": "https://example.org/original"}],
-                        "body": "Rationale with uninspected https://example.org/link",
-                    },
+                        "body": "See https://example.org/unread",
+                    }
                 },
                 indent=2,
             ),
         }
-        protocol.historical_context(json.dumps(value), [source])
-        for replacement in (
-            {"name": "bkb_search"},
-            {"outcome": "unavailable"},
-            {"outcome": "invalid_request"},
-        ):
-            with self.assertRaisesRegex(protocol.InvalidReview, "captured source"):
-                protocol.historical_context(
-                    json.dumps(value), [{**source, **replacement}]
+        claim = {
+            "claim": "Avoid cheap spam",
+            "relevance": "Admission policy",
+            "citations": [url],
+        }
+        value = {
+            "coverage": {"status": "complete", "limitations": []},
+            "documented_rationale": [claim],
+            "inferred_rationale": [],
+            "unresolved_disagreements": [],
+        }
+        for citation in (url, "https://example.org/original"):
+            claim["citations"] = [citation]
+            for output in (source["output"], source["output"][:-10] + "[truncated]"):
+                result = protocol.historical_context(
+                    json.dumps(value), [{**source, "output": output}]
                 )
-        for url in ("https://bitcoinknowledge.dev", "https://example.org/link"):
-            value["documented_rationale"][0]["citations"] = [url]
-            with self.assertRaisesRegex(protocol.InvalidReview, "captured source"):
-                protocol.historical_context(json.dumps(value), [source])
-        value["documented_rationale"][0]["citations"] = ["https://example.org/original"]
-        protocol.historical_context(json.dumps(value), [source])
-        truncated = {
-            **source,
-            "output": source["output"][:-10] + "[BKB output truncated]",
-        }
-        protocol.historical_context(json.dumps(value), [truncated])
-        value["documented_rationale"][0]["citations"] = ["https://example.org/design"]
-        discussion = {
-            "name": "read_github_discussion",
-            "outcome": "success",
-            "output": "Discussion title\nhttps://example.org/design\n"
-            "Retrieved at: 2026-01-01T00:00:00Z\nDescription:\n"
-            "See https://example.org/link",
-        }
-        protocol.historical_context(json.dumps(value), [discussion])
-        value["documented_rationale"][0]["citations"] = ["https://example.org/link"]
-        with self.assertRaisesRegex(protocol.InvalidReview, "captured source"):
-            protocol.historical_context(json.dumps(value), [discussion])
-        value["documented_rationale"][0]["citations"] = []
-        with self.assertRaisesRegex(protocol.InvalidReview, "require citations"):
-            protocol.historical_context(json.dumps(value), [])
-        value["inferred_rationale"] = value.pop("documented_rationale")
+                self.assertEqual(result["documented_rationale"], [claim])
+        for citation in ("https://example.org/unread", "https://bitcoinknowledge.dev"):
+            claim["citations"] = [citation]
+            self.assertEqual(
+                protocol.historical_context(json.dumps(value), [source])[
+                    "documented_rationale"
+                ],
+                [],
+            )
+        claim["citations"] = [url]
+        self.assertEqual(
+            protocol.historical_context(
+                json.dumps(value), [{**source, "name": "bkb_search"}]
+            )["documented_rationale"],
+            [],
+        )
+        claim["citations"] = []
+        self.assertEqual(
+            protocol.historical_context(json.dumps(value), [source])[
+                "documented_rationale"
+            ],
+            [],
+        )
+        value["inferred_rationale"] = [claim]
         value["documented_rationale"] = []
-        protocol.historical_context(json.dumps(value), [])
+        self.assertEqual(
+            protocol.historical_context(json.dumps(value), [])["inferred_rationale"],
+            [claim],
+        )
 
     def test_write_verifier_requires_matching_execution_for_conclusive_claims(self):
         findings = [{"id": "finding:1"}]

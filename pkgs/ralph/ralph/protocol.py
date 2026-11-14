@@ -755,8 +755,17 @@ def historical_context(text, captured_sources):
                     r"^(https?://[^\s]+)\n(?:Retrieved at|Cutoff):", header, re.M
                 )
             )
+            # The adapter writes this first-line metadata from fetched records.
+            # Never interpret attribution-shaped lines inside source prose.
+            first_line = output.split("\n", 1)[0]
+            prefix = "Fetched comment URLs: "
+            if first_line.startswith(prefix):
+                urls = json.loads(first_line.removeprefix(prefix))
+                _citations(urls)
+                source_urls.update(urls)
     _object(result, HISTORICAL_CONTEXT_SCHEMA["properties"])
     _coverage(result["coverage"])
+    omitted = 0
     for field in (
         "documented_rationale",
         "inferred_rationale",
@@ -766,18 +775,24 @@ def historical_context(text, captured_sources):
             raise InvalidReview(
                 "Historical context must contain at most 12 entries per category"
             )
+        retained = []
         for item in result[field]:
             _object(item, RATIONALE["properties"])
             _text(item, ("claim", "relevance"))
             _citations(item["citations"])
-            if any(url not in source_urls for url in item["citations"]):
-                raise InvalidReview(
-                    "Historical citations must occur in captured source outputs"
-                )
-            if field != "inferred_rationale" and not item["citations"]:
-                raise InvalidReview(
-                    "Documented rationale and disagreements require citations"
-                )
+            if any(url not in source_urls for url in item["citations"]) or (
+                field != "inferred_rationale" and not item["citations"]
+            ):
+                omitted += 1
+                continue
+            retained.append(item)
+        result[field] = retained
+    if omitted:
+        result["coverage"]["status"] = "partial"
+        result["coverage"]["limitations"].append(
+            f"Omitted {omitted} historical claims whose citations could not be "
+            "matched to inspected source attribution."
+        )
     return result
 
 

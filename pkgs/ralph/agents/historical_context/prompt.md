@@ -20,6 +20,11 @@ If a source cannot be retrieved, record the specific limitation.
 
 Return a small briefing in the supplied schema. Each entry has a claim, its
 relevance to the current behavior, and HTTP(S) citations from inspected sources.
+Cite the exact document or provenance URLs supplied by bkb_get_document, or the
+fetched discussion URL and comment permalinks printed in discussion attribution.
+Links merely mentioned inside a source, search hits, commit URLs and pinned-code
+URLs are not historical source attribution. Inspect the source itself before
+citing it. Keep relevance to pinned code in the relevance text.
 Use documented_rationale only for rationale stated in sources. Put your own
 explanations in inferred_rationale and cite supporting premises when available.
 Use unresolved_disagreements for competing positions that the inspected record

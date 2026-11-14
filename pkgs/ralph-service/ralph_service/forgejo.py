@@ -278,6 +278,7 @@ def _append_comments(
     if omitted:
         result += f"{omitted} comments were omitted because current metadata is after the cutoff or incomplete.\n"
     seen = set()
+    urls = []
     for comment in selected:
         if comment.get("id") in seen:
             continue
@@ -293,10 +294,13 @@ def _append_comments(
             or f"{bot_config.repository_url}/pulls"
         )
         item = f"{author}{identifier_text} ({url}): {content}\n"
-        if len((result + item).encode()) > MAX_TOOL_BYTES:
-            return result + "[Comments truncated]\n"
+        prefix = "Fetched comment URLs: " + json.dumps([*urls, url]) + "\n"
+        if len((prefix + result + item).encode()) > MAX_TOOL_BYTES:
+            result += "[Comments truncated]\n"
+            break
         result += item
-    return result
+        urls.append(url)
+    return "Fetched comment URLs: " + json.dumps(urls) + "\n" + result
 
 
 def _public_discussion_page(
