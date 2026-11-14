@@ -463,6 +463,34 @@ def _public_concept_citation(citation):
     return record if record else None
 
 
+def _public_historical_context(debug):
+    context = debug.get("historical_context")
+    if not isinstance(context, dict):
+        return None
+    result = {"coverage": {"status": _coverage_status(context.get("coverage"))}}
+    for field in (
+        "documented_rationale",
+        "inferred_rationale",
+        "unresolved_disagreements",
+    ):
+        result[field] = [
+            {
+                "claim": item["claim"],
+                "relevance": item["relevance"],
+                "citations": [
+                    url
+                    for citation in _strings(item.get("citations"))
+                    if (url := _safe_http_url(citation)) is not None
+                ],
+            }
+            for item in context.get(field, [])
+            if isinstance(item, dict)
+            and isinstance(item.get("claim"), str)
+            and isinstance(item.get("relevance"), str)
+        ]
+    return result
+
+
 def _public_concept_assessment(debug):
     assessment = core_trace.concept_assessment(debug)
     if not assessment:
@@ -638,6 +666,7 @@ def _public_record(
         record["stage_outputs"] = _public_stage_outputs(debug)
         record["stage_metrics"] = core_trace.stage_metrics(debug)
         record["concept_assessment"] = _public_concept_assessment(debug)
+        record["historical_context"] = _public_historical_context(debug)
         record["finding_attribution"] = _public_attribution(debug)
         record["decisions"] = _public_decisions(debug)
         record["challenges"] = _public_challenges(debug)
@@ -1277,6 +1306,7 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
             head_sha=record["head"],
             coverage_url=archive_url + "#coverage",
             finding_suffix=feedback_suffix,
+            historical_context=record.get("historical_context"),
         )
     content = nh3.clean(
         MarkdownIt("commonmark")

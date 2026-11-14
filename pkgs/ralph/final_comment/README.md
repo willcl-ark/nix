@@ -82,3 +82,9 @@ Run the focused checks from the repository root:
 PYTHONPATH=pkgs/ralph python3 -m unittest discover -s pkgs/ralph/tests -p test_comment.py
 PYTHONPATH=pkgs/ralph python3 -m unittest discover -s pkgs/ralph/tests -p test_protocol.py
 ```
+
+Human reports append validated historical context after the review, with source
+links and the relevance of each decision to the change. Documented decisions,
+Ralph's inferences and unresolved disagreements remain separate. Partial research
+gets a short notice; raw research responses remain in the run archive. The PR
+comment stays focused on findings and the design assessment.

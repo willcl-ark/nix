@@ -971,7 +971,11 @@ class PipelineTests(unittest.TestCase):
                 return concept_verification()
             return discovery()
 
-        self.run_review(reviewer, archaeology_enabled=True, historian=historian)
+        result = self.run_review(
+            reviewer, archaeology_enabled=True, historian=historian
+        )
+        self.assertIn("## Background", result)
+        self.assertIn("Historical incentive premise", result)
         self.assertIn("independent", seen)
         self.assertIn("alternatives", seen)
         self.assertIn("concept_verifier", seen)

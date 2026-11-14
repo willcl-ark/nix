@@ -41,6 +41,51 @@ class ReportTests(unittest.TestCase):
             },
         }
 
+    def test_historical_context_is_projected_and_rendered_with_safe_links(self):
+        result = self.review_result("Approved explanation.")
+        item = {
+            "claim": "Listening and discovery serve different purposes.",
+            "relevance": "Preserve the Tor privacy boundary in this refactor.",
+            "citations": [
+                "https://example.org/discussion#comment-1",
+                "javascript:alert(1)",
+            ],
+            "private": "internal item metadata",
+        }
+        result["output"]["data"]["historical_context"] = {
+            "coverage": {"status": "partial", "limitations": ["internal limit detail"]},
+            "documented_rationale": [item],
+            "inferred_rationale": [],
+            "unresolved_disagreements": [],
+            "captured_sources": [{"output": "private raw source"}],
+            "omitted_sources": 3,
+        }
+        record = report._public_record(123, result, "historical-context")
+        public = record["historical_context"]
+        self.assertEqual(
+            public["documented_rationale"],
+            [
+                {
+                    "claim": item["claim"],
+                    "relevance": item["relevance"],
+                    "citations": ["https://example.org/discussion#comment-1"],
+                }
+            ],
+        )
+        self.assertNotIn("captured_sources", public)
+        self.assertNotIn("internal", json.dumps(public))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, result, "historical-context")
+            rendered = (root / "reports" / name).read_text()
+        self.assertIn("Background", rendered)
+        self.assertIn(item["claim"], rendered)
+        self.assertIn(item["relevance"], rendered)
+        self.assertIn('href="https://example.org/discussion#comment-1"', rendered)
+        self.assertNotIn("javascript:", rendered)
+        self.assertNotIn("private raw source", rendered)
+        self.assertNotIn("internal limit detail", rendered)
+
     def test_feedback_controls_follow_eligible_findings_and_saved_identity(self):
         result = self.review_result("Approved explanation.")
         result["head_sha"] = "a" * 40

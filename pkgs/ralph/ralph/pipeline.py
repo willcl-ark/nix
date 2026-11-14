@@ -1391,6 +1391,7 @@ def review_with_independent_passes(
         debug["coverage"]["limitations"],
         concept_summary,
         backport=debug.get("backport_assessment"),
+        historical_context=historical_context,
         review_memory=debug.get("review_memory"),
         head_sha=snapshot.head_sha,
         review_tier=plan["tier"],

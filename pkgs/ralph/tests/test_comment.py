@@ -12,6 +12,74 @@ COMMENT_DIR = Path(final_comment.__file__).parent
 
 
 class CommentTests(unittest.TestCase):
+    def test_report_ends_with_cited_historical_context(self):
+        context = {
+            "coverage": {"status": "partial", "limitations": ["internal detail"]},
+            "documented_rationale": [
+                {
+                    "claim": "Listening and address discovery are separate controls.",
+                    "relevance": "The changed selection logic must preserve Tor privacy.",
+                    "citations": [
+                        "https://github.com/bitcoin/bitcoin/pull/5161#issuecomment-60883023"
+                    ],
+                }
+            ],
+            "inferred_rationale": [
+                {
+                    "claim": "This may explain the current default.",
+                    "relevance": "The patch preserves that default.",
+                    "citations": [],
+                }
+            ],
+            "unresolved_disagreements": [
+                {
+                    "claim": "Participants disagreed about discovery defaults.",
+                    "relevance": "A default change needs a separate justification.",
+                    "citations": ["https://example.org/discussion"],
+                }
+            ],
+        }
+        rendered = final_comment.render_report(
+            [], historical_context=context, coverage_url="https://example.org/coverage"
+        )
+        self.assertLess(
+            rendered.index("Coverage details"), rendered.index("## Background")
+        )
+        for text in (
+            "Documented decisions",
+            "Ralph's inferences",
+            "Unresolved disagreements",
+        ):
+            self.assertIn(text, rendered)
+        for field in (
+            "documented_rationale",
+            "inferred_rationale",
+            "unresolved_disagreements",
+        ):
+            item = context[field][0]
+            self.assertIn(item["claim"], rendered)
+            self.assertIn(item["relevance"], rendered)
+            for url in item["citations"]:
+                self.assertIn(f"](<{url}>)", rendered)
+        self.assertIn("historical record reviewed here is incomplete", rendered)
+        self.assertNotIn("internal detail", rendered)
+        context["coverage"]["status"] = "complete"
+        self.assertNotIn(
+            "historical record reviewed here is incomplete",
+            final_comment.render_report([], historical_context=context),
+        )
+
+    def test_empty_historical_context_has_no_report_section(self):
+        for context in (
+            None,
+            {},
+            {"coverage": {"status": "partial"}, "documented_rationale": []},
+        ):
+            self.assertNotIn(
+                "Background",
+                final_comment.render_report([], historical_context=context),
+            )
+
     def test_preview_works_from_an_unrelated_directory(self):
         example = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())
         with tempfile.TemporaryDirectory() as directory:

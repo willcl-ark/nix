@@ -237,6 +237,7 @@ def render_report(
     base_sha=None,
     failure_reason=None,
     finding_suffix=None,
+    historical_context=None,
 ):
     """Render the approved review; diagnostic detail belongs in the run archive."""
     comment_format = (
@@ -353,9 +354,42 @@ def render_report(
             else "Review completed with no actionable findings."
         )
     content = _render_sections(comment_format["comment"], sections)
+    history = _historical_context(historical_context)
+    if history:
+        content += "\n\n" + history
     if review_tier:
         content += f"\n\n<!-- Review tier: {escape(review_tier)} -->"
     return content
+
+
+def _historical_context(context):
+    if not context:
+        return ""
+    groups = []
+    for field, heading in (
+        ("documented_rationale", "Documented decisions"),
+        ("inferred_rationale", "Ralph's inferences"),
+        ("unresolved_disagreements", "Unresolved disagreements"),
+    ):
+        entries = []
+        for item in context.get(field, []):
+            sources = " · ".join(
+                f"[Source {index}](<{quote(url, safe=':/?#[]@!$&()*+,;=%')}>)"
+                for index, url in enumerate(item["citations"], 1)
+            )
+            entries.append(
+                "\n\n".join(
+                    part for part in (item["claim"], item["relevance"], sources) if part
+                )
+            )
+        if entries:
+            groups.append(f"### {heading}\n\n" + "\n\n".join(entries))
+    if not groups:
+        return ""
+    introduction = "Ralph's summary of historical context for the behaviour affected by this change."
+    if context.get("coverage", {}).get("status") != "complete":
+        introduction += " The historical record reviewed here is incomplete."
+    return "\n\n".join(["## Background", introduction, *groups])
 
 
 def render_github(
