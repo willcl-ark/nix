@@ -2,7 +2,7 @@
 :root {
   color-scheme: dark;
   --bg: #050806; --surface: #080d0a; --raised: #0f1812; --border: #1c3024; --rule: #2a4a36;
-  --text: #a6c4ae; --muted: #5f7d68; --accent: #4dff94; --glow: rgba(77, 255, 148, .35);
+  --text: #a6c4ae; --muted: #5f7d68; --accent: #4dff94; --glow: rgba(77, 255, 148, .18);
   --red: #ff5f56; --amber: #ffb000; --cyan: #5fd7ff; --violet: #c49bff;
   --mono: "Ralph Mono", ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", monospace;
 }

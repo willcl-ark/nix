@@ -1432,7 +1432,7 @@ def _style():
     return (
         theme.STYLE
         + """
-body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 20; background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .18) 2px 3px); }
+body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 20; background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .07) 2px 3px); }
 :root[data-theme="light"] body::after { display: none; }
 header { position: fixed; inset: 0 auto 0 0; width: 15rem; background: var(--surface); border-right: 1px solid var(--rule); padding: 1.5rem 1rem; display: flex; flex-direction: column; z-index: 5; overflow-y: auto; }
 .brand { display: flex; align-items: baseline; gap: .6ch; font-size: 1.35rem; font-weight: 800; text-decoration: none; color: var(--accent); text-shadow: 0 0 .5em var(--glow); }
