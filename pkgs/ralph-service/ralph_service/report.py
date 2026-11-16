@@ -1353,7 +1353,7 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
 <body>
 {theme.BUTTON}
 <header>
-<h1>{_escape(record.get("pr_title") or "Review report")}</h1>
+<h1>{_escape_with_code(record.get("pr_title") or "Review report")}</h1>
 <p>{_escape(record.get("repository") or record.get("repository_id") or "core")}: {_pr_link(record)}</p>
 <p class="report-metadata">Head: {_commit_link(record, record.get("head"))} · Base: {_commit_link(record, record.get("base"))}<br>
 {"Run ended" if failed else "Completed"}: {_escape(record.get("review_completed_at") or "unknown")}</p>
