@@ -1099,7 +1099,7 @@ def _stage_html(name, stage, stage_output):
 
 def _pr_link(record):
     label = f"PR #{record['pr']}"
-    base = _safe_http_url(record.get("repository_url"))
+    base = _source_repository_url(record)
     if base is None:
         return _escape(label)
     url = config.pull_request_url(base, record["pr"])

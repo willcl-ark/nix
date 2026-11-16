@@ -24,6 +24,7 @@ class StatsPageTests(unittest.TestCase):
                     ("gui", "bitcoin-core/gui-qml"),
                 )
             }
+            repositories["gui"]["github_repository"] = "bitcoin-core/gui-qml"
             reports = root / "reports"
             ledger = Ledger(root / "usage.sqlite3")
             for key in repositories:
@@ -92,8 +93,9 @@ class StatsPageTests(unittest.TestCase):
             )
             page = (output / "reviews/index.html").read_text()
             self.assertEqual(page.count('title="Most recent saved review"'), 2)
-            for metadata in repositories.values():
-                self.assertIn(metadata["repository_url"] + "/pulls/123", page)
+            self.assertIn("https://forge.example/bitcoin/bitcoin/pulls/123", page)
+            self.assertIn("https://github.com/bitcoin-core/gui-qml/pull/123", page)
+            self.assertNotIn("https://forge.example/bitcoin-core/gui-qml", page)
             self.assertIn("https://reports.example/gui/123-", page)
             gui = (output / "repos/gui/reviews/index.html").read_text()
             self.assertIn("bitcoin-core/gui-qml", gui)

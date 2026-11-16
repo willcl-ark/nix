@@ -251,7 +251,7 @@ class ReportTests(unittest.TestCase):
             report.save_report(root, 123, {}, "linked-review", refresh=True)
             self.assertEqual(human, (root / "reports" / name).read_text())
         self.assertEqual(saved["github_repository"], "bitcoin/bitcoin")
-        self.assertIn('href="https://forge.example/mirrors/core/pulls/123"', human)
+        self.assertIn('href="https://github.com/bitcoin/bitcoin/pull/123"', human)
         self.assertIn(
             f'href="https://github.com/bitcoin/bitcoin/commit/{"a" * 40}"', human
         )

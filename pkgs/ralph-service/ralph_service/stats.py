@@ -18,7 +18,7 @@ from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
 from . import health
-from .report import public_limits
+from .report import _source_repository_url, public_limits
 
 
 SNAPSHOT_MODEL = re.compile(r"(.+)-\d{4}-\d{2}-\d{2}")
@@ -267,7 +267,7 @@ def collect_stats(
                     value.update(
                         repository_id=repo,
                         repository=metadata.get("repository", repo),
-                        repository_url=metadata.get("repository_url"),
+                        repository_url=_source_repository_url(metadata),
                     )
             for child in value.values():
                 identify(child)

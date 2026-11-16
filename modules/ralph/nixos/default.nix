@@ -189,7 +189,7 @@ in
             githubRepository = lib.mkOption {
               type = lib.types.nullOr (lib.types.strMatching "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
               default = null;
-              description = "Upstream GitHub owner/repo. PR numbers must match the Forgejo mirror.";
+              description = "Upstream GitHub owner/repo. PR numbers must match the Forgejo mirror. Report and stats pages link here instead of the mirror.";
             };
 
             repositoryUrl = lib.mkOption {
