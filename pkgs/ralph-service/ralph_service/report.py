@@ -290,6 +290,13 @@ def _public_stages(debug):
             record["required"] = stage["required"]
         if "limits" in stage:
             record["limits"] = public_limits(stage)
+        research = stage.get("historical_research")
+        if name == "historical_context" and isinstance(research, dict):
+            record["historical_research"] = {
+                key: research[key]
+                for key in ("mode", "reason", "question")
+                if isinstance(research.get(key), str)
+            }
         profiles = _strings(stage.get("profiles"))
         if profiles:
             record["profiles"] = profiles

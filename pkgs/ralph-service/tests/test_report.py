@@ -4,7 +4,7 @@ import unittest
 from html.parser import HTMLParser
 from pathlib import Path
 
-from ralph_service import report
+from ralph_service import report, trace
 
 
 class ReportTests(unittest.TestCase):
@@ -85,6 +85,45 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("javascript:", rendered)
         self.assertNotIn("private raw source", rendered)
         self.assertNotIn("internal limit detail", rendered)
+
+    def test_historical_research_selection_survives_trace_and_public_report(self):
+        for mode, status, question in (
+            ("focused", "completed", "Why was this compatibility guard added?"),
+            ("none", "skipped", ""),
+        ):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                selection = {
+                    "mode": mode,
+                    "reason": "The routing decision follows the changed behavior.",
+                    "question": question,
+                }
+                stage = {
+                    "status": status,
+                    "historical_research": {**selection, "private": "internal detail"},
+                }
+                if status == "completed":
+                    stage["limits"] = {
+                        "tool_calls": {"limit": 12, "used": 4, "hit": False}
+                    }
+                result = self.review_result("Approved explanation.")
+                result["output"]["data"]["stages"] = {"historical_context": stage}
+                root = Path(directory)
+                saved = json.loads(
+                    trace.save_review_trace(root, 123, result).read_text()
+                )
+                self.assertEqual(
+                    saved["trace"]["stages"]["historical_context"][
+                        "historical_research"
+                    ],
+                    stage["historical_research"],
+                )
+                report.save_report(root, 123, result, "research-selection")
+                public = json.loads((root / "research-selection.json").read_text())
+                projected = public["stages"]["historical_context"]
+                self.assertEqual(projected["status"], status)
+                self.assertEqual(projected["historical_research"], selection)
+                self.assertEqual(projected.get("limits"), stage.get("limits"))
+                self.assertNotIn("internal detail", json.dumps(public))
 
     def test_feedback_controls_follow_eligible_findings_and_saved_identity(self):
         result = self.review_result("Approved explanation.")
