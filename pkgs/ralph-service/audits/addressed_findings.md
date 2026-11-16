@@ -22,3 +22,12 @@ partially_addressed, provide concrete diff or file evidence.
 
 Return one assessment for every supplied finding and preserve each source
 identity exactly.
+
+Each finding includes captured evidence with opaque evidence_id values and any
+inspection gaps. Return evidence_ids, using only IDs supplied for that finding
+in this comparison. Do not copy source text or invent IDs. Ralph resolves them
+into saved source and revision records. For any definite status, cite new-head
+source or a source-to-new diff; old source alone cannot establish the new state.
+A diff may support a deletion even when no new file exists. Missing source,
+renames, bounded excerpts and truncated diffs can leave the answer unclear.
+The fact that an ID is valid does not establish that its text supports a fix.

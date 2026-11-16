@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ralph import model, repository, usage
-from ralph_service import followup_runner, stats
+from ralph_service import followup, followup_runner, stats, stats_page
 from ralph_service.jobs import JobStore
 
 
@@ -221,7 +221,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                         "finding_id": "finding:1",
                         "status": "addressed",
                         "reason": "Zero is checked before dividing.",
-                        "evidence": "sample.cpp:1 adds a divisor == 0 guard.",
+                        "evidence_ids": [],
                     }
                 ]
             }
@@ -243,10 +243,24 @@ class FollowupIntegrationTests(unittest.TestCase):
                     }
                 ],
             }
+            captured = {}
+
+            def respond(_url, payload, *_args, **_kwargs):
+                packet = json.loads(json.loads(payload)["input"][0]["content"])
+                captured.update(packet)
+                evidence = packet["findings"][0]["evidence"]
+                answer["findings"][0]["evidence_ids"] = [
+                    item["evidence_id"]
+                    for item in evidence
+                    if item["kind"] == "path_diff"
+                ]
+                response["output"][0]["content"][0]["text"] = json.dumps(answer)
+                return response
+
             with patch.object(
                 model.transport,
                 "request",
-                return_value=response,
+                side_effect=respond,
             ) as send:
                 self.assertEqual(
                     followup_runner.run_once(
@@ -277,6 +291,52 @@ class FollowupIntegrationTests(unittest.TestCase):
             self.assertEqual(addressed["status_counts"]["addressed"], 1)
             self.assertEqual(addressed["findings"][0]["old_head"], old_head)
             self.assertEqual(addressed["findings"][0]["new_head"], new_head)
+            saved = addressed["findings"][0]["source_evidence"][0]
+            self.assertEqual(saved["old_head"], old_head)
+            self.assertEqual(saved["new_head"], new_head)
+            self.assertIn("+if (divisor == 0)", saved["text"])
+            rendered = stats_page._addressed_table(
+                addressed["findings"], "https://example.invalid/repo", ""
+            )
+            self.assertIn("+if (divisor == 0)", rendered)
+            row = answer["findings"][0]
+            candidate = {**captured["findings"][0], "source_head": old_head}
+            registry = {item["evidence_id"]: item for item in candidate["evidence"]}
+            old_id = next(
+                key for key, value in registry.items() if value["kind"] == "old_source"
+            )
+            new_id = next(
+                key for key, value in registry.items() if value["kind"] == "new_source"
+            )
+            for ids in (["invented"], [old_id], [new_id]):
+                with self.subTest(ids=ids), self.assertRaises(ValueError):
+                    followup._parse_assessments(
+                        json.dumps({"findings": [{**row, "evidence_ids": ids}]}),
+                        [candidate],
+                        old_head,
+                        new_head,
+                        registry,
+                    )
+            for bad_registry in (
+                {},
+                {
+                    key: {**value, "finding_id": "another"}
+                    for key, value in registry.items()
+                },
+                {
+                    key: {**value, "new_head": old_head}
+                    for key, value in registry.items()
+                },
+            ):
+                with self.assertRaises(ValueError):
+                    followup._parse_assessments(
+                        json.dumps(answer),
+                        [candidate],
+                        old_head,
+                        new_head,
+                        bad_registry,
+                    )
+
             with patch.object(model.transport, "request") as send:
                 self.assertEqual(
                     followup_runner.run_once(
@@ -285,6 +345,44 @@ class FollowupIntegrationTests(unittest.TestCase):
                     0,
                 )
                 send.assert_not_called()
+
+            # A deletion is valid comparison evidence even without new source.
+            source.unlink()
+            git("add", "sample.cpp")
+            git(
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "Remove operation",
+            )
+            deleted_head = git("rev-parse", "HEAD")
+            candidate["line"] = 1
+            packet, deleted_registry = followup._model_input(
+                origin, old, {"head": deleted_head}, [candidate], old_head, deleted_head
+            )
+            self.assertFalse(
+                any(item["kind"] == "new_source" for item in deleted_registry.values())
+            )
+            deletion_id = next(
+                key
+                for key, item in deleted_registry.items()
+                if item["kind"] == "path_diff"
+            )
+            result = followup._parse_assessments(
+                json.dumps({"findings": [{**row, "evidence_ids": [deletion_id]}]}),
+                [candidate],
+                old_head,
+                deleted_head,
+                deleted_registry,
+            )
+            self.assertEqual(result[0]["status"], "addressed")
+            self.assertIn(
+                "new source is unavailable",
+                json.loads(packet)["findings"][0]["gaps"][0],
+            )
 
 
 if __name__ == "__main__":

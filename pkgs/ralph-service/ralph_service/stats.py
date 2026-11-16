@@ -1133,6 +1133,7 @@ def _addressed_records(followup, completed_reviews_by_job):
                 "status": status,
                 "reason": _optional_string(finding.get("reason")),
                 "evidence": _optional_string(finding.get("evidence")),
+                "source_evidence": finding.get("source_evidence", []),
                 "assessed_at": assessed_at,
                 "model": model,
             }

@@ -388,7 +388,13 @@ def _addressed_table(findings, repository_url, report_base_url):
             + _escape(finding.get("reason", ""))
             + "</p><p>"
             + _escape(finding.get("evidence", ""))
-            + "</p><p>"
+            + "</p>"
+            + (
+                report._json_html(finding["source_evidence"])
+                if finding.get("source_evidence")
+                else ""
+            )
+            + "<p>"
             + _report_name_link(source_name, report_base_url, "Source report")
             + " · "
             + _compare_link(finding, repository_url)

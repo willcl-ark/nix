@@ -189,3 +189,10 @@ PRs omit it so the worker fetches the current target branch. Every review uses
 `merge-base(base, head)..head` for its patch and file tools. Historical reviews
 remain retrospective: discussion and web research are not time-filtered.
 Changing prompts does not automatically rerun previously reviewed heads.
+
+Addressed-finding assessments cite IDs attached to captured source and path diffs.
+IDs are scoped to one finding and comparison, and accepted assessments retain
+full captured text and revision metadata in source_evidence. Definite outcomes
+require current source or a source-to-new diff; unavailable or insufficient
+context remains unclear. Capture limits and diff truncation are explicit. This
+changes new assessment responses only; existing stored assessments remain readable.

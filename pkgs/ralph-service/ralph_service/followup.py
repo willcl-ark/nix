@@ -3,6 +3,8 @@
 import hashlib
 import json
 import re
+import subprocess
+import uuid
 from datetime import datetime, timezone
 
 from ralph import trace as core_trace
@@ -28,7 +30,7 @@ SCHEMA = {
                     "finding_id": {"type": "string"},
                     "status": {"type": "string", "enum": sorted(STATUSES)},
                     "reason": {"type": "string"},
-                    "evidence": {"type": "string"},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": [
                     "source_job_id",
@@ -36,7 +38,7 @@ SCHEMA = {
                     "finding_id",
                     "status",
                     "reason",
-                    "evidence",
+                    "evidence_ids",
                 ],
                 "additionalProperties": False,
             },
@@ -305,43 +307,88 @@ def _model_input(
     submodules=None,
 ):
     diff = repository.diff_between_heads(checkout, assessed_from_head, new_head)
+    registry = {}
+    snapshots = {}
     finding_inputs = []
     for index, candidate in enumerate(candidates, 1):
         source_head = candidate.get("source_head") or assessed_from_head
-        if repository.has_commit(checkout, source_head):
-            source_to_new_diff = repository.diff_path_between_heads(
+        identity = {
+            field: candidate[field]
+            for field in ("source_job_id", "source_generation", "finding_id")
+        }
+        sources = []
+        gaps = []
+
+        source_available = repository.has_commit(checkout, source_head)
+        if source_available:
+            path_diff = repository.diff_path_between_heads(
                 checkout, source_head, new_head, candidate["path"]
             )
-            old_file_excerpt = repository.file_excerpt_at(
-                checkout,
-                source_head,
-                candidate["path"],
-                candidate["line"],
-                submodules=submodules,
-            )
+            if path_diff.startswith("diff --git "):
+                sources.append(
+                    {
+                        "kind": "path_diff",
+                        "text": path_diff,
+                        "truncated": path_diff.endswith("[Path diff truncated]"),
+                    }
+                )
         else:
-            source_to_new_diff = "Source head is unavailable in the local checkout."
-            old_file_excerpt = source_to_new_diff
+            gaps.append(
+                "Original finding commit is unavailable; the change cannot be compared."
+            )
+        for side, revision in (("old", source_head), ("new", new_head)):
+            if side == "old" and not source_available:
+                continue
+            try:
+                if revision not in snapshots:
+                    snapshots[revision] = repository.snapshot_repository(
+                        checkout, revision, revision, submodules=submodules
+                    )
+                snapshot = snapshots[revision]
+                output = repository.cite_file(
+                    snapshot, "head", candidate["path"], max(1, candidate["line"] - 30)
+                )
+                source = snapshot.citations[
+                    output.splitlines()[0].removeprefix("Citation: ")
+                ]
+            except (
+                repository.ToolFailure,
+                ValueError,
+                OSError,
+                subprocess.SubprocessError,
+            ):
+                gaps.append(f"{side} source is unavailable at the finding location.")
+                continue
+            sources.append(
+                {
+                    "kind": f"{side}_source",
+                    "text": source["excerpt"],
+                    "revision": revision,
+                    "line": source["line"],
+                    "end_line": source["end_line"],
+                    "bounded": True,
+                }
+            )
+        for source in sources:
+            source.update(
+                evidence_id=uuid.uuid4().hex,
+                **identity,
+                path=candidate["path"],
+                old_head=source_head,
+                new_head=new_head,
+            )
+            registry[source["evidence_id"]] = source
         finding_inputs.append(
             {
                 "index": index,
-                "source_job_id": candidate["source_job_id"],
-                "source_generation": candidate["source_generation"],
-                "finding_id": candidate["finding_id"],
+                **identity,
                 "title": candidate["title"],
                 "path": candidate["path"],
                 "source_head": source_head,
                 "summary": candidate.get("summary", ""),
                 "body": candidate.get("body", ""),
-                "source_to_new_path_diff": source_to_new_diff,
-                "old_file_excerpt": old_file_excerpt,
-                "new_file_excerpt": repository.file_excerpt_at(
-                    checkout,
-                    new_head,
-                    candidate["path"],
-                    candidate["line"],
-                    submodules=submodules,
-                ),
+                "evidence": sources,
+                "gaps": gaps,
             }
         )
     previous_result = previous_job.get("review_result") or {}
@@ -360,10 +407,10 @@ def _model_input(
             "findings": finding_inputs,
         },
         sort_keys=True,
-    )
+    ), registry
 
 
-def _parse_assessments(text, candidates, assessed_from_head, new_head):
+def _parse_assessments(text, candidates, assessed_from_head, new_head, registry):
     result = json.loads(text)
     if not isinstance(result, dict) or set(result) != {"findings"}:
         raise ValueError("invalid addressed findings response")
@@ -381,7 +428,9 @@ def _parse_assessments(text, candidates, assessed_from_head, new_head):
     seen = set()
     output = []
     for row in rows:
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or set(row) != set(
+            SCHEMA["properties"]["findings"]["items"]["properties"]
+        ):
             raise ValueError("invalid addressed finding row")
         key = (
             row.get("source_job_id"),
@@ -392,19 +441,52 @@ def _parse_assessments(text, candidates, assessed_from_head, new_head):
             raise ValueError("unexpected addressed finding identity or status")
         status = row["status"]
         reason = row.get("reason")
-        evidence = row.get("evidence")
-        if not isinstance(reason, str) or not isinstance(evidence, str):
-            raise ValueError("addressed finding reason and evidence must be strings")
-        if status in {"addressed", "partially_addressed"} and (
-            not reason.strip() or not evidence.strip()
-        ):
-            raise ValueError("addressed findings require reason and evidence")
-        seen.add(key)
-        output.append(
-            _output_record(
-                expected[key], assessed_from_head, new_head, status, reason, evidence
+        evidence_ids = row.get("evidence_ids")
+        if not isinstance(reason, str) or not isinstance(evidence_ids, list):
+            raise ValueError("addressed finding requires reason and evidence IDs")
+        sources = []
+        for identifier in evidence_ids:
+            if not isinstance(identifier, str) or identifier not in registry:
+                raise ValueError("unknown follow-up evidence ID")
+            source = registry[identifier]
+            source_key = tuple(
+                source[field]
+                for field in ("source_job_id", "source_generation", "finding_id")
             )
+            if (
+                source_key != key
+                or source["new_head"] != new_head
+                or source["old_head"]
+                != (expected[key].get("source_head") or assessed_from_head)
+            ):
+                raise ValueError(
+                    "follow-up evidence belongs to another finding or comparison"
+                )
+            sources.append(dict(source))
+        if status != "unclear" and (
+            not reason.strip()
+            or not any(
+                source["kind"] in {"new_source", "path_diff"} for source in sources
+            )
+        ):
+            raise ValueError(
+                "definitive assessments require current evidence and a reason"
+            )
+        if status in {"addressed", "partially_addressed"} and not any(
+            source["kind"] in {"old_source", "path_diff"} for source in sources
+        ):
+            raise ValueError("addressed findings require original comparison evidence")
+        seen.add(key)
+        record = _output_record(
+            expected[key],
+            assessed_from_head,
+            new_head,
+            status,
+            reason,
+            "; ".join(f"{source['kind']}: {source['path']}" for source in sources),
         )
+        record["source_evidence"] = sources
+        output.append(record)
     if seen != set(expected):
         raise ValueError("addressed findings response repeated candidates")
     return output
@@ -476,7 +558,7 @@ def assess_completed_review(
         )
         return record
     try:
-        input_text = _model_input(
+        input_text, evidence_registry = _model_input(
             checkout,
             previous,
             current_job,
@@ -515,7 +597,7 @@ def assess_completed_review(
         if result.get("status") != "completed" or not text.strip():
             raise ValueError("addressed findings response did not complete")
         record["findings"] = _parse_assessments(
-            text, assessed, assessed_from_head, new_head
+            text, assessed, assessed_from_head, new_head, evidence_registry
         )
         record.update(status="complete", old_head=assessed_from_head, new_head=new_head)
     except model.StaleReview:

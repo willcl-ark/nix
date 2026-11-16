@@ -421,3 +421,7 @@ with `systemctl status 'ralph-job@*.service'` and
 `journalctl -u ralph-job@JOB-TOKEN.service`. Stopping `ralph.service` does not
 stop active reviews. See [job operations](../../pkgs/ralph-service/README.md#independent-job-operations)
 for cancellation and upgrade requirements.
+
+Follow-up assessments use finding-scoped evidence IDs for captured old/new source
+and diffs. Saved outcomes include resolved evidence and pinned revisions; models
+still decide whether the changes address the original finding.
