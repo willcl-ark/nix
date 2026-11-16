@@ -684,6 +684,10 @@ def _escape(value):
     return html.escape("" if value is None else str(value))
 
 
+def _escape_with_code(value):
+    return re.sub(r"`([^`\n]+)`", r"<code>\1</code>", _escape(value))
+
+
 def _summary_list(items):
     return "".join(f"<li>{_escape(item)}</li>" for item in items)
 
@@ -740,7 +744,7 @@ def _findings_html(attribution):
         rows.append(
             "<tr>"
             f"<td>{_escape(finding.get('finding_id'))}</td>"
-            f"<td>{_escape(finding.get('title'))}</td>"
+            f"<td>{_escape_with_code(finding.get('title'))}</td>"
             f"<td>{_escape(location)}</td>"
             f"<td>{_escape(', '.join(finding.get('raised_by') or []))}</td>"
             f"<td>{_escape(', '.join(finding.get('candidate_ids') or []))}</td>"
@@ -920,7 +924,7 @@ def _finding_detail(finding, index):
                 f"<p><strong>{_escape(key.title())}:</strong> {_escape(finding[key])}</p>"
             )
     return (
-        f"<details><summary>{_escape(title)}{_escape(location)}</summary>"
+        f"<details><summary>{_escape_with_code(title)}{_escape(location)}</summary>"
         f"{''.join(rows)}</details>"
     )
 
@@ -963,7 +967,7 @@ def _decisions_html(decisions):
             if finding.get("path") and finding.get("line") and finding.get("side"):
                 location = f"{finding['path']}:{finding['line']} ({finding['side']})"
             finding_html = (
-                f"<p><strong>{_escape(finding.get('title'))}</strong>"
+                f"<p><strong>{_escape_with_code(finding.get('title'))}</strong>"
                 f" {_escape(location)}</p>"
                 f"<p>{_escape(finding.get('summary'))}</p>"
                 f"<pre>{_escape(finding.get('body'))}</pre>"
@@ -1011,7 +1015,7 @@ def _challenges_html(records):
             else ""
         )
         cells = [
-            f"<td><strong>{_escape(record['title'])}</strong><br>"
+            f"<td><strong>{_escape_with_code(record['title'])}</strong><br>"
             f"<code>{_escape(record['candidate_id'])}</code><br>{_escape(location)}</td>"
         ]
         for disposition, reason, evidence in (
@@ -1379,7 +1383,7 @@ def _export_findings_html(record):
             f"<td>{_escape(finding.get('id', ''))}</td>"
             f"<td>{_escape(finding.get('severity', 'unknown'))}</td>"
             f"<td>{_escape(finding.get('kind', 'unknown'))}</td>"
-            f"<td>{_escape(finding.get('presented_title') or finding.get('title', ''))}</td>"
+            f"<td>{_escape_with_code(finding.get('presented_title') or finding.get('title', ''))}</td>"
             f"<td><code>{_escape(location)}</code></td>"
             f"<td>{_escape(finding.get('presented_summary') or finding.get('summary', ''))}</td>"
             f"<td>{_escape(finding.get('presented_body') or finding.get('body', ''))}</td>"

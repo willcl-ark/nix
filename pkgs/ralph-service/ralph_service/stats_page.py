@@ -378,7 +378,9 @@ def _addressed_table(findings, repository_url, report_base_url):
         source_name = _safe_report_name(
             {"report_name": finding.get("source_report_name")}
         )
-        title = _escape(finding.get("title") or finding.get("finding_id", "unknown"))
+        title = report._escape_with_code(
+            finding.get("title") or finding.get("finding_id", "unknown")
+        )
         title += '<span class="subline">' + _escape(finding.get("path", "")) + "</span>"
         status = finding.get("status", "unclear")
         detail = (
@@ -762,7 +764,7 @@ def _challenge_details(tracking, repository_url, archive_base_url):
         outcome = item["outcome"]
         decision = item.get("final_disposition") or "unassessed"
         group = f"refuted_{decision}" if outcome == "refuted" else outcome
-        title = _escape(item.get("title"))
+        title = report._escape_with_code(item.get("title"))
         location = ":".join(
             str(item[key]) for key in ("path", "line") if item.get(key) is not None
         )

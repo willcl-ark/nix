@@ -17,6 +17,8 @@ from urllib.parse import quote, unquote, urlsplit
 
 from final_comment import report_findings
 
+from . import report
+
 TOKEN = re.compile(r"[0-9a-f]{64}")
 REPOSITORY = re.compile(r"[a-z][a-z0-9_-]*")
 REPORT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
@@ -315,7 +317,7 @@ def _html_queue(rows):
             '<article><h2><a href="'
             + html.escape(url, quote=True)
             + '">'
-            + html.escape(row["title"])
+            + report._escape_with_code(row["title"])
             + "</a></h2><p>"
             + html.escape(
                 f"{row['repository']} · {row['head']} · {row['report_id']} · {row['finding_id']}"

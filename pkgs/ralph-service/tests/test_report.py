@@ -228,6 +228,12 @@ class ReportTests(unittest.TestCase):
         self.assertIn(f"/blob/{'c' * 40}/src/example.cpp#L12", human)
         self.assertIn(f"parent of {'b' * 12}", human)
 
+    def test_escape_with_code_boxes_backticked_spans_after_escaping(self):
+        self.assertEqual(
+            report._escape_with_code("`<span>` & `a`"),
+            "<code>&lt;span&gt;</code> &amp; <code>a</code>",
+        )
+
     def test_human_report_links_saved_revision_and_preserves_literal_code(self):
         result = self.review_result("Add an explicit `#include <span>`. ")
         result["head_sha"] = "a" * 40
