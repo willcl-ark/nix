@@ -759,6 +759,11 @@ class PipelineTests(unittest.TestCase):
             ],
         }
         self.debug = {}
+        self.historical_research = {
+            "mode": "full",
+            "reason": "Historical constraints may affect this change.",
+            "question": "Which historical constraints apply to the changed behavior?",
+        }
 
     def plan(self, *args, **kwargs):
         result = {
@@ -767,6 +772,7 @@ class PipelineTests(unittest.TestCase):
             "profiles": getattr(self, "profiles", []),
             "evidence": [],
             "missing_context": [],
+            "historical_research": self.historical_research,
         }
         args[4]["routing"] = {"selected": result}
         return result
@@ -921,13 +927,18 @@ class PipelineTests(unittest.TestCase):
             return self.result.content
 
     def test_historical_context_precedes_discovery_and_preserves_blindness(self):
-        self.tier, self.audits = "routine", []
+        self.tier, self.audits = "routine", ["design"]
         seen = []
 
         def historian(*args, **kwargs):
             seen.append("historical_context")
             self.assertIn("Current PR excluded from historical research", args[1])
             self.assertIn(self.source["url"], args[1])
+            settings = self.prompts.profile.stages["historical_context"]
+            self.assertEqual(
+                kwargs["max_tool_calls"], settings.max_tool_calls[self.tier]
+            )
+            self.assertEqual(kwargs["max_context_calls"], settings.max_context_calls)
             args[3]["research_entries"] = [
                 {
                     "name": "bkb_get_document",
@@ -977,8 +988,119 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("## Background", result)
         self.assertIn("Historical incentive premise", result)
         self.assertIn("independent", seen)
+        self.assertIn("design", seen)
         self.assertIn("alternatives", seen)
         self.assertIn("concept_verifier", seen)
+
+    def test_skipping_history_preserves_concept_review(self):
+        self.tier, self.audits = "routine", ["design"]
+        self.historical_research = {
+            "mode": "none",
+            "reason": "Only presentation changes; no historical question.",
+            "question": "",
+        }
+        seen = []
+        historian = Mock(side_effect=AssertionError("History should be skipped"))
+
+        def reviewer(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            seen.append(stage)
+            self.assertNotIn("Historical design context and captured sources", args[1])
+            if stage == "archaeologist":
+                return archaeology({**assessment(), "alternatives": []})
+            if stage == "alternatives":
+                return json.dumps({"coverage": COMPLETE, "alternatives": []})
+            if stage == "concept_verifier":
+                return concept_verification()
+            return discovery()
+
+        self.run_review(reviewer, archaeology_enabled=True, historian=historian)
+        historian.assert_not_called()
+        self.assertTrue(
+            {"design", "archaeologist", "alternatives", "concept_verifier"} <= set(seen)
+        )
+        stage = self.debug["stages"]["historical_context"]
+        self.assertEqual(stage["status"], "skipped")
+        self.assertEqual(stage["historical_research"], self.historical_research)
+        self.assertFalse(
+            any(
+                issue["stage"] == "historical_context"
+                for issue in self.debug["coverage"]["issues"]
+            )
+        )
+
+    def test_focused_history_caps_requests_without_raising_profile_limits(self):
+        self.tier, self.audits = "routine", []
+        self.historical_research = {
+            "mode": "focused",
+            "reason": "One compatibility guard moved.",
+            "question": "Why was this compatibility guard introduced?",
+        }
+        original = self.prompts
+        for smaller in (False, True):
+            with self.subTest(smaller_profile=smaller):
+                self.debug = {}
+                self.prompts = original
+                if smaller:
+                    self.prompts = replace(
+                        original,
+                        profile=original.profile.with_stages(
+                            {
+                                "historical_context": {
+                                    "max_tool_calls": dict.fromkeys(
+                                        ("routine", "standard", "sensitive"), 3
+                                    ),
+                                    "max_context_calls": 1,
+                                    "max_history_calls": 0,
+                                    "max_output_tokens": 1000,
+                                }
+                            }
+                        ),
+                    )
+                calls = []
+
+                def historian(*args, calls=calls, **kwargs):
+                    calls.append(kwargs)
+                    self.assertIn(self.historical_research["question"], args[1])
+                    return json.dumps(
+                        {
+                            "coverage": COMPLETE,
+                            "documented_rationale": [],
+                            "inferred_rationale": [],
+                            "unresolved_disagreements": [],
+                        }
+                    )
+
+                def reviewer(*args, **kwargs):
+                    stage = kwargs["stage_name"]
+                    if stage == "archaeologist":
+                        return archaeology({**assessment(), "alternatives": []})
+                    if stage == "alternatives":
+                        return json.dumps({"coverage": COMPLETE, "alternatives": []})
+                    if stage == "concept_verifier":
+                        return concept_verification()
+                    return discovery()
+
+                self.run_review(reviewer, archaeology_enabled=True, historian=historian)
+                self.assertEqual(len(calls), 1)
+                actual = calls[0]
+                expected = (3, 1, 0, 1000) if smaller else (12, 6, 2, 4000)
+                self.assertEqual(
+                    tuple(
+                        actual[key]
+                        for key in (
+                            "max_tool_calls",
+                            "max_context_calls",
+                            "max_history_calls",
+                            "max_output_tokens",
+                        )
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.debug["stages"]["historical_context"]["historical_research"],
+                    self.historical_research,
+                )
 
     def test_failed_historical_context_is_nonfatal_and_visible(self):
         self.tier, self.audits = "routine", []

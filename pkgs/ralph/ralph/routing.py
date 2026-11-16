@@ -21,6 +21,13 @@ ROUTER_SCHEMA = object_schema(
         },
         "evidence": STRINGS,
         "missing_context": STRINGS,
+        "historical_research": object_schema(
+            {
+                "mode": {"type": "string", "enum": ["none", "focused", "full"]},
+                "reason": {"type": "string"},
+                "question": {"type": "string"},
+            }
+        ),
     }
 )
 TIERS = ("routine", "standard", "sensitive")
@@ -99,6 +106,11 @@ def full_plan(reason, strategy=None):
         "profiles": list(strategy.adversarial_profiles),
         "evidence": [reason],
         "missing_context": [],
+        "historical_research": {
+            "mode": "full",
+            "reason": reason,
+            "question": "Which historical design constraints and tradeoffs explain the affected behavior?",
+        },
     }
 
 
@@ -118,6 +130,17 @@ def validate_plan(text, paths, strategy=None):
         raise InvalidReview("Unknown audit role")
     if set(result["profiles"]) - set(strategy.adversarial_profiles):
         raise InvalidReview("Unknown adversarial profile")
+    research = result["historical_research"]
+    if (
+        not isinstance(research, dict)
+        or set(research) != {"mode", "reason", "question"}
+        or research["mode"] not in ("none", "focused", "full")
+        or not isinstance(research["reason"], str)
+        or not research["reason"].strip()
+        or not isinstance(research["question"], str)
+        or (research["mode"] != "none" and not research["question"].strip())
+    ):
+        raise InvalidReview("Invalid historical research plan")
     if result["missing_context"]:
         return full_plan("Router reported missing context", strategy)
     selected_profiles = set(result["profiles"])

@@ -8,7 +8,7 @@ Major findings before that decision.
 
 ```mermaid
 flowchart TD
-    router[Router] --> context[Historical design context, when archaeology enabled]
+    router[Router] --> context[Historical design context, when enabled and selected]
     context --> discovery[Discovery pool: overview, script, adversarial pair and selected audits]
     context --> history[Archaeologist and blind alternatives, when enabled]
     discovery --> followup[Test coverage follow-up, when needed]
@@ -41,7 +41,22 @@ stage order. Sensitive reviews add the two adversarial reviewers. They share a
 [prompt](adversarial/prompt.md) with selected consensus, wallet or P2P
 [domain instructions](adversarial/domains).
 
-Archaeology runs only when enabled. First, [historical context](historical_context/prompt.md)
+Archaeology runs only when enabled. The router separately selects `none`,
+`focused`, or `full` historical research, with a reason and a question. This is
+independent of review tier: explanatory documentation can need full research,
+while a mechanical change can need none. Full and shadow routing, and routing
+failures or incomplete inputs, retain full research.
+
+Focused research caps the configured limits at 12 total tool calls, including
+six remote-context calls and two local-history calls, and 4,000 output tokens.
+Smaller configured limits still apply. Full research keeps the configured
+limits. The researcher stops when it answers the assigned question and may
+return no rationale when searches find nothing relevant. Unanswered questions
+remain explicit limitations; discovery escalation does not rerun research.
+The selection is saved in stage traces and public report JSON alongside usage.
+Skipping historical research does not disable concept review or blind alternatives.
+
+When selected, [historical context](historical_context/prompt.md) first
 researches the system-design rationale through the Bitcoin knowledge base and
 primary discussions. Its cited briefing separates documented rationale, inference
 and unresolved disagreement. Discovery and later assessment receive this briefing

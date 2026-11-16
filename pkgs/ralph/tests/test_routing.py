@@ -14,6 +14,7 @@ def route(
     profiles=(),
     evidence=("Router evidence",),
     missing_context=(),
+    historical_research=None,
 ):
     return json.dumps(
         {
@@ -22,6 +23,15 @@ def route(
             "profiles": list(profiles),
             "evidence": list(evidence),
             "missing_context": list(missing_context),
+            "historical_research": (
+                historical_research
+                if historical_research is not None
+                else {
+                    "mode": "none",
+                    "reason": "The patch changes presentation only.",
+                    "question": "",
+                }
+            ),
         }
     )
 
@@ -91,22 +101,90 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(plan["tier"], "routine")
 
     def test_documentation_can_select_symbol_and_behavior_checks(self):
+        research = {
+            "mode": "focused",
+            "reason": "The documentation changes the rationale for a compatibility guard.",
+            "question": "Which legacy callers required this guard?",
+        }
         for name in ("core", "gui"):
             strategy = config.PromptConfig.load(strategy=name).strategy
             with self.subTest(strategy=name):
                 plan = routing.validate_plan(
-                    route(audits=("symbol_usage", "design")),
+                    route(
+                        audits=("symbol_usage", "design"),
+                        historical_research=research,
+                    ),
                     {"doc/example.md"},
                     strategy,
                 )
                 self.assertEqual(set(plan["audits"]), {"symbol_usage", "design"})
                 self.assertEqual(plan["tier"], "routine")
+                self.assertEqual(plan["historical_research"], research)
                 self.assertEqual(
                     routing.validate_plan(route(), {"doc/example.md"}, strategy)[
                         "audits"
                     ],
                     [],
                 )
+
+    def test_historical_research_is_independent_of_sensitive_coverage(self):
+        plan = routing.validate_plan(
+            route(profiles=("wallet",)), {"src/wallet/wallet.cpp"}
+        )
+        self.assertEqual(plan["tier"], "sensitive")
+        self.assertEqual(plan["historical_research"]["mode"], "none")
+
+    def test_invalid_historical_research_falls_back_to_full(self):
+        for research in (
+            {},
+            {"mode": "focused", "reason": "Inspect intent", "question": " "},
+            {"mode": "none", "reason": " ", "question": ""},
+            {"mode": [], "reason": "Inspect intent", "question": "Why?"},
+            {"mode": "full", "reason": "Inspect intent", "question": 1},
+            {"mode": "none", "reason": "Mechanical", "question": "", "extra": 1},
+        ):
+            with self.subTest(research=research):
+                with self.assertRaises(InvalidReview):
+                    routing.validate_plan(
+                        route(historical_research=research), {"doc/example.md"}
+                    )
+                with patch(
+                    "ralph.model.openai_review",
+                    return_value=route(historical_research=research),
+                ):
+                    plan = routing.plan_review(
+                        self.runtime(),
+                        "Patch",
+                        self.snapshot("doc/example.md"),
+                        self.prompt_config(),
+                        {},
+                    )
+                self.assertEqual(plan["historical_research"]["mode"], "full")
+                self.assertTrue(plan["historical_research"]["question"].strip())
+
+    def test_full_and_shadow_routing_retain_full_historical_research(self):
+        for mode in ("full", "shadow"):
+            with (
+                self.subTest(mode=mode),
+                patch("ralph.model.openai_review", return_value=route()) as run,
+            ):
+                debug = {}
+                plan = routing.plan_review(
+                    self.runtime(),
+                    "Patch",
+                    self.snapshot("doc/example.md"),
+                    self.prompt_config(),
+                    debug,
+                    mode,
+                )
+                self.assertEqual(plan["historical_research"]["mode"], "full")
+                if mode == "full":
+                    run.assert_not_called()
+                else:
+                    self.assertEqual(
+                        debug["routing"]["proposed"]["historical_research"]["mode"],
+                        "none",
+                    )
 
     def runtime(self):
         case = engine.ReviewCase("Patch", None)

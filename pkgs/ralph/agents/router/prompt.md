@@ -13,6 +13,25 @@ requirement to use tools when the patch establishes the route. Inspect all
 substantive hunks before choosing a lower tier. Account for truncation and
 uninspected changes explicitly.
 
+Select historical_research independently of the review tier. Give a concrete
+reason and, for focused or full research, the historical question that could
+affect judgment of this change. Choose none for pure spelling, formatting or
+other clearly mechanical changes where historical decisions would not affect
+the review; its question may be empty. Choose focused when a narrow change
+raises one specific question, such as why a compatibility guard exists or why
+an alternative was rejected. Choose full when several interacting design
+decisions, protocol constraints, incentives or tradeoffs need investigation.
+A narrow refactor or test update usually needs at most focused research, but
+the title and file paths do not establish that scope. Documentation changing
+an explanation of behavior, constraints or rationale may need full research
+even at routine tier. Do not request broad subsystem history merely because
+the changed code belongs to an important subsystem.
+
+Put unanswered historical questions in historical_research.question. Reserve
+missing_context for evidence missing from the patch or permitted code reads
+that prevents choosing review coverage; an unknown historical answer alone
+does not mean routing failed.
+
 Choose `routine`, `standard`, or `sensitive` from the code and behavior that
 actually changed. Use routine only for clearly narrow changes such as isolated
 documentation or tests that do not alter runtime or public behavior. Use standard

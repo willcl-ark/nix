@@ -104,6 +104,19 @@ def _run_stage(
     stage_model = settings.model
     record = {"model": stage_model, "status": "running", "turns": [], "tools": []}
     stages[name] = record
+    if name == "historical_context":
+        record["historical_research"] = plan["historical_research"]
+        if plan["historical_research"]["mode"] == "focused":
+            settings = replace(
+                settings,
+                max_tool_calls={
+                    tier: min(limit, 12)
+                    for tier, limit in settings.max_tool_calls.items()
+                },
+                max_context_calls=min(settings.max_context_calls, 6),
+                max_history_calls=min(settings.max_history_calls, 2),
+                max_output_tokens=min(settings.max_output_tokens, 4000),
+            )
     if name in ADVERSARIAL_STAGES:
         record["profiles"] = list(plan["profiles"])
     try:
@@ -1068,12 +1081,16 @@ def review_with_independent_passes(
         record["coverage"] = result["coverage"]
         record["test_coverage"] = result["test_coverage"]
 
-    if archaeology:
+    historical_research = plan["historical_research"]
+    if archaeology and historical_research["mode"] != "none":
         try:
             answer = run_stage(
                 "historical_context",
                 with_research_inventory(
                     f"Current PR excluded from historical research: {case.source['url']}\n\n"
+                    + "Historical research assignment:\n"
+                    + json.dumps(historical_research)
+                    + "\n\n"
                     + review
                 ),
                 prompt_config.audit_prompts["historical_context"],
@@ -1142,7 +1159,12 @@ def review_with_independent_passes(
         stages["historical_context"] = {
             "model": prompt_config.models["historical_context"],
             "status": "skipped",
-            "reason": "Archaeology was not requested.",
+            "reason": (
+                historical_research["reason"]
+                if archaeology
+                else "Archaeology was not requested."
+            ),
+            "historical_research": historical_research,
             "turns": [],
             "tools": [],
         }
