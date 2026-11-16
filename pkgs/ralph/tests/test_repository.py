@@ -44,6 +44,82 @@ class LocalRepositoryTests(unittest.TestCase):
             "for-each-ref", "--format=%(refname)", "refs/ralph/local"
         ).splitlines()
 
+    def test_diff_anchors_follow_paging_and_literal_paths(self):
+        self.git("checkout", "-q", "topic")
+        path = "literal[1].txt"
+        (self.repo / path).write_text("old\n")
+        (self.repo / "literal1.txt").write_text("unrelated\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "files")
+        base = self.git("rev-parse", "HEAD").strip()
+        lines = ["x" * 13000, "--- source-looking header"] + [
+            f"new {i}" for i in range(180)
+        ]
+        (self.repo / path).write_text("\n".join(lines) + "\n")
+        (self.repo / "literal1.txt").write_text(
+            "must not be attributed to literal[1].txt\n"
+        )
+        self.git("commit", "-qam", "change")
+        snapshot = repository.snapshot_repository(
+            self.repo, base, self.git("rev-parse", "HEAD").strip()
+        )
+        start = 1
+        observed = set()
+        while True:
+            page = repository.read_diff(
+                self.repo,
+                snapshot.changed_paths,
+                snapshot.diff_base_sha,
+                snapshot.head_sha,
+                path,
+                start,
+                anchors=snapshot.anchors,
+            )
+            self.assertLessEqual(len(page.encode()), repository.MAX_TOOL_BYTES)
+            self.assertNotIn("must not be attributed", page)
+            observed.update(re.findall(r"Anchor: ([0-9a-f]+)", page))
+            following = re.search(r"continue at (\d+)", page)
+            if following is None:
+                break
+            start = int(following[1])
+        self.assertEqual(observed, set(snapshot.anchors))
+        self.assertEqual(
+            {a["line"] for a in snapshot.anchors.values() if a["side"] == "head"},
+            set(range(2, len(lines) + 1)),
+        )
+        self.assertEqual(
+            [a for a in snapshot.anchors.values() if a["side"] == "base"],
+            [{"path": path, "side": "base", "line": 1}],
+        )
+        other = repository.snapshot_repository(self.repo, base, snapshot.head_sha)
+        with self.assertRaises(protocol.InvalidReview):
+            protocol._location({"anchor_id": next(iter(observed))}, other)
+
+    def test_rename_anchors_preserve_old_and_new_paths(self):
+        self.git("checkout", "-q", "topic")
+        self.git("mv", "code.txt", "renamed.txt")
+        self.git("commit", "-qm", "rename")
+        snapshot = repository.snapshot_repository(
+            self.repo, self.head, self.git("rev-parse", "HEAD").strip()
+        )
+        for path in sorted(snapshot.changed_paths):
+            repository.read_diff(
+                self.repo,
+                snapshot.changed_paths,
+                snapshot.diff_base_sha,
+                snapshot.head_sha,
+                path,
+                1,
+                anchors=snapshot.anchors,
+            )
+        self.assertEqual(
+            list(snapshot.anchors.values()),
+            [
+                {"path": "code.txt", "side": "base", "line": 1},
+                {"path": "renamed.txt", "side": "head", "line": 1},
+            ],
+        )
+
     def test_intermediate_commit_location_survives_verification_and_rendering(self):
         self.git("checkout", "-q", "topic")
         (self.repo / "code.txt").write_text("original\n")
@@ -60,9 +136,21 @@ class LocalRepositoryTests(unittest.TestCase):
             "commit": self.head,
             "parent": None,
         }
+        repository.read_pr_commit(
+            self.repo,
+            self.ancestor,
+            restored,
+            self.head,
+            "code.txt",
+            1,
+            anchors=snapshot.anchors,
+        )
+        anchor = next(
+            key for key, value in snapshot.anchors.items() if value == location
+        )
         candidate = {
             "kind": "suggestion",
-            **location,
+            "anchor_id": anchor,
             **dict.fromkeys(
                 (
                     "title",
@@ -141,7 +229,7 @@ class LocalRepositoryTests(unittest.TestCase):
         finding = {
             "kind": "suggestion",
             "severity": "suggestion",
-            **location,
+            "anchor_id": anchor,
             "security": {
                 "classification": "non_security",
                 "reason": "Commit structure",
@@ -174,8 +262,7 @@ class LocalRepositoryTests(unittest.TestCase):
             "side": "head",
             "path": "other.txt",
         }
-        unsupported.pop("commit")
-        unsupported.pop("parent")
+
         verification["decisions"][0]["finding"] = unsupported
         _, withheld = protocol.verification(
             json.dumps(verification), candidates, snapshot
@@ -206,7 +293,7 @@ class LocalRepositoryTests(unittest.TestCase):
         )
         self.assertIn(f"/blob/{self.head}/code.txt#L1", report)
         parent_link = final_comment.source_location(
-            {**finding, "parent": self.ancestor},
+            {**location, "parent": self.ancestor},
             "https://github.com/o/r",
             self.ancestor,
             restored,

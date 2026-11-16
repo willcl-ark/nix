@@ -97,10 +97,22 @@ class FeedbackTests(unittest.TestCase):
         )
         candidates = feedback.publication_candidates(memory, self.snapshot)
         self.assertEqual(len(candidates), 1)
+        repository.read_pr_commit(
+            self.snapshot.checkout,
+            self.snapshot.diff_base_sha,
+            self.snapshot.head_sha,
+            self.snapshot.head_sha,
+            "index.cpp",
+            1,
+            anchors=self.snapshot.anchors,
+        )
+        anchor_id = next(
+            key for key, value in self.snapshot.anchors.items() if value == location
+        )
         finding = {
             "kind": "suggestion",
             "severity": "suggestion",
-            **location,
+            "anchor_id": anchor_id,
             "security": {
                 "classification": "non_security",
                 "reason": "Commit organization",

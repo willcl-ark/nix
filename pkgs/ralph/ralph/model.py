@@ -420,6 +420,12 @@ for tool in [*TOOLS, PR_COMMIT_FILE_TOOL]:
         }
         tool["parameters"]["required"].append("end_line")
 
+for tool in [*TOOLS, PR_COMMIT_TOOL]:
+    if tool["name"] in {"read_diff", "read_pr_commit"}:
+        tool["description"] += (
+            " Changed source lines carry Anchor IDs; use one as anchor_id for a finding. Context lines and metadata are not anchors."
+        )
+
 FOCUSED_TOOLS = [*TOOLS[:5], PR_COMMIT_TOOL, PR_COMMIT_FILE_TOOL]
 TOOLS.extend([PR_COMMIT_TOOL, PR_COMMIT_FILE_TOOL])
 BASE_TOOLS = [
@@ -1161,6 +1167,7 @@ def openai_review(
                                 args.get("path"),
                                 args.get("start_line"),
                                 dependencies=getattr(snapshot, "dependencies", ()),
+                                anchors=snapshot.anchors,
                             )
                         elif call["name"] == "read_pr_commit_file":
                             answer = cite_file(
@@ -1181,6 +1188,7 @@ def openai_review(
                                 args.get("path"),
                                 args.get("start_line"),
                                 dependencies=getattr(snapshot, "dependencies", ()),
+                                anchors=snapshot.anchors,
                             )
                         elif call["name"] == "search_code":
                             answer = search_code(

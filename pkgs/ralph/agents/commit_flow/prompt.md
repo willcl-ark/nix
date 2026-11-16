@@ -35,11 +35,10 @@ preference for atomic commits. Return no findings when the sequence is clear.
 
 Report commit-flow improvements as kind suggestion. Name the relevant commit
 SHAs and purposes, the concrete review burden and one sufficient rearrangement.
-For an intermediate source location, use side `commit`, the full PR commit SHA
-in `commit`, and `parent: null` for that commit's tree. To cite its prior tree,
-set `parent` to the full SHA of the relevant direct parent; select the parent
-explicitly for merges. Use read_pr_commit_file to confirm the actual source line.
-Head/base anchors remain available for files changed in the combined diff.
+For an intermediate source location, obtain an `anchor_id` from `read_pr_commit`.
+Its added lines refer to the commit tree and removed lines to the first parent's
+tree, including for merges. Use read_pr_commit_file for supporting source
+citations. Head/base anchors from read_diff remain available for net-changed code.
 Never invent a source location for a history-only observation. Distinguish an
 intermediate problem repaired later from a defect remaining at the head; the
 former may support a sequencing suggestion, not a current runtime-defect claim.

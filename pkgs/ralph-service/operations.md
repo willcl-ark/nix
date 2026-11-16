@@ -205,3 +205,11 @@ to a model stage and are regenerated for replay. Frozen research captures now
 use schema version 3 to store attribution and notices separately from tool text;
 version 2 captures must be recaptured before replay. Existing saved reports
 remain readable and public history sections continue to show resolved links.
+
+Finding locations are selected with review-local anchor IDs returned by diff
+reads. Only added and deleted source lines actually returned by the tool receive
+IDs. Saved findings retain resolved paths, sides and line numbers. Commit-flow
+anchors use the commit tree or its first parent; renamed files use separate old
+and new paths. Binary and mode-only changes do not fabricate textual anchors.
+Configured dependency diffs remain supporting evidence only; they do not issue
+publication anchors because reports link locations in the reviewed repository.

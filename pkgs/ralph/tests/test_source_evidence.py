@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,12 +39,24 @@ class SourceEvidenceTests(unittest.TestCase):
         head = repository.git(self.checkout, "rev-parse", "HEAD").strip()
         self.snapshot = repository.snapshot_repository(self.checkout, base, head)
         self.evidence = self.citation("head", self.caller, 471, 471)
+        repository.read_diff(
+            self.checkout,
+            self.snapshot.changed_paths,
+            self.snapshot.diff_base_sha,
+            self.snapshot.head_sha,
+            self.framework,
+            1,
+            anchors=self.snapshot.anchors,
+        )
+        anchor_id = next(
+            key
+            for key, value in self.snapshot.anchors.items()
+            if value["side"] == "head"
+        )
         self.finding = {
             "kind": "defect",
             "severity": "major",
-            "path": self.framework,
-            "line": 1,
-            "side": "head",
+            "anchor_id": anchor_id,
             "title": "Positional caller breaks",
             "summary": "Existing positional arguments no longer match the helper.",
             "body": "The caller supplies wait and timeout positionally.",
@@ -181,19 +194,40 @@ class SourceEvidenceTests(unittest.TestCase):
                 output = [
                     {
                         "type": "function_call",
+                        "call_id": "diff",
+                        "name": "read_diff",
+                        "arguments": json.dumps(
+                            {"path": self.framework, "start_line": 1}
+                        ),
+                    },
+                    {
+                        "type": "function_call",
                         "call_id": "read",
                         "name": "read_file",
                         "arguments": json.dumps(
                             {"path": self.framework, "start_line": 1, "end_line": 3}
                         ),
-                    }
+                    },
                 ]
             else:
                 tool_output = data["input"][-1]["output"]
                 citation_id = tool_output.splitlines()[0].removeprefix("Citation: ")
+                diff_output = data["input"][-2]["output"]
+                anchor_id = re.findall(r"Anchor: ([0-9a-f]+)", diff_output)[-1]
                 value = {
                     "coverage": {"status": "complete", "limitations": []},
-                    "findings": [],
+                    "findings": [
+                        {
+                            "anchor_id": anchor_id,
+                            "kind": "suggestion",
+                            "title": "Review logging",
+                            "claim": "Logging changed",
+                            "consequence": "Output differs",
+                            "evidence": "Inspected diff",
+                            "correction": "",
+                            "uncertainty": "",
+                        }
+                    ],
                     "requires_sensitive_review": False,
                     "test_coverage": [
                         {
@@ -222,10 +256,19 @@ class SourceEvidenceTests(unittest.TestCase):
                 prompt="Review",
                 model="gpt-6-luna",
                 max_output_tokens=1000,
-                tools=[tool for tool in model.TOOLS if tool["name"] == "read_file"],
+                tools=[
+                    tool
+                    for tool in model.TOOLS
+                    if tool["name"] in {"read_file", "read_diff"}
+                ],
             )
         result = protocol.tests_discovery(answer, self.snapshot, [self.framework])
         self.assertEqual(result["coverage"]["status"], "complete")
+        finding = json.loads(json.dumps(result))["findings"][0]
+        self.assertEqual(
+            (finding["path"], finding["side"], finding["line"]),
+            (self.framework, "head", 3),
+        )
         saved = json.loads(json.dumps(result))["test_coverage"][0]["evidence"][0]
         self.assertEqual(saved["excerpt"], source.removesuffix("\n"))
         self.assertEqual(saved["path"], self.framework)

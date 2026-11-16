@@ -1,7 +1,6 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import final_comment
 from ralph import protocol, research
@@ -138,12 +137,13 @@ class ProtocolTests(unittest.TestCase):
             head_files={"src/example.cpp": "blob"},
             base_files={"src/example.cpp": "old"},
         )
+        self.snapshot.anchors = {
+            "setup-anchor": {"path": "src/example.cpp", "line": 5, "side": "head"}
+        }
         self.finding = {
             "kind": "suggestion",
             "severity": "suggestion",
-            "path": "src/example.cpp",
-            "line": 5,
-            "side": "head",
+            "anchor_id": "setup-anchor",
             "title": "Consolidate duplicate setup",
             "summary": "Duplicate setup makes the regression test harder to maintain.",
             "body": "Reuse the existing fixture while keeping the regression assertion.",
@@ -158,13 +158,7 @@ class ProtocolTests(unittest.TestCase):
             ],
         }
         self.snapshot.checkout = "/unused"
-        reader = patch.object(
-            protocol,
-            "read_file",
-            return_value="src/example.cpp (6 lines):\n5: setup();\n",
-        )
-        reader.start()
-        self.addCleanup(reader.stop)
+
         self.coverage = {"status": "complete", "limitations": []}
 
     def verification(self, decisions, coverage=None):
@@ -306,9 +300,7 @@ class ProtocolTests(unittest.TestCase):
         ]
         candidate = {
             "kind": "suggestion",
-            "path": "src/example.cpp",
-            "line": 5,
-            "side": "head",
+            "anchor_id": "setup-anchor",
             "title": "Add an activation-boundary assertion",
             "claim": "The first active block is not checked.",
             "consequence": "A delayed activation would pass the test.",
@@ -321,7 +313,10 @@ class ProtocolTests(unittest.TestCase):
             self.snapshot,
             self.snapshot.changed_paths,
         )
-        self.assertEqual(result["findings"], [{**candidate, "id": "tests:1"}])
+        self.assertEqual(
+            result["findings"],
+            [{**candidate, **self.snapshot.anchors["setup-anchor"], "id": "tests:1"}],
+        )
         self.assertEqual(result["test_coverage"], [])
         self.assertEqual(result["coverage"]["status"], "partial")
         self.assertIn(
@@ -571,6 +566,7 @@ class ProtocolTests(unittest.TestCase):
             [
                 {
                     **self.finding,
+                    **self.snapshot.anchors["setup-anchor"],
                     "source_evidence": [self.snapshot.citations["setup"]],
                     "id": "finding:1",
                 }
@@ -636,23 +632,23 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(published, [])
                 self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
 
-    def test_finding_must_refer_to_changed_file_on_correct_side(self):
+    def test_finding_must_use_an_issued_anchor(self):
         decision = {
             "candidate_ids": ["tests:1"],
             "disposition": "supported",
             "reason": "Verified",
-            "finding": {**self.finding, "path": "missing.cpp"},
+            "finding": {**self.finding, "anchor_id": "invented"},
         }
         result, accepted = protocol.verification(
             self.verification([decision]), [{"id": "tests:1"}], self.snapshot
         )
         self.assertEqual(accepted, [])
         self.assertEqual(result["coverage"]["status"], "partial")
-        self.assertIn("changed file", result["decisions"][0]["reason"])
+        self.assertIn("Unknown finding anchor", result["decisions"][0]["reason"])
         self.assertEqual(result["decisions"][0]["disposition"], "unresolved")
         self.assertIsNone(result["decisions"][0]["finding"])
         self.assertEqual(result["validation_errors"][0]["candidate_ids"], ["tests:1"])
-        self.assertIn("missing.cpp", result["validation_errors"][0]["error"])
+        self.assertIn("Unknown finding anchor", result["validation_errors"][0]["error"])
 
     def test_support_without_candidate_ids_withholds_new_verifier_finding(self):
         decision = {

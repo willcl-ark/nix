@@ -16,9 +16,15 @@ only when that evidence could materially change the review; avoid a generic
 limitation or automatic partial status when the available evidence is adequate.
 Use kind `design` for approach, architecture, or workflow tradeoffs and grounded
 questions, `defect` for correctness failures, and `suggestion` for other useful
-improvements. For implementation leads, give a changed-file path and source line that
-supports it. Commit-flow suggestions may instead use their commit-specific
-source-location schema. Set the flag when the code or unresolved evidence raises a
+improvements. For every lead, submit only `anchor_id` for its location. Obtain
+it from an added or deleted source line returned by `read_diff`; commit-flow
+suggestions may use an anchor from `read_pr_commit`. You may reuse an ID supplied
+by an earlier stage of this review. Never invent IDs or submit path/line/side
+fields. Ralph resolves the coordinates from the pinned diff. Context lines,
+binary changes and mode-only changes have no textual anchor; report a coverage
+gap or a concept concern when no appropriate changed source line exists.
+Supporting source citations are separate from the publication anchor. Set the
+flag when the code or unresolved evidence raises a
 credible consensus or security concern, and clear it otherwise.
 
 Review scope includes production code, tests, CI, build tooling, and contrib

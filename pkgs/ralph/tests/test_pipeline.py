@@ -85,9 +85,7 @@ def concept_verification(concept=None, alternatives=()):
 def candidate(title="Simplify fixture"):
     return {
         "kind": "suggestion",
-        "path": "src/example.cpp",
-        "line": 3,
-        "side": "head",
+        "anchor_id": "head-anchor",
         "title": title,
         "claim": "Duplicate setup",
         "consequence": "Two fixtures to maintain",
@@ -739,6 +737,11 @@ class PipelineTests(unittest.TestCase):
             frozenset({"src/example.cpp"}),
         )
         for side in ("head", "base"):
+            self.snapshot.anchors[f"{side}-anchor"] = {
+                "path": "src/example.cpp",
+                "line": 3,
+                "side": side,
+            }
             identifier = f"{side}-source"
             self.snapshot.citations[identifier] = {
                 "citation_id": identifier,
@@ -751,9 +754,7 @@ class PipelineTests(unittest.TestCase):
         self.published = {
             "kind": "suggestion",
             "severity": "suggestion",
-            "path": "src/example.cpp",
-            "line": 3,
-            "side": "head",
+            "anchor_id": "head-anchor",
             "title": "Simplify fixture",
             "summary": "Duplicated setup makes the fixtures harder to maintain.",
             "body": "Reuse the fixture while preserving the regression check.",
@@ -902,11 +903,6 @@ class PipelineTests(unittest.TestCase):
                 model,
                 "run_audit",
                 side_effect=audit or AssertionError("Unexpected tool-less audit"),
-            ),
-            patch.object(
-                protocol,
-                "read_file",
-                return_value="src/example.cpp (3 lines):\n3: setup();\n",
             ),
             patch.object(pipeline, "audit_developer_notes", return_value="Policy"),
         ):

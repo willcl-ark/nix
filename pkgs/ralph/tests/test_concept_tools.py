@@ -71,12 +71,14 @@ class ConceptToolTests(unittest.TestCase):
             "new.cpp",
             25,
             dependencies=(),
+            anchors=self.snapshot.anchors,
         )
         self.assertEqual(requests[-1]["input"][-1]["output"], "Pinned patch")
 
     def setUp(self):
         self.snapshot = SimpleNamespace(
             checkout="checkout",
+            anchors={},
             head_files={"new.cpp": "head"},
             base_files={"old.cpp": "base"},
             changed_paths={"new.cpp"},

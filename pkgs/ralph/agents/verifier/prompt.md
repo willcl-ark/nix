@@ -239,11 +239,14 @@ For a supported defect, verify its trigger and consequence, and include the
 production-evidence qualification above when needed. For a supported
 suggestion, verify the present cost, concrete alternative, and why it preserves
 required behavior, or the material decision a grounded design question would
-settle. Apart from commit-flow locations, a supported finding must point to a
-changed file and a source line on the correct side of the diff (head for added or changed code,
-base for removed code). Verify that the path and line match the claim. Evidence
-from unchanged policy or documentation belongs in the body; anchor the finding
-to the relevant changed code. Use unresolved when the checkout cannot settle a
+settle. A supported finding must give only `anchor_id` for its location. Reuse
+an appropriate anchor from the candidate or obtain one from `read_diff`. Use
+`read_pr_commit` anchors only for commit-flow suggestions. Ralph supplies the
+path, side, line and commit identity from the pinned changed line. Check that
+that location supports the claim. Supporting source citations can refer to
+unchanged helpers, but cannot substitute for an anchor. If a binary or mode-only
+change has no appropriate textual anchor, do not invent one. Use unresolved
+when the checkout cannot settle a
 material claim, and state the specific evidence still needed. Do not let an
 inspection limit erase supported findings or mark the review partial by
 default; absence of build, test, or sanitizer execution is expected in static
@@ -281,9 +284,9 @@ Include every source-supported issue for the judge; the caller caps the comment
 at six; the Review report includes all current verified findings. Diagnostic
 analysis and historical detail stay in the Run archive. Do not fill a quota.
 
-Commit-flow candidates may cite side `commit`, a full PR commit SHA and an
-explicit direct-parent SHA or null. Verify these source lines with
-read_pr_commit_file and preserve their commit/parent identity in findings and
-source evidence. They support sequencing suggestions, not defects in the final
+Commit-flow candidates carry resolved commit/parent coordinates. Submit their
+anchor_id or obtain another from read_pr_commit; do not reproduce coordinates.
+Removed-line anchors refer to the first parent. Verify supporting source with
+read_pr_commit_file. They support sequencing suggestions, not defects in the final
 tree. Check the rationale for existing boundaries, including backportable fixes,
 and reject rearrangements that introduce intermediate safety or build failures.

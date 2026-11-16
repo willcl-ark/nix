@@ -480,7 +480,15 @@ def read_file(checkout, files, path, start_line):
 
 
 def read_diff(
-    checkout, changed_paths, base, head, path, start_line, *, dependencies=()
+    checkout,
+    changed_paths,
+    base,
+    head,
+    path,
+    start_line,
+    *,
+    dependencies=(),
+    anchors=None,
 ):
     for dependency in dependencies:
         if isinstance(path, str) and path.startswith(dependency.path + "/"):
@@ -517,11 +525,27 @@ def read_diff(
         "--no-ext-diff",
         "--no-textconv",
         "--no-color",
+        "--no-renames",
         f"{base}..{head}",
         "--",
         path,
     )
-    return _diff_page(checkout, args, head, path, start_line)
+    return _diff_page(
+        checkout,
+        args,
+        head,
+        path,
+        start_line,
+        anchors=anchors,
+        anchor_path=path,
+        anchor_sides={
+            side
+            for side, ref in (("base", base), ("head", head))
+            if path in tracked_files_at(checkout, ref)
+        }
+        if anchors is not None
+        else (),
+    )
 
 
 def _diff_page(
@@ -533,6 +557,11 @@ def _diff_page(
     *,
     max_bytes=MAX_TOOL_BYTES,
     tool="read_diff",
+    anchors=None,
+    anchor_path=None,
+    anchor_sides=(),
+    commit=None,
+    parent=None,
 ):
     # Reserve room for the continuation marker instead of dropping the first
     # line that does not fit on a page.
@@ -549,6 +578,9 @@ def _diff_page(
         stopped_early = False
         number, pending = 1, b""
         oversized = False
+        old_line = new_line = None
+        old_left = new_left = 0
+        issued = {}
         deadline = time.monotonic() + 180
         try:
             while True:
@@ -562,14 +594,55 @@ def _diff_page(
                 if not chunk:
                     break
                 for piece in chunk.splitlines(keepends=True):
-                    if number >= start_line and not oversized:
+                    if not oversized:
                         pending += piece
                         oversized = len(pending) > MAX_TOOL_BYTES
                     if not piece.endswith(b"\n"):
                         continue
+                    text = pending.decode(errors="replace")
+                    location = None
+                    hunk = re.match(
+                        r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", text
+                    )
+                    if hunk:
+                        old_line, old_count, new_line, new_count = hunk.groups()
+                        old_line, new_line = int(old_line), int(new_line)
+                        old_left = int(old_count) if old_count is not None else 1
+                        new_left = int(new_count) if new_count is not None else 1
+                    elif old_left or new_left:
+                        if (text.startswith("+") and new_left) or (
+                            text.startswith("-") and old_left
+                        ):
+                            side = "head" if text[0] == "+" else "base"
+                            location = {
+                                "path": anchor_path,
+                                "side": side,
+                                "line": new_line if side == "head" else old_line,
+                            }
+                            if side not in anchor_sides:
+                                location = None
+                            if location is not None and commit is not None:
+                                location.update(
+                                    side="commit",
+                                    commit=commit,
+                                    parent=parent if side == "base" else None,
+                                )
+                        if text.startswith(("-", " ")) and old_left:
+                            old_line += 1
+                            old_left -= 1
+                        if text.startswith(("+", " ")) and new_left:
+                            new_line += 1
+                            new_left -= 1
                     if number >= start_line:
                         found = True
-                        item = f"{number}: " + pending.decode(errors="replace")
+                        item = f"{number}: " + text
+                        anchor_id = (
+                            uuid.uuid4().hex
+                            if anchors is not None and location
+                            else None
+                        )
+                        if anchor_id:
+                            item += f"  Anchor: {anchor_id}\n"
                         if oversized or len((result + item).encode()) > content_limit:
                             if max_bytes == MAX_TOOL_BYTES and (
                                 oversized
@@ -589,6 +662,8 @@ def _diff_page(
                             stopped_early = True
                             break
                         result += item
+                        if anchor_id:
+                            issued[anchor_id] = location
                         if number >= start_line + 149:
                             result += f"[Diff continues; continue at {number + 1} with {tool}]\n"
                             stopped_early = True
@@ -610,6 +685,8 @@ def _diff_page(
             process.stdout.close()
         if not stopped_early and process.returncode:
             raise subprocess.CalledProcessError(process.returncode, process.args)
+        if anchors is not None:
+            anchors.update(issued)
         return result if found else result + "No diff lines."
 
 
@@ -845,7 +922,17 @@ def cite_file(
     return prefix + "\n".join(lines) + "\n"
 
 
-def read_pr_commit(checkout, base, head, commit, path, start_line, *, dependencies=()):
+def read_pr_commit(
+    checkout,
+    base,
+    head,
+    commit,
+    path,
+    start_line,
+    *,
+    dependencies=(),
+    anchors=None,
+):
     """Inspect one pinned PR commit, including changes later reverted by the PR."""
     for dependency in dependencies:
         if isinstance(path, str) and path.startswith(dependency.path + "/"):
@@ -902,6 +989,14 @@ def read_pr_commit(checkout, base, head, commit, path, start_line, *, dependenci
         "--",
         path,
     )
+    anchor_parent = (
+        next(
+            iter(git(checkout, "rev-list", "--parents", "-n", "1", commit).split()[1:]),
+            None,
+        )
+        if anchors is not None
+        else None
+    )
     return _diff_page(
         checkout,
         args,
@@ -909,6 +1004,17 @@ def read_pr_commit(checkout, base, head, commit, path, start_line, *, dependenci
         f"{path} at {commit}",
         start_line,
         tool="read_pr_commit",
+        anchors=anchors,
+        anchor_path=path,
+        commit=commit,
+        parent=anchor_parent,
+        anchor_sides={
+            side
+            for side, ref in (("base", anchor_parent), ("head", commit))
+            if ref and path in tracked_files_at(checkout, ref)
+        }
+        if anchors is not None
+        else (),
     )
 
 
@@ -987,6 +1093,7 @@ class RepositorySnapshot:
     dependencies: tuple[DependencySnapshot, ...] = ()
     experiment_shell: str | None = None
     citations: dict = field(default_factory=dict, compare=False, repr=False)
+    anchors: dict = field(default_factory=dict, compare=False, repr=False)
 
 
 def resolve_commit(checkout, revision):

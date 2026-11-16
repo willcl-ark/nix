@@ -2,11 +2,7 @@
 
 import json
 import re
-import subprocess
 from urllib.parse import urlsplit
-
-from .repository import read_file, pr_commit_revision, tracked_files_at
-from .evidence import ToolFailure
 
 
 class InvalidReview(ValueError):
@@ -35,22 +31,10 @@ COVERAGE = object_schema(
     }
 )
 LOCATION = {
-    "path": STRING,
-    "line": {"type": "integer"},
-    "side": {"type": "string", "enum": ["head", "base"]},
-}
-REVIEW_LOCATION = {
-    "path": STRING,
-    "line": {"type": "integer"},
-    "side": {"type": "string", "enum": ["head", "base", "commit"]},
-    "commit": {
-        "type": ["string", "null"],
-        "description": "Full SHA of a commit in the reviewed PR for side commit; null for head/base",
-    },
-    "parent": {
-        "type": ["string", "null"],
-        "description": "Full SHA of a direct parent to cite, or null to cite the commit itself",
-    },
+    "anchor_id": {
+        "type": "string",
+        "description": "Anchor ID issued for a changed source line by read_diff or read_pr_commit in this review.",
+    }
 }
 SOURCE_EVIDENCE = object_schema(
     {
@@ -79,7 +63,7 @@ CANDIDATE = object_schema(
         },
     }
 )
-COMMIT_CANDIDATE = object_schema({**CANDIDATE["properties"], **REVIEW_LOCATION})
+COMMIT_CANDIDATE = CANDIDATE
 SECURITY_ASSESSMENT = object_schema(
     {
         "classification": {
@@ -97,7 +81,7 @@ FINDING = object_schema(
             "enum": ["critical", "major", "minor", "suggestion"],
         },
         "security": SECURITY_ASSESSMENT,
-        **REVIEW_LOCATION,
+        **LOCATION,
         "title": STRING,
         "summary": {"type": "string"},
         "body": STRING,
@@ -447,54 +431,16 @@ def _coverage(value):
         value["status"] = "partial"
 
 
-def _normalize_location(value):
-    # Head/base records have no commit identity in stored findings and history.
-    if isinstance(value, dict) and value.get("side") in {"head", "base"}:
-        for field in ("commit", "parent"):
-            if value.get(field) is not None:
-                raise InvalidReview(
-                    "Head/base locations cannot name a commit or parent"
-                )
-            value.pop(field, None)
-
-
-def _commit_files(value, snapshot):
-    try:
-        revision = pr_commit_revision(
-            snapshot.checkout,
-            snapshot.diff_base_sha,
-            snapshot.head_sha,
-            value["commit"],
-            value["parent"],
-        )
-        files = tracked_files_at(snapshot.checkout, revision)
-        # A real source line is required, including for intermediate-only files.
-        read_file(snapshot.checkout, files, value["path"], value["line"])
-        return files
-    except (KeyError, OSError, subprocess.SubprocessError, ToolFailure) as exc:
-        raise InvalidReview(f"Invalid commit source location: {exc}") from exc
-
-
 def _location(value, snapshot, *, allow_commit=False):
-    if value.get("side") == "commit":
-        if not allow_commit:
-            raise InvalidReview(
-                "Commit locations are restricted to commit-flow suggestions"
-            )
-        _commit_files(value, snapshot)
-        return
-    if not isinstance(value["side"], str) or value["side"] not in {"head", "base"}:
-        raise InvalidReview("Invalid location side")
-    path = value["path"]
-    if not isinstance(path, str) or path not in snapshot.changed_paths:
-        raise InvalidReview(f"Finding must identify a changed file: {repr(path)[:120]}")
-    files = snapshot.head_files if value["side"] == "head" else snapshot.base_files
-    if path not in files:
+    _text(value, ("anchor_id",))
+    location = snapshot.anchors.get(value["anchor_id"])
+    if location is None:
+        raise InvalidReview("Unknown finding anchor for this review")
+    if location["side"] == "commit" and not allow_commit:
         raise InvalidReview(
-            f"Finding path is missing on the {value['side']} side: {repr(path)[:120]}"
+            "Commit locations are restricted to commit-flow suggestions"
         )
-    if type(value["line"]) is not int or value["line"] < 1:
-        raise InvalidReview("Finding must identify a positive line")
+    value.update(location)
 
 
 def discovery(text, stage, snapshot):
@@ -506,13 +452,7 @@ def discovery(text, stage, snapshot):
     ):
         raise InvalidReview("Invalid discovery response")
     for index, finding in enumerate(result["findings"], 1):
-        _normalize_location(finding)
-        schema = (
-            COMMIT_CANDIDATE
-            if isinstance(finding, dict) and finding.get("side") == "commit"
-            else CANDIDATE
-        )
-        _object(finding, schema["properties"])
+        _object(finding, CANDIDATE["properties"])
         _location(finding, snapshot, allow_commit=stage == "commit_flow")
         if stage == "commit_flow" and finding["kind"] != "suggestion":
             raise InvalidReview("Commit-flow findings must be suggestions")
@@ -805,15 +745,7 @@ def _concept_decision(concept, concept_assessment):
 
 
 def _verified_finding(finding, snapshot, *, allow_commit=False):
-    _normalize_location(finding)
-    fields = FINDING["properties"]
-    if isinstance(finding, dict) and finding.get("side") in {"head", "base"}:
-        fields = {
-            key: value
-            for key, value in fields.items()
-            if key not in {"commit", "parent"}
-        }
-    _object(finding, fields)
+    _object(finding, FINDING["properties"])
     _location(finding, snapshot, allow_commit=allow_commit)
     if allow_commit and (
         finding["kind"] != "suggestion" or finding["severity"] != "suggestion"

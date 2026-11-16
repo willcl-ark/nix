@@ -107,7 +107,10 @@ class SubmoduleTests(unittest.TestCase):
             "bitcoin/api.h",
             1,
             dependencies=snapshot.dependencies,
+            anchors=snapshot.anchors,
         )
+        self.assertEqual(snapshot.anchors, {})
+        self.assertNotIn("Anchor:", delta)
         self.assertIn("-old interface", delta)
         self.assertIn("+new interface", delta)
         self.assertIn(

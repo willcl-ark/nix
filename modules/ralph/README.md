@@ -430,3 +430,11 @@ Historical rationale uses retrieval-issued source IDs rather than model-copied
 URLs. Document and comment attribution comes from adapters, while saved results
 retain the inspected passages and retrieval limitations. Frozen research capture
 schema 3 is required for replay; earlier captures must be recaptured.
+
+Finding locations are selected with review-local anchor IDs returned by diff
+reads. Only added and deleted source lines actually returned by the tool receive
+IDs. Saved findings retain resolved paths, sides and line numbers. Commit-flow
+anchors use the commit tree or its first parent; renamed files use separate old
+and new paths. Binary and mode-only changes do not fabricate textual anchors.
+Configured dependency diffs remain supporting evidence only; they do not issue
+publication anchors because reports link locations in the reviewed repository.
