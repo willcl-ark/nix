@@ -90,7 +90,7 @@ class HistoryTests(unittest.TestCase):
                 page.index("/traces/new.html"), page.index("/traces/old.html")
             )
             self.assertEqual(page.count('data-commit="' + "b" * 40), 2)
-            self.assertEqual(page.count("🟠"), 1)
+            self.assertEqual(page.count('class="latest"'), 1)
             self.assertIn("?commit=" + "a" * 40, page)
             self.assertNotIn("incomplete", page)
             self.assertIn("Review report unavailable", page)
@@ -251,14 +251,14 @@ class HistoryTests(unittest.TestCase):
                 page.index("/traces/backfilled.html"),
             )
             self.assertIn("Unknown", page)
-            self.assertIn("🟠", page)
+            self.assertIn('class="latest"', page)
             self.assertIn("2026-02-01 00:00:00 UTC", page)
             self.assertNotIn('<script>alert("head")', page)
             self.assertNotIn("<img src=x", page)
             (root / "earlier.html").unlink()
             (root / "later.html").unlink()
             history.save_history(root)
-            self.assertNotIn("🟠", (root / "123/index.html").read_text())
+            self.assertNotIn('class="latest"', (root / "123/index.html").read_text())
 
 
 if __name__ == "__main__":

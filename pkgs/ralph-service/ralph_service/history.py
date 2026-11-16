@@ -239,7 +239,10 @@ def _page(number, records):
         escaped_head = html.escape(head, quote=True)
         date = _date(timestamp)
         if index == 0 and _latest_label(records):
-            date += f" {_latest_label(records)}"
+            date += (
+                ' <span class="latest" title="Most recent saved review">'
+                f"{_latest_label(records)}</span>"
+            )
         count = str(record["findings_count"])
         review_link = (
             f'<a href="{html.escape(record["report_url"], quote=True)}">Review report</a>'
@@ -278,7 +281,7 @@ A saved report does not necessarily mean its review was posted.</p>
 def _latest_label(records):
     if not records or records[0][0] is None:
         return ""
-    return "🟠"
+    return "*"
 
 
 def _date(timestamp):
@@ -294,9 +297,10 @@ def _style():
     return (
         theme.STYLE
         + """body { margin: 2rem auto; padding: 0 1rem; max-width: 90rem; }
-.table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: .65rem; }
+.table-scroll { overflow-x: auto; border: 1px solid var(--border); }
 code { font-size: .85em; }
 form { margin: 1rem 0; }
+.latest { color: var(--amber); font-weight: 700; cursor: help; }
 """
     )
 
@@ -389,7 +393,15 @@ async function searchReports(query) {
             const row = body.insertRow();
             row.insertCell().textContent = report.repository;
             link(row.insertCell(), report.history_path, `#${report.pr}`);
-            row.insertCell().textContent = `${report.reviewed}${report.latest ? " " + report.latest : ""}`;
+            const reviewed = row.insertCell();
+            reviewed.textContent = report.reviewed;
+            if (report.latest) {
+                const latest = document.createElement('span');
+                latest.className = 'latest';
+                latest.title = 'Most recent saved review';
+                latest.textContent = report.latest;
+                reviewed.append(' ', latest);
+            }
             const commitCell = row.insertCell();
             const code = document.createElement('code');
             link(code, `${report.history_path}?commit=${encodeURIComponent(report.head)}`, report.head);
