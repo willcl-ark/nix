@@ -296,7 +296,7 @@ def _date(timestamp):
 def _style():
     return (
         theme.STYLE
-        + """body { margin: 2rem auto; padding: 0 1rem; max-width: 90rem; }
+        + """body { margin: 2rem auto; padding: 0 1rem; max-width: 90rem; font-size: 16px; }
 .table-scroll { overflow-x: auto; border: 1px solid var(--border); }
 code { font-size: .85em; }
 form { margin: 1rem 0; }
