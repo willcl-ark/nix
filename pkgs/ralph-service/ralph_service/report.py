@@ -1355,11 +1355,13 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
 <header>
 <h1>{_escape_with_code(record.get("pr_title") or "Review report")}</h1>
 <p>{_escape(record.get("repository") or record.get("repository_id") or "core")}: {_pr_link(record)}</p>
+</header>
+<main data-feedback-url="{_escape(feedback_url)}">{content}</main>
+<footer>
 <p class="report-metadata">Head: {_commit_link(record, record.get("head"))} · Base: {_commit_link(record, record.get("base"))}<br>
 {"Run ended" if failed else "Completed"}: {_escape(record.get("review_completed_at") or "unknown")}</p>
 <p><a href="{_escape(archive_url)}">Run archive</a> · <a href="{_escape(history_url)}">Previous runs</a></p>
-</header>
-<main data-feedback-url="{_escape(feedback_url)}">{content}</main>
+</footer>
 </body>
 </html>
 """
@@ -1404,6 +1406,8 @@ def _style():
         theme.STYLE
         + """
 body { margin: 2rem auto; max-width: 76rem; padding: 0 1rem; font-size: 16px; overflow-wrap: anywhere; }
+header { border-bottom: 1px solid var(--border); padding-bottom: .5rem; margin-bottom: 1.5rem; }
+footer { border-top: 1px solid var(--border); margin-top: 2rem; padding-top: .5rem; color: var(--muted); font-size: .875rem; }
 @media (max-width: 750px) { h1 { font-size: 1.4rem; } }
 .notice { border-left: 4px solid var(--accent); background: var(--raised); padding: .75rem 1rem; }
 .report-metadata { font-size: .875rem; }
