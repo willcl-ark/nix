@@ -1047,14 +1047,14 @@ def _stage_html(name, stage, stage_output):
     if stage.get("model"):
         title += f" ({stage['model']})"
     marker = {
-        "completed": "🟢",
-        "skipped": "⏭️",
-        "failed": "🔴",
-        "invalid": "🔴",
-        "pending": "⏳",
-        "running": "⏳",
-    }.get(stage.get("status"), "⚪")
-    title = f"{marker} {title}"
+        "completed": "ok",
+        "skipped": "skip",
+        "failed": "fail",
+        "invalid": "fail",
+        "pending": "wait",
+        "running": "wait",
+    }.get(stage.get("status"), "unknown")
+    label = {"ok": " OK ", "unknown": " ?? "}.get(marker, marker.upper())
     raw_output = stage.get("raw_output")
     output_blocks = []
     if raw_output is not None:
@@ -1086,7 +1086,8 @@ def _stage_html(name, stage, stage_output):
             )
         )
     return (
-        f"<details><summary>{_escape(title)}</summary>"
+        f'<details><summary><span class="stage-status {marker}">[{label}]</span> '
+        f"{_escape(title)}</summary>"
         f"{error}"
         f"{coverage}"
         f"{outputs}"
@@ -1407,6 +1408,11 @@ details { border-top: 1px solid var(--border); padding: .75rem 0; }
 main > details { border-top: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
 summary { font-weight: 600; }
 .severity-tag { color: var(--cyan); }
+summary:has(.stage-status) { color: var(--text); }
+.stage-status { white-space: pre; color: var(--muted); }
+.stage-status.ok { color: var(--accent); }
+.stage-status.fail { color: var(--red); }
+.stage-status.wait { color: var(--amber); }
 .severity-tag.minor { color: var(--text); }
 .severity-tag.major { color: var(--amber); }
 .severity-tag.critical { color: var(--bg); background: var(--red); padding: 0 .3ch; }
