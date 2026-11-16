@@ -35,6 +35,9 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 1px solid 
 [data-theme-toggle] { float: right; }
 [data-theme-toggle]::before { content: "["; color: var(--muted); }
 [data-theme-toggle]::after { content: "]"; color: var(--muted); }
+@media (max-width: 750px) {
+  body > [data-theme-toggle]:not([hidden]) { float: none; display: block; margin: 0 0 .25rem auto; padding: .2rem 0; border: 0; background: none; color: var(--muted); font-size: .8rem; }
+}
 table { border-collapse: collapse; width: 100%; background: var(--surface); }
 th, td { border-bottom: 1px solid var(--border); text-align: left; padding: .75rem; }
 th { color: var(--muted); font-weight: 400; text-transform: lowercase; border-bottom: 1px dashed var(--rule); }
