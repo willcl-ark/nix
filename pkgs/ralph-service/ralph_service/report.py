@@ -1400,6 +1400,7 @@ def _style():
         theme.STYLE
         + """
 body { margin: 2rem auto; max-width: 76rem; padding: 0 1rem; font-size: 16px; overflow-wrap: anywhere; }
+@media (max-width: 750px) { h1 { font-size: 1.4rem; } }
 .notice { border-left: 4px solid var(--accent); background: var(--raised); padding: .75rem 1rem; }
 .report-metadata { font-size: .875rem; }
 pre { white-space: pre-wrap; }

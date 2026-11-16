@@ -408,6 +408,7 @@ def _addressed_table(findings, repository_url, report_base_url):
             (v, v.replace("_", " ").capitalize())
             for v in ("addressed", "partially_addressed", "still_present", "unclear")
         ],
+        phone_cards="outcome-cards",
     )
 
 
@@ -664,7 +665,7 @@ def _cells(values):
 LIST_PAGE_SIZE = 50
 
 
-def _interactive_table(headers, rows, label, filters=(), controls=""):
+def _interactive_table(headers, rows, label, filters=(), controls="", phone_cards=""):
     rows = [
         row if index < LIST_PAGE_SIZE else row.replace("<tr", "<tr hidden", 1)
         for index, row in enumerate(rows)
@@ -683,7 +684,7 @@ def _interactive_table(headers, rows, label, filters=(), controls=""):
         else ""
     )
     return (
-        '<div class="data-list"><div class="list-controls" hidden>'
+        f'<div class="data-list {phone_cards}"><div class="list-controls" hidden>'
         f'<label>Search {_escape(label)} <input type="search" data-search></label>'
         + select
         + controls
@@ -1235,6 +1236,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
         + "</select></label><label>Sort <select data-review-sort>"
         '<option value="newest">Newest first</option><option value="severity">Severity</option>'
         "</select></label>",
+        phone_cards="review-cards",
     )
 
 
@@ -1619,6 +1621,41 @@ td code { color: var(--muted); }
   .cards { gap: .65rem; }
   .kpi-value { font-size: 1.8rem; }
   .finding-score meter { display: none; }
+  header { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .5rem 1rem; padding: .75rem 1rem; }
+  .header-top { padding: 0; }
+  header nav, .preview { grid-column: 1 / -1; margin: 0; }
+  nav[aria-label="Repositories"] { margin: 0; font-size: .78rem; }
+  nav[aria-label="Repositories"] a[aria-current] { background: none; color: var(--accent); }
+  nav[aria-label="Repositories"] a[aria-current]::before { color: var(--accent); }
+  .sidebar-tools { grid-row: 1; grid-column: 2; padding: 0; }
+  .sidebar-tools a[download] { display: none; }
+  .table-wrap th, .table-wrap td { padding: .45rem .6rem; }
+  .table-wrap tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--border); }
+  .table-wrap tbody tr:hover > :first-child { background: var(--raised); }
+  .review-cards table, .review-cards tbody, .outcome-cards table, .outcome-cards tbody { display: block; }
+  .review-cards thead, .outcome-cards thead { display: none; }
+  .review-cards tbody tr, .outcome-cards tbody tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem 1ch; padding: .7rem 0; border-bottom: 1px solid var(--border); }
+  .review-cards .table-wrap td, .outcome-cards .table-wrap td { display: block; position: static; padding: 0; border: 0; box-shadow: none; background: none; min-width: 0; white-space: normal; text-align: left; }
+  .review-cards .review-title { max-width: none; white-space: normal; }
+  .review-cards td:nth-child(1), .review-cards td.severity.zero { display: none; }
+  .review-cards td:nth-child(2) { order: 1; flex: 1; white-space: nowrap; }
+  .review-cards td.severity { order: 2; }
+  .review-cards td.severity::before { content: "["; }
+  .review-cards td.severity.critical::after { content: " critical]"; }
+  .review-cards td.severity.major::after { content: " major]"; }
+  .review-cards td.severity.minor { color: var(--violet); }
+  .review-cards td.severity.minor::after { content: " minor]"; }
+  .review-cards td.severity.suggestion { color: var(--cyan); }
+  .review-cards td.severity.suggestion::after { content: " suggestion]"; }
+  .review-cards td.severity.unknown::after { content: " unclassified]"; }
+  .review-cards .table-wrap td.severity.critical { background: var(--red); padding: 0 .5ch; }
+  .review-cards td:nth-child(3) { order: 3; flex-basis: 100%; }
+  .review-cards td:nth-child(n+4):not(.severity) { order: 4; color: var(--muted); font-size: .8rem; }
+  .review-cards td:nth-child(n+5):not(.severity)::before { content: "· "; }
+  .outcome-cards td:nth-child(1) { order: 1; flex: 1; }
+  .outcome-cards td:nth-child(3) { order: 2; color: var(--muted); }
+  .outcome-cards td:nth-child(2) { order: 3; flex-basis: 100%; }
+  .outcome-cards td:nth-child(4) { order: 4; flex-basis: 100%; }
 }
 """
     )
