@@ -8,6 +8,7 @@ import urllib.request
 
 from ralph.evidence import ToolFailure
 from ralph.repository import MAX_TOOL_BYTES
+from ralph.research import add_source
 
 BASE_URL = "https://bitcoinknowledge.dev"
 MAX_RESPONSE_BYTES = 500_000
@@ -127,7 +128,7 @@ def search(query, source_type="", source_repo="", limit=5):
     )
 
 
-def get_document(id):
+def get_document(id, *, sources=None, notices=None):
     if not _text(id, 1000) or id in {".", ".."}:
         raise ToolFailure(
             "invalid_request",
@@ -137,15 +138,39 @@ def get_document(id):
     if not isinstance(value, dict):
         raise ToolFailure("unavailable", "BKB returned an invalid document.")
     record = _record(value.get("document"), "body")
-    record["url"] = value.get("url")
+    record["url"] = value.get("url") or record.get("url")
     # Put attribution before the passage so long bodies retain their provenance.
     body = record.pop("body")
     record["provenance"] = value.get("provenance", [])
     record["body"] = body
-    return _format(
+    output = _format(
         {
             "provider": BASE_URL,
             "snapshot": "Current indexed content; not a historical snapshot",
             "document": record,
         }
     )
+    if notices is not None:
+        notices.append(
+            "BKB returns current indexed content, not a historical snapshot."
+        )
+        if json.loads(output).get("truncated"):
+            notices.append("BKB passage truncated; remaining content omitted.")
+        notices.append(
+            "Document metadata: "
+            + json.dumps(
+                {
+                    key: record[key]
+                    for key in ("title", "author", "created_at", "updated_at")
+                    if key in record
+                }
+            )
+        )
+    add_source(
+        sources,
+        record.get("url"),
+        "document",
+        record["body"],
+        provenance=record["provenance"],
+    )
+    return output

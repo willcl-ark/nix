@@ -196,3 +196,12 @@ full captured text and revision metadata in source_evidence. Definite outcomes
 require current source or a source-to-new diff; unavailable or insufficient
 context remains unclear. Capture limits and diff truncation are explicit. This
 changes new assessment responses only; existing stored assessments remain readable.
+
+Historical document and discussion reads issue source IDs from structured adapter
+attribution. Historical claims reference those IDs; saved reviews retain the
+resolved URLs, inspected passages, provenance and retrieval limitations. Search
+hits and URLs mentioned in source prose do not create citations. IDs are local
+to a model stage and are regenerated for replay. Frozen research captures now
+use schema version 3 to store attribution and notices separately from tool text;
+version 2 captures must be recaptured before replay. Existing saved reports
+remain readable and public history sections continue to show resolved links.

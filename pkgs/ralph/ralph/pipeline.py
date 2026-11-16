@@ -1106,7 +1106,7 @@ def review_with_independent_passes(
                 protocol.HISTORICAL_CONTEXT_SCHEMA,
             )
             historical_context = protocol.historical_context(
-                answer, stages["historical_context"].get("research_entries", [])
+                answer, stages["historical_context"].get("historical_sources", {})
             )
             stages["historical_context"]["coverage"] = historical_context["coverage"]
         except model.StaleReview:
@@ -1128,29 +1128,19 @@ def review_with_independent_passes(
         # input bounded; the full evidence remains in the stage trace.
         captured = []
         size = 0
-        entries = stages["historical_context"].get("research_entries", [])
-        citations = {
-            citation
+        sources = stages["historical_context"].get("historical_sources", {})
+        cited = {
+            identifier
             for field in (
                 "documented_rationale",
                 "inferred_rationale",
                 "unresolved_disagreements",
             )
             for item in historical_context[field]
-            for citation in item["citations"]
+            for identifier in item["source_ids"]
         }
-
-        def source_priority(entry):
-            successful = entry.get("outcome") == "success"
-            document = entry.get("name") in {
-                "bkb_get_document",
-                "read_discussion",
-                "read_github_discussion",
-            }
-            cited = any(url in entry.get("output", "") for url in citations)
-            return (not successful, not (document and cited), not document)
-
-        for entry in sorted(entries, key=source_priority):
+        entries = list(sources.values())
+        for entry in sorted(entries, key=lambda entry: entry["source_id"] not in cited):
             encoded_size = len(json.dumps(entry).encode())
             if size + encoded_size <= 64000:
                 captured.append(entry)

@@ -171,7 +171,13 @@ class ConceptToolTests(unittest.TestCase):
             with (
                 self.subTest(allow_live=allow_live),
                 patch.object(
-                    model.research, "lookup", return_value="Frozen discussion"
+                    model.research,
+                    "lookup",
+                    return_value={
+                        "output": "Frozen discussion",
+                        "sources": [],
+                        "notices": [],
+                    },
                 ) as lookup,
                 patch.object(model, "read_commit"),
             ):
@@ -201,7 +207,11 @@ class ConceptToolTests(unittest.TestCase):
     def test_bkb_calls_share_context_budget_and_capture_passages(self):
         debug = {}
         live = Mock(
-            return_value='{"url":"https://delvingbitcoin.org/t/1","body":"Rationale"}'
+            return_value={
+                "output": '{"url":"https://delvingbitcoin.org/t/1","body":"Rationale"}',
+                "sources": [],
+                "notices": [],
+            }
         )
         requests = self.run_tools(
             [
@@ -231,7 +241,10 @@ class ConceptToolTests(unittest.TestCase):
         from ralph.evidence import ToolFailure
 
         live = Mock(
-            side_effect=[ToolFailure("unavailable", "BKB timeout"), "GitHub rationale"]
+            side_effect=[
+                ToolFailure("unavailable", "BKB timeout"),
+                {"output": "GitHub rationale", "sources": [], "notices": []},
+            ]
         )
         debug = {}
         self.run_tools(
@@ -249,11 +262,26 @@ class ConceptToolTests(unittest.TestCase):
         self.assertEqual(debug["research_entries"][2]["output"], "GitHub rationale")
 
     def test_repeated_live_research_is_stable_and_replayable(self):
-        from ralph import research
+        from ralph import protocol, research
 
-        live = Mock(side_effect=["First passage", "Second passage"])
+        retrieved = [
+            {
+                "output": text,
+                "sources": [
+                    {
+                        "url": "https://example.org/" + str(index),
+                        "kind": "document",
+                        "content": text,
+                        "provenance": [],
+                    }
+                ],
+                "notices": ["Current indexed content"],
+            }
+            for index, text in enumerate(("First passage", "Second passage"))
+        ]
+        live = Mock(side_effect=retrieved)
         debug = {}
-        self.run_tools(
+        requests = self.run_tools(
             [
                 ("bkb_get_document", {"id": "one"}),
                 ("bkb_get_document", {"id": "one"}),
@@ -275,9 +303,45 @@ class ConceptToolTests(unittest.TestCase):
         }
         research.validate(evidence)
         self.assertEqual(
-            research.lookup(evidence, "bkb_get_document", {"id": "one"}),
-            "First passage",
+            research.lookup(evidence, "bkb_get_document", {"id": "one"}), retrieved[0]
         )
+        issued = json.loads(requests[-1]["input"][-1]["output"])["sources"][0][
+            "source_id"
+        ]
+        value = {
+            "coverage": {"status": "complete", "limitations": []},
+            "documented_rationale": [
+                {"claim": "Rationale", "relevance": "Policy", "source_ids": [issued]}
+            ],
+            "inferred_rationale": [],
+            "unresolved_disagreements": [],
+        }
+        saved = protocol.historical_context(
+            json.dumps(value), debug["historical_sources"]
+        )
+        self.assertEqual(
+            saved["documented_rationale"][0]["source_records"][0]["notices"],
+            ["Current indexed content"],
+        )
+        replay_debug = {}
+        replay = self.run_tools(
+            [("bkb_get_document", {"id": "two"})],
+            tools=model.ARCHAEOLOGY_TOOLS,
+            research_evidence=json.loads(json.dumps(evidence)),
+            discussion_lookup=Mock(side_effect=AssertionError("live read on replay")),
+            debug=replay_debug,
+        )
+        replayed = json.loads(replay[-1]["input"][-1]["output"])["sources"][0]
+        self.assertEqual(replayed["content"], "Second passage")
+        self.assertNotEqual(replayed["source_id"], issued)
+        self.assertEqual(
+            protocol.historical_context(
+                json.dumps(value), replay_debug["historical_sources"]
+            )["documented_rationale"],
+            [],
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported frozen"):
+            research.validate({**evidence, "schema_version": 2})
 
     def test_bkb_frozen_replay_never_falls_back_to_network(self):
         from ralph import research
@@ -294,6 +358,8 @@ class ConceptToolTests(unittest.TestCase):
                     "name": "bkb_get_document",
                     "arguments": args,
                     "output": "Captured rationale",
+                    "sources": [],
+                    "notices": [],
                     "outcome": "success",
                     "captured_at": timestamp,
                     "cutoff": timestamp,

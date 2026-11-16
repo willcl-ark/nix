@@ -947,20 +947,15 @@ class PipelineTests(unittest.TestCase):
                 kwargs["max_tool_calls"], settings.max_tool_calls[self.tier]
             )
             self.assertEqual(kwargs["max_context_calls"], settings.max_context_calls)
-            args[3]["research_entries"] = [
-                {
-                    "name": "bkb_get_document",
-                    "outcome": "success",
-                    "output": json.dumps(
-                        {
-                            "document": {
-                                "url": "https://example.invalid/design",
-                                "body": "Design rationale",
-                            }
-                        }
-                    ),
+            args[3]["historical_sources"] = {
+                "history-1": {
+                    "source_id": "history-1",
+                    "url": "https://example.invalid/design",
+                    "kind": "document",
+                    "content": "Design rationale",
+                    "provenance": [],
                 }
-            ]
+            }
             return json.dumps(
                 {
                     "coverage": COMPLETE,
@@ -968,7 +963,7 @@ class PipelineTests(unittest.TestCase):
                         {
                             "claim": "Historical incentive premise",
                             "relevance": "Affects the changed policy",
-                            "citations": ["https://example.invalid/design"],
+                            "source_ids": ["history-1"],
                         }
                     ],
                     "inferred_rationale": [],

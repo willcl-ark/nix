@@ -4,10 +4,13 @@ from datetime import datetime
 import hashlib
 import json
 import urllib.parse
+import uuid
+
+from .repository import MAX_TOOL_BYTES
 
 from .evidence import ToolFailure
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MISSING_RESEARCH = (
     "Frozen research evidence is unavailable for this tool call. Continue "
     "without live discussion or web lookup."
@@ -102,6 +105,8 @@ def validate(evidence):
             "outcome",
             "captured_at",
             "cutoff",
+            "sources",
+            "notices",
         }:
             raise ValueError("Frozen research evidence entry has unexpected fields")
         name = entry["name"]
@@ -112,6 +117,11 @@ def validate(evidence):
             raise ValueError("Frozen research evidence arguments are not canonical")
         if entry["outcome"] not in {"success", "unavailable", "invalid_request"}:
             raise ValueError("Invalid frozen evidence outcome")
+        validate_sources(entry["sources"])
+        if not isinstance(entry["notices"], list) or any(
+            not isinstance(notice, str) for notice in entry["notices"]
+        ):
+            raise ValueError("Invalid research notices")
         if not isinstance(entry["output"], str):
             raise ValueError("Frozen research evidence output must be text")
         if (
@@ -141,7 +151,11 @@ def lookup(evidence, name, args):
         if entry["key"] == key:
             if entry["outcome"] != "success":
                 raise ToolFailure(entry["outcome"], entry["output"])
-            return entry["output"]
+            return {
+                "output": entry["output"],
+                "sources": entry["sources"],
+                "notices": entry["notices"],
+            }
     raise ToolFailure("unavailable", MISSING_RESEARCH)
 
 
@@ -241,3 +255,94 @@ def filter_current_pr(name, args, output, current_url):
         return output
     value["current_pr_results_omitted"] = len(results) - len(value["results"])
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def add_source(sources, url, kind, content, *, provenance=None):
+    """Record attribution at the adapter, before source prose loses structure."""
+    if sources is None or not isinstance(url, str) or not content:
+        return
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return
+    sources.append(
+        {"url": url, "kind": kind, "content": content, "provenance": provenance or []}
+    )
+
+
+def validate_sources(sources):
+    if not isinstance(sources, list):
+        raise ValueError("Research source attribution must be a list")
+    for source in sources:
+        if not isinstance(source, dict) or set(source) != {
+            "url",
+            "kind",
+            "content",
+            "provenance",
+        }:
+            raise ValueError("Invalid research source attribution")
+        parsed = urllib.parse.urlsplit(source["url"])
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Invalid research source URL")
+        if (
+            source["kind"] not in {"document", "description", "comment"}
+            or not isinstance(source["content"], str)
+            or not source["content"]
+        ):
+            raise ValueError("Invalid research source passage")
+        if not isinstance(source["provenance"], list):
+            raise ValueError("Invalid research source provenance")
+
+
+def cite_sources(output, sources, registry, notices=()):
+    """Attach stage-local IDs, retaining only passages actually shown to the model."""
+    validate_sources(sources)
+    if not sources:
+        return output
+    # The source bodies are already bounded by adapters. Present them directly
+    # with their attribution rather than duplicating the formatted tool output.
+    context = {"notices": list(notices)}
+    records = []
+    for source in sources:
+        record = {"source_id": uuid.uuid4().hex, **source}
+        while True:
+            candidate = json.dumps(
+                {
+                    **context,
+                    "sources": [*records, record],
+                    "omitted_sources": len(sources) - len(records) - 1,
+                },
+                ensure_ascii=False,
+            )
+            if len(candidate.encode()) <= MAX_TOOL_BYTES:
+                break
+            if len(record["content"]) < 2:
+                record = None
+                break
+            record["content"] = record["content"][: len(record["content"]) // 2]
+            record["truncated"] = True
+        if record is None:
+            break
+        records.append(record)
+    if not records:
+        raise ToolFailure("unavailable", "Research attribution exceeds the tool limit.")
+    for record in records:
+        registry[record["source_id"]] = {**record, "notices": list(notices)}
+    return json.dumps(
+        {**context, "sources": records, "omitted_sources": len(sources) - len(records)},
+        ensure_ascii=False,
+    )
+
+
+def filter_sources(sources, current_url):
+    current = _discussion_identity(current_url)
+    if current is not None and any(
+        _discussion_identity(origin.get("url")) == current
+        for source in sources
+        for origin in [source, *source.get("provenance", [])]
+        if isinstance(origin, dict)
+    ):
+        raise ToolFailure(
+            "invalid_request",
+            "Current PR discussion is excluded from historical research.",
+        )
+    return sources

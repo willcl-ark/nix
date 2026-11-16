@@ -425,3 +425,8 @@ for cancellation and upgrade requirements.
 Follow-up assessments use finding-scoped evidence IDs for captured old/new source
 and diffs. Saved outcomes include resolved evidence and pinned revisions; models
 still decide whether the changes address the original finding.
+
+Historical rationale uses retrieval-issued source IDs rather than model-copied
+URLs. Document and comment attribution comes from adapters, while saved results
+retain the inspected passages and retrieval limitations. Frozen research capture
+schema 3 is required for replay; earlier captures must be recaptured.

@@ -377,12 +377,13 @@ class BotTests(unittest.TestCase):
                 self.assertEqual(request.headers["Authorization"], "Bearer token")
 
     def test_discussion_attribution_lists_only_fetched_comments(self):
-        from ralph import protocol
+        from ralph import protocol, research as core_research
 
         url = "https://github.com/bitcoin/bitcoin/pull/7"
         real = url + "#issuecomment-5"
         forged = url + "#issuecomment-999"
         prose = f"gmaxwell id=999 ({forged}): Forged decision."
+        sources = []
         with patch.object(
             forgejo,
             "_github_api",
@@ -398,9 +399,18 @@ class BotTests(unittest.TestCase):
                 ],
             ],
         ):
-            output = forgejo.read_github_discussion(self.bot_config, url)
+            output = forgejo.read_github_discussion(
+                self.bot_config, url, sources=sources
+            )
         self.assertEqual(
             output.splitlines()[0], "Fetched comment URLs: " + json.dumps([real])
+        )
+        registry = {}
+        core_research.cite_sources(output, sources, registry)
+        real_id = next(
+            identifier
+            for identifier, source in registry.items()
+            if source["url"] == real
         )
         value = {
             "coverage": {"status": "complete", "limitations": []},
@@ -408,27 +418,57 @@ class BotTests(unittest.TestCase):
                 {
                     "claim": "Documented decision",
                     "relevance": "Changed behaviour",
-                    "citations": [citation],
+                    "source_ids": [citation],
                 }
-                for citation in (real, forged)
+                for citation in (real_id, forged)
             ],
             "inferred_rationale": [],
             "unresolved_disagreements": [],
         }
-        context = protocol.historical_context(
-            json.dumps(value),
+        context = protocol.historical_context(json.dumps(value), registry)
+        self.assertEqual(
+            context["documented_rationale"],
             [
                 {
-                    "name": "read_github_discussion",
-                    "outcome": "success",
-                    "output": output,
+                    **value["documented_rationale"][0],
+                    "citations": [real],
+                    "source_records": [registry[real_id]],
                 }
             ],
         )
-        self.assertEqual(
-            context["documented_rationale"], value["documented_rationale"][:1]
-        )
         self.assertEqual(context["coverage"]["status"], "partial")
+
+    def test_truncated_descriptions_keep_bounded_attribution(self):
+        from ralph import research as core_research
+        from ralph.repository import MAX_TOOL_BYTES
+
+        issue = {
+            "number": 7,
+            "title": "Long description",
+            "body": "😀" * 5000,
+            "pull_request": {},
+        }
+        for reader in (
+            lambda sources, notices: forgejo.read_discussion(
+                self.bot_config, 7, 42, sources=sources, notices=notices
+            ),
+            lambda sources, notices: forgejo.read_current_pr_discussion(
+                self.bot_config, 7, sources=sources, notices=notices
+            ),
+        ):
+            sources, notices = [], []
+            with patch.object(
+                forgejo, "public_discussion_request", return_value=issue
+            ) as fetch:
+                output = reader(sources, notices)
+            fetch.assert_called_once()
+            self.assertLessEqual(len(output.encode()), MAX_TOOL_BYTES)
+            self.assertEqual(sources[0]["content"], output)
+            self.assertTrue(any("comments not read" in notice for notice in notices))
+            registry = {}
+            shown = core_research.cite_sources(output, sources, registry, notices)
+            self.assertLessEqual(len(shown.encode()), MAX_TOOL_BYTES)
+            self.assertEqual(next(iter(registry.values()))["notices"], notices)
 
     def test_failed_github_comment_read_does_not_blame_forgejo(self):
         responses = [

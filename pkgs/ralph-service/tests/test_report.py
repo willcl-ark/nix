@@ -52,6 +52,15 @@ class ReportTests(unittest.TestCase):
             ],
             "private": "internal item metadata",
         }
+        source = {
+            "source_id": "read-1",
+            "kind": "comment",
+            "url": "https://example.org/discussion#comment-1",
+            "content": "Original rationale.",
+            "notices": ["Comment truncated."],
+            "provenance": [],
+        }
+        item["source_records"] = [{**source, "private": "internal adapter metadata"}]
         result["output"]["data"]["historical_context"] = {
             "coverage": {"status": "partial", "limitations": ["internal limit detail"]},
             "documented_rationale": [item],
@@ -68,6 +77,7 @@ class ReportTests(unittest.TestCase):
                 {
                     "claim": item["claim"],
                     "relevance": item["relevance"],
+                    "source_records": [source],
                     "citations": ["https://example.org/discussion#comment-1"],
                 }
             ],

@@ -49,7 +49,8 @@ class BkbTests(unittest.TestCase):
         }
         opener, _ = self.request(value)
         with patch.object(bkb.urllib.request, "build_opener", return_value=opener):
-            result = bkb.get_document("a/b?#&")
+            sources, notices = [], []
+            result = bkb.get_document("a/b?#&", sources=sources, notices=notices)
         self.assertEqual(
             opener.open.call_args.args[0].full_url,
             bkb.BASE_URL + "/document/a%2Fb%3F%23%26",
@@ -59,6 +60,12 @@ class BkbTests(unittest.TestCase):
         self.assertIn("https://example.org/x", result)
         self.assertIn("original", result)
         self.assertIn("2020-01-01", result)
+        self.assertEqual(sources[0]["content"], json.loads(result)["document"]["body"])
+        self.assertEqual(sources[0]["provenance"], value["provenance"])
+        self.assertTrue(any("truncated" in notice for notice in notices))
+        self.assertTrue(
+            any("not a historical snapshot" in notice for notice in notices)
+        )
 
     def test_bad_network_and_responses_are_unavailable(self):
         opener, response = self.request({})

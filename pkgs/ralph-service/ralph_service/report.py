@@ -482,6 +482,34 @@ def _public_concept_citation(citation):
     return record if record else None
 
 
+def _public_historical_sources(value):
+    if not isinstance(value, list):
+        return []
+    sources = []
+    for source in value:
+        if (
+            not isinstance(source, dict)
+            or (url := _safe_http_url(source.get("url"))) is None
+        ):
+            continue
+        record = _filtered(source, ("source_id", "kind", "content", "truncated"))
+        record["url"] = url
+        record["notices"] = _strings(source.get("notices"))
+        record["provenance"] = [
+            {
+                **_filtered(
+                    origin, ("id", "title", "author", "created_at", "updated_at")
+                ),
+                "url": safe_url,
+            }
+            for origin in source.get("provenance", [])
+            if isinstance(origin, dict)
+            and (safe_url := _safe_http_url(origin.get("url"))) is not None
+        ]
+        sources.append(record)
+    return sources
+
+
 def _public_historical_context(debug):
     context = debug.get("historical_context")
     if not isinstance(context, dict):
@@ -496,6 +524,9 @@ def _public_historical_context(debug):
             {
                 "claim": item["claim"],
                 "relevance": item["relevance"],
+                "source_records": _public_historical_sources(
+                    item.get("source_records")
+                ),
                 "citations": [
                     url
                     for citation in _strings(item.get("citations"))

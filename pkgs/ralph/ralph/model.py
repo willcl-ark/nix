@@ -932,6 +932,9 @@ def openai_review(
     files = snapshot.head_files
     inputs = [{"role": "user", "content": review}]
     research_cache = {}
+    historical_sources = {}
+    if debug is not None:
+        debug["historical_sources"] = historical_sources
     research_captured_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     bkb_unavailable = False
     if debug is not None:
@@ -1101,6 +1104,7 @@ def openai_review(
             inputs.extend(output)
             for call in calls:
                 research_key = None
+                retrieved = None
                 outcome = "success"
                 evidence = (
                     "experiment"
@@ -1233,11 +1237,21 @@ def openai_review(
                                         "unavailable", "Discussion lookup unavailable."
                                     )
                                 if outcome == "success":
+                                    retrieved = answer
                                     answer = research.filter_current_pr(
                                         call["name"],
                                         args,
-                                        answer,
+                                        retrieved["output"],
                                         excluded_discussion_url,
+                                    )
+                                    answer = research.cite_sources(
+                                        answer,
+                                        research.filter_sources(
+                                            retrieved["sources"],
+                                            excluded_discussion_url,
+                                        ),
+                                        historical_sources,
+                                        retrieved["notices"],
                                     )
                         elif call["name"] in {"blame_base", "read_commit"}:
                             if history_calls >= max_history_calls:
@@ -1285,7 +1299,10 @@ def openai_review(
                             "Context lookup failed; continue with available evidence."
                         )
                 if research_key is not None:
-                    research_cache.setdefault(research_key, (outcome, answer))
+                    research_cache.setdefault(
+                        research_key,
+                        (outcome, retrieved if outcome == "success" else answer),
+                    )
                     if call["name"].startswith("bkb_") and outcome == "unavailable":
                         bkb_unavailable = True
                 inputs.append(
@@ -1348,7 +1365,15 @@ def openai_review(
                                         ),
                                         "name": call["name"],
                                         "arguments": canonical_args,
-                                        "output": answer,
+                                        "output": retrieved["output"]
+                                        if outcome == "success"
+                                        else answer,
+                                        "sources": retrieved["sources"]
+                                        if outcome == "success"
+                                        else [],
+                                        "notices": retrieved["notices"]
+                                        if outcome == "success"
+                                        else [],
                                         "outcome": outcome,
                                         "captured_at": captured_at,
                                         "cutoff": (

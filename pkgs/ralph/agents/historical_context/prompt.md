@@ -30,12 +30,15 @@ briefing and follow historical sources instead.
 If a source cannot be retrieved, record the specific limitation.
 
 Return a small briefing in the supplied schema. Each entry has a claim, its
-relevance to the current behavior, and HTTP(S) citations from inspected sources.
-Cite the exact document or provenance URLs supplied by bkb_get_document, or the
-fetched discussion URL and comment permalinks printed in discussion attribution.
-Links merely mentioned inside a source, search hits, commit URLs and pinned-code
-URLs are not historical source attribution. Inspect the source itself before
-citing it. Keep relevance to pinned code in the relevance text.
+relevance to the current behavior, and source_ids from inspected sources.
+Document and discussion reading tools issue source_id values with captured
+passages and authoritative attribution. Copy those IDs, not URLs. Ralph resolves
+them to URLs and preserves the inspected passages for later reviewers. Never
+invent IDs or reuse IDs from another review. Description and individual comment
+IDs are distinct. Search hits and links mentioned inside source prose are not
+inspected historical evidence. A truncated passage supports only what is shown;
+record omitted material as a limitation when it could affect the conclusion.
+Keep relevance to pinned code in the relevance text.
 Use documented_rationale only for rationale stated in sources. Put your own
 explanations in inferred_rationale and cite supporting premises when available.
 Use unresolved_disagreements for competing positions that the inspected record

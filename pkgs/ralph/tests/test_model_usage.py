@@ -537,7 +537,9 @@ class ModelUsageTests(unittest.TestCase):
         ]
         debug = {}
         usage = FakeUsage()
-        discussion = Mock(return_value="Discussion")
+        discussion = Mock(
+            return_value={"output": "Discussion", "sources": [], "notices": []}
+        )
         with (
             patch.object(
                 model.transport,

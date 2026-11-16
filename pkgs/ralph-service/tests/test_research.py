@@ -30,7 +30,7 @@ class ResearchEvidenceTests(unittest.TestCase):
         with patch.object(bkb, "search", return_value="Retrieved evidence") as search:
             self.assertEqual(
                 research.discussion_lookup(self.bot_config, 42)(**request),
-                "Retrieved evidence",
+                {"output": "Retrieved evidence", "sources": [], "notices": []},
             )
             search.assert_called_once_with(
                 query="cluster mempool", source_type="", source_repo="", limit=5
@@ -49,7 +49,7 @@ class ResearchEvidenceTests(unittest.TestCase):
         ):
             self.assertEqual(
                 frozen_research.lookup(evidence, request["name"], request["arguments"]),
-                "Frozen evidence",
+                {"output": "Frozen evidence", "sources": [], "notices": []},
             )
 
     def test_historical_bkb_capture_is_unavailable_without_network(self):
@@ -148,6 +148,7 @@ class ResearchEvidenceTests(unittest.TestCase):
             "read_current_pr_discussion",
             {"kind": "comments", "page": 1, "review_id": 0},
         )
+        comments = comments["output"]
         self.assertIn("Old comment", comments)
         self.assertNotIn("Edited too late", comments)
         self.assertNotIn("Missing metadata", comments)

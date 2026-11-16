@@ -23,6 +23,8 @@ def _capture_call(
     name = request.get("name")
     arguments = _args(name, request.get("arguments", {}))
     outcome = "success"
+    sources = []
+    notices = []
     try:
         if name in {"bkb_search", "bkb_get_document"}:
             if cutoff and _parse_time(cutoff) < _parse_time(captured_at):
@@ -32,14 +34,19 @@ def _capture_call(
             if name == "bkb_search":
                 output = bkb.search(**arguments)
             else:
-                output = bkb.get_document(**arguments)
+                output = bkb.get_document(**arguments, sources=sources, notices=notices)
         elif name == "search_discussions":
             output = forgejo.search_discussions(
                 bot_config, arguments["query"], current_pr, cutoff=cutoff
             )
         elif name == "read_discussion":
             output = forgejo.read_discussion(
-                bot_config, arguments["number"], current_pr, cutoff=cutoff
+                bot_config,
+                arguments["number"],
+                current_pr,
+                cutoff=cutoff,
+                sources=sources,
+                notices=notices,
             )
         elif name == "read_current_pr_discussion":
             output = forgejo.read_current_pr_discussion(
@@ -49,6 +56,8 @@ def _capture_call(
                 arguments["page"],
                 arguments["review_id"],
                 cutoff=cutoff,
+                sources=sources,
+                notices=notices,
             )
         elif name == "read_github_discussion":
             output = forgejo.read_github_discussion(
@@ -58,11 +67,18 @@ def _capture_call(
                 arguments["page"],
                 cutoff=cutoff,
                 token=github_token,
+                sources=sources,
+                notices=notices,
             )
         else:
             raise ValueError(f"unsupported research tool: {name}")
     except ToolFailure as exc:
         outcome, output = exc.outcome, str(exc)
+    if outcome == "success" and sources:
+        notices.insert(
+            0,
+            f"{'Cutoff' if cutoff else 'Retrieved at'}: {cutoff or captured_at or utc_now()}",
+        )
     return {
         "key": _entry_key(name, arguments),
         "name": name,
@@ -71,6 +87,8 @@ def _capture_call(
         "outcome": outcome,
         "captured_at": captured_at,
         "cutoff": cutoff,
+        "sources": sources if outcome == "success" else [],
+        "notices": notices if outcome == "success" else [],
     }
 
 
@@ -124,6 +142,10 @@ def discussion_lookup(bot_config, current_pr, github_token=None):
         )
         if entry["outcome"] != "success":
             raise ToolFailure(entry["outcome"], entry["output"])
-        return entry["output"]
+        return {
+            "output": entry["output"],
+            "sources": entry["sources"],
+            "notices": entry["notices"],
+        }
 
     return lookup

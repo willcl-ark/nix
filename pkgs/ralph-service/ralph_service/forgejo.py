@@ -9,6 +9,7 @@ import urllib.request
 
 from ralph.repository import MAX_TOOL_BYTES
 from ralph.evidence import ToolFailure
+from ralph.research import add_source
 from . import config
 from .github import MARKER_PREFIX
 from .repository import current_head
@@ -163,7 +164,9 @@ def search_discussions(bot_config, query, current_pr, cutoff=None):
     return result if len(result.splitlines()) > 1 else missing
 
 
-def read_discussion(bot_config, number, current_pr, cutoff=None):
+def read_discussion(
+    bot_config, number, current_pr, cutoff=None, *, sources=None, notices=None
+):
     if (
         not isinstance(number, int)
         or isinstance(number, bool)
@@ -193,9 +196,30 @@ def read_discussion(bot_config, number, current_pr, cutoff=None):
         f"Description:\n{body}\n"
     )
     if len(result.encode()) > MAX_TOOL_BYTES:
-        return (
-            result.encode()[:MAX_TOOL_BYTES].decode(errors="replace")
-            + "\n[Description truncated]"
+        marker = "\n[Description truncated]"
+        result = (
+            result.encode()[: MAX_TOOL_BYTES - len(marker)].decode(errors="ignore")
+            + marker
+        )
+        if notices is not None:
+            notices.append(
+                "Description truncated by the tool byte limit; comments not read."
+            )
+        if _visible_before_cutoff(issue, cutoff) and (
+            issue.get("title") or issue.get("body")
+        ):
+            add_source(
+                sources,
+                _discussion_url(bot_config, kind, number),
+                "description",
+                result,
+            )
+        return result
+    if _visible_before_cutoff(issue, cutoff) and (
+        issue.get("title") or issue.get("body")
+    ):
+        add_source(
+            sources, _discussion_url(bot_config, kind, number), "description", result
         )
     try:
         comments = public_discussion_request(
@@ -206,6 +230,8 @@ def read_discussion(bot_config, number, current_pr, cutoff=None):
             "unavailable", result + "Comments exceed the public context response limit."
         )
     if not isinstance(comments, list):
+        if notices is not None:
+            notices.append("Forgejo returned invalid comments.")
         return result + "Forgejo returned invalid comments."
     human = [
         comment
@@ -218,6 +244,10 @@ def read_discussion(bot_config, number, current_pr, cutoff=None):
     result += f"Selected comments ({len(selected)} of {len(human)}{suffix}):\n"
     omitted = len(human) - len(visible)
     if omitted:
+        if notices is not None:
+            notices.append(
+                f"{omitted} comments omitted by cutoff or incomplete metadata."
+            )
         result += f"{omitted} comments were omitted because current metadata is after the cutoff or incomplete.\n"
     seen = set()
     for comment in selected:
@@ -229,11 +259,17 @@ def read_discussion(bot_config, number, current_pr, cutoff=None):
             or comment.get("original_author")
             or "unknown"
         )
-        content = str(comment.get("body") or "")[:1000]
+        raw_content = str(comment.get("body") or "")
+        if notices is not None and len(raw_content) > 1000:
+            notices.append(f"Comment {comment.get('id')} truncated.")
+        content = raw_content[:1000]
         item = f"{author}: {content}\n"
         if len((result + item).encode()) > MAX_TOOL_BYTES:
+            if notices is not None:
+                notices.append("Comments truncated by the tool byte limit.")
             return result + "[Comments truncated]"
         result += item
+        add_source(sources, comment.get("html_url"), "comment", item)
     return result
 
 
@@ -259,9 +295,18 @@ def _is_bot_comment(comment, bot_config):
 
 
 def _append_comments(
-    result, comments, bot_config, *, limit=DISCUSSION_PAGE_LIMIT, cutoff=None
+    result,
+    comments,
+    bot_config,
+    *,
+    limit=DISCUSSION_PAGE_LIMIT,
+    cutoff=None,
+    sources=None,
+    notices=None,
 ):
     if not isinstance(comments, list):
+        if notices is not None:
+            notices.append("Comments are unavailable.")
         return result + "Comments are unavailable.\n"
     human = [
         comment
@@ -276,6 +321,10 @@ def _append_comments(
     )
     omitted = len(human) - len(visible)
     if omitted:
+        if notices is not None:
+            notices.append(
+                f"{omitted} comments omitted by cutoff or incomplete metadata."
+            )
         result += f"{omitted} comments were omitted because current metadata is after the cutoff or incomplete.\n"
     seen = set()
     urls = []
@@ -287,6 +336,8 @@ def _append_comments(
         identifier = comment.get("id")
         identifier_text = f" id={identifier}" if identifier is not None else ""
         body = str(comment.get("body") or comment.get("content") or "")
+        if notices is not None and len(body) > 1500:
+            notices.append(f"Comment {identifier} truncated.")
         content = body[:1500] + ("\n[Comment truncated]" if len(body) > 1500 else "")
         url = (
             comment.get("html_url")
@@ -296,10 +347,13 @@ def _append_comments(
         item = f"{author}{identifier_text} ({url}): {content}\n"
         prefix = "Fetched comment URLs: " + json.dumps([*urls, url]) + "\n"
         if len((prefix + result + item).encode()) > MAX_TOOL_BYTES:
+            if notices is not None:
+                notices.append("Comments truncated by the tool byte limit.")
             result += "[Comments truncated]\n"
             break
         result += item
         urls.append(url)
+        add_source(sources, comment.get("html_url"), "comment", item)
     return "Fetched comment URLs: " + json.dumps(urls) + "\n" + result
 
 
@@ -325,7 +379,15 @@ def _slice_page(items, page, limit=DISCUSSION_PAGE_LIMIT, cutoff=None):
 
 
 def read_current_pr_discussion(
-    bot_config, number, kind="comments", page=1, review_id=0, cutoff=None
+    bot_config,
+    number,
+    kind="comments",
+    page=1,
+    review_id=0,
+    cutoff=None,
+    *,
+    sources=None,
+    notices=None,
 ):
     if (
         not isinstance(number, int)
@@ -369,16 +431,39 @@ def read_current_pr_discussion(
         f"Description:\n{body}\n"
     )
     if len(result.encode()) > MAX_TOOL_BYTES:
-        return (
-            result.encode()[:MAX_TOOL_BYTES].decode(errors="replace")
-            + "\n[Description truncated]\n"
+        marker = "\n[Description truncated]\n"
+        result = (
+            result.encode()[: MAX_TOOL_BYTES - len(marker)].decode(errors="ignore")
+            + marker
         )
+        if notices is not None:
+            notices.append(
+                "Description truncated by the tool byte limit; comments not read."
+            )
+        if _visible_before_cutoff(issue, cutoff) and (
+            issue.get("title") or issue.get("body")
+        ):
+            add_source(
+                sources, pull_request_url(bot_config, number), "description", result
+            )
+        return result
+    if _visible_before_cutoff(issue, cutoff) and (
+        issue.get("title") or issue.get("body")
+    ):
+        add_source(sources, pull_request_url(bot_config, number), "description", result)
     if kind == "comments":
         comments, truncated = _public_discussion_page(
             bot_config, f"/issues/{number}/comments", page=page, cutoff=cutoff
         )
         result += f"Issue comments page {page}:\n"
-        result = _append_comments(result, comments, bot_config, cutoff=cutoff)
+        result = _append_comments(
+            result,
+            comments,
+            bot_config,
+            cutoff=cutoff,
+            sources=sources,
+            notices=notices,
+        )
     elif kind == "inline":
         truncated = True
         try:
@@ -396,14 +481,25 @@ def read_current_pr_discussion(
         if isinstance(comments, list):
             comments, truncated = _slice_page(comments, page, cutoff=cutoff)
         result += f"Inline review comments for review {review_id}, page {page}:\n"
-        result = _append_comments(result, comments, bot_config, cutoff=cutoff)
+        result = _append_comments(
+            result,
+            comments,
+            bot_config,
+            cutoff=cutoff,
+            sources=sources,
+            notices=notices,
+        )
     else:
         reviews, truncated = _public_discussion_page(
             bot_config, f"/pulls/{number}/reviews", page=page, cutoff=cutoff
         )
         result += f"Pull review summaries page {page}:\n"
-        result = _append_comments(result, reviews, bot_config, cutoff=cutoff)
+        result = _append_comments(
+            result, reviews, bot_config, cutoff=cutoff, sources=sources, notices=notices
+        )
     if truncated:
+        if notices is not None:
+            notices.append(f"{kind} may continue on page {page + 1}.")
         result += f"{kind} may continue on page {page + 1}.\n"
     return result
 
@@ -474,7 +570,15 @@ def _github_fragment_comment(base, fragment, token=None):
 
 
 def read_github_discussion(
-    bot_config, url, kind="comments", page=1, cutoff=None, token=None
+    bot_config,
+    url,
+    kind="comments",
+    page=1,
+    cutoff=None,
+    token=None,
+    *,
+    sources=None,
+    notices=None,
 ):
     parsed = _parse_github_issue_url(url)
     if parsed is None:
@@ -511,6 +615,15 @@ def read_github_discussion(
         f"{'Cutoff' if cutoff else 'Retrieved at'}: {cutoff or _retrieved_at()}\n"
         f"Description:\n{body}\n"
     )
+    if _visible_before_cutoff(issue, cutoff) and (
+        issue.get("title") or issue.get("body")
+    ):
+        add_source(
+            sources,
+            f"https://github.com/{owner}/{repo}/pull/{number}",
+            "description",
+            result,
+        )
     fragment_comment, had_fragment = _github_fragment_comment(base, fragment, token)
     if had_fragment:
         result += "GitHub referenced comment:\n"
@@ -519,6 +632,8 @@ def read_github_discussion(
             [fragment_comment] if isinstance(fragment_comment, dict) else None,
             bot_config,
             cutoff=cutoff,
+            sources=sources,
+            notices=notices,
         )
         return result
     if kind == "comments":
@@ -536,8 +651,12 @@ def read_github_discussion(
             f"{base}/pulls/{number}/reviews", page=page, cutoff=cutoff, token=token
         )
         result += f"GitHub review summaries page {page}:\n"
-    result = _append_comments(result, comments, bot_config, cutoff=cutoff)
+    result = _append_comments(
+        result, comments, bot_config, cutoff=cutoff, sources=sources, notices=notices
+    )
     if truncated:
+        if notices is not None:
+            notices.append(f"GitHub {kind} may continue on page {page + 1}.")
         result += f"GitHub {kind} may continue on page {page + 1}.\n"
     return result
 
