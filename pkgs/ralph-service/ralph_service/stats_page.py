@@ -1523,6 +1523,8 @@ td { font-variant-numeric: tabular-nums; }
 .reviews-list td { padding-top: .35rem; padding-bottom: .35rem; white-space: nowrap; }
 .review-title { display: block; max-width: 50ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .severity.zero { color: var(--border); }
+.severity.minor { color: var(--violet); }
+.severity.suggestion { color: var(--cyan); }
 .severity.major { color: var(--amber); font-weight: 700; }
 .severity.critical { color: var(--bg); background: var(--red); font-weight: 700; }
 .numeric { text-align: right; white-space: nowrap; }
@@ -1643,9 +1645,7 @@ td code { color: var(--muted); }
   .review-cards td.severity::before { content: "["; }
   .review-cards td.severity.critical::after { content: " critical]"; }
   .review-cards td.severity.major::after { content: " major]"; }
-  .review-cards td.severity.minor { color: var(--violet); }
   .review-cards td.severity.minor::after { content: " minor]"; }
-  .review-cards td.severity.suggestion { color: var(--cyan); }
   .review-cards td.severity.suggestion::after { content: " suggestion]"; }
   .review-cards td.severity.unknown::after { content: " unclassified]"; }
   .review-cards .table-wrap td.severity.critical { background: var(--red); padding: 0 .5ch; }
