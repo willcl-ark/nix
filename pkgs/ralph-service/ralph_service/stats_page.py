@@ -1432,8 +1432,6 @@ def _style():
     return (
         theme.STYLE
         + """
-body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 20; background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .07) 2px 3px); }
-:root[data-theme="light"] body::after { display: none; }
 header { position: fixed; inset: 0 auto 0 0; width: 15rem; background: var(--surface); border-right: 1px solid var(--rule); padding: 1.5rem 1rem; display: flex; flex-direction: column; z-index: 5; overflow-y: auto; }
 .brand { display: flex; align-items: baseline; gap: .6ch; font-size: 1.35rem; font-weight: 800; text-decoration: none; color: var(--accent); text-shadow: 0 0 .5em var(--glow); }
 .brand:hover { background: none; color: var(--accent); }
@@ -1458,10 +1456,9 @@ nav[aria-label="Repositories"] { margin-bottom: 1.5rem; }
 .sidebar-tools a { color: var(--muted); text-decoration: none; }
 .sidebar-tools a:hover { color: var(--bg); }
 main { max-width: 112rem; margin-left: 15rem; padding: 2rem clamp(1rem, 3vw, 3rem) 3rem; }
-h1 { font-size: 1.6rem; margin: 0; color: var(--accent); text-shadow: 0 0 .6em var(--glow); }
+h1 { font-size: 1.6rem; margin: 0; }
 h1::before { content: "$ "; color: var(--muted); text-shadow: none; }
-h2 { font-size: 1rem; margin: 0 0 .7rem; color: var(--accent); }
-h2::before { content: "## "; color: var(--muted); }
+h2 { font-size: 1rem; margin: 0 0 .7rem; }
 h3 { font-size: .95rem; }
 p { margin: .6rem 0 1rem; }
 .subtitle, .note, .subline, .kpi-detail { color: var(--muted); }
@@ -1501,10 +1498,6 @@ td:first-child { min-width: 5rem; }
 .key-values dt::after { content: ":"; }
 .key-values dd { margin: 0; overflow-wrap: anywhere; }
 details { margin: .2rem 0; }
-summary { cursor: pointer; color: var(--accent); list-style: none; }
-summary::-webkit-details-marker { display: none; }
-summary::before { content: "[+] "; color: var(--muted); }
-details[open] > summary::before { content: "[-] "; }
 details[open] > summary { margin-bottom: .75rem; }
 .list-controls, .pagination { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; margin: 1rem 0; }
 .list-controls:first-child { margin-top: 0; }

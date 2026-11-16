@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import nh3
-from final_comment import render_report
+from final_comment import SEVERITY_ORDER, render_report, severity_label
 from markdown_it import MarkdownIt
 
 from ralph import trace as core_trace
@@ -1253,8 +1253,8 @@ def _feedback_form(finding, index):
 <fieldset disabled>
 <legend>Was this finding useful?</legend>
 <div class="feedback-votes">
-<button type="button" data-vote="1" aria-pressed="false" aria-label="Useful">👍 <span data-count="up">—</span></button>
-<button type="button" data-vote="-1" aria-pressed="false" aria-label="Not useful">👎 <span data-count="down">—</span></button>
+<button type="button" data-vote="1" aria-pressed="false" aria-label="Useful">+1 <span data-count="up">—</span></button>
+<button type="button" data-vote="-1" aria-pressed="false" aria-label="Not useful">-1 <span data-count="down">—</span></button>
 <span class="feedback-selection"></span>
 </div>
 <details class="feedback-explanation">
@@ -1321,6 +1321,11 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
         .disable("html_inline")
         .render(review)
     )
+    for severity in SEVERITY_ORDER:
+        content = content.replace(
+            severity_label(severity),
+            f'<span class="severity-tag {severity}">[{severity}]</span>',
+        )
     for marker, form in feedback_markers.items():
         content = content.replace(f"<p>{marker}</p>", form)
     feedback_url = (
@@ -1400,7 +1405,11 @@ pre { white-space: pre-wrap; }
 th, td { vertical-align: top; }
 details { border-top: 1px solid var(--border); padding: .75rem 0; }
 main > details { border-top: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
-summary { cursor: pointer; font-weight: 600; }
+summary { font-weight: 600; }
+.severity-tag { color: var(--cyan); }
+.severity-tag.minor { color: var(--text); }
+.severity-tag.major { color: var(--amber); }
+.severity-tag.critical { color: var(--bg); background: var(--red); padding: 0 .3ch; }
 """
     )
 

@@ -11,7 +11,6 @@ main > details:has(+ .finding-feedback) {
   margin: 1rem 0;
   padding: 1rem 1.15rem;
   border: 1px solid var(--border);
-  border-radius: .5rem;
   background: var(--surface);
   font-size: .875rem;
 }
@@ -32,7 +31,6 @@ main > details:has(+ .finding-feedback) {
   resize: vertical;
   padding: .6rem;
   border: 1px solid var(--border);
-  border-radius: .35rem;
   color: var(--text);
   background: var(--bg);
   font: inherit;

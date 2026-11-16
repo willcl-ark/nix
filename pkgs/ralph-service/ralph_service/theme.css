@@ -19,6 +19,15 @@ body { margin: 0; color: var(--text); background: var(--bg); font: 13px/1.6 var(
 a { color: inherit; text-decoration: underline dotted var(--rule); text-underline-offset: .25em; }
 a:hover { background: var(--accent); color: var(--bg); }
 h1, h2, h3 { font-weight: 700; letter-spacing: 0; }
+h1, h2 { color: var(--accent); }
+h1 { text-shadow: 0 0 .6em var(--glow); }
+h2::before { content: "## "; color: var(--muted); }
+summary { cursor: pointer; color: var(--accent); list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "[+] "; color: var(--muted); }
+details[open] > summary::before { content: "[-] "; }
+body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 20; background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .07) 2px 3px); }
+:root[data-theme="light"] body::after { display: none; }
 input, button, select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--rule); border-radius: 0; padding: .4rem .65rem; }
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); color: var(--accent); }
