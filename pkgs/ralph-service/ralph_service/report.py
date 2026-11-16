@@ -1254,8 +1254,8 @@ def _feedback_form(finding, index):
 <fieldset disabled>
 <legend>Was this finding useful?</legend>
 <div class="feedback-votes">
-<button type="button" data-vote="1" aria-pressed="false" aria-label="Useful">+1 <span data-count="up">—</span></button>
-<button type="button" data-vote="-1" aria-pressed="false" aria-label="Not useful">-1 <span data-count="down">—</span></button>
+<button type="button" data-vote="1" aria-pressed="false" aria-label="Useful">+1<span data-count="up"></span></button>
+<button type="button" data-vote="-1" aria-pressed="false" aria-label="Not useful">-1<span data-count="down"></span></button>
 <span class="feedback-selection"></span>
 </div>
 <details class="feedback-explanation">
@@ -1413,7 +1413,8 @@ summary:has(.stage-status) { color: var(--text); }
 .stage-status.ok { color: var(--accent); }
 .stage-status.fail { color: var(--red); }
 .stage-status.wait { color: var(--amber); }
-.severity-tag.minor { color: var(--text); }
+.stage-status.skip { color: var(--cyan); }
+.severity-tag.minor { color: var(--violet); }
 .severity-tag.major { color: var(--amber); }
 .severity-tag.critical { color: var(--bg); background: var(--red); padding: 0 .3ch; }
 """

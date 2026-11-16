@@ -18,6 +18,8 @@ main > details:has(+ .finding-feedback) {
 .finding-feedback legend { padding: 0; margin-bottom: .6rem; font-weight: 600; }
 .feedback-votes { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .feedback-votes button { min-width: 4rem; }
+.feedback-votes [data-count] { margin-left: 1ch; color: var(--muted); }
+.feedback-votes [data-count]:empty { display: none; }
 .feedback-votes button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .feedback-selection { margin-left: .25rem; color: var(--muted); }
 .finding-feedback .feedback-explanation { border: 0; margin: .75rem 0 0; padding: 0; }
