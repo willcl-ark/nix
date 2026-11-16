@@ -106,7 +106,11 @@ coverage messages stay in the archive JSON. Inspect reported failures before cut
 statistics with `--full` afterward. Rendering changes apply to eligible saved
 records through this refresh, including source links, grouping and outcome text.
 PR titles appear when saved in the public record; refresh does not fetch missing
-metadata or rewrite approved prose. Judge and reconciliation prompt changes
+metadata or rewrite approved prose. Snapshots saved before the current format
+are reported as errors (a missing `base` or `summary` key) and keep their old
+pages, so style or link changes reach those pages only through an in-place
+edit of the HTML. Back up the files you edit, and change only markup or link
+targets, never recorded trace text. Judge and reconciliation prompt changes
 affect future reviews only. Retained findings link to their earlier report for
 context rather than treating an old explanation as newly verified. Deploy the engine, service, module options and
 static routes together; old workers retain their pinned configuration and should

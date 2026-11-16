@@ -123,6 +123,11 @@ Set `repositoryUrl` only when the HTML URL in Forgejo webhook payloads cannot
 be derived from `forgejoApi`. See [the module source](nixos/default.nix) for the
 full option definitions.
 
+`repositoryUrl` identifies the repository: it is matched against webhook
+payloads and keys each PR's review memory. Do not change it only to move links.
+Report and stats pages link to `githubRepository` when it is set, and to
+`repositoryUrl` otherwise.
+
 ## Review engine
 
 - `services.ralph.repositories.core.engine = "current"`: select the current review pipeline.
