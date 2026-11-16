@@ -2,7 +2,7 @@
 :root {
   color-scheme: dark;
   --bg: #050806; --surface: #080d0a; --raised: #0f1812; --border: #1c3024; --rule: #2a4a36;
-  --text: #b6f2c6; --muted: #5d8a69; --accent: #4dff94; --glow: rgba(77, 255, 148, .35);
+  --text: #a6c4ae; --muted: #5f7d68; --accent: #4dff94; --glow: rgba(77, 255, 148, .35);
   --red: #ff5f56; --amber: #ffb000; --cyan: #5fd7ff; --violet: #c49bff;
   --mono: "Ralph Mono", ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", monospace;
 }
@@ -16,7 +16,7 @@
 html { background: var(--bg); }
 body { margin: 0; color: var(--text); background: var(--bg); font: 13px/1.6 var(--mono); font-feature-settings: "zero"; }
 ::selection { background: var(--accent); color: var(--bg); }
-a { color: var(--accent); text-decoration: none; }
+a { color: inherit; text-decoration: underline dotted var(--rule); text-underline-offset: .25em; }
 a:hover { background: var(--accent); color: var(--bg); }
 h1, h2, h3 { font-weight: 700; letter-spacing: 0; }
 input, button, select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--rule); border-radius: 0; padding: .4rem .65rem; }

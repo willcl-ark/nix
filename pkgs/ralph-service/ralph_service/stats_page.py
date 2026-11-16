@@ -1507,6 +1507,7 @@ summary::before { content: "[+] "; color: var(--muted); }
 details[open] > summary::before { content: "[-] "; }
 details[open] > summary { margin-bottom: .75rem; }
 .list-controls, .pagination { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; margin: 1rem 0; }
+.list-controls:first-child { margin-top: 0; }
 .list-controls label { display: flex; flex-direction: column; gap: .3rem; font-size: .75rem; color: var(--muted); }
 input, select, button { font: inherit; padding: .4rem .7rem; border: 1px solid var(--rule); background: var(--bg); color: var(--text); border-radius: 0; }
 input { width: min(23rem, 100%); caret-color: var(--accent); }
@@ -1570,6 +1571,7 @@ meter::-moz-meter-bar { background: repeating-linear-gradient(to right, var(--me
 .quota-timeline-bar.codex { --bar: var(--violet); }
 .quota-timeline-marker { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--amber); box-shadow: 0 0 4px var(--amber); }
 .sort-button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; }
+td code { color: var(--muted); }
 .latest { color: var(--amber); font-weight: 700; cursor: help; }
 .sort-button:hover { color: var(--accent); }
 .sort-button::after { content: " ~"; opacity: .5; }
