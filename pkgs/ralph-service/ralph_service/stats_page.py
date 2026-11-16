@@ -1465,7 +1465,6 @@ header { position: fixed; inset: 0 auto 0 0; width: 15rem; background: var(--sur
 .cursor { display: inline-block; width: .6em; height: 1em; margin-left: .1ch; vertical-align: -.12em; background: var(--accent); box-shadow: 0 0 .5em var(--glow); animation: blink 1.1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
-.brand small { display: block; color: var(--muted); font-size: .72rem; font-weight: 400; text-shadow: none; }
 .header-top { padding: 0 .4rem 2rem; }
 .nav-label { color: var(--muted); font-size: .72rem; padding: 0 .4rem; }
 .nav-label::before { content: "# "; }
@@ -1628,7 +1627,7 @@ if (freshness) {
     .then(response => response.ok ? response.json() : Promise.reject())
     .then(data => {
       if (typeof data.generated_at === 'string') {
-        freshness.textContent = `Statistics refreshed ${data.generated_at}. `;
+        freshness.textContent = `Refreshed: ${data.generated_at}. `;
       }
     }).catch(() => {});
 }
@@ -1780,7 +1779,7 @@ def _header(summary, page_prefix="", active="Overview"):
     return (
         '<header><div class="header-top">'
         + f'<a class="brand" href="{page_prefix}reviews/"><span class="brand-mark" aria-hidden="true">~$</span>'
-        + '<span>ralph<span class="cursor" aria-hidden="true"></span><small>review statistics</small></span></a></div>'
+        + '<span>ralph<span class="cursor" aria-hidden="true"></span></span></a></div>'
         + f'<div class="nav-label">Repositories</div><nav aria-label="Repositories">{scope_links}</nav>'
         + (f'<p class="preview">{_escape(preview)}</p>' if preview else "")
         + '<div class="nav-label">Workspace</div><nav aria-label="Statistics">'
