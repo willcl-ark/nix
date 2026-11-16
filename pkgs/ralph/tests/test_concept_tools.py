@@ -22,7 +22,7 @@ class ConceptToolTests(unittest.TestCase):
             with self.subTest(name=name, outcome=outcome):
                 debug = {}
                 with (
-                    patch.object(model, "read_file", side_effect=TimeoutError)
+                    patch.object(model, "cite_file", side_effect=TimeoutError)
                     if outcome == "unavailable" and required
                     else nullcontext()
                 ):
@@ -132,7 +132,7 @@ class ConceptToolTests(unittest.TestCase):
     def test_blind_tools_search_only_base_and_reject_head_and_discussions(self):
         with (
             patch.object(model, "search_code", return_value="base matches") as search,
-            patch.object(model, "read_file", return_value="base contents") as read,
+            patch.object(model, "cite_file", return_value="base contents") as read,
             patch.object(model, "read_diff") as diff,
             patch.object(model, "read_commit") as discussion,
         ):
@@ -153,7 +153,7 @@ class ConceptToolTests(unittest.TestCase):
         search.assert_called_once_with(
             "checkout", "base-sha", "existing facility", dependencies=(), side="base"
         )
-        read.assert_called_once_with("checkout", self.snapshot.base_files, "old.cpp", 1)
+        read.assert_called_once_with(self.snapshot, "base", "old.cpp", 1, None)
         diff.assert_not_called()
         discussion.assert_not_called()
         outputs = [

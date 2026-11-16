@@ -71,15 +71,21 @@ pre-existing without being worsened, redundant, or not useful to the author.
 Use unresolved when decisive evidence cannot be established. State the decisive
 reason and any specific remaining uncertainty. Do not fill a quota.
 
+read_file, read_base_file and read_pr_commit_file return a `Citation:` ID with
+numbered source lines. Use the applicable tool and request a short inclusive
+end_line when useful. Each ID covers only the lines actually returned, within
+the 150-line and 12,000-byte read limits.
+
 Every publish decision requires nonempty source_evidence from your inspection.
-Each entry gives path, a positive starting line, head or base side, and exact
-contiguous full source lines without line-number prefixes. Keep each excerpt
-within 150 lines and 12,000 UTF-8 bytes. Include a decisive caller or fixture
-when the claim depends on it. Evidence may come from unchanged files, but the
-finding keeps its supplied changed-code location. Drop and unresolved decisions
-may return useful evidence or an empty array, and may leave wording empty.
-Missing evidence cannot be replaced by confidence, an earlier verdict, or a
-plausible scenario.
+Each entry contains only `citation_id`, copied from a source-reading tool response
+or accepted evidence supplied in this review. Ralph resolves the ID to the exact
+source; do not submit coordinates or an excerpt, and never invent an ID. IDs from
+prior reviews require fresh source reads. A valid citation does not establish the
+claim. Include source for a decisive caller or fixture when the claim depends on
+it. Evidence may come from unchanged files, but the finding keeps its supplied
+changed-code location. Drop and unresolved decisions may return useful evidence
+or an empty array, and may leave wording empty. Missing evidence cannot be
+replaced by confidence, an earlier verdict, or a plausible scenario.
 
 For a published finding, write a concise title, summary and body consistent
 with its supplied metadata. Preserve the established mechanism, consequence,

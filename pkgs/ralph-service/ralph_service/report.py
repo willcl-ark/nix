@@ -398,7 +398,19 @@ def _public_source_evidence(value):
     if not isinstance(value, list):
         return []
     return [
-        _filtered(item, ("path", "line", "side", "commit", "parent", "excerpt"))
+        _filtered(
+            item,
+            (
+                "citation_id",
+                "path",
+                "line",
+                "end_line",
+                "side",
+                "commit",
+                "parent",
+                "excerpt",
+            ),
+        )
         for item in value
         if isinstance(item, dict)
     ]

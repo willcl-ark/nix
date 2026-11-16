@@ -13,10 +13,10 @@ but it does not complete the outstanding coverage assignments.
 A follow-up pass may supply remaining assignments, accepted test assessments,
 rejected_test_coverage with the original assessments and validation errors, and
 already reported candidates. Rejected assessments do not establish coverage.
-Reread the cited source on the specified side, correct the excerpt or coordinates,
+Reread the relevant source on the specified side to obtain a valid citation_id,
 and reassess the claim before resubmitting it. If the source does not support
 it, inspect further or mark the assignment deferred with the unanswered question.
-Do not merely repeat a rejected quotation or change its status to avoid validation.
+Do not merely repeat a rejected citation or change its status to avoid validation.
 Inspect those remaining groups, reuse relevant prior evidence, and avoid
 reporting an existing candidate again. Resolve each supplied deferred question before marking its paths checked; inspecting another
 behavior in the same file does not resolve it. A confirmed
@@ -29,7 +29,7 @@ Use only assigned changed files in paths; unchanged supporting tests and helpers
 belong in evidence, not paths. Account for every required path, including
 production changes with unchanged tests. For each group, give `paths`, `status`,
 `evidence`, `regression`, and `reason`. Use `checked` only after inspecting the relevant implementation and
-assertions: cite exact source excerpts, including unchanged tests when useful,
+assertions: cite source returned by the reading tools, including unchanged tests when useful,
 and name a plausible wrong implementation those assertions distinguish. A
 confirmed missing assertion can also be checked and reported as a finding.
 Use `deferred` with the specific unanswered inspection question when work is
@@ -37,16 +37,18 @@ unfinished. Use `not_applicable` with a concrete reason for a mechanical change,
 or for generated data whose validation is explained in another group. Do not
 call coverage complete because a fixture exists or a file excerpt was supplied.
 
-Every evidence entry must give path, side, the 1-based starting line, and an
-excerpt copied from read_file or read_base_file for that side. Copy contiguous
-full lines exactly, preserving indentation, blank lines and punctuation, and
-remove only the tool's displayed line-number prefixes. Do not substitute prose,
-ellipses, partial lines or compressed code for the source in excerpt. Put
-explanations in reason and regression. Use separate entries for noncontiguous source.
-Keep each excerpt short and within 150 lines and 12,000 UTF-8 bytes. Encode
-newlines normally in JSON so decoding yields actual newlines, not literal
-backslash-n text. A quote that exists at a different line or revision will be
-rejected. If precise source cannot be inspected, report the gap as deferred.
+read_file and read_base_file return a `Citation:` ID with numbered source lines. Use the applicable tool and request a short inclusive
+end_line when useful. Each ID covers only the lines actually returned, within
+the 150-line and 12,000-byte read limits.
+
+Every evidence entry must contain only `citation_id`, copied from a source-reading
+tool response in this review. Ralph resolves the ID to the exact file, revision,
+lines and source text; do not submit coordinates or an excerpt. You may reuse IDs
+from accepted evidence supplied by an earlier stage of this review. IDs from a
+prior review are not valid here; reread that source. Never invent an ID. Put
+explanations in reason and regression. A valid citation establishes which source
+was returned, not that it supports your assessment. If precise source cannot be
+inspected, report the gap as deferred.
 
 For deployment or mode changes, compare the last old-state and first new-state
 behavior, rollback or reorg across the transition, and the initial state used

@@ -244,7 +244,10 @@ def reconcile(
                 )
             )
             if evidence or assessment["status"] != "unclear":
-                _source_evidence(evidence, snapshot, allow_commit=commit_finding)
+                evidence = _source_evidence(
+                    evidence, snapshot, allow_commit=commit_finding
+                )
+                assessment = {**assessment, "source_evidence": evidence}
             if assessment["status"] != "unclear" and not any(
                 item["side"] == "head" or (commit_finding and item["side"] == "commit")
                 for item in evidence

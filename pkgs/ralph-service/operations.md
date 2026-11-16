@@ -53,6 +53,14 @@ remain stored but are omitted from the pending list.
 
 ### Report rendering
 
+New reviews cite source using citation IDs issued by source-reading tools. Ralph
+resolves IDs within the current review and saves the file, revision, lines and
+exact source text with the evidence. Later stages and repair passes can reuse
+same-review IDs; prior-review evidence requires fresh source reads. Unknown IDs
+still require repair. Valid citations do not establish that the review's
+reasoning is correct. Saved reports remain self-contained and existing reports
+remain readable without rerunning reviews.
+
 The Review report contains approved findings, their explanations and qualifications,
 and a coverage link into the Run archive. Failed verification remains explicit. The Run archive contains preliminary agent replies, decisions,
 coverage diagnostics, retained history and usage. Intermediate claims in the

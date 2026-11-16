@@ -172,6 +172,16 @@ class ProtocolTests(unittest.TestCase):
 
     def setUp(self):
         self.snapshot = SimpleNamespace(
+            citations={
+                "setup": {
+                    "citation_id": "setup",
+                    "path": "src/example.cpp",
+                    "line": 5,
+                    "end_line": 5,
+                    "side": "head",
+                    "excerpt": "setup();",
+                }
+            },
             changed_paths={"src/example.cpp"},
             head_files={"src/example.cpp": "blob"},
             base_files={"src/example.cpp": "old"},
@@ -191,10 +201,7 @@ class ProtocolTests(unittest.TestCase):
             },
             "source_evidence": [
                 {
-                    "path": "src/example.cpp",
-                    "line": 5,
-                    "side": "head",
-                    "excerpt": "setup();",
+                    "citation_id": "setup",
                 }
             ],
         }
@@ -299,7 +306,7 @@ class ProtocolTests(unittest.TestCase):
         path = "test/functional/existing.py"
         self.snapshot.head_files[path] = "unchanged-test-blob"
         assessment = self.checked_test()
-        assessment["evidence"] = [{**self.finding["source_evidence"][0], "path": path}]
+        self.snapshot.citations["setup"]["path"] = path
         assessment["regression"] = (
             "Activating one block late would still pass the existing assertion."
         )
@@ -310,7 +317,10 @@ class ProtocolTests(unittest.TestCase):
             self.snapshot.changed_paths,
         )
         self.assertEqual(result["coverage"], self.coverage)
-        self.assertEqual(result["test_coverage"], [assessment])
+        self.assertEqual(
+            result["test_coverage"],
+            [{**assessment, "evidence": [self.snapshot.citations["setup"]]}],
+        )
 
     def test_deferred_tests_force_partial_but_explained_mechanical_changes_do_not(self):
         assessment = {
@@ -362,7 +372,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result["findings"], [{**candidate, "id": "tests:1"}])
         self.assertEqual(result["test_coverage"], [])
         self.assertEqual(result["coverage"]["status"], "partial")
-        self.assertIn("does not match", " ".join(result["coverage"]["limitations"]))
+        self.assertIn(
+            "unexpected: excerpt", " ".join(result["coverage"]["limitations"])
+        )
 
     def test_backport_verdict_requires_complete_evidence(self):
         assessment = {
@@ -518,7 +530,7 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual([finding["id"] for finding in published], ["finding:1"])
         self.assertEqual(result["decisions"][1]["disposition"], "unresolved")
-        self.assertIn("does not match", result["decisions"][1]["reason"])
+        self.assertIn("unexpected: excerpt", result["decisions"][1]["reason"])
 
     def test_challenger_preserves_valid_counterevidence_and_accounts_for_every_candidate(
         self,
@@ -545,7 +557,10 @@ class ProtocolTests(unittest.TestCase):
             [{"id": f"tests:{i}"} for i in range(1, 4)],
             self.snapshot,
         )
-        self.assertEqual(result["challenges"][0], good)
+        self.assertEqual(
+            result["challenges"][0],
+            {**good, "source_evidence": [self.snapshot.citations["setup"]]},
+        )
         self.assertEqual(
             [item["outcome"] for item in result["challenges"]],
             ["refuted", "unresolved", "unresolved"],
@@ -599,7 +614,16 @@ class ProtocolTests(unittest.TestCase):
         result, accepted = protocol.verification(
             self.verification(decisions), candidates, self.snapshot
         )
-        self.assertEqual(accepted, [{**self.finding, "id": "finding:1"}])
+        self.assertEqual(
+            accepted,
+            [
+                {
+                    **self.finding,
+                    "source_evidence": [self.snapshot.citations["setup"]],
+                    "id": "finding:1",
+                }
+            ],
+        )
         self.assertEqual(
             [decision["disposition"] for decision in result["decisions"]],
             ["supported", "refuted", "unresolved"],

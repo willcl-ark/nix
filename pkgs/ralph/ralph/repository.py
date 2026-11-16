@@ -8,7 +8,7 @@ import tempfile
 import uuid
 from contextlib import contextmanager
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from pathlib import Path
 
@@ -794,6 +794,57 @@ def read_pr_commit_file(checkout, base, head, commit, parent, path, start_line):
     return read_file(checkout, tracked_files_at(checkout, revision), path, start_line)
 
 
+def cite_file(
+    snapshot, side, path, start_line, end_line=None, *, commit=None, parent=None
+):
+    """Issue evidence only for source lines returned by this review's read tools."""
+    if type(start_line) is not int or start_line < 1:
+        raise ToolFailure("invalid_request", "Invalid starting line.")
+    if end_line is not None and (
+        type(end_line) is not int
+        or end_line < start_line
+        or end_line - start_line >= 150
+    ):
+        raise ToolFailure(
+            "invalid_request", "Source ranges must contain 1 to 150 lines."
+        )
+    if side == "commit":
+        revision = pr_commit_revision(
+            snapshot.checkout, snapshot.diff_base_sha, snapshot.head_sha, commit, parent
+        )
+        files = tracked_files_at(snapshot.checkout, revision)
+    elif side in {"head", "base"}:
+        files = snapshot.head_files if side == "head" else snapshot.base_files
+    else:
+        raise ToolFailure("invalid_request", "Invalid source revision.")
+    output = read_file(snapshot.checkout, files, path, start_line)
+    header, _, body = output.partition("\n")
+    count = 150 if end_line is None else end_line - start_line + 1
+    lines = body.splitlines()[:count]
+    if not lines or (end_line is not None and len(lines) != count):
+        raise ToolFailure(
+            "invalid_request", "Source range exceeds the file or read limit."
+        )
+    citation_id = uuid.uuid4().hex
+    prefix = f"Citation: {citation_id}\n{header}\n"
+    while lines and len((prefix + "\n".join(lines) + "\n").encode()) > MAX_TOOL_BYTES:
+        lines.pop()
+    if not lines or (end_line is not None and len(lines) != count):
+        raise ToolFailure("invalid_request", "Source range exceeds the read limit.")
+    source = {
+        "citation_id": citation_id,
+        "path": path,
+        "side": side,
+        "line": start_line,
+        "end_line": start_line + len(lines) - 1,
+        "excerpt": "\n".join(line.partition(": ")[2] for line in lines),
+    }
+    if side == "commit":
+        source.update(commit=commit, parent=parent)
+    snapshot.citations[citation_id] = source
+    return prefix + "\n".join(lines) + "\n"
+
+
 def read_pr_commit(checkout, base, head, commit, path, start_line, *, dependencies=()):
     """Inspect one pinned PR commit, including changes later reverted by the PR."""
     for dependency in dependencies:
@@ -935,6 +986,7 @@ class RepositorySnapshot:
     changed_paths: frozenset[str]
     dependencies: tuple[DependencySnapshot, ...] = ()
     experiment_shell: str | None = None
+    citations: dict = field(default_factory=dict, compare=False, repr=False)
 
 
 def resolve_commit(checkout, revision):

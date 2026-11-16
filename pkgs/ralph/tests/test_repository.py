@@ -149,7 +149,7 @@ class LocalRepositoryTests(unittest.TestCase):
             "title": "Intermediate change",
             "summary": "Review intermediate behavior",
             "body": "Keep related changes together",
-            "source_evidence": [{**location, "excerpt": "head"}],
+            "source_evidence": [self.citation(snapshot, location)],
         }
         verification = {
             "coverage": coverage,
@@ -214,6 +214,18 @@ class LocalRepositoryTests(unittest.TestCase):
         self.assertIn(f"/blob/{self.ancestor}/code.txt#L1", parent_link)
         self.assertIn(f"parent of {self.head[:12]}", parent_link)
 
+    def citation(self, snapshot, location):
+        output = repository.cite_file(
+            snapshot,
+            location["side"],
+            location["path"],
+            location["line"],
+            location["line"],
+            commit=location.get("commit"),
+            parent=location.get("parent"),
+        )
+        return {"citation_id": output.splitlines()[0].removeprefix("Citation: ")}
+
     def test_commit_finding_is_reverified_on_later_run(self):
         location = {
             "path": "code.txt",
@@ -240,6 +252,7 @@ class LocalRepositoryTests(unittest.TestCase):
             "source_evidence": [{**location, "excerpt": "original"}],
         }
         snapshot = repository.snapshot_repository(self.repo, self.ancestor, self.head)
+        assessment["source_evidence"] = [self.citation(snapshot, location)]
         head_finding = {**finding, "side": "head"}
         head_finding.pop("commit")
         head_finding.pop("parent")

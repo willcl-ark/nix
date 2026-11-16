@@ -73,6 +73,12 @@ class FeedbackTests(unittest.TestCase):
             ]
         }
 
+    def citation(self, side="head", line=2, commit=None, parent=None):
+        output = repository.cite_file(
+            self.snapshot, side, "index.cpp", line, line, commit=commit, parent=parent
+        )
+        return {"citation_id": output.splitlines()[0].removeprefix("Citation: ")}
+
     def test_historical_commit_suggestion_passes_normal_verification(self):
         location = {
             "path": "index.cpp",
@@ -81,7 +87,7 @@ class FeedbackTests(unittest.TestCase):
             "commit": self.snapshot.head_sha,
             "parent": None,
         }
-        evidence = [{**location, "excerpt": "new_trigger();"}]
+        evidence = [self.citation("commit", 2, self.snapshot.head_sha)]
         self.packet["findings"][0].update(severity="suggestion", **location)
         memory = feedback.reconcile(
             self.packet,
@@ -135,14 +141,7 @@ class FeedbackTests(unittest.TestCase):
             "unchanged": False,
             "unchanged_since_report": True,
             "reason": "The new trigger still reaches the shared limitation.",
-            "source_evidence": [
-                {
-                    "path": "index.cpp",
-                    "line": 2,
-                    "side": "head",
-                    "excerpt": "new_trigger();",
-                }
-            ],
+            "source_evidence": [self.citation()],
             **kwargs,
         }
 
@@ -180,8 +179,7 @@ class FeedbackTests(unittest.TestCase):
         self.assertFalse(self.reconcile([assessment])["collapsed"])
         self.assertTrue(self.reconcile([assessment])["unchanged_since_report"])
         assessment["source_evidence"] = [
-            {"path": "index.cpp", "line": 1, "side": side, "excerpt": "shared_limit();"}
-            for side in ("base", "head")
+            self.citation(side, 1) for side in ("base", "head")
         ]
         record = self.reconcile([assessment])
         self.assertTrue(record["collapsed"])
@@ -335,14 +333,7 @@ class FeedbackTests(unittest.TestCase):
                 self.assessment(
                     prior_key="invalid",
                     status="fixed",
-                    source_evidence=[
-                        {
-                            "path": "index.cpp",
-                            "line": 1,
-                            "side": "base",
-                            "excerpt": "shared_limit();",
-                        }
-                    ],
+                    source_evidence=[self.citation("base", 1)],
                 ),
                 self.assessment(prior_key="duplicate", duplicate_of=original["key"]),
             ],

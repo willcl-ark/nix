@@ -5,7 +5,7 @@ import re
 import subprocess
 from urllib.parse import urlsplit
 
-from .repository import MAX_TOOL_BYTES, read_file, pr_commit_revision, tracked_files_at
+from .repository import read_file, pr_commit_revision, tracked_files_at
 from .evidence import ToolFailure
 
 
@@ -54,20 +54,14 @@ REVIEW_LOCATION = {
 }
 SOURCE_EVIDENCE = object_schema(
     {
-        **LOCATION,
-        "excerpt": {
+        "citation_id": {
             "type": "string",
-            "description": (
-                "Exact contiguous full source lines starting at the given 1-based line "
-                "in the specified revision's file. Preserve indentation and newlines; "
-                "omit displayed line-number prefixes. No prose summaries, omitted "
-                "lines, inserted ellipses or reformatted code. At most 150 lines and 12000 "
-                "UTF-8 bytes."
-            ),
-        },
+            "description": "Citation ID issued by a successful source-file read in this review.",
+        }
     }
 )
-REVIEW_EVIDENCE = object_schema({**SOURCE_EVIDENCE["properties"], **REVIEW_LOCATION})
+REVIEW_EVIDENCE = SOURCE_EVIDENCE
+
 CANDIDATE = object_schema(
     {
         "kind": {"type": "string", "enum": ["defect", "design", "suggestion"]},
@@ -568,7 +562,7 @@ def tests_discovery(text, snapshot, required_paths, *, stage="tests"):
             if not isinstance(evidence, list):
                 raise InvalidReview("Test coverage evidence must be a list")
             if evidence or status == "checked":
-                _source_evidence(evidence, snapshot)
+                assessment["evidence"] = _source_evidence(evidence, snapshot)
         except InvalidReview as exc:
             # An unsupported coverage claim must not erase separately valid leads.
             limitations.append(f"Test coverage assessment {index}: {exc}")
@@ -593,42 +587,17 @@ def tests_discovery(text, snapshot, required_paths, *, stage="tests"):
 def _source_evidence(evidence, snapshot, *, allow_commit=False):
     if not isinstance(evidence, list) or not evidence:
         raise InvalidReview("Finding must include source evidence")
-    for source in evidence:
-        _normalize_location(source)
-        schema = (
-            REVIEW_EVIDENCE
-            if isinstance(source, dict) and source.get("side") == "commit"
-            else SOURCE_EVIDENCE
-        )
-        _object(source, schema["properties"])
-        if source["side"] == "commit" and allow_commit:
-            files = _commit_files(source, snapshot)
-        elif source["side"] in ("head", "base"):
-            files = (
-                snapshot.head_files if source["side"] == "head" else snapshot.base_files
-            )
-        else:
+    resolved = []
+    for reference in evidence:
+        _object(reference, SOURCE_EVIDENCE["properties"])
+        _text(reference, ("citation_id",))
+        source = snapshot.citations.get(reference["citation_id"])
+        if source is None:
+            raise InvalidReview("Unknown source citation for this review")
+        if source["side"] == "commit" and not allow_commit:
             raise InvalidReview("Invalid source evidence side")
-        if not isinstance(source["path"], str) or source["path"] not in files:
-            raise InvalidReview("Source evidence must identify a tracked file")
-        if type(source["line"]) is not int or source["line"] < 1:
-            raise InvalidReview("Source evidence must identify a positive line")
-        _text(source, ("excerpt",))
-        lines = source["excerpt"].removesuffix("\n").split("\n")
-        if len(lines) > 150 or len(source["excerpt"].encode()) > MAX_TOOL_BYTES:
-            raise InvalidReview("Source evidence exceeds the file-read limit")
-        try:
-            actual = read_file(snapshot.checkout, files, source["path"], source["line"])
-        except (OSError, subprocess.SubprocessError, ToolFailure) as exc:
-            raise InvalidReview("Source evidence could not be read") from exc
-        expected = "".join(
-            f"{number}: {line}\n" for number, line in enumerate(lines, source["line"])
-        )
-        if not actual.partition("\n")[2].startswith(expected):
-            raise InvalidReview(
-                "Source evidence does not match the snapshot: "
-                f"{source['path']}:{source['line']} ({source['side']})"
-            )
+        resolved.append(dict(source))
+    return resolved
 
 
 def _concept_assessment(value):
@@ -901,7 +870,9 @@ def _verified_finding(finding, snapshot, *, allow_commit=False):
     ):
         raise InvalidReview("Invalid security classification")
     _text(security, ("reason",))
-    _source_evidence(finding["source_evidence"], snapshot, allow_commit=allow_commit)
+    finding["source_evidence"] = _source_evidence(
+        finding["source_evidence"], snapshot, allow_commit=allow_commit
+    )
 
 
 def concept_verification(text, concept_candidate=None, blind_alternatives=None):
@@ -1196,7 +1167,7 @@ def challenge(text, candidates, snapshot):
             if not isinstance(evidence, list):
                 raise InvalidReview("Expected challenger source evidence")
             if evidence or item["outcome"] == "refuted":
-                _source_evidence(
+                item["source_evidence"] = _source_evidence(
                     evidence,
                     snapshot,
                     allow_commit=identifier.startswith("commit_flow:"),
@@ -1256,7 +1227,7 @@ def judgment(text, verified_findings, verified_concept, snapshot):
             if not isinstance(evidence, list):
                 raise InvalidReview("Expected judge source evidence")
             if evidence or disposition == "publish":
-                _source_evidence(
+                item["source_evidence"] = _source_evidence(
                     evidence,
                     snapshot,
                     allow_commit=original.get("side") == "commit"

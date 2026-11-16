@@ -193,8 +193,7 @@ class PipelineTests(unittest.TestCase):
             "regression": "Removing setup leaves the fixture uninitialized.",
             "evidence": [
                 {
-                    **self.published["source_evidence"][0],
-                    "excerpt": "Sets up the fixture.",
+                    "citation_id": "unknown",
                 }
             ],
         }
@@ -212,7 +211,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(payload["previous_test_coverage"], [])
                 rejection = payload["rejected_test_coverage"][0]
                 self.assertEqual(rejection["assessment"], assessment)
-                self.assertIn("src/example.cpp:3 (head)", rejection["error"])
+                self.assertIn("Unknown source citation", rejection["error"])
                 return discovery(test_coverage=[repaired])
             if stage == "challenger":
                 return self.challenge(*args, **kwargs)
@@ -234,7 +233,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(self.result.findings), 1)
         record = self.debug["stages"]["tests"]
         self.assertEqual(record["initial_test_coverage"], [])
-        self.assertEqual(record["test_coverage"], [repaired])
+        self.assertEqual(
+            record["test_coverage"],
+            [{**repaired, "evidence": [self.snapshot.citations["head-source"]]}],
+        )
         self.assertEqual(record["coverage_before_followup"]["status"], "partial")
         self.assertEqual(self.debug["coverage"]["status"], "complete")
 
@@ -736,6 +738,16 @@ class PipelineTests(unittest.TestCase):
             {"src/example.cpp": "base"},
             frozenset({"src/example.cpp"}),
         )
+        for side in ("head", "base"):
+            identifier = f"{side}-source"
+            self.snapshot.citations[identifier] = {
+                "citation_id": identifier,
+                "path": "src/example.cpp",
+                "line": 3,
+                "end_line": 3,
+                "side": side,
+                "excerpt": "setup();",
+            }
         self.published = {
             "kind": "suggestion",
             "severity": "suggestion",
@@ -749,14 +761,7 @@ class PipelineTests(unittest.TestCase):
                 "classification": "non_security",
                 "reason": "This only removes duplicate fixture setup.",
             },
-            "source_evidence": [
-                {
-                    "path": "src/example.cpp",
-                    "line": 3,
-                    "side": "head",
-                    "excerpt": "setup();",
-                }
-            ],
+            "source_evidence": [{"citation_id": "head-source"}],
         }
         self.debug = {}
         self.historical_research = {
@@ -808,7 +813,10 @@ class PipelineTests(unittest.TestCase):
                         "title": item["title"],
                         "summary": item["summary"],
                         "body": item["body"],
-                        "source_evidence": item["source_evidence"],
+                        "source_evidence": [
+                            {"citation_id": source["citation_id"]}
+                            for source in item["source_evidence"]
+                        ],
                     }
                     for item in payload["findings"]
                 ],
@@ -1432,8 +1440,7 @@ class PipelineTests(unittest.TestCase):
                     "unchanged_since_report": True,
                     "reason": "The same setup appears in base and head.",
                     "source_evidence": [
-                        {**self.published["source_evidence"][0], "side": side}
-                        for side in ("base", "head")
+                        {"citation_id": f"{side}-source"} for side in ("base", "head")
                     ],
                 }
             ]
@@ -1586,9 +1593,7 @@ class PipelineTests(unittest.TestCase):
                 "prior_key": "previous:2",
                 "candidate_ids": [],
                 "status": "fixed",
-                "source_evidence": [
-                    {**self.published["source_evidence"][0], "side": "base"}
-                ],
+                "source_evidence": [{"citation_id": "base-source"}],
             }
         )
         self.run_review(reviewer, audit=audit, review_feedback=packet)

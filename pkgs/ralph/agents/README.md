@@ -162,7 +162,10 @@ The [judge](judge/prompt.md) runs when supported findings or an eligible concept
 objection remain. It independently checks eligible findings, rebuttals,
 and optional experiment evidence. It returns `publish`, `drop`, or `unresolved`
 for each eligible finding and writes approved titles, summaries and bodies.
-Every publication requires exact source evidence. The judge cannot add or merge
+Every publication requires source evidence identified by citation IDs issued by
+source-reading tools in this review. Ralph resolves IDs to exact snapshot text;
+models do not copy source excerpts or coordinates into evidence. Prior-review IDs
+require fresh source reads. The judge cannot add or merge
 findings, resurrect ineligible candidates, or change kind, severity, security,
 or location. It may also approve and summarize an eligible concept objection.
 No model edits its approved wording afterward.

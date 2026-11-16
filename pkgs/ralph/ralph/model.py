@@ -13,13 +13,12 @@ from . import claude, progress, research, transport, upstream
 from .evidence import ToolFailure
 from .repository import (
     find_paths,
-    read_file,
+    cite_file,
     read_diff,
     search_code,
     blame_base,
     read_commit,
     read_pr_commit,
-    read_pr_commit_file,
 )
 from .usage import web_search_calls
 
@@ -107,7 +106,7 @@ TOOLS = [
         "name": "read_file",
         "strict": True,
         "description": "Read numbered lines from a tracked text file at the PR head. "
-        "Returns up to 300 lines and 12,000 UTF-8 bytes. Use another call for later lines.",
+        "Returns up to 150 lines and 12,000 UTF-8 bytes. Use another call for later lines.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -409,6 +408,18 @@ PR_COMMIT_FILE_TOOL = {
         "additionalProperties": False,
     },
 }
+for tool in [*TOOLS, PR_COMMIT_FILE_TOOL]:
+    if tool["name"] in {"read_file", "read_base_file", "read_pr_commit_file"}:
+        tool["description"] += (
+            " Returns a citation ID usable as source evidence in this review. "
+            "Citable reads return at most 150 lines and 12,000 UTF-8 bytes."
+        )
+        tool["parameters"]["properties"]["end_line"] = {
+            "type": ["integer", "null"],
+            "description": "Inclusive last line; null reads up to 150 lines.",
+        }
+        tool["parameters"]["required"].append("end_line")
+
 FOCUSED_TOOLS = [*TOOLS[:5], PR_COMMIT_TOOL, PR_COMMIT_FILE_TOOL]
 TOOLS.extend([PR_COMMIT_TOOL, PR_COMMIT_FILE_TOOL])
 BASE_TOOLS = [
@@ -1129,19 +1140,13 @@ def openai_review(
                             answer = find_paths(files, args.get("query"))
                         elif call["name"] == "find_base_paths":
                             answer = find_paths(snapshot.base_files, args.get("query"))
-                        elif call["name"] == "read_file":
-                            answer = read_file(
-                                checkout,
-                                files,
+                        elif call["name"] in {"read_file", "read_base_file"}:
+                            answer = cite_file(
+                                snapshot,
+                                "head" if call["name"] == "read_file" else "base",
                                 args.get("path"),
                                 args.get("start_line"),
-                            )
-                        elif call["name"] == "read_base_file":
-                            answer = read_file(
-                                checkout,
-                                snapshot.base_files,
-                                args.get("path"),
-                                args.get("start_line"),
+                                args.get("end_line"),
                             )
                         elif call["name"] == "read_diff":
                             answer = read_diff(
@@ -1154,14 +1159,14 @@ def openai_review(
                                 dependencies=getattr(snapshot, "dependencies", ()),
                             )
                         elif call["name"] == "read_pr_commit_file":
-                            answer = read_pr_commit_file(
-                                checkout,
-                                snapshot.diff_base_sha,
-                                snapshot.head_sha,
-                                args.get("commit"),
-                                args.get("parent"),
+                            answer = cite_file(
+                                snapshot,
+                                "commit",
                                 args.get("path"),
                                 args.get("start_line"),
+                                args.get("end_line"),
+                                commit=args.get("commit"),
+                                parent=args.get("parent"),
                             )
                         elif call["name"] == "read_pr_commit":
                             answer = read_pr_commit(

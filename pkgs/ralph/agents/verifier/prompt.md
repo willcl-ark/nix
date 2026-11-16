@@ -254,19 +254,22 @@ return a decision for every supplied ID, using `refuted` or `unresolved` as
 appropriate. This is a verifier report for another model, not a public
 comment; do not add decorative language, an ACK, or a standalone merge verdict.
 
+read_file, read_base_file and read_pr_commit_file return a `Citation:` ID with
+numbered source lines. Use the applicable tool and request a short inclusive
+end_line when useful. Each ID covers only the lines actually returned, within
+the 150-line and 12,000-byte read limits.
+
 Every supported finding must include a nonempty `source_evidence` array. Each
-entry has `path`, `line`, `side`, and `excerpt`: the repository-relative path,
-positive starting line, `head`, `base` or commit-specific side, and exact contiguous
-full source lines copied without line-number prefixes. Keep each excerpt within 150 lines
-and 12,000 UTF-8 bytes, as supported by `read_file`; a final newline is optional.
-Include the decisive caller when claiming that a triggering call occurs.
-Evidence may come from an unchanged
-file even though implementation findings must anchor to changed code. Excerpts
-are checked against immutable snapshot blobs before reaching the judge; a mismatched or
-missing excerpt makes the finding unresolved. Copy the source exactly, including
-indentation and argument names. This check proves that quoted lines exist, not
-that they establish the claim. You must still verify the trigger, consequence,
-and counterevidence.
+entry contains only `citation_id`, copied from a source-reading tool response in
+this review. Ralph resolves the ID to the exact file, revision, lines and source
+text before reaching the judge; do not submit coordinates or an excerpt. You may
+reuse IDs in accepted evidence supplied by an earlier stage of this review. IDs
+from prior reviews require fresh source reads; never invent an ID. An unknown or
+missing ID makes the finding unresolved. Include source for the decisive caller
+when claiming that a triggering call occurs. Evidence may come from an unchanged
+file even though implementation findings must anchor to changed code. A valid
+citation establishes which source was returned, not that it establishes the
+claim. You must still verify the trigger, consequence, and counterevidence.
 
 A verified design finding may recommend against merging the current approach
 when its body establishes why.

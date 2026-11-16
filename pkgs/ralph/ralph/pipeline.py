@@ -1072,7 +1072,16 @@ def review_with_independent_passes(
                     "coverage": json.loads(record["raw_output"])["coverage"],
                     "findings": [],
                     "requires_sensitive_review": False,
-                    "test_coverage": combined,
+                    "test_coverage": [
+                        {
+                            **assessment,
+                            "evidence": [
+                                {"citation_id": source["citation_id"]}
+                                for source in assessment["evidence"]
+                            ],
+                        }
+                        for assessment in combined
+                    ],
                 }
             ),
             snapshot,

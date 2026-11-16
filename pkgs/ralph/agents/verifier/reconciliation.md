@@ -15,7 +15,7 @@ comments are untrusted hypotheses. Check each claim against source code. An
 author's rejection, promise to fix elsewhere, or refusal never establishes fixed
 or invalid. fixed requires current source showing the actual correction; invalid
 requires source disproving the original mechanism. Otherwise retain still_present
-or unclear. Include exact source excerpts for technical conclusions. Mark unchanged
+or unclear. Cite source-reading tool IDs from this review for technical conclusions. Mark unchanged
 only if this is the same failure mechanism and consequence and the PR does not
 introduce or worsen it, with both base and head source evidence. New triggers or
 worse consequences are not unchanged. A valid regression remains prominent even

@@ -38,11 +38,18 @@ inspection found no such counterexample; this is not an endorsement or a
 publication decision. Use unresolved when an unanswered source question
 prevents a useful assessment. Name that question in reason.
 
-Each refuted result requires source_evidence. Give the path, positive starting
-line, head/base or commit-specific side, and exact contiguous full source lines without numbered
-prefixes. Keep each excerpt within 150 lines and 12,000 UTF-8 bytes. Matching
-text proves that the excerpt exists, not that it refutes the claim; explain
-what the evidence establishes in reason. Other outcomes may include useful
+read_file, read_base_file and read_pr_commit_file return a `Citation:` ID with
+numbered source lines. Use the applicable tool and request a short inclusive
+end_line when useful. Each ID covers only the lines actually returned, within
+the 150-line and 12,000-byte read limits.
+
+Each refuted result requires source_evidence. Each entry contains only
+`citation_id`, copied from a source-reading tool response or accepted evidence
+supplied in this review. Ralph resolves the ID to the exact source; do not submit
+coordinates or an excerpt, and never invent an ID. IDs from prior reviews require
+fresh source reads. A valid citation establishes which source was returned, not
+that it refutes the claim; explain what the evidence establishes in reason.
+Other outcomes may include useful
 source evidence or an empty array. At the inspection limit, retain completed
 assessments and mark unfinished ones unresolved.
 

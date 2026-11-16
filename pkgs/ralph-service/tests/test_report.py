@@ -561,8 +561,10 @@ if (value < 1) return;
             "body": "Reject zero before dividing the supplied value.",
         }
         source = {
+            "citation_id": "source:example",
             "path": "src/example.cpp",
             "line": 12,
+            "end_line": 12,
             "side": "head",
             "excerpt": "return value / divisor;",
         }

@@ -70,7 +70,9 @@ token. All review stages, including Claude adversarial review, and follow-up
 assessments use the proxy and the same key. Ralph retains its prompts and tool
 execution. A failed proxy request does not fall back to the paid OpenAI API.
 The proxy converts Claude's strict JSON schema to prompt guidance; Ralph still
-parses and validates the response before accepting it.
+parses and validates the response before accepting it. Source evidence uses
+citation IDs from source-reading tools in the current review. Ralph resolves
+these to exact snapshot text rather than asking models to reproduce quotations.
 
 Stop new review intake and let active work finish before changing the endpoint
 and key together. Queued jobs and frozen evaluations retain their recorded
