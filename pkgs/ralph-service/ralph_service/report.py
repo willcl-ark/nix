@@ -1408,6 +1408,7 @@ th, td { vertical-align: top; }
 details { border-top: 1px solid var(--border); padding: .75rem 0; }
 main > details { border-top: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
 summary { font-weight: 600; }
+:not(pre, a) > code { background: var(--raised); border: 1px solid var(--border); padding: 0 .35ch; }
 .severity-tag { color: var(--cyan); }
 summary:has(.stage-status) { color: var(--text); }
 .stage-status { white-space: pre; color: var(--muted); }
