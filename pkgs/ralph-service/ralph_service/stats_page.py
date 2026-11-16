@@ -661,7 +661,14 @@ def _cells(values):
     )
 
 
+LIST_PAGE_SIZE = 50
+
+
 def _interactive_table(headers, rows, label, filters=(), controls=""):
+    rows = [
+        row if index < LIST_PAGE_SIZE else row.replace("<tr", "<tr hidden", 1)
+        for index, row in enumerate(rows)
+    ]
     options = "".join(
         f'<option value="{_escape(value)}">{_escape(text)}</option>'
         for value, text in filters
@@ -1685,27 +1692,37 @@ document.querySelectorAll('.data-list').forEach(list => {
   const previous = list.querySelector('[data-prev]');
   const next = list.querySelector('[data-next]');
   const status = list.querySelector('[data-page]');
-  const searchable = rows.map(row => (row.textContent + ' ' + [...row.querySelectorAll('[data-search-text]')]
-    .map(cell => cell.dataset.searchText).join(' ')).toLocaleLowerCase());
-  const size = 25;
+  const searchable = new Map(rows.map(row => [row, (row.textContent + ' ' + [...row.querySelectorAll('[data-search-text]')]
+    .map(cell => cell.dataset.searchText).join(' ')).toLocaleLowerCase()]));
+  const size = """
+        + str(LIST_PAGE_SIZE)
+        + """;
+  const bySeverity = [...rows].sort((a, b) => {
+    for (const level of ['critical', 'major', 'minor', 'suggestion', 'unknown']) {
+      const difference = (counts.get(b)[level] || 0) - (counts.get(a)[level] || 0);
+      if (difference) return difference;
+    }
+    return 0;
+  });
+  let order = rows;
   let page = 0;
   function render() {
     const query = search.value.trim().toLocaleLowerCase();
-    const matches = rows.filter((row, index) => searchable[index].includes(query)
+    const sorted = sort && sort.value === 'severity' ? bySeverity : rows;
+    if (sorted !== order) {
+      list.querySelector('tbody').append(...sorted);
+      order = sorted;
+    }
+    const matches = sorted.filter(row => searchable.get(row).includes(query)
       && (!filter || !filter.value || row.dataset.filter === filter.value)
       && (!repository || !repository.value || row.dataset.repository === repository.value)
       && (!severity || !severity.value || counts.get(row)[severity.value] > 0));
-    if (sort && sort.value === 'severity') matches.sort((a, b) => {
-      for (const level of ['critical', 'major', 'minor', 'suggestion', 'unknown']) {
-        const difference = (counts.get(b)[level] || 0) - (counts.get(a)[level] || 0);
-        if (difference) return difference;
-      }
-      return 0;
-    });
-    list.querySelector('tbody').append(...matches);
     page = Math.min(page, Math.max(0, Math.ceil(matches.length / size) - 1));
-    rows.forEach(row => { row.hidden = true; });
-    matches.slice(page * size, (page + 1) * size).forEach(row => { row.hidden = false; });
+    const shown = new Set(matches.slice(page * size, (page + 1) * size));
+    rows.forEach(row => {
+      const hidden = !shown.has(row);
+      if (row.hidden !== hidden) row.hidden = hidden;
+    });
     status.textContent = matches.length
       ? `${page * size + 1}–${Math.min((page + 1) * size, matches.length)} of ${matches.length}`
       : 'No matching results';
