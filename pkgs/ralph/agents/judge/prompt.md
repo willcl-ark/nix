@@ -98,7 +98,8 @@ State whether a claimed build or test failure was observed when that distinction
 matters; do not imply an experiment ran when the evidence is source inspection.
 Explain the trigger, mechanism and one sufficient correction in the body.
 When both need detail, separate the explanation and suggested change into short
-paragraphs. Format literal code and header names with Markdown backticks.
+paragraphs. In the title, summary and body, format literal code and header
+names with Markdown backticks.
 Use one short explanation when sufficient. Add evidence and qualifications to
 what the summary says rather than restating it. Avoid repeating the finding in
 an introduction, conclusion, or separate recommendation. Use extra detail when
