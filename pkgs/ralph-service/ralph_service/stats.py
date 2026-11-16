@@ -458,8 +458,8 @@ def _review_summary(row):
         "coverage": coverage["status"],
         "context_coverage": coverage["context_status"],
         "verification_status": coverage["verification_status"],
-        # The report includes retained findings checked at this head. Keep its
-        # display counts separate from exported/published attribution metrics.
+        # Count what the report shows. Keep these display counts separate from
+        # exported/published attribution metrics.
         "report_severities": dict(
             Counter(
                 finding.get("severity")

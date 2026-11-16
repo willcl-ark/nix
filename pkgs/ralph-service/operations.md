@@ -85,9 +85,11 @@ to the Review report and Run archive. Add `?commit=<SHA>` to filter by a full
 commit hash or prefix. The archive root has the existing search form. History
 includes runs that were never posted, counts each run once, and labels reports
 unavailable until their human pages have been generated. History and the Reviews
-table count the findings shown in the Review report, including current-head
-confirmed retained findings. Agent attribution and publication metrics continue
-to count exported findings, rather than crediting retained findings again.
+table count the findings shown in the Review report: the findings approved in
+that run. Earlier findings appear only when the run approves them again;
+unresolved ones stay in the archive. Agent attribution and publication metrics
+count exported findings. When this counting changes, bump `VERSION` in
+`stats_cache.py` so cached counts are rebuilt.
 
 Before switching links to `/report`, preview the offline backfill using the
 installed service Python environment:
