@@ -10,6 +10,7 @@
   bubblewrap,
   bash,
   util-linux,
+  jetbrains-mono,
 }:
 
 let
@@ -17,6 +18,10 @@ let
     ps.aiohttp
     ps.markdown-it-py
     ps.nh3
+  ]);
+  fontTools = python3.withPackages (ps: [
+    ps.fonttools
+    ps.brotli
   ]);
 in
 stdenvNoCC.mkDerivation {
@@ -50,6 +55,12 @@ stdenvNoCC.mkDerivation {
       install -Dm644 "$module" $out/libexec/ralph-service/"$module"
     done
     install -Dm644 audits/addressed_findings.md $out/libexec/ralph-service/audits/addressed_findings.md
+    mkdir -p $out/share/ralph-service/fonts
+    ${fontTools}/bin/pyftsubset "${jetbrains-mono}/share/fonts/truetype/JetBrainsMono[wght].ttf" \
+      --flavor=woff2 \
+      --output-file=$out/share/ralph-service/fonts/ralph-mono.woff2 \
+      --unicodes=U+0020-007E,U+00A0-00FF,U+2010-2027,U+2030-203A,U+2190-2199,U+2500-259F,U+25A0-25FF,U+2713,U+2717 \
+      --layout-features=kern,zero
     makeWrapper ${python.interpreter} $out/bin/ralph-service \
       --add-flags $out/libexec/ralph-service/bot.py \
       --set-default RALPH_JOB_EXECUTABLE "$out/bin/ralph-job" \

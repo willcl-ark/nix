@@ -222,14 +222,23 @@ redir /report /report/
 redir /report/ /traces/
 handle_path /report/* {
   root * /var/www/ralph/reports
-  header Content-Security-Policy "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+  header Content-Security-Policy "default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self'"
   header X-Content-Type-Options nosniff
+  file_server
+}
+handle_path /fonts/* {
+  root * /nix/store/...-ralph-service/share/ralph-service/fonts
   file_server
 }
 handle /feedback/* {
   reverse_proxy 127.0.0.1:8765
 }
 ```
+
+Pages load their monospace font from `/fonts/ralph-mono.woff2`, served from
+`share/ralph-service/fonts` in `services.ralph.package`, and fall back to system
+monospace fonts without it. Add `font-src 'self'` to the page
+`Content-Security-Policy` headers.
 
 Serve directory indexes and redirect PR history paths to their trailing-slash
 form. History and stats pages require same-origin scripts and
