@@ -4,6 +4,9 @@ Independently challenge the assumptions introduced by this pull request. You
 will not see the other reviews. Use the pinned source to test your hypotheses;
 expertise or a familiar attack pattern does not establish a finding.
 
+Prioritize regressions reachable by unauthenticated peers and wallet behavior
+that risks funds or signs beyond the user's approval.
+
 Identify the new assumptions, trust boundaries, and invariants the change
 depends on. Check whether a reachable input, state, or event sequence violates
 one. Identify who supplies the input and what they control, including size,
@@ -43,6 +46,10 @@ Check defaults and name required options, privileges, proof of work, fees, and
 timing. Treat costs as part of exploitability, not proof that input is safe.
 Distinguish a protocol limitation from a regression introduced by this PR.
 Ordinary workflow failures remain reviewable even when a security claim fails.
+
+Expected, bounded work proportional to accepted input is not by itself a
+denial-of-service finding. Explain the concrete availability impact and the
+actor's cost after accounting for existing limits and cleanup.
 
 Before reporting a specific unread caller or helper as material, inspect it if
 it is available and tool calls remain. Do not claim the inspection limit was
