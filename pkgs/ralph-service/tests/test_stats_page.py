@@ -455,12 +455,12 @@ class StatsPageTests(unittest.TestCase):
             reviews, "https://example.org/repo", "https://example.org/reports"
         )
         rows = re.findall(r"<tr\b[^>]*>.*?</tr>", rendered, flags=re.S)
-        self.assertEqual(rendered.count("🟠"), 2)
+        self.assertEqual(rendered.count('class="latest"'), 2)
         for row in rows:
             if "newer.html" in row or "other-pr.html" in row:
-                self.assertIn("🟠", row)
+                self.assertIn('class="latest"', row)
             if "older.html" in row:
-                self.assertNotIn("🟠", row)
+                self.assertNotIn('class="latest"', row)
 
     def test_adversarial_comparison_keeps_historical_gemini_and_counts_claude(self):
         paired = stats._new_adversarial_comparison()
@@ -555,7 +555,7 @@ class StatsPageTests(unittest.TestCase):
                 archive_base_url="https://reports.example.org/traces",
             )
             html = "".join(path.read_text() for path in public.rglob("*.html"))
-            self.assertNotIn("$", html)
+            self.assertNotRegex(html, r"\$\d")
             self.assertIn("Rate limits (429)", html)
             self.assertEqual(
                 stats.collect_stats(root / "empty", root / "reports")["usage"][
