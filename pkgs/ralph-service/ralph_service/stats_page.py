@@ -12,6 +12,9 @@ from . import config, report, theme
 
 
 MISSING = object()
+NUMBER = r"\$?\d[\d,]*(?:\.\d+)?%?"
+NUMERIC_CELL = re.compile(rf"{NUMBER}(?: ?/ ?{NUMBER})?(?: \(partial\))?")
+PLACEHOLDER_CELLS = {"N/A", "Unknown"}
 
 
 def _escape(value):
@@ -602,16 +605,39 @@ def _data_table(headers, rows):
         "Sole accepted",
         "Shared accepted",
     }
+    cell_classes = [re.findall(r"<td\b([^>]*)>", row) for row in rows]
+    numeric_columns = {
+        index
+        for index in range(len(headers))
+        if cell_classes
+        and all(
+            index < len(cells) and re.search(r"numeric|placeholder", cells[index])
+            for cells in cell_classes
+        )
+    }
+
+    def align_placeholders(row):
+        index = -1
+
+        def align(match):
+            nonlocal index
+            index += 1
+            if match[0] != '<td class="placeholder">':
+                return match[0]
+            return '<td class="numeric">' if index in numeric_columns else "<td>"
+
+        return re.sub(r"<td\b[^>]*>", align, row)
+
     return (
         "<table><thead><tr>"
         + "".join(
             '<th scope="col"'
-            + (' class="numeric"' if h in numeric else "")
+            + (' class="numeric"' if h in numeric or i in numeric_columns else "")
             + f">{_escape(h)}</th>"
-            for h in headers
+            for i, h in enumerate(headers)
         )
         + "</tr></thead><tbody>"
-        + "".join(rows)
+        + "".join(align_placeholders(row) for row in rows)
         + "</tbody></table>"
     )
 
@@ -622,9 +648,9 @@ def _cells(values):
         + "".join(
             (
                 '<td class="numeric">'
-                if value
-                and "<" not in value
-                and (value[0].isdigit() or value[0] == "$" or value == "N/A")
+                if NUMERIC_CELL.fullmatch(value)
+                else '<td class="placeholder">'
+                if value in PLACEHOLDER_CELLS
                 else "<td>"
             )
             + value

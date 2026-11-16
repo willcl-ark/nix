@@ -444,6 +444,27 @@ class StatsPageTests(unittest.TestCase):
         self.assertEqual(counts["minor"], 0)
         self.assertEqual(sum(counts.values()), 0)
 
+    def test_table_alignment_follows_column_contents(self):
+        rendered = stats_page._data_table(
+            ["Configuration", "Records", "Report"],
+            [
+                stats_page._cells(["7c7f016bff1eac0a", "1,465", "N/A"]),
+                stats_page._cells(["ac72d3eb77bc9359", "Unknown", "report"]),
+            ],
+        )
+        self.assertEqual(
+            re.findall(r"<th\b[^>]*>", rendered),
+            [
+                '<th scope="col">',
+                '<th scope="col" class="numeric">',
+                '<th scope="col">',
+            ],
+        )
+        self.assertEqual(
+            re.findall(r"<td\b[^>]*>", rendered),
+            ["<td>", '<td class="numeric">', "<td>"] * 2,
+        )
+
     def test_latest_marker_tracks_the_latest_available_report_per_pr(self):
         reviews = [
             {"number": 42, "job_id": 1, "report_name": "older.html"},
