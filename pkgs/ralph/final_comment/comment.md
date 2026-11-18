@@ -2,9 +2,9 @@ ${verification_failed}
 
 ${overview}
 
-${backport}
-
 ${findings}
+
+${backport}
 
 ${design}
 

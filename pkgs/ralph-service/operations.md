@@ -74,6 +74,7 @@ repeating inference. Native Forgejo publication can continue without a report
 link if saving fails; GitHub comment creation and updates require a Review
 report URL.
 
+Reports show findings before backport assessments and supporting evidence.
 Each finding has a visible Link control that targets the start of the finding.
 The fragment uses its saved finding ID and works without JavaScript. Refresh
 existing report HTML with the offline backfill to add these links.

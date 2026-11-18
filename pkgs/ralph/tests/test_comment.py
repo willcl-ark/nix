@@ -170,10 +170,18 @@ class CommentTests(unittest.TestCase):
 
     def test_findings_show_summary_before_collapsed_explanation(self):
         example = json.loads((COMMENT_DIR / "examples" / "mixed.json").read_text())
+        example["backport"] = {
+            "verdict": "Needs clarification",
+            "summary": "Backport assessment summary.",
+            "evidence": ["Long supporting evidence."],
+        }
         rendered = final_comment.render_report(**example)
         for limitation in example["limitations"]:
             self.assertNotIn(limitation, rendered)
         finding = example["findings"][0]
+        self.assertLess(
+            rendered.index("Optional improvements"), rendered.index("Backport verdict")
+        )
         before, details = rendered.split("<details>", 1)
         self.assertIn(finding["title"], before)
         self.assertIn(finding["summary"], before)

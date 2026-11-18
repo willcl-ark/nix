@@ -221,6 +221,7 @@ New PR comments and
 Telegram notifications link to the Review report; diagnostic links and history
 use the Run archive. See the [cutover and backfill instructions](../../pkgs/ralph-service/operations.md).
 
+Reports show findings before backport assessments and supporting evidence.
 Each finding has a visible Link control that targets the start of the finding.
 The fragment uses its saved finding ID and works without JavaScript. Refresh
 existing report HTML with the offline backfill to add these links.
