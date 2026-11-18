@@ -236,6 +236,7 @@ def render_report(
     repository_url=None,
     base_sha=None,
     failure_reason=None,
+    finding_prefix=None,
     finding_suffix=None,
     historical_context=None,
 ):
@@ -274,6 +275,8 @@ def render_report(
 
     def finding_text(finding):
         content = finding_content(finding)
+        if finding_prefix is not None:
+            content = finding_prefix(finding) + content
         if finding_suffix is not None:
             content += finding_suffix(finding)
         return content

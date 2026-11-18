@@ -169,6 +169,17 @@ class ReportTests(unittest.TestCase):
                 rendered.index("Optional change"),
                 rendered.index('data-finding-id="finding:suggestion"'),
             )
+            for identifier in ("finding:major", "finding:suggestion"):
+                anchor = f"finding-{identifier}"
+                self.assertEqual(rendered.count(f'id="{anchor}"'), 1)
+                self.assertIn(f'<section id="{anchor}"', rendered)
+                self.assertIn(
+                    f'href="#finding-{identifier.replace(":", "%3A")}"', rendered
+                )
+                self.assertLess(
+                    rendered.index(f'id="{anchor}"'),
+                    rendered.index(f'data-finding-id="{identifier}"'),
+                )
             self.assertEqual(rendered.count('class="finding-feedback"'), 2)
             self.assertTrue((root / "reports/gui/finding-feedback.js").is_file())
             self.assertTrue((root / "reports/gui/finding-feedback.css").is_file())

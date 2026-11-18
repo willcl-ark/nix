@@ -74,6 +74,10 @@ repeating inference. Native Forgejo publication can continue without a report
 link if saving fails; GitHub comment creation and updates require a Review
 report URL.
 
+Each finding has a visible Link control that targets the start of the finding.
+The fragment uses its saved finding ID and works without JavaScript. Refresh
+existing report HTML with the offline backfill to add these links.
+
 Report source and commit links use the configured `github_repository` upstream
 when present. PR-discussion links retain their original repository URL. New
 snapshots save the upstream mapping; refreshing older snapshots with

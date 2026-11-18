@@ -1297,7 +1297,7 @@ def _failure_reason(record, verification):
 
 def _feedback_form(finding, index):
     finding_id = _escape(finding["id"])
-    return f"""<form id="finding-{finding_id}" class="finding-feedback" data-finding-id="{finding_id}" hidden>
+    return f"""<form class="finding-feedback" data-finding-id="{finding_id}" hidden>
 <fieldset disabled>
 <legend>Was this finding useful?</legend>
 <div class="feedback-votes">
@@ -1315,7 +1315,7 @@ def _feedback_form(finding, index):
 <button type="button" class="feedback-remove" hidden>Remove feedback</button>
 </fieldset>
 <p class="feedback-status" role="status" aria-live="polite"></p>
-</form><hr class="finding-divider">"""
+</form>"""
 
 
 def _html_report(record, archive_url, history_url, *, github_repository=None):
@@ -1328,16 +1328,31 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
     incomplete = (
         coverage.get("status") != "complete" or verification.get("status") != "complete"
     )
-    feedback_markers = {}
+    finding_markers = {}
 
-    def feedback_suffix(finding):
+    def finding_marker(markup):
+        # Substitute trusted controls only after sanitizing all review prose.
+        marker = "ralphfinding" + secrets.token_hex(24)
+        finding_markers[marker] = markup
+        return "\n\n" + marker + "\n\n"
+
+    def finding_prefix(finding):
         if not finding.get("id"):
             return ""
-        # These unpredictable markers exist only during rendering. Substitute
-        # trusted forms after sanitizing all review prose.
-        marker = "ralphfeedback" + secrets.token_hex(24)
-        feedback_markers[marker] = _feedback_form(finding, len(feedback_markers))
-        return "\n\n" + marker
+        anchor = "finding-" + finding["id"]
+        return finding_marker(
+            f'<section id="{_escape(anchor)}" class="report-finding">'
+            f'<a class="finding-permalink" href="#{quote(anchor, safe="")}" '
+            'aria-label="Link to this finding">Link</a>'
+        )
+
+    def finding_suffix(finding):
+        if not finding.get("id"):
+            return ""
+        return finding_marker(
+            _feedback_form(finding, len(finding_markers))
+            + '</section><hr class="finding-divider">'
+        )
 
     concept = record.get("concept_assessment") or {}
     backport = record.get("backport_assessment")
@@ -1360,7 +1375,8 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
             base_sha=record.get("base"),
             head_sha=record["head"],
             coverage_url=archive_url + "#coverage",
-            finding_suffix=feedback_suffix,
+            finding_prefix=finding_prefix,
+            finding_suffix=finding_suffix,
             historical_context=record.get("historical_context"),
         )
     content = nh3.clean(
@@ -1374,8 +1390,8 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
             severity_label(severity),
             f'<span class="severity-tag {severity}">[{severity}]</span>',
         )
-    for marker, form in feedback_markers.items():
-        content = content.replace(f"<p>{marker}</p>", form)
+    for marker, markup in finding_markers.items():
+        content = content.replace(f"<p>{marker}</p>", markup)
     feedback_url = (
         "/feedback/"
         + quote(record.get("repository_id") or "core", safe="")
@@ -1454,6 +1470,9 @@ footer { border-top: 1px solid var(--border); margin-top: 2rem; padding-top: .5r
 @media (max-width: 750px) { h1 { font-size: 1.4rem; } }
 .notice { border-left: 4px solid var(--accent); background: var(--raised); padding: .75rem 1rem; }
 .report-metadata { font-size: .875rem; }
+.report-finding { display: flow-root; scroll-margin-top: 1rem; }
+.report-finding > p:first-of-type { margin-top: 0; }
+.finding-permalink { float: right; margin-left: 1rem; font-size: .875rem; }
 pre { white-space: pre-wrap; }
 th, td { vertical-align: top; }
 details { border-top: 1px solid var(--border); padding: .75rem 0; }

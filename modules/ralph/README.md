@@ -221,6 +221,10 @@ New PR comments and
 Telegram notifications link to the Review report; diagnostic links and history
 use the Run archive. See the [cutover and backfill instructions](../../pkgs/ralph-service/operations.md).
 
+Each finding has a visible Link control that targets the start of the finding.
+The fragment uses its saved finding ID and works without JavaScript. Refresh
+existing report HTML with the offline backfill to add these links.
+
 For example, with a public directory at `/var/www/ralph`, Caddy can serve the
 views using these routes alongside the existing archive and stats routes:
 
