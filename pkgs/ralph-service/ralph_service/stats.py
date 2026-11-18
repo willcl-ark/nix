@@ -1801,7 +1801,7 @@ def _add_stage_results(stages, debug, row, report_name):
                     tracking["candidates"].append(
                         {
                             **{
-                                key: challenge[key]
+                                key: challenge.get(key)
                                 for key in (
                                     "candidate_id",
                                     "source",

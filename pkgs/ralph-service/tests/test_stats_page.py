@@ -169,6 +169,7 @@ class StatsPageTests(unittest.TestCase):
                 (title, "Pending verification", "Bad refutation"), 1
             )
         ]
+        originals[1] = {"title": "Pending verification"}
         current = {
             "schema_version": 2,
             "candidate_sources": dict.fromkeys(
@@ -274,6 +275,9 @@ class StatsPageTests(unittest.TestCase):
             self.assertNotIn("source_evidence", tracking["candidates"][0])
             self.assertNotIn("reason", tracking["candidates"][0])
             self.assertIsNone(tracking["candidates"][1]["final_disposition"])
+            self.assertIsNone(tracking["candidates"][1]["path"])
+            self.assertIsNone(tracking["candidates"][1]["line"])
+            self.assertIsNone(tracking["candidates"][1]["side"])
             public = root / "public"
             stats_page.save_stats(
                 public,
