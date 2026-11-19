@@ -13,6 +13,7 @@ import nh3
 from final_comment import SEVERITY_ORDER, render_report, severity_label
 from markdown_it import MarkdownIt
 
+from ralph import coverage as core_coverage, refusals
 from ralph import trace as core_trace
 
 from . import config, theme
@@ -277,11 +278,14 @@ def _public_stages(debug):
             "error",
             "error_type",
             "error_message",
+            "failure_kind",
             "validation_error",
             "incomplete_reason",
         ):
             if isinstance(stage.get(key), str):
                 record[key] = stage[key]
+        if kind := refusals.failure_kind(stage):
+            record["failure_kind"] = kind
         if type(stage.get("http_status")) is int:
             record["http_status"] = stage["http_status"]
         if isinstance(stage.get("used_verified_wording"), bool):
@@ -1299,12 +1303,39 @@ def _commit_link(record, sha):
     return f'<a href="{_escape(url)}">{label}</a>'
 
 
+def refusal_notice(debug):
+    """Explain refused stages without exposing provider payloads or review prose."""
+    consequences = {
+        "router": "The conservative full-review plan was used.",
+        "challenger": "Challenges remain unresolved; source verification can continue.",
+        "write_verifier": "Experiments remain incomplete; static verification can continue.",
+        "verifier": "Source verification is unavailable; candidates remain unverified.",
+        "judge": "The final assessment is unavailable.",
+        "backport_assessment": "Backport fidelity remains unassessed.",
+    }
+    lines = []
+    for name, stage in (debug.get("stages") or {}).items():
+        if stage.get("status") not in {"failed", "invalid"}:
+            continue
+        kind = refusals.failure_kind(stage)
+        if kind is None:
+            continue
+        consequence = consequences.get(name) or (
+            "This advisory context is unavailable."
+            if name in core_coverage.CONTEXT_STAGES
+            else "These inspection checks remain incomplete."
+        )
+        # Stage names are internal identifiers, not provider-supplied prose.
+        label = re.sub(r"[^a-zA-Z0-9_-]", "?", name)[:80]
+        lines.append(f"{label}: {refusals.description(kind)} {consequence}")
+    return "\n".join(lines)
+
+
 def _failure_reason(record, verification):
     stage_labels = {
         "verifier": "source verification",
-        "write_verifier": "experimental verification",
         "judge": "the final assessment",
-        "concept_verifier": "concept verification",
+        "backport_assessment": "backport assessment",
     }
     for name, stage in (record.get("stages") or {}).items():
         if stage.get("status") in {"failed", "invalid"} and name in stage_labels:
@@ -1397,6 +1428,14 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
             finding_prefix=finding_prefix,
             finding_suffix=finding_suffix,
             historical_context=record.get("historical_context"),
+        )
+    notice = refusal_notice(record)
+    if notice:
+        review = (
+            "## Provider refusals\n\n"
+            + "\n\n".join(notice.splitlines())
+            + "\n\n"
+            + review
         )
     provisional = record.get("provisional_findings") or []
     if failed and provisional:

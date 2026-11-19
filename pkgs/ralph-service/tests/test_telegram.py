@@ -36,6 +36,48 @@ class TelegramTests(unittest.TestCase):
             self.assertIn("https://reports.example/42.html", text)
         self.assertNotIn("⚠️", self.render(self.result()))
 
+    def test_refusals_preserve_outcome_and_links_with_long_titles_and_stage_lists(self):
+        result = self.result()
+        result["engine"] = {"name": "current"}
+        result["run"]["pr_title"] = "🚨" * 4096
+        stages = {
+            "router": {"status": "failed", "failure_kind": "provider_refusal"},
+            **{
+                f"audit_{n}": {"status": "failed", "failure_kind": "cyber_refusal"}
+                for n in range(30)
+            },
+        }
+        result["output"].update(
+            schema_version=2, data={"schema_version": 2, "stages": stages}
+        )
+        text = self.render(result)
+        self.assertLessEqual(telegram.message_length(text), telegram.MESSAGE_LIMIT)
+        self.assertIn("router: Provider declined", text)
+        self.assertIn("cybersecurity restriction", text)
+        self.assertIn("https://reports.example/42.html", text)
+        self.assertNotIn("Review failed", text)
+        result["run"]["status"] = "failed"
+        stages.clear()
+        stages.update(
+            {
+                "judge": {"status": "failed", "failure_kind": "cyber_refusal"},
+                "verifier": {
+                    "status": "completed",
+                    "decisions": [
+                        {"disposition": "supported", "finding": {"title": "Concern"}},
+                        {"disposition": "refuted", "finding": None},
+                    ],
+                },
+            }
+        )
+        text = self.render(result)
+        self.assertIn("Review failed", text)
+        self.assertIn("Current findings: unavailable", text)
+        self.assertIn("Provisional findings on report: 1", text)
+        self.assertIn("https://reports.example/42.html", text)
+        stages["verifier"]["status"] = "failed"
+        self.assertNotIn("Provisional findings", self.render(result))
+
     def test_unicode_limit_and_oversized_title_keep_links(self):
         self.assertEqual(telegram.message_length("🚨"), 2)
         result = self.result(

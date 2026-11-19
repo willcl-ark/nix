@@ -275,7 +275,12 @@ for interpretation, backfill and cache recovery.
 The Reviews page includes a Cyber refusals count and filter. It identifies
 explicit provider cybersecurity refusals, lists affected stages and models,
 and links to their reports. Each review counts once regardless of how many
-stages refused; approved finding counts are unchanged.
+stages refused, including optional stages on otherwise completed reviews. Generic
+refusals have distinct wording in diagnostics and notices; they do not enter
+the cyber-refusal count. Reports, monitoring and Telegram notices identify
+refused stages and the work
+left incomplete. Explicit refusals are not automatically retried or sent to a
+different model; approved finding counts and verification gates are unchanged.
 
 To refresh statistics immediately:
 

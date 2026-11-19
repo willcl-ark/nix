@@ -706,6 +706,38 @@ if (value < 1) return;
         self.assertIn("Experiment evidence", html)
         self.assertNotIn("PRIVATE-CREDENTIAL", html + json.dumps(public))
 
+    def test_optional_refusals_keep_approved_findings_and_explain_missing_work(self):
+        result = self.review_result("Approved explanation.")
+        result["output"]["data"]["stages"] = {
+            "router": {
+                "status": "failed",
+                "turns": [
+                    {
+                        "status": "failed",
+                        "error": {
+                            "code": "refusal",
+                            "message": "PRIVATE-PROVIDER-TEXT",
+                        },
+                    }
+                ],
+            },
+            "write_verifier": {"status": "failed", "failure_kind": "cyber_refusal"},
+        }
+        public = report._public_record(123, result, "optional-refusal")
+        self.assertEqual(public["stages"]["router"]["failure_kind"], "provider_refusal")
+        self.assertEqual(public["status"], "completed")
+        self.assertEqual(len(public["findings"]), 1)
+        self.assertEqual(public["provisional_findings"], [])
+        rendered = report._html_report(
+            public, "https://reports.example/archive", "/history"
+        )
+        self.assertIn("Approved finding", rendered)
+        self.assertIn("conservative full-review plan", rendered)
+        self.assertIn("Experiments remain incomplete", rendered)
+        self.assertIn("cybersecurity restriction", rendered)
+        self.assertNotIn("Review failed", rendered)
+        self.assertNotIn("PRIVATE-PROVIDER-TEXT", rendered)
+
     def test_judge_failure_shows_only_validated_provisional_findings(self):
         result = self.review_result("Provisional explanation.")
         finding = result["output"]["exports"]["findings"].pop()
@@ -723,7 +755,7 @@ if (value < 1) return;
                 ],
                 "raw_output": '{"finding": "UNVALIDATED-CLAIM"}',
             },
-            "judge": {"status": "failed"},
+            "judge": {"status": "failed", "failure_kind": "cyber_refusal"},
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -736,15 +768,14 @@ if (value < 1) return;
             self.assertNotIn("PRIVATE-FINDING-DATA", saved.decode())
             rendered = (root / "reports" / name).read_text()
             self.assertIn("Review failed", rendered)
+            self.assertIn("cybersecurity restriction", rendered)
             self.assertIn("Provisional concern", rendered)
             self.assertIn("have not received final adjudication", rendered)
             self.assertNotIn("UNVALIDATED-CLAIM", rendered)
             self.assertNotIn('class="finding-feedback"', rendered)
             report.save_report(root, 123, {}, "provisional", refresh=True)
             self.assertEqual((root / "provisional.json").read_bytes(), saved)
-            self.assertIn(
-                "Provisional concern", (root / "reports" / name).read_text()
-            )
+            self.assertIn("Provisional concern", (root / "reports" / name).read_text())
         stages["verifier"]["status"] = "invalid"
         public = report._public_record(123, result, "invalid-verifier")
         self.assertEqual(public["provisional_findings"], [])

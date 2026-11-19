@@ -32,6 +32,12 @@ class HealthTests(unittest.TestCase):
             "Invalid stage output",
             health.stage_runs(debug, {}, row, None)[0]["reasons"],
         )
+        stage.update(status="failed", failure_kind="cyber_refusal")
+        reasons = health.stage_runs(debug, {}, row, None)[0]["reasons"]
+        self.assertTrue(
+            any("cybersecurity restriction" in reason for reason in reasons)
+        )
+        self.assertNotIn("Stage failed", reasons)
         row["status"] = "cancelled"
         self.assertEqual(health.stage_runs(debug, {}, row, None), [])
 

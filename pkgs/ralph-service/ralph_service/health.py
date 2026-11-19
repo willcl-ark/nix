@@ -4,6 +4,8 @@ import hashlib
 import json
 from collections import Counter
 
+from ralph import refusals
+
 from .report import public_limits
 
 
@@ -28,9 +30,12 @@ def stage_runs(debug, result, row, report_name):
             continue
         limits = public_limits(stage)
         reasons = []
-        if stage["status"] == "invalid":
+        kind = refusals.failure_kind(stage)
+        if kind and stage["status"] in {"failed", "invalid"}:
+            reasons.append(refusals.description(kind))
+        elif stage["status"] == "invalid":
             reasons.append("Invalid stage output")
-        if stage["status"] == "failed":
+        elif stage["status"] == "failed":
             reasons.append("Stage failed")
         if limits.get("output_tokens", {}).get("hit") is True:
             reasons.append("Output truncated")

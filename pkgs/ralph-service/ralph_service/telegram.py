@@ -11,6 +11,7 @@ from final_comment import report_findings
 from ralph import trace
 
 from .config import pull_request_url
+from .report import _provisional_findings, refusal_notice
 
 MESSAGE_LIMIT = 4096
 
@@ -79,7 +80,16 @@ def review_message(repository_url, number, result, *, repository_id):
     summary = " · ".join(f"{label}: {counts[severity]}" for severity, label in labels)
     if findings_export is None or outcome:
         summary = "unavailable"
-    footer = f"\nCurrent findings: {summary}{links}"
+    debug = trace.current_diagnostics(result)
+    notice = refusal_notice(debug)
+    notice = "\n" + truncate_message(notice, 1200) if notice else ""
+    provisional = _provisional_findings(debug)
+    provisional_note = (
+        f"\nProvisional findings on report: {len(provisional)}. Final assessment unavailable."
+        if outcome == "failed" and provisional
+        else ""
+    )
+    footer = f"{notice}\nCurrent findings: {summary}{provisional_note}{links}"
     # Keep the counts and both links even if a PR has an unusually long title.
     return truncate_message(heading, MESSAGE_LIMIT - message_length(footer)) + footer
 

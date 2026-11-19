@@ -16,7 +16,12 @@ class StatsPageTests(unittest.TestCase):
             root = Path(directory)
             reports = root / "reports"
             store = jobs.JobStore(root / "jobs.sqlite3")
-            for number, error in ((42, refusal), (43, "Request timed out")):
+            for number, error in (
+                (42, refusal),
+                (43, "Request timed out"),
+                (44, None),
+                (45, None),
+            ):
                 store.enqueue(
                     number,
                     "main",
@@ -48,6 +53,25 @@ class StatsPageTests(unittest.TestCase):
                         },
                     },
                 }
+                if number in (44, 45):
+                    result["run"]["status"] = "completed"
+                    result["output"]["data"]["stages"] = {
+                        "router": {
+                            "status": "failed",
+                            "model": "test-model",
+                            "turns": [
+                                {
+                                    "status": "failed",
+                                    "error": {
+                                        "code": "refusal",
+                                        "message": refusal
+                                        if number == 44
+                                        else "Provider refused",
+                                    },
+                                }
+                            ],
+                        }
+                    }
                 store.save_result(job, result)
                 store.complete(job)
                 report.save_report(
@@ -57,7 +81,7 @@ class StatsPageTests(unittest.TestCase):
                     f"{number}-{'a' * 40}-{job['id']}-{job['generation']}",
                 )
             summary = stats.collect_stats(root, reports)
-            self.assertEqual(summary["overview"]["cyber_refusal_reviews"], 1)
+            self.assertEqual(summary["overview"]["cyber_refusal_reviews"], 2)
             by_number = {item["number"]: item for item in summary["reviews"]}
             self.assertEqual(
                 by_number[42]["cyber_refusals"],
@@ -67,8 +91,13 @@ class StatsPageTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(by_number[43]["cyber_refusals"], [])
+            self.assertEqual(by_number[45]["cyber_refusals"], [])
+            self.assertEqual(
+                by_number[44]["cyber_refusals"],
+                [{"stage": "router", "model": "test-model"}],
+            )
             page = stats_page._reviews_html(summary, None, "https://reports.example")
-            self.assertEqual(page.count('data-filter="cyber_refusal"'), 1)
+            self.assertEqual(page.count('data-filter="cyber_refusal"'), 2)
             self.assertIn('<option value="cyber_refusal">', page)
             self.assertIn("judge / test-model", page)
             self.assertIn("write_verifier / test-model", page)

@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from final_comment import report_findings
+from ralph import refusals
 from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
@@ -297,9 +298,8 @@ def _cyber_refusals(debug):
     return [
         {"stage": name, "model": stage.get("model")}
         for name, stage in (debug.get("stages") or {}).items()
-        if stage.get("status") == "failed"
-        and "flagged for possible cybersecurity risk"
-        in str(stage.get("error_message", "")).casefold()
+        if stage.get("status") in {"failed", "invalid"}
+        and refusals.failure_kind(stage) == "cyber_refusal"
     ]
 
 

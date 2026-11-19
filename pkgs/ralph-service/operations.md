@@ -167,10 +167,28 @@ also include other tools using the same accounts.
 The Reviews page counts saved reviews with explicit provider cyber refusals once
 per review, even when several stages fail. Select **Cyber refusals** in the Show
 filter to find affected reports; the Outcome column names the stages and models.
-Detection uses failed-stage provider errors containing "flagged for possible
-cybersecurity risk", not review prose or generic failures. Approved finding
-counts are unchanged. The derived stats cache rebuilds historical rows after
-this extraction change.
+Detection uses the same explicit provider refusal classification as stage
+diagnostics, including retained terminal-response errors. A generic provider
+refusal is not counted as a cyber refusal without a cybersecurity signal. Review
+prose and ordinary failures never establish a refusal. Router and optional-stage
+refusals are included even when the review completes. The derived stats cache
+reclassifies retained historical diagnostics without rewriting saved outcomes or
+public snapshots; missing historical diagnostics remain unclassified.
+
+Provider refusals stop the affected request without automatic retry, model
+switching or prompt rewriting. Transient transport failures retain their usual
+retries. Reports, health monitoring and review notifications identify the
+refused stages and the work left incomplete, without exposing request payloads.
+
+| Refused stage | Result |
+| --- | --- |
+| Router | Conservative full-review plan; refusal recorded without marking inspection failed. |
+| Discovery audits or challenger | Independent checks continue; inspection or challenge coverage remains incomplete. |
+| Research, concept verification, feedback or reconciliation | Conservative context fallback; independently verified findings remain usable. |
+| Experimental verifier | Experiments incomplete; static verification continues. |
+| Source verifier | Candidates remain unverified in the archive; no provisional or approved findings. |
+| Final judge | Failed review; already source-verified findings shown provisionally on the report. |
+| Backport assessment | Assessment unavailable; no completed fidelity verdict. |
 
 ## Rebuilding statistics
 
