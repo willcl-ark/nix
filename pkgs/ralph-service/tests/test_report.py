@@ -706,6 +706,53 @@ if (value < 1) return;
         self.assertIn("Experiment evidence", html)
         self.assertNotIn("PRIVATE-CREDENTIAL", html + json.dumps(public))
 
+    def test_judge_failure_shows_only_validated_provisional_findings(self):
+        result = self.review_result("Provisional explanation.")
+        finding = result["output"]["exports"]["findings"].pop()
+        finding["title"] = "Provisional concern"
+        finding["private"] = "PRIVATE-FINDING-DATA"
+        result["run"]["status"] = "failed"
+        result["output"]["data"]["coverage"]["verification"]["status"] = "failed"
+        stages = result["output"]["data"]["stages"] = {
+            "verifier": {
+                "status": "completed",
+                "decisions": [
+                    {"disposition": "supported", "finding": finding},
+                    {"disposition": "refuted", "finding": None},
+                    {"disposition": "unresolved", "finding": None},
+                ],
+                "raw_output": '{"finding": "UNVALIDATED-CLAIM"}',
+            },
+            "judge": {"status": "failed"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = report.save_report(root, 123, result, "provisional")
+            saved = (root / "provisional.json").read_bytes()
+            public = json.loads(saved)
+            self.assertEqual(public["status"], "failed")
+            self.assertEqual(public["findings"], [])
+            self.assertEqual(len(public["provisional_findings"]), 1)
+            self.assertNotIn("PRIVATE-FINDING-DATA", saved.decode())
+            rendered = (root / "reports" / name).read_text()
+            self.assertIn("Review failed", rendered)
+            self.assertIn("Provisional concern", rendered)
+            self.assertIn("have not received final adjudication", rendered)
+            self.assertNotIn("UNVALIDATED-CLAIM", rendered)
+            self.assertNotIn('class="finding-feedback"', rendered)
+            report.save_report(root, 123, {}, "provisional", refresh=True)
+            self.assertEqual((root / "provisional.json").read_bytes(), saved)
+            self.assertIn(
+                "Provisional concern", (root / "reports" / name).read_text()
+            )
+        stages["verifier"]["status"] = "invalid"
+        public = report._public_record(123, result, "invalid-verifier")
+        self.assertEqual(public["provisional_findings"], [])
+        stages["verifier"]["status"] = "completed"
+        stages["judge"]["status"] = "completed"
+        public = report._public_record(123, result, "completed-judge")
+        self.assertEqual(public["provisional_findings"], [])
+
     def test_failed_review_exports_status_and_safe_provider_diagnostic(self):
         result = {
             "schema_version": 1,

@@ -67,6 +67,16 @@ coverage diagnostics, retained history and usage. Intermediate claims in the
 archive are not published findings. Both views use one saved public JSON record;
 private request payloads, configuration and private traces remain private.
 
+When source verification succeeds but the final judge fails, the Review report
+also shows the validated findings under a provisional disclaimer. Their severity
+and publication suitability have not received final adjudication. The run stays
+failed; provisional findings are separate from approved findings and are not
+posted as findings to Forgejo or GitHub, counted as approved findings, or eligible
+for feedback. Refuted, unresolved and unvalidated model output remain excluded.
+New public snapshots retain this separate list, so offline report refresh needs
+no model calls. Older snapshots lack it; recovering an older run requires its
+saved private result with validated verifier decisions, not parsing raw replies.
+
 Set `reportBaseUrl` to the URL serving `reportDir/reports` and `archiveBaseUrl`
 to the URL serving `reportDir`. Each run has matching HTML paths beneath these
 bases. Publication retries recover missing pages from the saved JSON without

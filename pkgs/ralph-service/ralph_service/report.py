@@ -616,6 +616,24 @@ def _public_concept_brief(assessment):
     return record or None
 
 
+def _provisional_findings(debug):
+    stages = debug.get("stages") or {}
+    verifier = stages.get("verifier") or {}
+    judge = stages.get("judge") or {}
+    if verifier.get("status") != "completed" or judge.get("status") not in {
+        "failed",
+        "invalid",
+    }:
+        return []
+    # These decisions have passed protocol validation. Raw model output has not.
+    return [
+        _filtered(decision["finding"], FINDING_FIELDS)
+        for decision in verifier.get("decisions", [])
+        if decision.get("disposition") == "supported"
+        and isinstance(decision.get("finding"), dict)
+    ]
+
+
 def _public_record(
     number,
     result,
@@ -718,6 +736,7 @@ def _public_record(
         record["concept_assessment"] = _public_concept_assessment(debug)
         record["historical_context"] = _public_historical_context(debug)
         record["finding_attribution"] = _public_attribution(debug)
+        record["provisional_findings"] = _provisional_findings(debug)
         record["decisions"] = _public_decisions(debug)
         record["challenges"] = _public_challenges(debug)
     return record
@@ -1378,6 +1397,20 @@ def _html_report(record, archive_url, history_url, *, github_repository=None):
             finding_prefix=finding_prefix,
             finding_suffix=finding_suffix,
             historical_context=record.get("historical_context"),
+        )
+    provisional = record.get("provisional_findings") or []
+    if failed and provisional:
+        review += (
+            "\n\n## Provisional findings\n\n"
+            "The final assessment failed. These findings passed source verification "
+            "but have not received final adjudication. Severity and publication "
+            "suitability remain provisional. The review remains failed.\n\n"
+            + render_report(
+                provisional,
+                repository_url=_source_repository_url(record),
+                base_sha=record.get("base"),
+                head_sha=record["head"],
+            )
         )
     content = nh3.clean(
         MarkdownIt("commonmark")

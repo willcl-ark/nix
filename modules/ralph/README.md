@@ -210,6 +210,11 @@ continue to the final source-based check.
 
 ## Public reports and statistics
 
+If source verification completes but the final judge fails, browser reports show
+source-verified findings with a provisional disclaimer. The run remains failed;
+these findings are excluded from approved findings, feedback and comment
+publication. Saved reports can be refreshed without repeating inference.
+
 For browser Review reports and Run archives, set `services.ralph.reportDir` to
 an absolute public directory separate from private state. Set
 `services.ralph.reportBaseUrl` to the URL serving `reportDir/reports`, such as
