@@ -1237,7 +1237,7 @@ def review_with_independent_passes(
                 json.dumps(feedback.mapping_input(feedback_packet, candidates)),
                 model_name=settings.model,
                 max_output_tokens=record["max_output_tokens"],
-                response_schema=feedback.FEEDBACK_SCHEMA,
+                response_schema=feedback.mapping_schema(feedback_packet, candidates),
                 reasoning_effort=settings.reasoning_effort,
                 debug_record=record,
                 timeout=settings.timeout,
@@ -1256,6 +1256,8 @@ def review_with_independent_passes(
                 status="failed",
                 error_type=type(exc).__name__,
             )
+            if isinstance(exc, protocol.InvalidReview):
+                record["validation_error"] = str(exc)
             return None
 
     # The challenger and the feedback mapping both read only the candidates.

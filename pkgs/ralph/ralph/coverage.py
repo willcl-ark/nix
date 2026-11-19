@@ -29,7 +29,7 @@ FAILURES = {"failed", "invalid"}
 
 def _failure(stage):
     status = stage.get("status")
-    if status == "invalid":
+    if status == "invalid" or stage.get("validation_error"):
         return "Output failed validation: " + stage.get(
             "validation_error", "invalid review output"
         )

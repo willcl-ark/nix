@@ -134,6 +134,13 @@ without compatibility handling. Publication retries holding an old template
 snapshot may fail after cutover and need a newly requested review; no automatic
 replay or saved-result migration is performed.
 
+A failed feedback stage leaves the remaining review stages running without its
+mapping. For `InvalidReview`, inspect `validation_error` in the saved stage
+metadata or the trace coverage limitation. Unknown or duplicate references name
+the field and offending IDs. The mapper's input excludes internal source-anchor
+IDs and its response schema permits only references from that request. Validation
+failures are not retried or repaired by translating IDs.
+
 Statistics read durable jobs and usage ledgers without model requests. Shared
 findings credit each contributing agent, so counts overlap. Concept assessments
 have separate counts; archaeology does not compete in the finding leaderboard.

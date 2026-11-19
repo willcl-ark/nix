@@ -1217,7 +1217,19 @@ class PipelineTests(unittest.TestCase):
             mapper_inputs.append(json.loads(input_text))
             self.assertEqual(name, "feedback")
             self.assertLessEqual(kwargs["max_output_tokens"], 4000)
-            raise ValueError("Invalid or unavailable feedback agent")
+            return json.dumps(
+                {
+                    "mappings": [
+                        {
+                            "prior_key": "previous:1",
+                            "candidate_ids": ["a2bbb37a6f624185a715fdbe8bc1c11e"],
+                            "comment_ids": [],
+                            "author_position": "none",
+                            "reason": "Same mechanism.",
+                        }
+                    ]
+                }
+            ), {"status": "completed"}
 
         self.run_review(
             reviewer,
@@ -1227,6 +1239,17 @@ class PipelineTests(unittest.TestCase):
             archaeology_enabled=True,
         )
         self.assertEqual(calls, ["feedback"])
+        failed = self.debug["stages"]["feedback"]
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["error_type"], "InvalidReview")
+        self.assertIn("candidate_ids", failed["validation_error"])
+        self.assertIn("a2bbb37a6f624185a715fdbe8bc1c11e", failed["validation_error"])
+        self.assertTrue(
+            any(
+                failed["validation_error"] in issue["reason"]
+                for issue in coverage.summarize(self.debug)["issues"]
+            )
+        )
         prior = mapper_inputs[0]["review_feedback"]["findings"][0]
         self.assertEqual(prior["key"], "previous:1")
         self.assertEqual(prior["title"], self.published["title"])
@@ -1451,6 +1474,13 @@ class PipelineTests(unittest.TestCase):
             order.append(name)
             mapped_candidates = json.loads(input_text)["candidate_findings"]
             self.assertEqual(mapped_candidates[0]["id"], "independent:1")
+            self.assertNotIn("anchor_id", mapped_candidates[0])
+            mapping_schema = kwargs["response_schema"]["properties"]["mappings"][
+                "items"
+            ]["properties"]
+            self.assertEqual(
+                mapping_schema["candidate_ids"]["items"]["enum"], ["independent:1"]
+            )
             self.assertEqual(mapped_candidates[0]["claim"], candidate()["claim"])
             self.assertEqual(
                 mapped_candidates[0]["consequence"], candidate()["consequence"]

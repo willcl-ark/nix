@@ -416,6 +416,12 @@ means the model call returned; response validation and final review coverage are
 reported in the saved trace. Conditional stages appear when they start.
 Prompts, responses, and tool output are not included in progress events.
 
+The feedback mapper receives candidate claims without internal source-anchor IDs.
+Its response schema restricts references to the current candidates, earlier
+findings and captured comments. Invalid mappings are discarded without retry;
+verification continues without that mapping. Saved traces include the validation
+error and offending reference IDs.
+
 Follow normal operational logs with `journalctl -u ralph -p info -f`, or include
 live progress with `journalctl -u ralph -p debug -f`. Without a priority filter,
 journalctl includes both. Progress uses the existing journal retention policy;

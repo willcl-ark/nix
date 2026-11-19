@@ -79,6 +79,91 @@ class FeedbackTests(unittest.TestCase):
         )
         return {"citation_id": output.splitlines()[0].removeprefix("Citation: ")}
 
+    def test_mapping_uses_candidate_ids_even_when_candidates_share_an_anchor(self):
+        anchor = "a2bbb37a6f624185a715fdbe8bc1c11e"
+        candidate = {
+            "id": "review:1",
+            "anchor_id": anchor,
+            "title": "Index corruption",
+            "claim": "New trigger corrupts the index",
+            "consequence": "Later reads return incorrect records",
+            "path": "index.cpp",
+            "line": 2,
+            "side": "head",
+            "internal_metadata": {"id": "not-a-candidate"},
+        }
+        self.candidates = [candidate, {**candidate, "id": "review:2"}]
+        mapped = feedback.mapping_input(self.packet, self.candidates)
+        self.assertNotIn(anchor, json.dumps(mapped))
+        self.assertNotIn("internal_metadata", json.dumps(mapped))
+        self.assertEqual(mapped["candidate_findings"][0]["claim"], candidate["claim"])
+        self.assertEqual(mapped["candidate_findings"][0]["path"], candidate["path"])
+        self.assertIn("anchor_id", candidate)
+
+        # Distinct earlier findings may legitimately refer to the same candidate.
+        self.packet["findings"].append({**self.packet["findings"][0], "key": "old:2"})
+        self.mapping["mappings"].append(
+            {**self.mapping["mappings"][0], "prior_key": "old:2"}
+        )
+        self.assertEqual(
+            feedback.parse_feedback(
+                json.dumps(self.mapping), self.packet, self.candidates
+            ),
+            self.mapping,
+        )
+        self.mapping["mappings"][0]["candidate_ids"].append(anchor)
+        with self.assertRaisesRegex(
+            InvalidReview, "Unknown candidate_ids reference: " + anchor
+        ):
+            feedback.parse_feedback(
+                json.dumps(self.mapping), self.packet, self.candidates
+            )
+
+    def test_mapping_schema_references_are_scoped_to_each_request(self):
+        schema = feedback.mapping_schema(self.packet, self.candidates)
+        properties = schema["properties"]["mappings"]["items"]["properties"]
+        self.assertEqual(
+            properties["prior_key"]["enum"], [self.packet["findings"][0]["key"]]
+        )
+        self.assertEqual(
+            properties["candidate_ids"]["items"]["enum"], [self.candidates[0]["id"]]
+        )
+        self.assertEqual(
+            properties["comment_ids"]["items"]["enum"],
+            [self.packet["comments"][0]["id"]],
+        )
+        properties["candidate_ids"]["items"]["enum"].append("foreign:1")
+        properties["reason"]["type"] = "null"
+        fresh = feedback.mapping_schema(self.packet, self.candidates)
+        fresh_properties = fresh["properties"]["mappings"]["items"]["properties"]
+        self.assertNotIn(
+            "foreign:1", fresh_properties["candidate_ids"]["items"]["enum"]
+        )
+        self.assertEqual(fresh_properties["reason"], protocol.STRING)
+        self.assertNotIn(
+            "enum", feedback.MAPPING["properties"]["candidate_ids"]["items"]
+        )
+
+    def test_empty_feedback_reference_sets_allow_only_empty_lists(self):
+        self.packet["comments"] = []
+        schema = feedback.mapping_schema(self.packet, [])
+        properties = schema["properties"]["mappings"]["items"]["properties"]
+        for field in ("candidate_ids", "comment_ids"):
+            self.assertEqual(properties[field]["maxItems"], 0)
+            self.assertNotIn("enum", properties[field]["items"])
+        mapping = self.mapping["mappings"][0]
+        mapping.update(candidate_ids=[], comment_ids=[], author_position="none")
+        self.assertEqual(
+            feedback.parse_feedback(json.dumps(self.mapping), self.packet, []),
+            self.mapping,
+        )
+        self.packet["findings"] = []
+        schema = feedback.mapping_schema(self.packet, [])
+        self.assertEqual(schema["properties"]["mappings"]["maxItems"], 0)
+        self.assertNotIn(
+            "enum", schema["properties"]["mappings"]["items"]["properties"]["prior_key"]
+        )
+
     def test_historical_commit_suggestion_passes_normal_verification(self):
         location = {
             "path": "index.cpp",

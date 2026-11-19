@@ -107,7 +107,7 @@ def validate_packet(packet, source, snapshot):
 
 
 def mapping_input(packet, candidates):
-    """Expose claim text and reference targets without old run-local identities."""
+    """Expose claim text and mapping targets without unrelated identities."""
 
     def claim(finding):
         return {
@@ -139,18 +139,65 @@ def mapping_input(packet, candidates):
                 for finding in packet["findings"]
             ],
             "comments": [
-                {"id": comment["id"], "body": comment["body"]}
+                {"id": str(comment["id"]), "body": comment["body"]}
                 for comment in packet["comments"]
             ],
         },
-        "candidate_findings": candidates,
+        "candidate_findings": [
+            {
+                field: candidate[field]
+                for field in (
+                    "id",
+                    "kind",
+                    "title",
+                    "claim",
+                    "consequence",
+                    "evidence",
+                    "correction",
+                    "uncertainty",
+                    "path",
+                    "line",
+                    "side",
+                    "commit",
+                    "parent",
+                )
+                if field in candidate
+            }
+            for candidate in candidates
+        ],
     }
 
 
-def _references(value, allowed):
+def mapping_schema(packet, candidates):
+    """Constrain mapping references to the identities supplied in this request."""
+    schema = copy.deepcopy(FEEDBACK_SCHEMA)
+    mappings = schema["properties"]["mappings"]
+    properties = mappings["items"]["properties"]
+    prior = [finding["key"] for finding in packet["findings"]]
+    if prior:
+        properties["prior_key"] = {"type": "string", "enum": prior}
+    else:
+        mappings["maxItems"] = 0
+    for field, values in (
+        ("candidate_ids", [candidate["id"] for candidate in candidates]),
+        ("comment_ids", [str(comment["id"]) for comment in packet["comments"]]),
+    ):
+        # Replace the shared STRINGS schema independently for each field.
+        properties[field] = {"type": "array", "items": {"type": "string"}}
+        if values:
+            properties[field]["items"]["enum"] = values
+        else:
+            properties[field]["maxItems"] = 0
+    return schema
+
+
+def _references(value, allowed, field="feedback"):
     _strings(value)
-    if len(value) != len(set(value)) or not set(value) <= allowed:
-        raise InvalidReview("Unknown or duplicate feedback reference")
+    for reference, count in Counter(value).items():
+        if reference not in allowed:
+            raise InvalidReview(f"Unknown {field} reference: {reference}")
+        if count > 1:
+            raise InvalidReview(f"Duplicate {field} reference: {reference}")
 
 
 def parse_feedback(text, packet, candidates):
@@ -172,8 +219,8 @@ def parse_feedback(text, packet, candidates):
         if not isinstance(key, str) or key not in prior or key in seen:
             raise InvalidReview("Unknown or duplicate prior finding")
         seen.add(key)
-        _references(mapping["candidate_ids"], current)
-        _references(mapping["comment_ids"], comments)
+        _references(mapping["candidate_ids"], current, "candidate_ids")
+        _references(mapping["comment_ids"], comments, "comment_ids")
         if mapping["author_position"] not in POSITIONS:
             raise InvalidReview("Invalid author position")
         if mapping["author_position"] != "none" and not mapping["comment_ids"]:
