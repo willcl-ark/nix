@@ -9,7 +9,7 @@ import time
 import urllib.error
 from email.utils import parsedate_to_datetime
 
-from . import claude, progress, research, transport, upstream
+from . import claude, progress, refusals, research, transport, upstream
 from .evidence import ToolFailure
 from .repository import (
     find_paths,
@@ -492,6 +492,11 @@ def _provider_error_message(error, api_key):
             body = json.loads(error.read(8192))
     except (OSError, ValueError, http.client.HTTPException):
         return None
+    if isinstance(body, dict):
+        detail = body.get("error", body.get("detail"))
+        error.failure_kind = refusals.failure_kind(
+            {"error": detail} if isinstance(detail, dict) else {"error_message": detail}
+        )
     return _provider_error_detail(body, api_key)
 
 
@@ -579,6 +584,7 @@ def request_response(
                 exc.provider_error_message = _provider_error_detail(
                     {"error": exc.error}, api_key
                 )
+                exc.failure_kind = refusals.failure_kind({"error": exc.error})
                 retryable = exc.retryable
             else:
                 retryable = isinstance(
@@ -590,7 +596,11 @@ def request_response(
                         http.client.HTTPException,
                     ),
                 )
-            if not retryable or attempt + 1 == MAX_REQUEST_ATTEMPTS:
+            if (
+                getattr(exc, "failure_kind", None)
+                or not retryable
+                or attempt + 1 == MAX_REQUEST_ATTEMPTS
+            ):
                 raise
             delay = attempt + 1
             if http_error:
@@ -640,6 +650,15 @@ def request_response(
         usage.complete(token, result)
     if on_response is not None:
         on_response(stage_name, payload, result)
+    kind = refusals.failure_kind(result)
+    if kind:
+        result = {
+            **result,
+            "status": "failed",
+            "failure_kind": kind,
+            "error_message": _provider_error_detail(result, api_key)
+            or refusals.description(kind),
+        }
     return result, payload, elapsed
 
 
@@ -654,6 +673,11 @@ def response_record(result, payload, elapsed):
         "response_id": result.get("id"),
         "status": result.get("status"),
         "error": result.get("error"),
+        **{
+            key: result[key]
+            for key in ("failure_kind", "error_message")
+            if key in result
+        },
         "request_bytes": len(payload),
         "request_sha256": hashlib.sha256(payload).hexdigest(),
         "response_output_sha256": hashlib.sha256(
@@ -711,6 +735,9 @@ def request_failure_record(data, error):
         )
     if message:
         record["error_message"] = message
+    kind = getattr(error, "failure_kind", None)
+    if kind:
+        record["failure_kind"] = kind
     return record
 
 
@@ -843,7 +870,7 @@ def run_audit(
             stage.update(
                 {
                     key: failure[key]
-                    for key in ("http_status", "error_message")
+                    for key in ("http_status", "error_message", "failure_kind")
                     if key in failure
                 }
             )
@@ -869,6 +896,13 @@ def run_audit(
                 "status": status,
                 "raw_output": answer,
                 "incomplete_reason": record["incomplete_reason"],
+            }
+        )
+        stage.update(
+            {
+                key: record[key]
+                for key in ("failure_kind", "error_message")
+                if key in record
             }
         )
         stage["turns"].append(record.copy())
@@ -1032,7 +1066,7 @@ def openai_review(
                 stage_debug.update(
                     {
                         key: failure[key]
-                        for key in ("http_status", "error_message")
+                        for key in ("http_status", "error_message", "failure_kind")
                         if key in failure
                     }
                 )
@@ -1052,6 +1086,13 @@ def openai_review(
             }
             debug["turns"].append(turn_record)
             stage_debug["status"] = result.get("status")
+            stage_debug.update(
+                {
+                    key: turn_record[key]
+                    for key in ("failure_kind", "error_message")
+                    if key in turn_record
+                }
+            )
         if result.get("status") != "completed":
             raw = output_text(result.get("output", []))
             if stage_debug is not None:

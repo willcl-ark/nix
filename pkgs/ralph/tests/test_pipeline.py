@@ -14,9 +14,18 @@ from ralph import (
     protocol,
     repository,
     runner,
+    transport,
 )
 
 COMPLETE = {"status": "complete", "limitations": []}
+
+
+def refuse_review(*args, **kwargs):
+    message = "This content was flagged for possible cybersecurity risk."
+    args[3].update(
+        status="failed", failure_kind="cyber_refusal", error_message=message
+    )
+    raise transport.StreamError({"code": "refusal", "message": message})
 
 
 def discovery(findings=(), sensitive=False, test_coverage=None):
@@ -604,6 +613,7 @@ class PipelineTests(unittest.TestCase):
         for failure in (
             RuntimeError("Sandbox unavailable"),
             protocol.InvalidReview("Invalid writer output"),
+            refuse_review,
         ):
             with self.subTest(failure=type(failure).__name__):
                 self.debug = {}
@@ -612,6 +622,11 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(self.debug["coverage"]["status"], "complete")
                 self.assertEqual(self.debug["coverage"]["limitations"], [])
                 self.assertTrue(self.debug["coverage"]["experiments"]["limitations"])
+                if failure is refuse_review:
+                    self.assertEqual(
+                        self.debug["stages"]["write_verifier"]["failure_kind"],
+                        "cyber_refusal",
+                    )
 
     def test_writer_evidence_reaches_judge_without_deciding_publication(self):
         self.tier, self.audits = "routine", []
@@ -691,12 +706,12 @@ class PipelineTests(unittest.TestCase):
                 ]
             )
 
-        for failure in (TimeoutError("Judge unavailable"), "{}"):
+        for failure in (TimeoutError("Judge unavailable"), "{}", refuse_review):
             with self.subTest(failure=failure):
                 self.debug = {}
                 judge = (
                     Mock(side_effect=failure)
-                    if isinstance(failure, Exception)
+                    if isinstance(failure, Exception) or callable(failure)
                     else Mock(return_value=failure)
                 )
                 self.run_review(review, judge=judge)
@@ -716,6 +731,16 @@ class PipelineTests(unittest.TestCase):
                 self.assertTrue(self.result.content.startswith("Review failed"))
                 self.assertEqual(
                     self.debug["coverage"]["verification"]["status"], "failed"
+                )
+                self.assertEqual(
+                    len(self.debug["stages"]["verifier"]["decisions"]), 2
+                )
+                self.assertTrue(
+                    all(
+                        decision["disposition"] == "supported"
+                        and decision["finding"] is not None
+                        for decision in self.debug["stages"]["verifier"]["decisions"]
+                    )
                 )
 
     def setUp(self):
@@ -1678,14 +1703,14 @@ class PipelineTests(unittest.TestCase):
 
     def test_challenger_failure_preserves_verified_findings(self):
         self.tier, self.audits = "routine", []
-        for failure in (TimeoutError("Provider unavailable"), "{}"):
+        for failure in (refuse_review, "{}"):
             with self.subTest(failure=failure):
                 self.debug = {}
 
                 def reviewer(*args, **kwargs):
                     if kwargs["stage_name"] == "challenger":
-                        if isinstance(failure, Exception):
-                            raise failure
+                        if callable(failure):
+                            return failure(*args, **kwargs)
                         return failure
                     return self.major_review(*args, **kwargs)
 
@@ -1714,7 +1739,7 @@ class PipelineTests(unittest.TestCase):
             "comments": [{"id": "reply:1", "body": "PRIVATE_AUTHOR_REPLY"}],
         }
         for failed_stage in ("concept_verifier", "reconciliation"):
-            for failure in (TimeoutError("Provider unavailable"), "{}"):
+            for failure in (refuse_review, "{}"):
                 with self.subTest(stage=failed_stage, failure=type(failure).__name__):
                     self.debug = {}
                     calls = {}
@@ -1744,8 +1769,8 @@ class PipelineTests(unittest.TestCase):
                                 ]
                             )
                         if stage == failed_stage:
-                            if isinstance(failure, Exception):
-                                raise failure
+                            if callable(failure):
+                                return failure(*args, **kwargs)
                             return failure
                         if stage == "concept_verifier":
                             return concept_verification()
@@ -1814,7 +1839,7 @@ class PipelineTests(unittest.TestCase):
             if kwargs["stage_name"] == "reconciliation":
                 return json.dumps({"coverage": COMPLETE, "review_reconciliation": []})
             self.assertEqual(kwargs["stage_name"], "verifier")
-            raise TimeoutError("Provider unavailable")
+            return refuse_review(*args, **kwargs)
 
         def audit(*args, **kwargs):
             self.assertEqual(args[1], "feedback")

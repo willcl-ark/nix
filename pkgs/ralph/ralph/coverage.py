@@ -2,6 +2,8 @@
 
 import re
 
+from . import refusals
+
 
 # Only discard an entire, ordinary static-review caveat. Mixed statements that
 # also name missing evidence stay limitations, including historical outputs.
@@ -28,6 +30,9 @@ FAILURES = {"failed", "invalid"}
 
 
 def _failure(stage):
+    kind = refusals.failure_kind(stage)
+    if kind:
+        return refusals.description(kind)
     status = stage.get("status")
     if status == "invalid" or stage.get("validation_error"):
         return "Output failed validation: " + stage.get(

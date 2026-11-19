@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ralph import config, engine, profiles, routing
+from ralph import config, coverage, engine, profiles, routing, transport
 from ralph.protocol import InvalidReview
 from ralph.repository import MAX_REVIEW_BYTES
 
@@ -214,15 +214,22 @@ class RoutingTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(plan, routing.full_plan("Initial patch is incomplete"))
 
+        def refuse(*args, **kwargs):
+            args[3].update(failure_kind="cyber_refusal")
+            raise transport.StreamError({"code": "refusal"})
+
         for answer in (
             '{"tier": "routine"}',
             InvalidReview("Router response incomplete"),
+            refuse,
         ):
             with self.subTest(answer=answer):
                 debug = {}
                 with patch(
                     "ralph.model.openai_review",
-                    side_effect=answer if isinstance(answer, Exception) else None,
+                    side_effect=answer
+                    if isinstance(answer, Exception) or callable(answer)
+                    else None,
                     return_value=answer,
                 ):
                     plan = routing.plan_review(
@@ -239,6 +246,11 @@ class RoutingTests(unittest.TestCase):
                     ),
                 )
                 self.assertEqual(debug["stages"]["router"]["status"], "failed")
+                if answer is refuse:
+                    self.assertEqual(
+                        debug["stages"]["router"]["failure_kind"], "cyber_refusal"
+                    )
+                    self.assertEqual(coverage.summarize(debug)["issues"], [])
 
         plan = routing.validate_plan(
             route(missing_context=("caller omitted",)), {"src/example.cpp"}

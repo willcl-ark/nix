@@ -7,7 +7,7 @@ import urllib.error
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from ralph import model
+from ralph import claude, model, refusals
 
 
 class FakeUsage:
@@ -437,6 +437,142 @@ class ModelUsageTests(unittest.TestCase):
                     self.assertEqual(
                         usage.events[-1], ("complete", "token", "finished")
                     )
+
+    def test_refusal_stops_retryable_http_and_stream_errors(self):
+        message = (
+            "This content was flagged for possible cybersecurity risk; Bearer secret"
+        )
+        errors = [
+            urllib.error.HTTPError(
+                "url",
+                503,
+                "rejected",
+                {},
+                io.BytesIO(json.dumps({"error": {"message": message}}).encode()),
+            ),
+            model.transport.StreamError({"code": "server_error", "message": message}),
+            urllib.error.HTTPError(
+                "url",
+                503,
+                "rejected",
+                {},
+                io.BytesIO(b'{"error":{"code":"refusal","message":"Declined"}}'),
+            ),
+        ]
+        for index, error in enumerate(errors):
+            expected = "provider_refusal" if index == 2 else "cyber_refusal"
+            with self.subTest(error=type(error).__name__, index=index):
+                usage, debug = FakeUsage(), {}
+                with (
+                    patch.object(model.transport, "request", side_effect=error) as send,
+                    patch.object(model.time, "sleep") as sleep,
+                    self.assertRaises(type(error)),
+                ):
+                    model.run_audit(
+                        "secret",
+                        "verifier",
+                        "Verify.",
+                        "input",
+                        model_name="test",
+                        max_output_tokens=100,
+                        usage=usage,
+                        debug=debug,
+                    )
+                send.assert_called_once()
+                sleep.assert_not_called()
+                self.assertEqual(debug["failure_kind"], expected)
+                self.assertEqual(debug["turns"][0]["failure_kind"], expected)
+                self.assertNotIn("secret", debug["error_message"])
+                self.assertEqual(usage.events[-1], ("fail", "token", True))
+
+    def test_terminal_refusals_preserve_usage_and_fail_both_stage_paths(self):
+        results = [
+            {
+                "status": "failed",
+                "error": {
+                    "message": "This content was flagged for possible cybersecurity risk; Bearer secret"
+                },
+                "output": [],
+            },
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "refusal", "refusal": "Declined"}],
+                    }
+                ],
+            },
+            claude.response({"stop_reason": "refusal", "content": [], "usage": {}}),
+        ]
+        for index, result in enumerate(results):
+            result.update(id="refused", usage={"input_tokens": 10, "output_tokens": 4})
+            expected = "cyber_refusal" if index == 0 else "provider_refusal"
+            for tool_loop in (False, True):
+                with self.subTest(index=index, tool_loop=tool_loop):
+                    usage, debug = FakeUsage(), {}
+                    with patch.object(
+                        model.transport, "request", return_value=result
+                    ) as send:
+                        if tool_loop:
+                            with self.assertRaisesRegex(ValueError, "did not complete"):
+                                model.openai_review(
+                                    "secret",
+                                    "input",
+                                    self.snapshot,
+                                    debug,
+                                    prompt="Review.",
+                                    model="test",
+                                    max_output_tokens=100,
+                                    usage=usage,
+                                )
+                        else:
+                            _, record = model.run_audit(
+                                "secret",
+                                "verifier",
+                                "Verify.",
+                                "input",
+                                model_name="test",
+                                max_output_tokens=100,
+                                usage=usage,
+                                debug=debug,
+                            )
+                            self.assertEqual(record["status"], "failed")
+                    send.assert_called_once()
+                    stage = debug
+                    self.assertEqual(stage["status"], "failed")
+                    self.assertEqual(stage["failure_kind"], expected)
+                    self.assertEqual(stage["turns"][0]["failure_kind"], expected)
+                    self.assertTrue(stage["turns"][0]["usage_known"])
+                    self.assertNotIn("secret", stage["error_message"])
+                    self.assertEqual(usage.events[-1], ("complete", "token", "refused"))
+
+    def test_classifier_ignores_review_prose_and_reads_historical_provider_errors(self):
+        phrase = "This content was flagged for possible cybersecurity risk"
+        self.assertIsNone(
+            refusals.failure_kind(
+                {
+                    "status": "failed",
+                    "raw_output": phrase,
+                    "http_status": 403,
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": phrase}],
+                        }
+                    ],
+                }
+            )
+        )
+        self.assertEqual(
+            refusals.failure_kind(
+                {
+                    "status": "failed",
+                    "turns": [{"status": "failed", "error": {"code": "refusal"}}],
+                }
+            ),
+            "provider_refusal",
+        )
 
     def test_transport_retry_is_bounded_and_checks_staleness_before_reserving(self):
         for stale in (False, True):
