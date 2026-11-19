@@ -164,6 +164,14 @@ uninstrumented. Reaching a cap does not establish that more allowance would
 improve a review. Usage totals describe Ralph's requests; subscription quotas
 also include other tools using the same accounts.
 
+The Reviews page counts saved reviews with explicit provider cyber refusals once
+per review, even when several stages fail. Select **Cyber refusals** in the Show
+filter to find affected reports; the Outcome column names the stages and models.
+Detection uses failed-stage provider errors containing "flagged for possible
+cybersecurity risk", not review prose or generic failures. Approved finding
+counts are unchanged. The derived stats cache rebuilds historical rows after
+this extraction change.
+
 ## Rebuilding statistics
 
 Stats updates are incremental by default. A private cache in `stateDir/stats`

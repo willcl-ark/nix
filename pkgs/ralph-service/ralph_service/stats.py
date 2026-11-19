@@ -112,6 +112,7 @@ def collect_stats(
     }
     overview = {
         "saved_reviews": 0,
+        "cyber_refusal_reviews": 0,
         "published_reviews": 0,
         "review_status": {},
         "saved_findings": 0,
@@ -291,6 +292,17 @@ def collect_stats(
     return summary
 
 
+def _cyber_refusals(debug):
+    """Identify explicit provider cyber refusals, not review prose or other errors."""
+    return [
+        {"stage": name, "model": stage.get("model")}
+        for name, stage in (debug.get("stages") or {}).items()
+        if stage.get("status") == "failed"
+        and "flagged for possible cybersecurity risk"
+        in str(stage.get("error_message", "")).casefold()
+    ]
+
+
 def _review_summary(row):
     """Extract only statistics inputs; never cache raw diagnostics or prompts."""
     row = dict(row)
@@ -299,6 +311,7 @@ def _review_summary(row):
     )
     overview = {
         "saved_reviews": 0,
+        "cyber_refusal_reviews": 0,
         "published_reviews": 0,
         "review_status": {},
         "saved_findings": 0,
@@ -385,6 +398,7 @@ def _review_summary(row):
     research_completed = _archaeology_research_completed(debug)
     coverage = _coverage_summary(debug)
     routing = _routing_summary(debug)
+    cyber_refusals = _cyber_refusals(debug)
     displayed_findings = report_findings(
         findings,
         core_trace.review_memory_export(result),
@@ -399,6 +413,7 @@ def _review_summary(row):
 
     if not skipped:
         overview["saved_reviews"] += 1
+        overview["cyber_refusal_reviews"] += bool(cyber_refusals)
         review_status = (result.get("run") or {}).get("status", "unknown")
         counts = overview["review_status"]
         counts[review_status] = counts.get(review_status, 0) + 1
@@ -453,6 +468,7 @@ def _review_summary(row):
         "review_status": (result.get("run") or {}).get("status", "unknown"),
         "job_attempts": row["attempts"],
         "recorded_failed_attempts": max(0, int(row["attempts"] or 0)),
+        "cyber_refusals": cyber_refusals,
         "skipped": skipped,
         "routing": routing,
         "coverage": coverage["status"],

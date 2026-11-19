@@ -1196,6 +1196,13 @@ def _reviews_table(reviews, repository_url, report_base_url):
             is review
             else ""
         )
+        refusals = _list(review.get("cyber_refusals"))
+        outcome = _escape(review.get("review_status", "unknown"))
+        if refusals:
+            outcome += "<br>Cyber refusal: " + "; ".join(
+                _escape(f"{item['stage']} / {item.get('model') or 'unknown model'}")
+                for item in refusals
+            )
         rows.append(
             _cells(
                 [
@@ -1206,13 +1213,15 @@ def _reviews_table(reviews, repository_url, report_base_url):
                     f'<span class="review-title" title="{title}">{title}</span>',
                     f'<code data-search-text="{head if _valid_sha(head) else ""}">{commit}</code>',
                     _report_link(review, report_base_url),
-                    _escape(review.get("review_status", "unknown")),
+                    outcome,
                 ]
             )
             .replace("</tr>", severity_cells + "</tr>")
             .replace(
                 "<tr>",
-                '<tr data-repository="'
+                '<tr data-filter="'
+                + ("cyber_refusal" if refusals else "")
+                + '" data-repository="'
                 + _escape(review.get("repository_id", "core"))
                 + '" data-severities="'
                 + _escape(json.dumps(counts))
@@ -1231,6 +1240,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
         ],
         rows,
         "reviews",
+        filters=(("cyber_refusal", "Cyber refusals"),),
         controls='<label>Repository <select data-repository-filter><option value="">All</option>'
         + "".join(
             f'<option value="{_escape(repo)}">{_escape(repo)}</option>'
@@ -2018,6 +2028,9 @@ def _reviews_html(summary, repository_url, report_base_url):
     body = (
         '<h1>Reviews</h1><p class="subtitle">Search saved reviews by PR, commit or outcome. Severity is estimated by Ralph.</p>'
         + '<section class="reviews-list">'
+        + "<p>Reviews with a recorded cyber refusal: "
+        + _fmt_int(_mapping(summary.get("overview")).get("cyber_refusal_reviews", 0))
+        + ". Each review is counted once, even if several stages were refused.</p>"
         + _reviews_table(_sorted_reviews(summary), repository_url, report_base_url)
         + "</section>"
     )

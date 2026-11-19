@@ -10,6 +10,71 @@ from ralph_service import history, jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
+    def test_cyber_refusals_count_reviews_and_link_filterable_reports(self):
+        refusal = "This content was flagged for possible cybersecurity risk."
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "reports"
+            store = jobs.JobStore(root / "jobs.sqlite3")
+            for number, error in ((42, refusal), (43, "Request timed out")):
+                store.enqueue(
+                    number,
+                    "main",
+                    "a" * 40,
+                    "opened",
+                    engine_identity={"name": "current"},
+                )
+                job = store.claim()
+                result = {
+                    "schema_version": 1,
+                    "head_sha": "a" * 40,
+                    "run": {"status": "failed"},
+                    "engine": {"name": "current"},
+                    "output": {
+                        "schema_version": 2,
+                        "exports": {"findings": []},
+                        "data": {
+                            "schema_version": 2,
+                            "stages": {
+                                name: {
+                                    "model": "test-model",
+                                    "status": "failed",
+                                    "error_message": error,
+                                    # Review prose must never classify a refusal.
+                                    "raw_output": refusal,
+                                }
+                                for name in ("judge", "write_verifier")
+                            },
+                        },
+                    },
+                }
+                store.save_result(job, result)
+                store.complete(job)
+                report.save_report(
+                    reports,
+                    number,
+                    result,
+                    f"{number}-{'a' * 40}-{job['id']}-{job['generation']}",
+                )
+            summary = stats.collect_stats(root, reports)
+            self.assertEqual(summary["overview"]["cyber_refusal_reviews"], 1)
+            by_number = {item["number"]: item for item in summary["reviews"]}
+            self.assertEqual(
+                by_number[42]["cyber_refusals"],
+                [
+                    {"stage": name, "model": "test-model"}
+                    for name in ("judge", "write_verifier")
+                ],
+            )
+            self.assertEqual(by_number[43]["cyber_refusals"], [])
+            page = stats_page._reviews_html(summary, None, "https://reports.example")
+            self.assertEqual(page.count('data-filter="cyber_refusal"'), 1)
+            self.assertIn('<option value="cyber_refusal">', page)
+            self.assertIn("judge / test-model", page)
+            self.assertIn("write_verifier / test-model", page)
+            self.assertIn("https://reports.example/42-", page)
+            self.assertNotIn(refusal, page)
+
     def test_repository_scopes_preserve_same_number_reviews_and_source_links(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

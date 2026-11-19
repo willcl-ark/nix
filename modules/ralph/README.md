@@ -272,6 +272,11 @@ updates address earlier findings, using its own checkout and usage ledger under
 old PR updates. See [reports and statistics](../../pkgs/ralph-service/operations.md#reports-and-statistics)
 for interpretation, backfill and cache recovery.
 
+The Reviews page includes a Cyber refusals count and filter. It identifies
+explicit provider cybersecurity refusals, lists affected stages and models,
+and links to their reports. Each review counts once regardless of how many
+stages refused; approved finding counts are unchanged.
+
 To refresh statistics immediately:
 
 ```sh
