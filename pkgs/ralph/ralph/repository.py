@@ -331,7 +331,7 @@ def prepare_submodules(checkout, revisions, submodules):
     for path, remote in submodules.items():
         pins = list(dict.fromkeys(link[path] for link in links if path in link))
         if not pins:
-            raise ValueError(f"Configured submodule {path} has no gitlink")
+            continue
         child = _dependency_checkout(checkout, path)
         if not child.exists():
             child.mkdir(parents=True)
@@ -379,7 +379,7 @@ def _snapshot_dependencies(checkout, base, head, submodules, base_files, head_fi
         child = _dependency_checkout(checkout, path)
         pins = (base_links.get(path), head_links.get(path))
         if not any(pins):
-            raise ValueError(f"Configured submodule {path} has no gitlink")
+            continue
         if git(child, "remote", "get-url", "origin").strip() != remote:
             raise ValueError(f"Submodule {path} origin does not match configuration")
         for commit, files in zip(pins, (base_files, head_files)):

@@ -170,6 +170,18 @@ class SubmoduleTests(unittest.TestCase):
             )
         self.assertNotIn("fetch", trace.read_text())
 
+    def test_configured_submodule_absent_from_both_endpoints_is_skipped(self):
+        fork = self.make_repository("fork")
+        base = self.commit(fork, "api.h", "old interface\n")
+        head = self.commit(fork, "api.h", "new interface\n")
+        repository.prepare_submodules(fork, [base, head], self.allowed)
+        snapshot = repository.snapshot_repository(
+            fork, base, head, submodules=self.allowed
+        )
+        self.assertEqual(snapshot.dependencies, ())
+        self.assertEqual(set(snapshot.head_files), {"api.h"})
+        self.assertFalse((fork / "bitcoin").exists())
+
     def test_symlink_checkout_and_remote_change_are_rejected(self):
         (self.repo / "bitcoin").symlink_to(self.upstream, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "escapes"):
