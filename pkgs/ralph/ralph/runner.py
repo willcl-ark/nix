@@ -61,6 +61,8 @@ def run_review(case, runtime, selected_engine):
         "data": output.data,
         "exports": output.exports,
     }
+    if output.data == runtime.attempt:
+        del result["run"]["attempt"]
     return validate_json(result)
 
 

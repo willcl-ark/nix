@@ -29,6 +29,8 @@ def run(case, runtime, configured):
         runtime.check_current()
     data = {'native': 'arbitrary engine schema', 'source': case.source,
             'backport': case.backport_evidence}
+    if configured.get('mirror_attempt'):
+        data = dict(runtime.attempt)
     return Output('# Test review', data, {'custom': ['native']}, schema_version=17,
                   status='failed' if configured.get('verification_failed') else 'completed')
 """
@@ -148,6 +150,17 @@ class CLITest(unittest.TestCase):
         self.assertEqual(
             self.git("for-each-ref", "--format=%(refname)", "refs/ralph/local"), ""
         )
+
+    def test_diagnostics_mirrored_in_output_are_stored_once(self):
+        self.assertEqual(self.cli().returncode, 0)
+        self.assertIn("fake", self.result()["run"]["attempt"])
+        self.output.unlink()
+        self.configure(mirror_attempt=True)
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = self.result()
+        self.assertIn("fake", data["output"]["data"])
+        self.assertNotIn("attempt", data["run"])
 
     def test_failed_review_preserves_output_and_exits_nonzero(self):
         self.configure(verification_failed=True)

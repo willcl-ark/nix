@@ -137,7 +137,6 @@ class ServiceTests(unittest.TestCase):
                 "metrics": {},
                 "skipped": bool(debug.get("skip")),
                 "usage": {},
-                "attempt": debug,
             },
         }
 

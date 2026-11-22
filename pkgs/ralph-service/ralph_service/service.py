@@ -448,7 +448,7 @@ def process_job(
                 base_sha = saved["base_sha"]
                 head_sha = saved["head_sha"]
                 content = saved["content"]
-                debug = saved["run"]["attempt"]
+                debug = core_trace.current_diagnostics(saved)
                 expected_context = saved["run"].get("review_context")
                 review_fingerprint = saved["run"].get("review_fingerprint")
                 if not expected_context or not expected_context.get("base_ref"):
