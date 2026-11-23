@@ -19,7 +19,7 @@ from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
 from . import health
-from .report import _source_repository_url, public_limits
+from .report import _provisional_findings, _source_repository_url, public_limits
 
 
 SNAPSHOT_MODEL = re.compile(r"(.+)-\d{4}-\d{2}-\d{2}")
@@ -293,13 +293,13 @@ def collect_stats(
     return summary
 
 
-def _cyber_refusals(debug):
-    """Identify explicit provider cyber refusals, not review prose or other errors."""
+def _refusals(debug, kind):
+    """Identify explicit provider refusals, not review prose or other errors."""
     return [
         {"stage": name, "model": stage.get("model")}
         for name, stage in (debug.get("stages") or {}).items()
         if stage.get("status") in {"failed", "invalid"}
-        and refusals.failure_kind(stage) == "cyber_refusal"
+        and refusals.failure_kind(stage) == kind
     ]
 
 
@@ -398,7 +398,7 @@ def _review_summary(row):
     research_completed = _archaeology_research_completed(debug)
     coverage = _coverage_summary(debug)
     routing = _routing_summary(debug)
-    cyber_refusals = _cyber_refusals(debug)
+    cyber_refusals = _refusals(debug, "cyber_refusal")
     displayed_findings = report_findings(
         findings,
         core_trace.review_memory_export(result),
@@ -469,6 +469,8 @@ def _review_summary(row):
         "job_attempts": row["attempts"],
         "recorded_failed_attempts": max(0, int(row["attempts"] or 0)),
         "cyber_refusals": cyber_refusals,
+        "provider_refusals": _refusals(debug, "provider_refusal"),
+        "provisional_findings": len(_provisional_findings(debug)),
         "skipped": skipped,
         "routing": routing,
         "coverage": coverage["status"],

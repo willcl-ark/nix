@@ -97,12 +97,55 @@ class StatsPageTests(unittest.TestCase):
                 [{"stage": "router", "model": "test-model"}],
             )
             page = stats_page._reviews_html(summary, None, "https://reports.example")
-            self.assertEqual(page.count('data-filter="cyber_refusal"'), 2)
-            self.assertIn('<option value="cyber_refusal">', page)
-            self.assertIn("judge / test-model", page)
-            self.assertIn("write_verifier / test-model", page)
+            self.assertEqual(page.count('data-filter="cyber"'), 2)
+            self.assertIn('<option value="cyber">', page)
+            self.assertEqual(page.count('data-filter="refused"'), 1)
+            self.assertIn("Provider refusal: router / test-model", page)
+            self.assertEqual(page.count(">[cyber]</span>"), 2)
+            self.assertIn(
+                'title="Review failed. Cyber refusal: '
+                'judge / test-model; write_verifier / test-model"',
+                page,
+            )
             self.assertIn("https://reports.example/42-", page)
             self.assertNotIn(refusal, page)
+
+    def test_outcome_tag_shows_most_specific_cause(self):
+        refusal = [{"stage": "judge", "model": None}]
+        for expected, review in (
+            ("completed", {"review_status": "completed"}),
+            (
+                "completed",
+                {"review_status": "completed", "verification_status": "unknown"},
+            ),
+            (
+                "unverified",
+                {"review_status": "completed", "verification_status": "partial"},
+            ),
+            ("failed", {"review_status": "failed", "verification_status": "failed"}),
+            ("provisional", {"review_status": "failed", "provisional_findings": 2}),
+            (
+                "refused",
+                {
+                    "review_status": "failed",
+                    "provisional_findings": 2,
+                    "provider_refusals": refusal,
+                },
+            ),
+            (
+                "cyber",
+                {
+                    "review_status": "failed",
+                    "provider_refusals": refusal,
+                    "cyber_refusals": refusal,
+                },
+            ),
+        ):
+            with self.subTest(expected=expected, review=review):
+                tag, html = stats_page._outcome_tag(review)
+                self.assertEqual(tag, expected)
+                self.assertIn(f">[{expected}]</span>", html)
+        self.assertIn("Provider refusal: judge / unknown model", html)
 
     def test_repository_scopes_preserve_same_number_reviews_and_source_links(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -166,7 +166,15 @@ also include other tools using the same accounts.
 
 The Reviews page counts saved reviews with explicit provider cyber refusals once
 per review, even when several stages fail. Select **Cyber refusals** in the Show
-filter to find affected reports; the Outcome column names the stages and models.
+filter to find affected reports.
+
+The Outcome column shows one tag per review. `[cyber]` and `[refused]` mark
+provider refusals, `[provisional]` a failed judge with provisional findings on
+the report, and `[unverified]` a completed review with partial or failed
+verification. The first that applies, in that order, replaces `[completed]` or
+`[failed]`. The tooltip gives the review status and every cause; red tags mark
+failed reviews. The Show filter selects by tag.
+
 Detection uses the same explicit provider refusal classification as stage
 diagnostics, including retained terminal-response errors. A generic provider
 refusal is not counted as a cyber refusal without a cybersecurity signal. Review

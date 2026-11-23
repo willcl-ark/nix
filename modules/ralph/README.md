@@ -273,8 +273,9 @@ old PR updates. See [reports and statistics](../../pkgs/ralph-service/operations
 for interpretation, backfill and cache recovery.
 
 The Reviews page includes a Cyber refusals count and filter. It identifies
-explicit provider cybersecurity refusals, lists affected stages and models,
-and links to their reports. Each review counts once regardless of how many
+explicit provider cybersecurity refusals, tags affected reviews `[cyber]` with
+the stages and models in a tooltip, and links to their reports. Each review
+counts once regardless of how many
 stages refused, including optional stages on otherwise completed reviews. Generic
 refusals have distinct wording in diagnostics and notices; they do not enter
 the cyber-refusal count. Reports, monitoring and Telegram notices identify

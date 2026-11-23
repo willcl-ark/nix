@@ -1142,6 +1142,39 @@ def _sorted_reviews(summary):
     return sorted(reviews, key=_review_sort_key, reverse=True)
 
 
+def _outcome_tag(review):
+    """Show the most specific cause, with every cause in the tooltip."""
+    status = review.get("review_status", "unknown")
+    causes = [
+        (
+            tag,
+            f"{label}: "
+            + "; ".join(
+                f"{item['stage']} / {item.get('model') or 'unknown model'}"
+                for item in _list(review.get(field))
+            ),
+        )
+        for tag, label, field in (
+            ("cyber", "Cyber refusal", "cyber_refusals"),
+            ("refused", "Provider refusal", "provider_refusals"),
+        )
+        if review.get(field)
+    ]
+    provisional = review.get("provisional_findings")
+    if status == "failed" and provisional:
+        causes.append(("provisional", f"Provisional findings: {provisional}"))
+    verification = review.get("verification_status")
+    if status == "completed" and verification in {"partial", "failed"}:
+        causes.append(("unverified", f"Verification: {verification}"))
+    tag = causes[0][0] if causes else status
+    details = _escape(". ".join([f"Review {status}", *(text for _, text in causes)]))
+    style = "failed" if status == "failed" else "caution" if causes else ""
+    return tag, (
+        f'<span class="outcome-tag {style}" title="{details}"'
+        f' data-search-text="{details}">[{_escape(tag)}]</span>'
+    )
+
+
 def _reviews_table(reviews, repository_url, report_base_url):
     if not reviews:
         return "<p>No saved reviews were recorded.</p>"
@@ -1196,13 +1229,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
             is review
             else ""
         )
-        refusals = _list(review.get("cyber_refusals"))
-        outcome = _escape(review.get("review_status", "unknown"))
-        if refusals:
-            outcome += "<br>Cyber refusal: " + "; ".join(
-                _escape(f"{item['stage']} / {item.get('model') or 'unknown model'}")
-                for item in refusals
-            )
+        tag, outcome = _outcome_tag(review)
         rows.append(
             _cells(
                 [
@@ -1220,7 +1247,7 @@ def _reviews_table(reviews, repository_url, report_base_url):
             .replace(
                 "<tr>",
                 '<tr data-filter="'
-                + ("cyber_refusal" if refusals else "")
+                + _escape(tag)
                 + '" data-repository="'
                 + _escape(review.get("repository_id", "core"))
                 + '" data-severities="'
@@ -1240,7 +1267,14 @@ def _reviews_table(reviews, repository_url, report_base_url):
         ],
         rows,
         "reviews",
-        filters=(("cyber_refusal", "Cyber refusals"),),
+        filters=(
+            ("completed", "Completed"),
+            ("cyber", "Cyber refusals"),
+            ("refused", "Other refusals"),
+            ("provisional", "Provisional findings"),
+            ("unverified", "Unverified"),
+            ("failed", "Failed"),
+        ),
         controls='<label>Repository <select data-repository-filter><option value="">All</option>'
         + "".join(
             f'<option value="{_escape(repo)}">{_escape(repo)}</option>'
@@ -1620,6 +1654,9 @@ meter::-moz-meter-bar { background: repeating-linear-gradient(to right, var(--me
 .sort-button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; }
 td code { color: var(--muted); }
 .latest { color: var(--amber); font-weight: 700; cursor: help; }
+.outcome-tag { cursor: help; }
+.outcome-tag.caution { color: var(--amber); }
+.outcome-tag.failed { color: var(--red); }
 .sort-button:hover { color: var(--accent); }
 .sort-button::after { content: " ~"; opacity: .5; }
 [aria-sort="ascending"] .sort-button::after { content: " ^"; opacity: 1; color: var(--accent); }
