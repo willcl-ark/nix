@@ -17,6 +17,7 @@ from .evidence import ToolFailure
 MAX_REVIEW_BYTES = 300_000
 MAX_FILE_BYTES = 1_000_000
 MAX_TOOL_BYTES = 12_000
+MAX_RANGE_PARTS = 3
 MAX_FOCUSED_DIFF_BYTES = 80_000
 MAX_AUDIT_DOC_BYTES = 100_000
 MAX_FOLLOWUP_DIFF_BYTES = 80_000
@@ -877,13 +878,9 @@ def cite_file(
     """Issue evidence only for source lines returned by this review's read tools."""
     if type(start_line) is not int or start_line < 1:
         raise ToolFailure("invalid_request", "Invalid starting line.")
-    if end_line is not None and (
-        type(end_line) is not int
-        or end_line < start_line
-        or end_line - start_line >= 150
-    ):
+    if end_line is not None and (type(end_line) is not int or end_line < start_line):
         raise ToolFailure(
-            "invalid_request", "Source ranges must contain 1 to 150 lines."
+            "invalid_request", "Last line must be an integer at or after start_line."
         )
     if side == "commit":
         revision = pr_commit_revision(
@@ -896,18 +893,14 @@ def cite_file(
         raise ToolFailure("invalid_request", "Invalid source revision.")
     output = read_file(snapshot.checkout, files, path, start_line)
     header, _, body = output.partition("\n")
-    count = 150 if end_line is None else end_line - start_line + 1
+    count = 150 if end_line is None else min(end_line - start_line + 1, 150)
     lines = body.splitlines()[:count]
-    if not lines or (end_line is not None and len(lines) != count):
-        raise ToolFailure(
-            "invalid_request", "Source range exceeds the file or read limit."
-        )
     citation_id = uuid.uuid4().hex
     prefix = f"Citation: {citation_id}\n{header}\n"
     while lines and len((prefix + "\n".join(lines) + "\n").encode()) > MAX_TOOL_BYTES:
         lines.pop()
-    if not lines or (end_line is not None and len(lines) != count):
-        raise ToolFailure("invalid_request", "Source range exceeds the read limit.")
+    if not lines:
+        raise ToolFailure("invalid_request", "Source line exceeds the read limit.")
     source = {
         "citation_id": citation_id,
         "path": path,
@@ -920,6 +913,33 @@ def cite_file(
         source.update(commit=commit, parent=parent)
     snapshot.citations[citation_id] = source
     return prefix + "\n".join(lines) + "\n"
+
+
+def cite_range(
+    snapshot, side, path, start_line, end_line=None, *, commit=None, parent=None
+):
+    """Read a requested range as consecutive parts, each citable on its own."""
+
+    def part(line):
+        return cite_file(
+            snapshot, side, path, line, end_line, commit=commit, parent=parent
+        )
+
+    parts = [part(start_line)]
+    while end_line is not None:
+        citation_id = parts[-1].splitlines()[0].removeprefix("Citation: ")
+        last = snapshot.citations[citation_id]["end_line"]
+        if last == end_line:
+            break
+        if len(parts) == MAX_RANGE_PARTS:
+            parts.append(f"Read limit reached; call again from line {last + 1}.\n")
+            break
+        try:
+            parts.append(part(last + 1))
+        except ToolFailure as exc:
+            parts.append(f"Stopped after line {last}: {exc}\n")
+            break
+    return "\n".join(parts)
 
 
 def read_pr_commit(

@@ -714,7 +714,7 @@ class ModelUsageTests(unittest.TestCase):
                 "request",
                 side_effect=results,
             ) as send,
-            patch.object(model, "cite_file", return_value="1: evidence") as read,
+            patch.object(model, "cite_range", return_value="1: evidence") as read,
             patch.object(
                 model, "read_commit", return_value="Commit evidence"
             ) as history,
@@ -865,7 +865,7 @@ class ModelUsageTests(unittest.TestCase):
         states = iter([True, False])
         with (
             patch.object(model.transport, "request", return_value=first) as send,
-            patch.object(model, "cite_file", return_value="1: content"),
+            patch.object(model, "cite_range", return_value="1: content"),
             self.assertRaises(model.StaleReview),
         ):
             model.openai_review(
@@ -929,7 +929,7 @@ class ModelUsageTests(unittest.TestCase):
                 "request",
                 side_effect=[first, final],
             ) as send,
-            patch.object(model, "cite_file", return_value="1: evidence") as read,
+            patch.object(model, "cite_range", return_value="1: evidence") as read,
         ):
             answer = model.openai_review("proxy-key", "patch", self.snapshot, **options)
         self.assertEqual(json.loads(answer), {"findings": []})

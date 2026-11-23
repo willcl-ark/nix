@@ -22,7 +22,7 @@ class ConceptToolTests(unittest.TestCase):
             with self.subTest(name=name, outcome=outcome):
                 debug = {}
                 with (
-                    patch.object(model, "cite_file", side_effect=TimeoutError)
+                    patch.object(model, "cite_range", side_effect=TimeoutError)
                     if outcome == "unavailable" and required
                     else nullcontext()
                 ):
@@ -134,7 +134,7 @@ class ConceptToolTests(unittest.TestCase):
     def test_blind_tools_search_only_base_and_reject_head_and_discussions(self):
         with (
             patch.object(model, "search_code", return_value="base matches") as search,
-            patch.object(model, "cite_file", return_value="base contents") as read,
+            patch.object(model, "cite_range", return_value="base contents") as read,
             patch.object(model, "read_diff") as diff,
             patch.object(model, "read_commit") as discussion,
         ):

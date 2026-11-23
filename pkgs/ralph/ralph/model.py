@@ -13,7 +13,7 @@ from . import claude, progress, refusals, research, transport, upstream
 from .evidence import ToolFailure
 from .repository import (
     find_paths,
-    cite_file,
+    cite_range,
     read_diff,
     search_code,
     blame_base,
@@ -107,7 +107,7 @@ TOOLS = [
         "name": "read_file",
         "strict": True,
         "description": "Read numbered lines from a tracked text file at the PR head. "
-        "Returns up to 150 lines and 12,000 UTF-8 bytes. Use another call for later lines.",
+        "Set end_line to read beyond 150 lines in one call.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -413,11 +413,13 @@ for tool in [*TOOLS, PR_COMMIT_FILE_TOOL]:
     if tool["name"] in {"read_file", "read_base_file", "read_pr_commit_file"}:
         tool["description"] += (
             " Returns a citation ID usable as source evidence in this review. "
-            "Citable reads return at most 150 lines and 12,000 UTF-8 bytes."
+            "Each citation covers at most 150 lines and 12,000 UTF-8 bytes."
         )
         tool["parameters"]["properties"]["end_line"] = {
             "type": ["integer", "null"],
-            "description": "Inclusive last line; null reads up to 150 lines.",
+            "description": "Inclusive last line; null reads up to 150 lines. "
+            "Longer ranges return up to three parts, each with its own citation ID. "
+            "Reads stop at the end of the file.",
         }
         tool["parameters"]["required"].append("end_line")
 
@@ -1255,7 +1257,7 @@ def openai_review(
                         elif call["name"] == "find_base_paths":
                             answer = find_paths(snapshot.base_files, args.get("query"))
                         elif call["name"] in {"read_file", "read_base_file"}:
-                            answer = cite_file(
+                            answer = cite_range(
                                 snapshot,
                                 "head" if call["name"] == "read_file" else "base",
                                 args.get("path"),
@@ -1274,7 +1276,7 @@ def openai_review(
                                 anchors=snapshot.anchors,
                             )
                         elif call["name"] == "read_pr_commit_file":
-                            answer = cite_file(
+                            answer = cite_range(
                                 snapshot,
                                 "commit",
                                 args.get("path"),

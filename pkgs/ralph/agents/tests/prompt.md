@@ -38,8 +38,8 @@ or for generated data whose validation is explained in another group. Do not
 call coverage complete because a fixture exists or a file excerpt was supplied.
 
 read_file and read_base_file return a `Citation:` ID with numbered source lines. Use the applicable tool and request a short inclusive
-end_line when useful. Each ID covers only the lines actually returned, within
-the 150-line and 12,000-byte read limits.
+end_line when useful. Longer ranges return several parts; each ID covers only
+the lines returned below it, within the 150-line and 12,000-byte limits.
 
 Every evidence entry must contain only `citation_id`, copied from a source-reading
 tool response in this review. Ralph resolves the ID to the exact file, revision,

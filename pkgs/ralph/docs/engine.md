@@ -148,8 +148,10 @@ Each incomplete excerpt names the next diff line to read. When the path count
 leaves too little room for useful excerpts, stages receive the inventory and
 must inspect their assigned paths with `read_diff`. Excerpts do not establish
 review coverage.
-File reads return up to 300 lines and 12,000 UTF-8 bytes per call. Published
-source evidence uses the smaller limit in [findings and publication](#findings-and-publication).
+File reads return the requested lines, stopping at the end of the file. A range
+over 150 lines or 12,000 UTF-8 bytes returns up to three consecutive parts in one
+call. Each part has its own citation, so evidence stays within the limit in
+[findings and publication](#findings-and-publication).
 
 Code tools find paths, read head/base files, read diffs and search code.
 `read_pr_commit` pages through a changed file in a commit from the pinned review

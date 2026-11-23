@@ -73,8 +73,8 @@ reason and any specific remaining uncertainty. Do not fill a quota.
 
 read_file, read_base_file and read_pr_commit_file return a `Citation:` ID with
 numbered source lines. Use the applicable tool and request a short inclusive
-end_line when useful. Each ID covers only the lines actually returned, within
-the 150-line and 12,000-byte read limits.
+end_line when useful. Longer ranges return several parts; each ID covers only
+the lines returned below it, within the 150-line and 12,000-byte limits.
 
 Every publish decision requires nonempty source_evidence from your inspection.
 Each entry contains only `citation_id`, copied from a source-reading tool response

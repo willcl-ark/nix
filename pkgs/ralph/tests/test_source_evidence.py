@@ -2,6 +2,7 @@ import json
 import re
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -135,13 +136,12 @@ class SourceEvidenceTests(unittest.TestCase):
                 self.snapshot.citations[evidence["citation_id"]]["excerpt"], self.call
             )
 
-    def test_failed_or_oversized_reads_issue_no_citation(self):
+    def test_failed_reads_issue_no_citation(self):
         before = dict(self.snapshot.citations)
         for path, start, end in (
             ("missing.cpp", 1, 1),
-            (self.caller, 471, 472),
+            (self.caller, 472, 472),
             (self.caller, 2, 1),
-            (self.caller, 1, 151),
             (self.caller, True, 1),
         ):
             with (
@@ -154,6 +154,60 @@ class SourceEvidenceTests(unittest.TestCase):
         self.assertEqual(
             self.snapshot.citations[evidence["citation_id"]]["end_line"], 150
         )
+
+    def test_long_ranges_return_consecutive_exact_citations(self):
+        files = {
+            "long.cpp": [f"line {index}" for index in range(1, 601)],
+            "wide.cpp": [f"{index:03}" + "x" * 197 for index in range(1, 101)],
+            "huge.cpp": ["short", "x" * 13_000],
+        }
+        blobs = {}
+        for path, lines in files.items():
+            (self.checkout / path).write_text("\n".join(lines) + "\n")
+            blobs[path] = repository.git(
+                self.checkout, "hash-object", "-w", path
+            ).strip()
+        snapshot = replace(
+            self.snapshot, head_files={**self.snapshot.head_files, **blobs}
+        )
+        for path, start, end, last, parts, note in (
+            ("long.cpp", 1, 150, 150, 1, None),
+            ("long.cpp", 1, 400, 400, 3, None),
+            (
+                "long.cpp",
+                1,
+                600,
+                450,
+                3,
+                "Read limit reached; call again from line 451",
+            ),
+            ("long.cpp", 590, 700, 600, 1, "long.cpp has 600 lines."),
+            ("wide.cpp", 1, 100, 100, 2, None),
+            ("huge.cpp", 1, 2, 1, 1, "Stopped after line 1"),
+        ):
+            with self.subTest(path=path, start=start, end=end):
+                output = repository.cite_range(snapshot, "head", path, start, end)
+                cited = [
+                    snapshot.citations[line.removeprefix("Citation: ")]
+                    for line in output.splitlines()
+                    if line.startswith("Citation: ")
+                ]
+                self.assertEqual(len(cited), parts)
+                next_line = start
+                for source in cited:
+                    self.assertEqual(source["line"], next_line)
+                    self.assertLess(source["end_line"] - source["line"], 150)
+                    self.assertEqual(
+                        source["excerpt"].splitlines(),
+                        files[path][source["line"] - 1 : source["end_line"]],
+                    )
+                    next_line = source["end_line"] + 1
+                self.assertEqual(next_line - 1, last)
+                if note:
+                    self.assertIn(note, output.splitlines()[-1])
+                else:
+                    self.assertNotIn("Stopped", output)
+                    self.assertNotIn("Read limit", output)
 
     def test_commit_citations_keep_revision_authorization(self):
         reference = self.citation(
