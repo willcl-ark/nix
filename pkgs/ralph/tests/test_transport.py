@@ -5,6 +5,7 @@ import unittest
 import urllib.error
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from unittest import mock
 
 from ralph import transport
 
@@ -125,6 +126,39 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(server.payload, payload)
             self.assertEqual(server.authorization, "Bearer test-key")
         self.assertEqual(result, response)
+
+    def test_keepalives_do_not_count_as_a_started_response(self):
+        for heartbeat in (b": keep-alive\n\n", event("ping"), event("keepalive")):
+            with self.subTest(heartbeat=heartbeat):
+                closed = []
+
+                def respond(handler, heartbeat=heartbeat, closed=closed):
+                    start_stream(handler)
+                    closed.append(observe_close(handler, heartbeat))
+
+                with (
+                    mock.patch.object(transport, "FIRST_EVENT_TIMEOUT_SECONDS", 0.2),
+                    self.server(respond) as (url, _server),
+                    self.assertRaises(TimeoutError),
+                ):
+                    transport.request(url, b"{}", "key", 5)
+                self.assertEqual(closed, [True])
+
+    def test_started_responses_may_stay_quiet_past_the_start_deadline(self):
+        response = {"status": "completed", "output": []}
+
+        def respond(handler):
+            start_stream(handler)
+            handler.wfile.write(event("response.created"))
+            handler.wfile.flush()
+            time.sleep(0.5)
+            handler.wfile.write(event("response.completed", response=response))
+
+        with (
+            mock.patch.object(transport, "FIRST_EVENT_TIMEOUT_SECONDS", 0.2),
+            self.server(respond) as (url, _server),
+        ):
+            self.assertEqual(transport.request(url, b"{}", "key", 5), response)
 
     def test_explicit_incomplete_or_failed_terminal_preserves_usage_and_reason(self):
         for status, details in (

@@ -59,6 +59,9 @@ Model requests retry HTTP 429, 5xx and transient transport failures up to three
 total attempts, preserving the current conversation. Backoff is one then two
 seconds; `Retry-After` can extend
 either wait up to ten minutes. Provider overloads without one wait 330 seconds.
+An attempt that receives no model event within five minutes counts as a timeout
+and is retried; proxy keepalives and pings are not model events. After that only
+the configured timeout applies, so a model may think quietly.
 Other HTTP errors, including rejected parameters, fail immediately. Every
 attempt checks cancellation and records a separate usage attempt. Missing
 usage after a timeout or server error is not estimated.

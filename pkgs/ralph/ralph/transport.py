@@ -9,6 +9,9 @@ import aiohttp
 
 from . import claude
 
+# Healthy providers acknowledge a request within seconds, before any thinking.
+FIRST_EVENT_TIMEOUT_SECONDS = 300
+
 
 class RequestCancelled(Exception):
     """Local cancellation stopped an attempt with unknown remote execution."""
@@ -70,11 +73,22 @@ async def _events(content):
                 yield event
 
 
+async def _started(events, start_deadline):
+    """Lift the start deadline once the provider, not a proxy, sends an event."""
+    async for event in events:
+        if event.get("type") not in ("ping", "keepalive"):
+            start_deadline.reschedule(None)
+        yield event
+
+
 async def _request(url, payload, api_key, timeout):
     # Disable deadline rounding so the configured allowance is a real limit.
     native_claude = url.rstrip("/").endswith("/messages")
     deadline = aiohttp.ClientTimeout(total=timeout, ceil_threshold=float("inf"))
-    async with aiohttp.ClientSession(timeout=deadline, trust_env=True) as session:
+    async with (
+        asyncio.timeout(FIRST_EVENT_TIMEOUT_SECONDS) as start_deadline,
+        aiohttp.ClientSession(timeout=deadline, trust_env=True) as session,
+    ):
         async with session.post(
             url,
             data=payload,
@@ -107,9 +121,10 @@ async def _request(url, payload, api_key, timeout):
                 )
             if response.content_type != "text/event-stream":
                 raise ValueError("Model response was not an event stream")
+            events = _started(_events(response.content), start_deadline)
             if native_claude:
-                return await claude.read_stream(_events(response.content))
-            async for event in _events(response.content):
+                return await claude.read_stream(events)
+            async for event in events:
                 kind = event.get("type")
                 if kind in (
                     "response.completed",
