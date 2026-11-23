@@ -37,6 +37,8 @@ def stage_runs(debug, result, row, report_name):
             reasons.append("Invalid stage output")
         elif stage["status"] == "failed":
             reasons.append("Stage failed")
+        if stage.get("rejected_findings"):
+            reasons.append("Findings withheld")
         if limits.get("output_tokens", {}).get("hit") is True:
             reasons.append("Output truncated")
         rejected = stage.get("rejected_test_coverage") or []

@@ -947,9 +947,10 @@ def _correct_answer(
             "role": "user",
             "content": "Your answer failed validation:\n"
             + "\n".join(f"- {problem}" for problem in problems)
-            + "\n\nReturn the complete corrected answer, including every decision that "
-            "was already valid. Decide from the evidence you already have, and use "
-            "unresolved where it is insufficient. Do not call tools.",
+            + "\n\nReturn the complete corrected answer, including every decision and "
+            "finding that was already valid. Decide from the evidence you already "
+            "have. Where the schema allows unresolved, use it if that evidence is "
+            "insufficient. Do not call tools.",
         },
     ]
     data["tool_choice"] = "none"

@@ -191,25 +191,14 @@ class LocalRepositoryTests(unittest.TestCase):
         )
         # Normal implementation reviews still cannot cite this net-unchanged file,
         # or escape that rule by supplying a commit-specific location.
-        with self.assertRaises(protocol.InvalidReview):
-            protocol.discovery(json.dumps(discovery), "independent", snapshot)
-        with self.assertRaises(protocol.InvalidReview):
-            protocol.discovery(
-                json.dumps(
-                    {
-                        **discovery,
-                        "findings": [
-                            {
-                                k: v
-                                for k, v in {**candidate, "side": "head"}.items()
-                                if k not in {"commit", "parent"}
-                            }
-                        ],
-                    }
-                ),
+        for invalid in ({}, {"side": "head"}):
+            result = protocol.discovery(
+                json.dumps({**discovery, "findings": [{**candidate, **invalid}]}),
                 "independent",
                 snapshot,
             )
+            self.assertEqual(result["findings"], [])
+            self.assertEqual(len(result["rejected_findings"]), 1)
         for invalid in (
             {"commit": self.ancestor},
             {"commit": self.base},
@@ -217,15 +206,14 @@ class LocalRepositoryTests(unittest.TestCase):
             {"line": 2},
             {"path": "missing.cpp"},
         ):
-            with (
-                self.subTest(invalid=invalid),
-                self.assertRaises(protocol.InvalidReview),
-            ):
-                protocol.discovery(
+            with self.subTest(invalid=invalid):
+                result = protocol.discovery(
                     json.dumps({**discovery, "findings": [{**candidate, **invalid}]}),
                     "commit_flow",
                     snapshot,
                 )
+                self.assertEqual(result["findings"], [])
+                self.assertEqual(len(result["rejected_findings"]), 1)
         finding = {
             "kind": "suggestion",
             "severity": "suggestion",

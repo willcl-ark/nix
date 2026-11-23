@@ -414,7 +414,8 @@ without treating unavailable replies as author acceptance or rejection.
 `stats/health/` shows operational health separately from review outcomes. The
 Telegram monitor reads the same cached stats summary and alerts when three of
 the last five eligible stage runs within 24 hours have failed, exhausted their
-output budget, or retained invalid coverage evidence after repair. Runs are
+output budget, withheld malformed findings, or retained invalid coverage
+evidence after repair. Runs are
 grouped by repository, stage, model and saved engine/configuration/budget hash.
 Ordinary partial coverage and merely reaching a tool cap do not trigger alerts.
 

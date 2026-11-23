@@ -150,6 +150,13 @@ def summarize(debug):
                     category,
                     "Stage reported incomplete evidence without identifying the missing evidence.",
                 )
+            for rejected in stage.get("rejected_findings", []):
+                issue(
+                    name,
+                    category,
+                    f"Finding {rejected['index']} withheld: {rejected['error']}",
+                )
+                status = "partial"
             if category == "verification":
                 for error in stage.get("validation_errors", []):
                     if not any(

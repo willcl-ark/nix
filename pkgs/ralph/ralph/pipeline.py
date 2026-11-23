@@ -895,18 +895,30 @@ def review_with_independent_passes(
                 if name == "commit_flow"
                 else protocol.DISCOVERY_SCHEMA
             )
-            answer = run_stage(name, input_text, prompt, schema)
+
+            def parse(text):
+                if prompt_name == "tests":
+                    return protocol.tests_discovery(
+                        text, snapshot, required_test_paths, stage=name
+                    )
+                return protocol.discovery(text, name, snapshot)
+
+            answer = run_stage(
+                name,
+                input_text,
+                prompt,
+                schema,
+                check_answer=protocol.discovery_checker(parse),
+            )
+            result = parse(answer)
             if prompt_name == "tests":
-                result = protocol.tests_discovery(
-                    answer, snapshot, required_test_paths, stage=name
-                )
                 stages[name]["test_coverage"] = result["test_coverage"]
                 stages[name]["rejected_test_coverage"] = result[
                     "rejected_test_coverage"
                 ]
-            else:
-                result = protocol.discovery(answer, name, snapshot)
             stages[name]["coverage"] = result["coverage"]
+            if result["rejected_findings"]:
+                stages[name]["rejected_findings"] = result["rejected_findings"]
             return result
         except model.StaleReview:
             raise
@@ -933,7 +945,13 @@ def review_with_independent_passes(
         )
         try:
             answer = run_stage(
-                "archaeologist", input_text, prompt, protocol.ARCHAEOLOGY_SCHEMA
+                "archaeologist",
+                input_text,
+                prompt,
+                protocol.ARCHAEOLOGY_SCHEMA,
+                check_answer=lambda text: protocol.parse_problems(
+                    protocol.archaeology, text
+                ),
             )
             result = protocol.archaeology(answer)
             stages["archaeologist"]["coverage"] = result["coverage"]

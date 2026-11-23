@@ -451,20 +451,85 @@ def discovery(text, stage, snapshot):
         result["findings"], list
     ):
         raise InvalidReview("Invalid discovery response")
+    accepted = []
+    result["rejected_findings"] = []
     for index, finding in enumerate(result["findings"], 1):
-        _object(finding, CANDIDATE["properties"])
-        _location(finding, snapshot, allow_commit=stage == "commit_flow")
-        if stage == "commit_flow" and finding["kind"] != "suggestion":
-            raise InvalidReview("Commit-flow findings must be suggestions")
-        if finding["kind"] not in CANDIDATE["properties"]["kind"]["enum"]:
-            raise InvalidReview("Invalid candidate kind")
-        _text(
-            finding,
-            ("title", "claim", "consequence", "evidence", "correction", "uncertainty"),
-            empty=("correction", "uncertainty"),
-        )
+        try:
+            _candidate(finding, stage, snapshot)
+        except InvalidReview as exc:
+            # One malformed lead must not erase separately valid leads.
+            result["rejected_findings"].append(
+                {"index": index, "finding": finding, "error": str(exc)}
+            )
+            continue
         finding["id"] = f"{stage}:{index}"
+        accepted.append(finding)
+    result["findings"] = accepted
     return result
+
+
+def _candidate(finding, stage, snapshot):
+    _object(finding, CANDIDATE["properties"])
+    _location(finding, snapshot, allow_commit=stage == "commit_flow")
+    if stage == "commit_flow" and finding["kind"] != "suggestion":
+        raise InvalidReview("Commit-flow findings must be suggestions")
+    if finding["kind"] not in CANDIDATE["properties"]["kind"]["enum"]:
+        raise InvalidReview("Invalid candidate kind")
+    _text(
+        finding,
+        ("title", "claim", "consequence", "evidence", "correction", "uncertainty"),
+        empty=("correction", "uncertainty"),
+    )
+
+
+def _finding_count(text):
+    try:
+        findings = json.loads(text)["findings"]
+    except (ValueError, KeyError, TypeError):
+        return 0
+    return len(findings) if isinstance(findings, list) else 0
+
+
+def discovery_checker(parse):
+    """Return a check listing what an answer loses, including dropped findings."""
+    original_count = None
+
+    def check(text):
+        nonlocal original_count
+        count = _finding_count(text)
+        if original_count is None:
+            original_count = count
+        # Deleting a malformed finding must not pass for correcting it.
+        missing = [
+            "A finding from the original answer is missing"
+            for _ in range(original_count - count)
+        ]
+        try:
+            rejected = parse(text)["rejected_findings"]
+        except (ValueError, KeyError, TypeError) as exc:
+            return [
+                str(exc),
+                *(
+                    f"finding {index} is discarded with the answer"
+                    for index in range(1, count + 1)
+                ),
+                *missing,
+            ]
+        return [
+            *(f"finding {item['index']}: {item['error']}" for item in rejected),
+            *missing,
+        ]
+
+    return check
+
+
+def parse_problems(parse, text):
+    """Return the validation error from an all-or-nothing answer, if any."""
+    try:
+        parse(text)
+    except (ValueError, KeyError, TypeError) as exc:
+        return [str(exc)]
+    return []
 
 
 def tests_discovery(text, snapshot, required_paths, *, stage="tests"):

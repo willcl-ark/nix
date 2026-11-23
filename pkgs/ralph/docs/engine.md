@@ -48,7 +48,8 @@ source-verification and judge attribution alongside approved wording.
 
 | Check or outcome | What survives |
 | --- | --- |
-| Malformed discovery response | Discard that stage's candidates and record a limitation; keep other stages. |
+| Malformed discovery response | Ask once for a correction. If the envelope is still malformed, discard that stage's candidates and record a limitation; keep other stages. |
+| Malformed finding in a valid discovery response | Ask once for a correction, then withhold only the findings that remain malformed. A correction that drops findings does not count as an improvement. |
 | Challenger refutes a candidate | The candidate still reaches the verifier with counterevidence. |
 | Challenger fails | Keep every original candidate and record the challenge limitation. |
 | Malformed verifier envelope or decision structure | Reject the verifier response; none of its code findings become eligible. |
@@ -133,10 +134,11 @@ unresolved-history notice. The CLI prints the report and exits with status 1.
 By default, model requests use Responses event streams with a 1,800-second
 deadline per attempt in both review profiles, including tool calls, final responses and
 follow-ups. The deadline includes connecting and reading the response;
-heartbeats cannot extend it. Ralph consumes the terminal response, preserving
+heartbeats cannot extend it. An attempt that receives no model event within ten
+minutes also times out. Ralph consumes the terminal response, preserving
 usage and reasoning, and executes tools only after a completed response.
-Ralph still makes at most three attempts per request, so three stalled attempts
-can take about 90 minutes.
+Ralph still makes at most three attempts per request, so three attempts that
+never start take about 30 minutes, and three that stall later about 90.
 
 The initial review input allows 300,000 UTF-8 bytes. Larger patches are replaced
 by a complete changed-file inventory with line counts. Commit messages include

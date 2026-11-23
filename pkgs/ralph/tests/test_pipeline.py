@@ -445,6 +445,34 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("script", plan["audits"])
         self.assertEqual(self.debug["profile_selection"]["effective"], "default")
 
+    def test_malformed_finding_does_not_discard_its_stage(self):
+        self.tier, self.audits = "routine", []
+        offered = {}
+
+        def review(*args, **kwargs):
+            stage = kwargs["stage_name"]
+            if stage == "challenger":
+                return self.challenge(*args, **kwargs)
+            if stage == "verifier":
+                offered["verifier"] = args[1]
+                return verification()
+            if stage == "independent":
+                answer = discovery([{**candidate(), "title": ""}, candidate()])
+                offered["problems"] = kwargs["check_answer"](answer)
+                return answer
+            return discovery()
+
+        self.run_review(review)
+        stage = self.debug["stages"]["independent"]
+        self.assertEqual(offered["problems"], ["finding 1: Missing finding text"])
+        self.assertEqual(stage["status"], "completed")
+        self.assertEqual(len(stage["rejected_findings"]), 1)
+        self.assertIn("independent:2", offered["verifier"])
+        self.assertIn(
+            "independent: Finding 1 withheld: Missing finding text",
+            self.debug["coverage"]["limitations"],
+        )
+
     def test_comment_reports_final_tier_after_overview_escalation(self):
         self.tier, self.audits = "standard", []
         stages = []

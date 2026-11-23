@@ -323,6 +323,48 @@ class ProtocolTests(unittest.TestCase):
             "unexpected: excerpt", " ".join(result["coverage"]["limitations"])
         )
 
+    def test_malformed_finding_is_withheld_and_must_be_corrected_not_deleted(self):
+        good = {
+            "kind": "suggestion",
+            "anchor_id": "setup-anchor",
+            "title": "Title",
+            "claim": "Claim",
+            "consequence": "Consequence",
+            "evidence": "Evidence",
+            "correction": "",
+            "uncertainty": "",
+        }
+        bad = {**good, "anchor_id": "invented"}
+
+        def answer(*findings, **extra):
+            return json.dumps(
+                {
+                    "coverage": self.coverage,
+                    "requires_sensitive_review": False,
+                    "findings": list(findings),
+                    **extra,
+                }
+            )
+
+        def parse(text):
+            return protocol.discovery(text, "design", self.snapshot)
+
+        result = parse(answer(bad, good))
+        self.assertEqual([item["id"] for item in result["findings"]], ["design:2"])
+        self.assertEqual(result["rejected_findings"][0]["index"], 1)
+        check = protocol.discovery_checker(parse)
+        self.assertEqual(
+            check(answer(bad, good)),
+            ["finding 1: Unknown finding anchor for this review"],
+        )
+        self.assertEqual(len(check(answer(good))), 1)
+        self.assertEqual(len(check(answer())), 2)
+        self.assertEqual(check(answer(good, good)), [])
+        # An unusable envelope is worse than any single withheld finding.
+        check = protocol.discovery_checker(parse)
+        self.assertEqual(len(check(answer(good, good, note="x"))), 3)
+        self.assertEqual(len(check(answer(bad, good))), 1)
+
     def test_backport_verdict_requires_complete_evidence(self):
         assessment = {
             "verdict": "Faithful",
