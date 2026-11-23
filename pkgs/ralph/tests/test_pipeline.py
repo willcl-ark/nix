@@ -22,9 +22,7 @@ COMPLETE = {"status": "complete", "limitations": []}
 
 def refuse_review(*args, **kwargs):
     message = "This content was flagged for possible cybersecurity risk."
-    args[3].update(
-        status="failed", failure_kind="cyber_refusal", error_message=message
-    )
+    args[3].update(status="failed", failure_kind="cyber_refusal", error_message=message)
     raise transport.StreamError({"code": "refusal", "message": message})
 
 
@@ -732,9 +730,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(
                     self.debug["coverage"]["verification"]["status"], "failed"
                 )
-                self.assertEqual(
-                    len(self.debug["stages"]["verifier"]["decisions"]), 2
-                )
+                self.assertEqual(len(self.debug["stages"]["verifier"]["decisions"]), 2)
                 self.assertTrue(
                     all(
                         decision["disposition"] == "supported"
