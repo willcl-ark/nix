@@ -169,6 +169,15 @@ class FindingFeedbackTests(unittest.TestCase):
         self.assertEqual(self.vote(1)[0], 404)
         self.assertEqual(self.request()[1]["findings"], {})
 
+    def test_core_reports_saved_before_namespaces_accept_feedback(self):
+        del self.record["repository_id"]
+        del self.record["repository"]
+        path = self.reports / (self.record["report_id"] + ".json")
+        path.write_text(json.dumps(self.record))
+        self.assertEqual(self.request()[0], 200)
+        self.assertEqual(self.vote(1)[0], 200)
+        self.assertEqual(self.store.pending()[0]["repository"], "bitcoin/bitcoin")
+
     def test_rejects_cross_origin_invalid_payload_and_excessive_changes(self):
         self.assertEqual(self.vote(1, origin="https://elsewhere.example")[0], 403)
         self.assertEqual(self.vote(True)[0], 400)

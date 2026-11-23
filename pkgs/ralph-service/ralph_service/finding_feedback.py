@@ -182,6 +182,9 @@ def _load_report(bot, report_id):
     record = json.loads(
         (Path(bot.report_dir) / prefix / f"{report_id}.json").read_text()
     )
+    if bot.repo_id == "core":
+        # Reports saved before repository namespaces all belong to core.
+        record = {"repository_id": "core", "repository": bot.repository} | record
     if (
         record.get("report_id") != report_id
         or record.get("repository_id") != bot.repo_id
