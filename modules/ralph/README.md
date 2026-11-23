@@ -415,6 +415,24 @@ explanations stay off Telegram. See [feedback triage](../../pkgs/ralph-service/o
 See [Telegram operations](../../pkgs/ralph-service/README.md#telegram) for
 publication, command authorization and delivery behavior.
 
+## Merge post-mortems
+
+Set `services.ralph.postMortem.enable = true` and point `metadataDir` at a
+`github-metadata-backup` `pulls` directory to compare newly merged pull requests
+with their saved reviews every Monday. Nothing is reviewed again. Code selects
+human points Ralph could have seen, a small model matches them to its saved
+decisions, and a stronger model checks at most 20 likely misses a week against
+pinned source, four per pull request. A quarter of pull requests is held out and
+never used to write lessons. `weeklyTokens` bounds use; unfinished work waits.
+
+Lessons need confirmed cases from two pull requests. They go to the
+Telegram channel, with a weekly reminder until an administrator decides:
+`/lessons`, `/approve 3`, `/reject 3 too broad`, and `/veto 12` to remove a case.
+Approval records the lesson for a tested prompt
+change; it never alters a running review. The comparison misses points made only
+in short general comments, and silent fixes no human raised.
+Preserve `stateDir/post-mortem/*.sqlite3` with the other state.
+
 ## Frozen prompt and routing experiments
 
 Use `ralph-evaluate` to capture a PR and compare configurations against the same

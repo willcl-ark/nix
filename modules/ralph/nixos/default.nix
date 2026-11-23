@@ -282,6 +282,28 @@ in
       };
     };
 
+    postMortem = {
+      enable = lib.mkEnableOption "weekly comparison of merged pull requests with saved reviews";
+
+      repository = lib.mkOption {
+        type = lib.types.str;
+        default = "core";
+        description = "Repository ID to compare.";
+      };
+
+      metadataDir = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "github-metadata-backup pulls directory, mounted read-only for this service.";
+      };
+
+      weeklyTokens = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 500000;
+        description = "Input and output tokens allowed in any seven days. Unfinished work waits for a later run.";
+      };
+    };
+
     workers = lib.mkOption {
       type = lib.types.ints.positive;
       default = 3;
@@ -430,6 +452,12 @@ in
         {
           assertion = !cfg.telegram.enable || (cfg.reportDir != null && cfg.reportBaseUrl != null);
           message = "services.ralph Telegram publication requires reportDir and reportBaseUrl.";
+        }
+        {
+          assertion =
+            !cfg.postMortem.enable
+            || (cfg.postMortem.metadataDir != null && cfg.repositories ? ${cfg.postMortem.repository});
+          message = "services.ralph.postMortem requires metadataDir and a configured repository.";
         }
         {
           assertion = lib.hasPrefix "/var/lib/" cfg.stateDir;
@@ -583,6 +611,56 @@ in
       };
     };
 
+    systemd.services.ralph-post-mortem = lib.mkIf cfg.postMortem.enable {
+      description = "Compare merged pull requests with saved Ralph reviews";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${cfg.package}/bin/ralph-post-mortem ${
+          lib.escapeShellArgs [
+            "--state-dir"
+            cfg.stateDir
+            "--metadata-dir"
+            "/run/ralph-post-mortem-pulls"
+            "--repositories"
+            registryFile
+            "--repository"
+            cfg.postMortem.repository
+            "--openai-key-file"
+            cfg.openaiKeyFile
+            "--openai-api-base"
+            cfg.openaiApiBase
+            "--weekly-tokens"
+            (toString cfg.postMortem.weeklyTokens)
+          ]
+        }";
+        User = cfg.user;
+        Group = cfg.group;
+        StateDirectory = "${lib.removePrefix "/var/lib/" cfg.stateDir}/post-mortem";
+        StateDirectoryMode = "0700";
+        # The metadata group can also read backup tokens, so mount only this directory.
+        BindReadOnlyPaths = [ "${cfg.postMortem.metadataDir}:/run/ralph-post-mortem-pulls" ];
+        ReadOnlyPaths = [ cfg.stateDir ];
+        ReadWritePaths = [ "${cfg.stateDir}/post-mortem" ];
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        Nice = 10;
+        IOSchedulingClass = "idle";
+        TimeoutStartSec = "2h";
+      };
+    };
+
+    systemd.timers.ralph-post-mortem = lib.mkIf cfg.postMortem.enable {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "Mon *-*-* 03:00:00 UTC";
+        Persistent = true;
+      };
+    };
+
     systemd.services.ralph-telegram = lib.mkIf cfg.telegram.enable {
       description = "Publish Ralph reviews and monitor service status on Telegram";
       wantedBy = [ "multi-user.target" ];
@@ -590,7 +668,7 @@ in
       wants = [ "network-online.target" ];
       serviceConfig = {
         ExecStart = "${lib.getExe' cfg.package "ralph-telegram"} ${
-          lib.escapeShellArgs [
+          lib.escapeShellArgs ([
             "--state-dir"
             cfg.stateDir
             "--report-dir"
@@ -605,7 +683,7 @@ in
             cfg.telegram.botTokenFile
             "--telegram-chat-id"
             cfg.telegram.chatId
-          ]
+          ])
         }";
         User = cfg.user;
         Group = cfg.group;

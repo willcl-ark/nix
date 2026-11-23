@@ -50,6 +50,24 @@ let
       && lib.hasInfix "--repositories" cfg.systemd.services.ralph.serviceConfig.ExecStart
       && lib.hasInfix "--repositories" cfg.systemd.services.ralph-stats.serviceConfig.ExecStart
       && lib.hasInfix "--repositories" cfg.systemd.services.ralph-followup.serviceConfig.ExecStart;
+    postMortemIsBounded =
+      let
+        enabled = evaluate {
+          services.ralph.postMortem = {
+            enable = true;
+            metadataDir = "/var/lib/metadata/pulls";
+          };
+        };
+        service = enabled.systemd.services.ralph-post-mortem.serviceConfig;
+      in
+      failures enabled == [ ]
+      && !(cfg.systemd.services ? ralph-post-mortem)
+      && service.BindReadOnlyPaths == [ "/var/lib/metadata/pulls:/run/ralph-post-mortem-pulls" ]
+      && lib.hasInfix "--weekly-tokens 500000" service.ExecStart;
+    postMortemRequiresMetadata =
+      failures (evaluate {
+        services.ralph.postMortem.enable = true;
+      }) != [ ];
     archiveUrlRequired =
       failures (evaluate {
         services.ralph.archiveBaseUrl = lib.mkForce null;
