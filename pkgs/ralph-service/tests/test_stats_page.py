@@ -97,6 +97,9 @@ class StatsPageTests(unittest.TestCase):
                 [{"stage": "router", "model": "test-model"}],
             )
             page = stats_page._reviews_html(summary, None, "https://reports.example")
+            overview = stats_page._html(summary, None, None)
+            self.assertIn('<a href="reviews/">2</a>', overview)
+            self.assertIn("50.0% of saved reviews", overview)
             self.assertEqual(page.count('data-filter="cyber"'), 2)
             self.assertIn('<option value="cyber">', page)
             self.assertEqual(page.count('data-filter="refused"'), 1)

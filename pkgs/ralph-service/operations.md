@@ -164,9 +164,9 @@ uninstrumented. Reaching a cap does not establish that more allowance would
 improve a review. Usage totals describe Ralph's requests; subscription quotas
 also include other tools using the same accounts.
 
-The Reviews page counts saved reviews with explicit provider cyber refusals once
-per review, even when several stages fail. Select **Cyber refusals** in the Show
-filter to find affected reports.
+The Overview page counts saved reviews with explicit provider cyber refusals once
+per review, even when several stages fail. On the Reviews page, select **Cyber
+refusals** in the Show filter to find affected reports.
 
 The Outcome column shows one tag per review. `[cyber]` and `[refused]` mark
 provider refusals, `[provisional]` a failed judge with provisional findings on

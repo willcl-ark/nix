@@ -244,11 +244,12 @@ def _analysis(summary):
     return sentence
 
 
-def _kpi(label, value, detail=""):
+def _kpi(label, value, detail="", href=None):
+    value = _internal_link(href, value) if href else _escape(value)
     return (
         '<article class="card">'
         f'<div class="kpi-label">{_escape(label)}</div>'
-        f'<div class="kpi-value">{_escape(value)}</div>'
+        f'<div class="kpi-value">{value}</div>'
         f'<div class="kpi-detail">{_escape(detail)}</div>'
         "</article>"
     )
@@ -280,6 +281,16 @@ def _top_kpis(summary):
                 "Request records this month",
                 _fmt_int(month.get("request_count")),
                 "Ledger entries, including retries",
+            ),
+            _kpi(
+                "Cyber refusals",
+                _fmt_int(overview.get("cyber_refusal_reviews")),
+                _fmt_percent(
+                    overview.get("cyber_refusal_reviews"),
+                    overview.get("saved_reviews"),
+                )
+                + " of saved reviews; each counted once",
+                "reviews/",
             ),
         ]
     )
@@ -1552,6 +1563,7 @@ p { margin: .6rem 0 1rem; }
 .subtitle { margin: .3rem 0 1.6rem; }
 .subtitle::before { content: "# "; }
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.overview-cards { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .cards.usage-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
 .card, section { background: var(--surface); border: 1px solid var(--rule); padding: 1.25rem; }
 section { margin-top: 1.75rem; }
@@ -1924,7 +1936,7 @@ def _key_value_table(values):
 def _html(summary, repository_url, report_base_url):
     body = (
         '<h1>Overview</h1><p class="subtitle">Review activity and agent performance at a glance.</p>'
-        + f'<div class="cards">{_top_kpis(summary)}</div>'
+        + f'<div class="cards overview-cards">{_top_kpis(summary)}</div>'
         + _leaderboard_section(summary)
         + _paired_section(summary)
     )
@@ -2065,9 +2077,6 @@ def _reviews_html(summary, repository_url, report_base_url):
     body = (
         '<h1>Reviews</h1><p class="subtitle">Search saved reviews by PR, commit or outcome. Severity is estimated by Ralph.</p>'
         + '<section class="reviews-list">'
-        + "<p>Reviews with a recorded cyber refusal: "
-        + _fmt_int(_mapping(summary.get("overview")).get("cyber_refusal_reviews", 0))
-        + ". Each review is counted once, even if several stages were refused.</p>"
         + _reviews_table(_sorted_reviews(summary), repository_url, report_base_url)
         + "</section>"
     )
