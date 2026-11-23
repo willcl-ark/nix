@@ -28,30 +28,95 @@ class ProtocolTests(unittest.TestCase):
             "inferred_rationale": [],
             "unresolved_disagreements": [],
         }
-        result = protocol.historical_context(json.dumps(value), registry)
+        result = protocol.historical_context(json.dumps(value), registry, {})
         self.assertEqual(
             result["documented_rationale"],
-            [{**claim, "citations": [url], "source_records": [registry[identifier]]}],
+            [
+                {
+                    **claim,
+                    "citations": [url],
+                    "source_records": [registry[identifier]],
+                    "code_sources": [],
+                }
+            ],
         )
         self.assertEqual(registry[identifier]["content"], passage)
         for invalid in ("forged", "https://example.org/unread"):
             value["documented_rationale"] = [{**claim, "source_ids": [invalid]}]
-            result = protocol.historical_context(json.dumps(value), registry)
+            result = protocol.historical_context(json.dumps(value), registry, {})
             self.assertEqual(result["documented_rationale"], [])
             self.assertEqual(result["coverage"]["status"], "partial")
         value["documented_rationale"] = [claim]
         self.assertEqual(
-            protocol.historical_context(json.dumps(value), {})["documented_rationale"],
+            protocol.historical_context(json.dumps(value), {}, {})[
+                "documented_rationale"
+            ],
             [],
         )
         value["documented_rationale"] = []
         value["inferred_rationale"] = [{**claim, "source_ids": []}]
         self.assertEqual(
-            protocol.historical_context(json.dumps(value), {})["inferred_rationale"][0][
-                "citations"
-            ],
+            protocol.historical_context(json.dumps(value), {}, {})[
+                "inferred_rationale"
+            ][0]["citations"],
             [],
         )
+
+    def test_historical_claims_may_also_cite_code_reads(self):
+        history = {"history": {"source_id": "history", "url": "https://example.org/a"}}
+        location = {
+            "citation_id": "code",
+            "path": "src/net.cpp",
+            "side": "base",
+            "line": 3,
+            "end_line": 4,
+        }
+        code = {"code": {**location, "excerpt": "int x;\nint y;"}}
+
+        def claim(name, *identifiers):
+            return {"claim": name, "relevance": "r", "source_ids": list(identifiers)}
+
+        result = protocol.historical_context(
+            json.dumps(
+                {
+                    "coverage": {"status": "complete", "limitations": []},
+                    "documented_rationale": [
+                        claim("both", "history", "code"),
+                        claim("code only", "code"),
+                        claim("unknown", "history", "code", "forged"),
+                        claim("uncited"),
+                    ],
+                    "inferred_rationale": [claim("inferred", "code")],
+                    "unresolved_disagreements": [
+                        claim("disagreement", "history", "code"),
+                        claim("code disagreement", "code"),
+                    ],
+                }
+            ),
+            history,
+            code,
+        )
+        names = {
+            field: [item["claim"] for item in result[field]]
+            for field in (
+                "documented_rationale",
+                "inferred_rationale",
+                "unresolved_disagreements",
+            )
+        }
+        self.assertEqual(
+            names,
+            {
+                "documented_rationale": ["both"],
+                "inferred_rationale": ["inferred", "code only"],
+                "unresolved_disagreements": ["disagreement"],
+            },
+        )
+        both = result["documented_rationale"][0]
+        self.assertEqual(both["source_ids"], ["history"])
+        self.assertEqual(both["citations"], ["https://example.org/a"])
+        self.assertEqual(both["code_sources"], [location])
+        self.assertIn("Omitted 3 historical", result["coverage"]["limitations"][0])
 
     def test_historical_tool_ids_cover_only_bounded_displayed_passages(self):
         registry = {}

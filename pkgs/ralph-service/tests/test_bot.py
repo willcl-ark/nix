@@ -425,7 +425,7 @@ class BotTests(unittest.TestCase):
             "inferred_rationale": [],
             "unresolved_disagreements": [],
         }
-        context = protocol.historical_context(json.dumps(value), registry)
+        context = protocol.historical_context(json.dumps(value), registry, {})
         self.assertEqual(
             context["documented_rationale"],
             [
@@ -433,6 +433,7 @@ class BotTests(unittest.TestCase):
                     **value["documented_rationale"][0],
                     "citations": [real],
                     "source_records": [registry[real_id]],
+                    "code_sources": [],
                 }
             ],
         )

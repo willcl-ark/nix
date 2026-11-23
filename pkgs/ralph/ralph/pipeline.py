@@ -1137,7 +1137,9 @@ def review_with_independent_passes(
                 protocol.HISTORICAL_CONTEXT_SCHEMA,
             )
             historical_context = protocol.historical_context(
-                answer, stages["historical_context"].get("historical_sources", {})
+                answer,
+                stages["historical_context"].get("historical_sources", {}),
+                snapshot.citations,
             )
             stages["historical_context"]["coverage"] = historical_context["coverage"]
         except model.StaleReview:

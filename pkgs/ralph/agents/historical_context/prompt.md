@@ -38,6 +38,10 @@ invent IDs or reuse IDs from another review. Description and individual comment
 IDs are distinct. Search hits and links mentioned inside source prose are not
 inspected historical evidence. A truncated passage supports only what is shown;
 record omitted material as a limitation when it could affect the conclusion.
+Code reads issue a separate `Citation:` ID. You may add these to source_ids as
+supporting evidence, but documented_rationale and unresolved_disagreements also
+need at least one document or discussion source_id. Put claims supported only by
+code in inferred_rationale. Mailing-list message IDs are not source_ids.
 Keep relevance to pinned code in the relevance text.
 Use documented_rationale only for rationale stated in sources. Put your own
 explanations in inferred_rationale and cite supporting premises when available.

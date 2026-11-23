@@ -185,7 +185,9 @@ nonfatal and counts as context coverage, not failed code inspection.
 
 The concept archaeologist then assesses the proposal's goal, benefit, prior
 attempts and alternatives from captured research and pinned source. It runs
-alongside discovery and supplies concept opinions only to verification. Historical claims need source links, and earlier objections must be
+alongside discovery and supplies concept opinions only to verification. Historical claims need source links. They may
+also cite code reads from the same review; documented claims citing only code become
+inferences. Claims citing an unknown ID are omitted. Earlier objections must be
 checked for later answers. Promised follow-ups do not count as delivered benefits.
 See the [archaeologist prompt](../agents/archaeologist/prompt.md) for review criteria.
 

@@ -686,11 +686,12 @@ def concept_summary(assessment, reason):
     return f"{assessment['recommendation']} {reason}{source_text}"
 
 
-def historical_context(text, sources):
+def historical_context(text, sources, code_citations):
     result = json.loads(text)
     _object(result, HISTORICAL_CONTEXT_SCHEMA["properties"])
     _coverage(result["coverage"])
     omitted = 0
+    code_only = []
     for field in (
         "documented_rationale",
         "inferred_rationale",
@@ -705,26 +706,30 @@ def historical_context(text, sources):
             _object(item, RATIONALE["properties"])
             _text(item, ("claim", "relevance"))
             _strings(item["source_ids"])
-            if any(identifier not in sources for identifier in item["source_ids"]) or (
-                field != "inferred_rationale" and not item["source_ids"]
-            ):
+            history = [i for i in item["source_ids"] if i in sources]
+            code = [i for i in item["source_ids"] if i in code_citations]
+            unknown = len(history) + len(code) != len(item["source_ids"])
+            # Code shows what a decision produced, not the reasons given for it.
+            move = field == "documented_rationale" and code and not history
+            if unknown or (field != "inferred_rationale" and not history and not move):
                 omitted += 1
                 continue
-            retained.append(
+            (code_only if move else retained).append(
                 {
                     **item,
-                    "source_records": [
-                        dict(sources[identifier]) for identifier in item["source_ids"]
-                    ],
+                    "source_ids": history,
+                    "source_records": [dict(sources[i]) for i in history],
                     "citations": list(
-                        dict.fromkeys(
-                            sources[identifier]["url"]
-                            for identifier in item["source_ids"]
-                        )
+                        dict.fromkeys(sources[i]["url"] for i in history)
                     ),
+                    "code_sources": [
+                        {k: v for k, v in code_citations[i].items() if k != "excerpt"}
+                        for i in code
+                    ],
                 }
             )
         result[field] = retained
+    result["inferred_rationale"] += code_only
     if omitted:
         result["coverage"]["status"] = "partial"
         result["coverage"]["limitations"].append(

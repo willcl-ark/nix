@@ -319,7 +319,7 @@ class ConceptToolTests(unittest.TestCase):
             "unresolved_disagreements": [],
         }
         saved = protocol.historical_context(
-            json.dumps(value), debug["historical_sources"]
+            json.dumps(value), debug["historical_sources"], {}
         )
         self.assertEqual(
             saved["documented_rationale"][0]["source_records"][0]["notices"],
@@ -338,7 +338,7 @@ class ConceptToolTests(unittest.TestCase):
         self.assertNotEqual(replayed["source_id"], issued)
         self.assertEqual(
             protocol.historical_context(
-                json.dumps(value), replay_debug["historical_sources"]
+                json.dumps(value), replay_debug["historical_sources"], {}
             )["documented_rationale"],
             [],
         )
