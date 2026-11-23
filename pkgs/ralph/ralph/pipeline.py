@@ -504,6 +504,24 @@ def _challenge_candidates(
         ]
 
 
+def _historical_input(context):
+    """Send each passage once: captured_sources already lists cited ones first."""
+    return {
+        **context,
+        **{
+            field: [
+                {key: value for key, value in item.items() if key != "source_records"}
+                for item in context[field]
+            ]
+            for field in (
+                "documented_rationale",
+                "inferred_rationale",
+                "unresolved_disagreements",
+            )
+        },
+    }
+
+
 def _judge_findings(run_stage, prompt_config, review, snapshot, verified, debug):
     stages = debug["stages"]
     findings = []
@@ -824,7 +842,7 @@ def review_with_independent_passes(
         }:
             input_text = (
                 "Historical design context and captured sources:\n"
-                + json.dumps(historical_context)
+                + json.dumps(_historical_input(historical_context))
                 + "\n\n"
                 + input_text
             )

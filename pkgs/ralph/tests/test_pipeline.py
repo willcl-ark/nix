@@ -1069,6 +1069,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertNotIn("Historical incentive premise", args[1])
                 return json.dumps({"coverage": COMPLETE, "alternatives": []})
             self.assertIn("Historical incentive premise", args[1])
+            self.assertEqual(args[1].count('"Design rationale"'), 1)
             if stage == "archaeologist":
                 return archaeology({**assessment(), "alternatives": []})
             if stage == "concept_verifier":
@@ -1080,6 +1081,8 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertIn("## Background", result)
         self.assertIn("Historical incentive premise", result)
+        saved = self.debug["historical_context"]["documented_rationale"][0]
+        self.assertEqual(saved["source_records"][0]["content"], "Design rationale")
         self.assertIn("independent", seen)
         self.assertIn("design", seen)
         self.assertIn("alternatives", seen)
