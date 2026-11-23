@@ -155,6 +155,30 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(retried["review_result"], result)
         self.assertNotEqual(retried["token"], job["token"])
 
+    def test_publication_does_not_use_or_wait_for_review_capacity(self):
+        store = jobs.JobStore(
+            self.path,
+            global_limit=1,
+            repository_limits={"core": 1},
+            retry_base_seconds=0,
+        )
+        self.enqueue()
+        publishing = store.claim()
+        store.enqueue(43, "master", "b" * 40, "opened", engine_identity=ENGINE)
+        self.assertIsNone(store.claim())
+        store.save_result(publishing, {"content": "saved"})
+        review = store.claim()
+        self.assertEqual(review["number"], 43)
+        store.enqueue(44, "master", "c" * 40, "opened", engine_identity=ENGINE)
+        self.assertIsNone(store.claim())
+
+        store.release_attempt(publishing["id"], publishing["token"])
+        with store._connection(write=True) as db:
+            db.execute("UPDATE jobs SET next_attempt = 0")
+        self.assertEqual(store.claim()["id"], publishing["id"])
+        # The PR still has only one worker, and the review cap still applies.
+        self.assertIsNone(store.claim())
+
     def test_crashed_workers_obey_backoff_and_attempt_limit(self):
         self.enqueue()
         first = self.store.claim()

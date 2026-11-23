@@ -554,19 +554,23 @@ class JobStore:
             return True
 
     def claim(self):
-        """Admit runnable repositories fairly under transactional concurrency caps."""
+        """Admit runnable repositories fairly under transactional concurrency caps.
+
+        The caps limit reviews. A saved result only needs publishing, so it neither
+        waits for capacity nor uses any.
+        """
         with self._connection(write=True) as db:
             running = dict(
                 db.execute(
                     "SELECT jobs.repo_id, count(*) FROM execution_attempts JOIN jobs "
-                    "ON jobs.id = execution_attempts.job_id GROUP BY jobs.repo_id"
+                    "ON jobs.id = execution_attempts.job_id "
+                    "WHERE jobs.review_result IS NULL GROUP BY jobs.repo_id"
                 ).fetchall()
             )
-            if (
+            global_full = (
                 self.global_limit is not None
                 and sum(running.values()) >= self.global_limit
-            ):
-                return None
+            )
             eligible = (
                 [self.repo_id]
                 if self._scoped or not self.repository_limits
@@ -579,12 +583,14 @@ class JobStore:
             row = None
             for repo_id in eligible:
                 limit = self.repository_limits.get(repo_id)
-                if limit is not None and running.get(repo_id, 0) >= limit:
-                    continue
+                full = global_full or (
+                    limit is not None and running.get(repo_id, 0) >= limit
+                )
                 row = db.execute(
                     """
                     SELECT * FROM jobs AS candidate
                     WHERE candidate.repo_id = ?
+                        AND (NOT ? OR candidate.review_result IS NOT NULL)
                         AND (candidate.status = 'pending'
                             OR (candidate.status = 'retry' AND candidate.next_attempt <= ?))
                         AND NOT EXISTS (
@@ -593,9 +599,9 @@ class JobStore:
                             WHERE running.repo_id = candidate.repo_id
                                 AND running.number = candidate.number
                         )
-                    ORDER BY candidate.id LIMIT 1
+                    ORDER BY candidate.review_result IS NULL, candidate.id LIMIT 1
                     """,
-                    (repo_id, time.time()),
+                    (repo_id, full, time.time()),
                 ).fetchone()
                 if row is not None:
                     break
