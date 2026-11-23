@@ -165,6 +165,13 @@ ralph-service --state-dir /path/to/state --repositories /path/to/repositories.js
   --repository-id gui --release-delivery 123 --confirm-no-pending-write
 ```
 
+Saved results retry publication after 1, 5, 15 and 60 minutes, then hourly for
+about a day, outside the review concurrency limits. A numeric `Retry-After` can
+lengthen a wait. Each retry checks whether an uncertain write has appeared. A
+write still unseen after six hours is sent once more; if that is also uncertain,
+checks continue without another send until the retries run out and the job fails.
+Holds recorded before this policy have no timestamp and are never replayed.
+
 Release only after establishing that outstanding writes can no longer arrive.
 An absent comment alone does not establish this. Release permits delivery retry
 with the saved bytes and can reset the latest saved job's exhausted retry budget;
@@ -237,8 +244,8 @@ engine configuration is replaced with the deployed configuration before source
 collection or model calls, preserving the requested default/high profile.
 Compatible saved settings remain unchanged. Once model execution starts, a
 failed review is retained in the private trace rather than rerun automatically.
-A saved result can still retry delivery without spending more model tokens.
-After the allowance is consumed the job is terminal and requires an explicit
+A saved result retries delivery on its own slower schedule without spending more
+model tokens. After the allowance is consumed the job is terminal and requires an explicit
 rerun. Partial or invalid model results do not trigger a fresh review. This
 whole-job policy is separate from bounded retries of individual API requests.
 

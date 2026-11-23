@@ -1,8 +1,9 @@
 import tempfile
+import time
 import unittest
 import urllib.error
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from ralph_service import delivery
 from ralph_service.jobs import JobStore
@@ -76,6 +77,39 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaises(delivery.DeliveryHeld):
             session.check_hold()
         self.assertEqual(len(delivery.held(reopened)), 1)
+
+    def test_unseen_write_is_replayed_once_after_the_wait(self):
+        lost = Mock(side_effect=TimeoutError())
+        with self.assertRaises(delivery.DeliveryHeld):
+            self.execute(dispatch=lost)
+        started = time.time()
+
+        def reconcile_after(seconds, comment=None):
+            with patch.object(delivery.time, "time", return_value=started + seconds):
+                self.session.reconcile(comment, Mock())
+
+        reconcile_after(delivery.REPLAY_AFTER_SECONDS - 60)
+        self.assertEqual(len(delivery.held(self.jobs)), 1)
+        reconcile_after(delivery.REPLAY_AFTER_SECONDS + 60)
+        self.assertEqual(delivery.held(self.jobs), [])
+        self.assertTrue(self.session.replayed())
+        with self.assertRaises(delivery.DeliveryHeld):
+            self.execute(dispatch=lost, body="new rendering")
+        self.assertEqual(lost.call_args.args, ("POST", "/comments", "saved body"))
+        reconcile_after(10 * delivery.REPLAY_AFTER_SECONDS)
+        self.assertEqual(len(delivery.held(self.jobs)), 1)
+        self.assertEqual(lost.call_count, 2)
+        reconcile_after(1, {"id": 7, "body": "saved body"})
+        self.assertTrue(self.session.finished())
+
+    def test_hold_without_timestamp_is_never_replayed(self):
+        with self.assertRaises(delivery.DeliveryHeld):
+            self.execute(dispatch=Mock(side_effect=TimeoutError()))
+        with self.jobs._connection(write=True) as db:
+            db.execute("UPDATE deliveries SET uncertain_at = NULL")
+        with patch.object(delivery.time, "time", return_value=time.time() * 2):
+            self.session.reconcile(None, Mock())
+        self.assertEqual(len(delivery.held(self.jobs)), 1)
 
     def test_release_adopts_visible_create_without_duplicate(self):
         with self.assertRaises(delivery.DeliveryHeld):

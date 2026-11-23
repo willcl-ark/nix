@@ -1,8 +1,10 @@
 import json
 import tempfile
 import unittest
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 from ralph_service import jobs
 
@@ -151,6 +153,9 @@ class JobStoreTests(unittest.TestCase):
         result = {"content": "saved before publication"}
         self.store.save_result(job, result)
         self.store.release_attempt(job["id"], job["token"])
+        self.assertIsNone(self.store.claim())
+        with self.store._connection(write=True) as db:
+            db.execute("UPDATE jobs SET next_attempt = 0")
         retried = self.store.claim()
         self.assertEqual(retried["review_result"], result)
         self.assertNotEqual(retried["token"], job["token"])
@@ -178,6 +183,36 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(store.claim()["id"], publishing["id"])
         # The PR still has only one worker, and the review cap still applies.
         self.assertIsNone(store.claim())
+
+    def test_publication_retries_slowly_for_a_day_before_failing(self):
+        self.enqueue()
+        delays = []
+        while True:
+            job = self.store.claim()
+            self.store.save_result(job, {"content": "saved"})
+            with patch.object(jobs.time, "time", return_value=1000):
+                status = self.store.retry(job, TimeoutError())
+            self.store.release_attempt(job["id"], job["token"])
+            if status != "retry":
+                break
+            with self.store._connection(write=True) as db:
+                row = db.execute("SELECT next_attempt FROM jobs").fetchone()
+                delays.append(row["next_attempt"] - 1000)
+                db.execute("UPDATE jobs SET next_attempt = 0")
+        self.assertEqual(status, "failed")
+        self.assertEqual(delays[:5], [60, 300, 900, 3600, 3600])
+        self.assertGreater(sum(delays), 24 * 3600)
+
+    def test_publication_honours_provider_retry_delay(self):
+        self.enqueue()
+        job = self.store.claim()
+        self.store.save_result(job, {"content": "saved"})
+        error = urllib.error.HTTPError("url", 429, "", {"Retry-After": "700"}, None)
+        with patch.object(jobs.time, "time", return_value=1000):
+            self.store.retry(job, error)
+        with self.store._connection() as db:
+            row = db.execute("SELECT next_attempt FROM jobs").fetchone()
+        self.assertEqual(row["next_attempt"], 1700)
 
     def test_crashed_workers_obey_backoff_and_attempt_limit(self):
         self.enqueue()

@@ -46,6 +46,9 @@ class ServiceTests(unittest.TestCase):
         )
         self.evidence = evidence.start()
         self.addCleanup(evidence.stop)
+        delays = patch("ralph_service.jobs.DELIVERY_RETRY_SECONDS", (0,))
+        delays.start()
+        self.addCleanup(delays.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.state_dir = Path(self.directory.name)
@@ -413,14 +416,15 @@ class ServiceTests(unittest.TestCase):
             patch.object(service.runner, "run_review") as review,
             self.assertLogs(level="ERROR"),
         ):
-            for expected in ("retry", "failed"):
+            for _ in range(3):
                 self.assertEqual(
                     self.process(job, github_token="token", github_publication="full"),
-                    expected,
+                    "retry",
                 )
+                self.jobs.release_attempt(job["id"], job["token"])
                 job = self.jobs.claim()
         review.assert_not_called()
-        self.assertEqual(publish.call_count, 2)
+        self.assertEqual(publish.call_count, 3)
         self.assertTrue(
             all(
                 call.args[3]["run"]["status"] == "completed"
@@ -428,7 +432,7 @@ class ServiceTests(unittest.TestCase):
             )
         )
 
-    def test_uncertain_github_stops_after_one_retry_without_models(self):
+    def test_uncertain_github_keeps_checking_without_models_or_writes(self):
         from ralph_service import delivery
         from unittest.mock import Mock
 
@@ -460,11 +464,10 @@ class ServiceTests(unittest.TestCase):
         ):
             self.assertEqual(
                 self.process(job, github_token="token", github_publication="full"),
-                "failed",
+                "retry",
             )
         run.assert_not_called()
         publish.assert_not_called()
-        self.assertIsNone(self.jobs.claim())
         self.assertTrue(delivery.held(self.jobs))
 
     def test_publication_retry_reuses_saved_result(self):

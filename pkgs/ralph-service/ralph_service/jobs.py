@@ -23,6 +23,15 @@ def _profile_name(identity):
 
 
 SCHEMA_VERSION = 2
+DELIVERY_RETRY_SECONDS = (60, 300, 900, 3600)
+MAX_DELIVERY_ATTEMPTS = 28
+
+
+def _provider_delay(error):
+    """Return an HTTP error's numeric Retry-After, if it has one."""
+    headers = getattr(error, "headers", None)
+    value = headers.get("Retry-After") if headers is not None else None
+    return int(value) if value and value.isdecimal() else 0
 
 
 def _repository_id(value):
@@ -770,16 +779,22 @@ class JobStore:
             (job["repo_id"], job["number"], job["generation"]),
         ).fetchone()
         attempts = job["attempts"] + 1
+        publishing = job["review_result"] is not None
+        limit = MAX_DELIVERY_ATTEMPTS if publishing else self.max_attempts
         if newer:
             status, next_attempt = "superseded", 0
-        elif attempts >= self.max_attempts:
+        elif attempts >= limit:
             status, next_attempt = "failed", 0
         else:
             status = "retry"
-            delay = min(
-                self.retry_base_seconds * 2 ** (attempts - 1),
-                self.retry_max_seconds,
-            )
+            if publishing:
+                step = min(attempts, len(DELIVERY_RETRY_SECONDS)) - 1
+                delay = max(DELIVERY_RETRY_SECONDS[step], _provider_delay(error))
+            else:
+                delay = min(
+                    self.retry_base_seconds * 2 ** (attempts - 1),
+                    self.retry_max_seconds,
+                )
             next_attempt = time.time() + delay
         db.execute(
             """

@@ -1,9 +1,14 @@
 """Durable publication attempts; uncertain remote writes are never replayed blindly."""
 
 from contextlib import closing
+import logging
 from pathlib import Path
 import sqlite3
+import time
 import urllib.error
+
+# An unacknowledged write still unseen after this long is sent once more.
+REPLAY_AFTER_SECONDS = 6 * 60 * 60
 
 
 class DeliveryHeld(urllib.error.URLError):
@@ -27,6 +32,14 @@ def initialize(db):
             PRIMARY KEY(job_id, destination)
         )
     """)
+    columns = {row[1] for row in db.execute("PRAGMA table_info(deliveries)")}
+    # Holds without a timestamp predate automatic replay and stay manual.
+    if "uncertain_at" not in columns:
+        db.execute("ALTER TABLE deliveries ADD COLUMN uncertain_at REAL")
+    if "replayed" not in columns:
+        db.execute(
+            "ALTER TABLE deliveries ADD COLUMN replayed INTEGER NOT NULL DEFAULT 0"
+        )
     if not existed:
         # A legacy saved result does not prove that its remote write finished.
         db.execute("""
@@ -117,6 +130,10 @@ class Session:
                     "saved publication belongs to a different destination"
                 )
 
+    def replayed(self):
+        row = self._record()
+        return row is not None and bool(row["replayed"])
+
     def finished(self):
         row = self._record()
         return row is not None and row["state"] == "confirmed"
@@ -149,6 +166,22 @@ class Session:
                         "UPDATE deliveries SET state = 'confirmed' WHERE job_id = ? AND destination = ? AND state = 'uncertain'",
                         (row["job_id"], row["destination"]),
                     )
+            elif (
+                row["uncertain_at"] is not None
+                and not row["replayed"]
+                and time.time() - row["uncertain_at"] >= REPLAY_AFTER_SECONDS
+            ):
+                with self.jobs._connection(write=True) as db:
+                    db.execute(
+                        "UPDATE deliveries SET state = 'ready', replayed = 1 WHERE job_id = ? AND destination = ? AND state = 'uncertain'",
+                        (row["job_id"], row["destination"]),
+                    )
+                logging.warning(
+                    "replaying unconfirmed delivery repo_id=%s pr=%d job=%d",
+                    row["repo_id"],
+                    row["number"],
+                    row["job_id"],
+                )
 
     def check_hold(self):
         self._check_hold()
@@ -215,8 +248,8 @@ class Session:
                 )
                 return "unchanged"
             db.execute(
-                "UPDATE deliveries SET state = 'uncertain' WHERE job_id = ? AND destination = ?",
-                (self.job["id"], self.destination),
+                "UPDATE deliveries SET state = 'uncertain', uncertain_at = ? WHERE job_id = ? AND destination = ?",
+                (time.time(), self.job["id"], self.destination),
             )
         if not is_current():
             self._state("ready")
