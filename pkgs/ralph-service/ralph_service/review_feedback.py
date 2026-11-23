@@ -151,7 +151,7 @@ def collect_review_feedback(
     scope = {"repository": bot_config.repository_url, "number": job["number"]}
     completed = [
         row
-        for row in completed_jobs(jobs_db)
+        for row in completed_jobs(jobs_db, bot_config.repo_id, job["number"])
         if row["repo_id"] == bot_config.repo_id and row["number"] == job["number"]
     ]
     if job.get("generation") is None:

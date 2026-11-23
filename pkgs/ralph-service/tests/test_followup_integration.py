@@ -213,7 +213,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                 "severity": "medium",
             }
 
-            def complete(head, debug):
+            def complete(head, debug, number=42):
                 identity = {
                     "name": "current",
                     "code_sha256": None,
@@ -221,7 +221,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                     "config": None,
                 }
                 jobs.enqueue(
-                    42, "master", head, "synchronize", engine_identity=identity
+                    number, "master", head, "synchronize", engine_identity=identity
                 )
                 job = jobs.claim()
                 exports = []
@@ -295,6 +295,19 @@ class FollowupIntegrationTests(unittest.TestCase):
             )
             new_head = git("rev-parse", "HEAD")
             complete(new_head, {})
+            other = complete(new_head, {}, number=43)
+            followup_runner.save_assessment(
+                state / "followup" / "assessments.sqlite3", other["id"], None
+            )
+            self.assertEqual(
+                [
+                    job["number"]
+                    for job in followup_runner.list_completed_jobs(
+                        state / "jobs.sqlite3"
+                    )
+                ],
+                [42, 42, 43],
+            )
             protected = [state / "jobs.sqlite3", state / "usage.sqlite3"]
             before = [hashlib.sha256(path.read_bytes()).digest() for path in protected]
             answer = {
@@ -341,11 +354,18 @@ class FollowupIntegrationTests(unittest.TestCase):
                 response["output"][0]["content"][0]["text"] = json.dumps(answer)
                 return response
 
-            with patch.object(
-                model.transport,
-                "request",
-                side_effect=respond,
-            ) as send:
+            with (
+                patch.object(
+                    model.transport,
+                    "request",
+                    side_effect=respond,
+                ) as send,
+                patch.object(
+                    followup_runner,
+                    "_decode_result",
+                    wraps=followup_runner._decode_result,
+                ) as decode,
+            ):
                 self.assertEqual(
                     followup_runner.run_once(
                         state,
@@ -357,6 +377,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                     1,
                 )
                 send.assert_called_once()
+                self.assertEqual(decode.call_count, 2)
                 self.assertEqual(
                     send.call_args.args[0], "http://127.0.0.1:8317/v1/responses"
                 )
@@ -449,7 +470,10 @@ class FollowupIntegrationTests(unittest.TestCase):
                 ["addressed", "unclear", "unclear", "unclear"],
             )
 
-            with patch.object(model.transport, "request") as send:
+            with (
+                patch.object(model.transport, "request") as send,
+                patch.object(followup_runner, "completed_jobs") as load,
+            ):
                 self.assertEqual(
                     followup_runner.run_once(
                         state, {"core": {"origin": str(origin)}}, "key", *prompts
@@ -457,6 +481,7 @@ class FollowupIntegrationTests(unittest.TestCase):
                     0,
                 )
                 send.assert_not_called()
+                load.assert_not_called()
 
             # A deletion is valid comparison evidence even without new source.
             source.unlink()

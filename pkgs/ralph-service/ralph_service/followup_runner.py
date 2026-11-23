@@ -81,17 +81,34 @@ def _job(row):
     return item
 
 
-def completed_jobs(jobs_db):
+def list_completed_jobs(jobs_db):
+    """List completed jobs without their results, which total gigabytes."""
     if not jobs_db.exists():
         return []
     with _read_only_db(jobs_db) as db:
-        rows = db.execute("""
-            SELECT id, repo_id, number, generation, base_ref, head, action, force,
-                status, attempts, review_result
+        return db.execute("""
+            SELECT id, repo_id, number, generation, action
             FROM jobs
             WHERE status = 'complete' AND review_result IS NOT NULL
             ORDER BY id
         """).fetchall()
+
+
+def completed_jobs(jobs_db, repo_id, number):
+    if not jobs_db.exists():
+        return []
+    with _read_only_db(jobs_db) as db:
+        rows = db.execute(
+            """
+            SELECT id, repo_id, number, generation, base_ref, head, action, force,
+                status, attempts, review_result
+            FROM jobs
+            WHERE repo_id = ? AND number = ?
+                AND status = 'complete' AND review_result IS NOT NULL
+            ORDER BY id
+            """,
+            (repo_id, number),
+        ).fetchall()
     return [
         job for job in (_job(row) for row in rows) if job["review_result"] is not None
     ]
@@ -265,7 +282,8 @@ def run_once(
     state_dir = Path(state_dir)
     followup_dir = state_dir / FOLLOWUP_DIR
     assessments_path = followup_dir / ASSESSMENTS_DB
-    jobs = completed_jobs(state_dir / "jobs.sqlite3")
+    jobs_db = state_dir / "jobs.sqlite3"
+    jobs = list_completed_jobs(jobs_db)
     first_run = init_assessments(assessments_path, jobs)
     if first_run:
         logging.info("follow-up seeded %d existing completed jobs", len(jobs))
@@ -279,16 +297,29 @@ def run_once(
     ledger = usage_tracking.Ledger(followup_dir / USAGE_DB)
     processed = 0
     assessed = 0
-    for job in pending:
-        repository_config = repositories.get(job["repo_id"])
+    for listed in pending:
+        repository_config = repositories.get(listed["repo_id"])
         if repository_config is None:
             continue
-        if job["action"] not in {"synchronize", "synchronized"}:
-            save_assessment(assessments_path, job["id"], None)
+        if listed["action"] not in {"synchronize", "synchronized"}:
+            save_assessment(assessments_path, listed["id"], None)
             processed += 1
             continue
         if assessed >= batch_size:
             break
+        pr_jobs = completed_jobs(jobs_db, listed["repo_id"], listed["number"])
+        job = next(
+            (
+                job
+                for job in pr_jobs
+                if job["id"] == listed["id"]
+                and job["generation"] == listed["generation"]
+            ),
+            None,
+        )
+        if job is None:
+            # It changed since the listing; assess it next run.
+            continue
         try:
             result = assess_job(
                 api_key,
@@ -297,7 +328,7 @@ def run_once(
                 prompt,
                 stage_model,
                 ledger,
-                jobs,
+                pr_jobs,
                 job,
                 prior_assessments,
                 api_base=api_base,
