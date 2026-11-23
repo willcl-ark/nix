@@ -9,8 +9,8 @@ import aiohttp
 
 from . import claude
 
-# Healthy providers acknowledge a request within seconds, before any thinking.
-FIRST_EVENT_TIMEOUT_SECONDS = 300
+# Most requests start within seconds, but healthy ones have taken four minutes.
+FIRST_EVENT_TIMEOUT_SECONDS = 600
 
 
 class RequestCancelled(Exception):
