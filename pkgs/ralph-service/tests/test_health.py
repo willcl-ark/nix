@@ -54,7 +54,7 @@ class HealthTests(unittest.TestCase):
                 runs.extend(
                     health.stage_runs(
                         {"stages": {"state": stage}},
-                        {},
+                        {"engine": {"code_sha256": str(job)}},
                         {
                             "id": job,
                             "generation": 1,

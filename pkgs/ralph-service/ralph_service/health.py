@@ -112,16 +112,14 @@ def summarize(runs, requests, now):
             continue
         if stamp < now - 86400:
             continue
-        # Configurations change with every engine update, so rates span them.
+        # Configurations change with every engine update and review tier, so
+        # rates and alerts span them.
         stage = stages.setdefault(
             run["stage"], {"stage": run["stage"], "runs": 0, "lost": 0}
         )
         stage["runs"] += 1
         stage["lost"] += run["lost"]
-        identity = {
-            key: run[key]
-            for key in ("repository_id", "stage", "model", "configuration")
-        }
+        identity = {key: run[key] for key in ("repository_id", "stage", "model")}
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[
             :24
         ]

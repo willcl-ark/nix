@@ -2451,7 +2451,6 @@ def _health_html(summary, archive_base_url):
                 _escape(group["repository_id"]),
                 _escape(group["stage"]),
                 _escape(group["model"]),
-                _escape(group["configuration"]),
                 "Alert"
                 if group["alert"]
                 else "Insufficient samples"
@@ -2472,7 +2471,7 @@ def _health_html(summary, archive_base_url):
         "<section><h2>Review health</h2>"
         + _section_note(
             "Telegram alerts when at least three of the last five eligible stage runs are affected, "
-            "within 24 hours, grouped by repository, stage, model and saved configuration. "
+            "within 24 hours, grouped by repository, stage and model. "
             "Failures, output truncation and unrepaired coverage evidence count. "
             "Ordinary partial coverage and tool-cap saturation do not."
         )
@@ -2481,7 +2480,6 @@ def _health_html(summary, archive_base_url):
                 "Repository",
                 "Stage",
                 "Model",
-                "Configuration",
                 "Rule",
                 "Affected",
                 "Reasons",

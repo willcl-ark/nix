@@ -294,8 +294,7 @@ class NotificationStore:
                     continue
                 text = (
                     f"Ralph review health {transition}: {group['repository_id']} / "
-                    f"{group['stage']} / {group['model']}\n{detail}\n"
-                    f"Configuration: {group['configuration']}"
+                    f"{group['stage']} / {group['model']}\n{detail}"
                 )
                 for run in [run for run in runs if run["reasons"]][:2]:
                     name = run.get("archive_name")
