@@ -48,13 +48,15 @@ stdenvNoCC.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    for launcher in bot.py job.py evaluate.py followup.py monitor.py feedback.py; do
+    for launcher in bot.py job.py evaluate.py followup.py monitor.py feedback.py post_mortem.py; do
       install -Dm755 "$launcher" $out/libexec/ralph-service/"$launcher"
     done
     for module in ralph_service/*.py ralph_service/*.css ralph_service/*.js; do
       install -Dm644 "$module" $out/libexec/ralph-service/"$module"
     done
-    install -Dm644 audits/addressed_findings.md $out/libexec/ralph-service/audits/addressed_findings.md
+    for audit in audits/*.md; do
+      install -Dm644 "$audit" $out/libexec/ralph-service/"$audit"
+    done
     mkdir -p $out/share/ralph-service/fonts
     ${fontTools}/bin/pyftsubset "${jetbrains-mono}/share/fonts/truetype/JetBrainsMono[wght].ttf" \
       --flavor=woff2 \
@@ -108,6 +110,10 @@ stdenvNoCC.mkDerivation {
       ) "--set-default RALPH_WRITE_VERIFIER_SHELL ${lib.getExe ralph.writeVerifierEnvironment}"}
     makeWrapper ${python.interpreter} $out/bin/ralph-followup \
       --add-flags $out/libexec/ralph-service/followup.py \
+      --prefix PYTHONPATH : ${ralph}/libexec/ralph \
+      --prefix PATH : ${lib.makeBinPath [ git ]}
+    makeWrapper ${python.interpreter} $out/bin/ralph-post-mortem \
+      --add-flags $out/libexec/ralph-service/post_mortem.py \
       --prefix PYTHONPATH : ${ralph}/libexec/ralph \
       --prefix PATH : ${lib.makeBinPath [ git ]}
     makeWrapper ${python.interpreter} $out/bin/ralph-feedback \
