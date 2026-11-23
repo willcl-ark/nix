@@ -794,6 +794,58 @@ class ModelUsageTests(unittest.TestCase):
             debug["turns"][0]["request_sha256"], hashlib.sha256(payload).hexdigest()
         )
 
+    def test_invalid_answer_gets_one_correction_that_must_improve_it(self):
+        def response(text, status="completed"):
+            return {
+                "id": text,
+                "status": status,
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                ],
+                "usage": {"output_tokens": 1},
+            }
+
+        problems = {"good": [], "bad": ["a: omitted", "b: omitted"], "half": ["a: x"]}
+        for first, second, expected, requests in (
+            ("good", None, "good", 1),
+            ("bad", response("good"), "good", 2),
+            ("bad", response("half"), "half", 2),
+            ("half", response("bad"), "half", 2),
+            ("bad", response("good", "incomplete"), "bad", 2),
+            ("bad", urllib.error.HTTPError("u", 400, "no", {}, None), "bad", 2),
+        ):
+            with self.subTest(first=first, second=second):
+                debug = {}
+                with patch.object(
+                    model.transport, "request", side_effect=[response(first), second]
+                ) as send:
+                    answer = model.openai_review(
+                        "secret",
+                        "patch",
+                        self.snapshot,
+                        debug,
+                        prompt="Review.",
+                        model="gpt-6-luna",
+                        max_output_tokens=1000,
+                        first_tool_required=False,
+                        stage_name="verifier",
+                        check_answer=problems.__getitem__,
+                    )
+                self.assertEqual(answer, expected)
+                self.assertEqual(send.call_count, requests)
+                self.assertEqual(len(debug["turns"]), requests)
+                self.assertEqual(debug["status"], "completed")
+                if requests == 2:
+                    payload = json.loads(send.call_args.args[1])
+                    self.assertEqual(payload["tool_choice"], "none")
+                    self.assertIn(problems[first][0], json.dumps(payload["input"][-1]))
+                    self.assertFalse(debug["limits"]["tool_calls"]["hit"])
+                    self.assertEqual(debug["correction"]["accepted"], expected != first)
+
     def test_stale_review_between_turns_does_not_start_again(self):
         call = {
             "type": "function_call",

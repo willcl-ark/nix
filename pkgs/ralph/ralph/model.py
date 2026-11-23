@@ -921,6 +921,62 @@ def run_audit(
     return answer, record
 
 
+def _correct_answer(
+    text,
+    check_answer,
+    data,
+    output,
+    record,
+    *,
+    request,
+    timeout,
+):
+    """Ask once for a corrected answer; keep the original unless it improves."""
+    problems = check_answer(text)
+    if not problems:
+        return text
+    data = {
+        key: value
+        for key, value in data.items()
+        if key not in ("max_tool_calls", "include")
+    }
+    data["input"] = [
+        *data["input"],
+        *output,
+        {
+            "role": "user",
+            "content": "Your answer failed validation:\n"
+            + "\n".join(f"- {problem}" for problem in problems)
+            + "\n\nReturn the complete corrected answer, including every decision that "
+            "was already valid. Decide from the evidence you already have, and use "
+            "unresolved where it is insufficient. Do not call tools.",
+        },
+    ]
+    data["tool_choice"] = "none"
+    correction = {"problems": len(problems), "accepted": False}
+    record["correction"] = correction
+    turns = record.setdefault("turns", [])
+    try:
+        result, payload, elapsed = request(data, timeout, turns.append)
+    except StaleReview:
+        raise
+    except Exception as exc:
+        turns.append(request_failure_record(data, exc))
+        correction["error"] = type(exc).__name__
+        return text
+    turns.append({**response_record(result, payload, elapsed), "tool_choice": "none"})
+    corrected = output_text(result.get("output", []))
+    if result.get("status") != "completed" or not corrected.strip():
+        correction["error"] = "incomplete response"
+        return text
+    remaining = check_answer(corrected)
+    correction["remaining"] = len(remaining)
+    if len(remaining) >= len(problems):
+        return text
+    correction["accepted"] = True
+    return corrected
+
+
 def openai_review(
     api_key,
     review,
@@ -952,6 +1008,7 @@ def openai_review(
     timeout=1800,
     final_timeout=1800,
     experiment_session=None,
+    check_answer=None,
 ):
     if experiment_session is not None and stage_name != "write_verifier":
         raise ValueError("Experiment tools are restricted to write_verifier")
@@ -1454,5 +1511,26 @@ def openai_review(
             raise ValueError("OpenAI response contained no review text")
         if first_tool_required and tools and max_tool_calls > 0 and calls_used == 0:
             raise ValueError("Review returned without inspecting repository evidence")
+        if check_answer is not None:
+            text = _correct_answer(
+                text,
+                check_answer,
+                data,
+                output,
+                debug if debug is not None else {},
+                request=lambda data, timeout, on_retry_failure: request_response(
+                    api_key,
+                    data,
+                    stage_name,
+                    on_response,
+                    usage,
+                    is_current,
+                    is_cancelled=is_cancelled,
+                    timeout=timeout,
+                    on_retry_failure=on_retry_failure,
+                    **request_options,
+                ),
+                timeout=final_timeout,
+            )
         return text
     raise ValueError("OpenAI review exceeded model turn limit")

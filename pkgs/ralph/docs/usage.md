@@ -51,6 +51,10 @@ its own tool limits. Claude receives `max_tokens` and native hosted-search
 exceeds the configured allowance. The proxy/provider enforces subscription
 limits.
 
+If the verifier's final answer is invalid or omits candidates, one extra turn
+without tools lists the problems and asks for a complete answer. It replaces the
+original only if fewer problems remain.
+
 Model requests retry HTTP 429, 5xx and transient transport failures up to three
 total attempts, preserving the current conversation. Backoff is one then two
 seconds; `Retry-After` can extend

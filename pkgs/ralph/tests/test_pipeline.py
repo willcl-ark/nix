@@ -2128,6 +2128,39 @@ class PipelineTests(unittest.TestCase):
         ]
         self.assertEqual(unresolved[0]["candidate_ids"], ["independent:2"])
 
+    def test_verifier_answer_check_names_each_omitted_candidate(self):
+        self.tier, self.audits = "routine", []
+        problems = []
+
+        def review(*args, **kwargs):
+            if kwargs["stage_name"] == "challenger":
+                return self.challenge(*args, **kwargs)
+            if kwargs["stage_name"] == "verifier":
+                decisions = [
+                    {
+                        "candidate_ids": [f"independent:{index}"],
+                        "disposition": "refuted",
+                        "reason": "Checked",
+                        "finding": None,
+                    }
+                    for index in (1, 2)
+                ]
+                for answer in (
+                    verification(decisions),
+                    verification(decisions[:1]),
+                    "not JSON",
+                ):
+                    problems.append(kwargs["check_answer"](answer))
+                return verification(decisions)
+            return discovery([candidate(), candidate("Second lead")])
+
+        self.run_review(review)
+        self.assertEqual(problems[0], [])
+        self.assertEqual(
+            problems[1], ["independent:2: Verifier omitted candidate decisions"]
+        )
+        self.assertEqual(len(problems[2]), 2)
+
     def test_judge_cannot_publish_unverified_candidates(self):
         self.tier, self.audits = "routine", []
 

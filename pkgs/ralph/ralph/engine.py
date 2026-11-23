@@ -100,6 +100,7 @@ class Runtime:
         timeout=1800,
         final_timeout=1800,
         experiment_session=None,
+        check_answer=None,
     ):
         from .model import openai_review
 
@@ -147,6 +148,7 @@ class Runtime:
                     if experiment_session is not None
                     else {}
                 ),
+                **({"check_answer": check_answer} if check_answer is not None else {}),
                 backport_evidence=self.case.backport_evidence,
                 research_evidence=(
                     self.case.research_evidence

@@ -87,6 +87,7 @@ def _run_stage(
     *,
     tools=True,
     experiment_session=None,
+    check_answer=None,
 ):
     debug = runtime.debug
     stages = debug["stages"]
@@ -147,6 +148,7 @@ def _run_stage(
                 response_schema=schema,
                 timeout=settings.timeout,
                 final_timeout=settings.final_timeout,
+                **({"check_answer": check_answer} if check_answer is not None else {}),
                 **(
                     {"experiment_session": experiment_session}
                     if experiment_session is not None
@@ -291,6 +293,9 @@ def _verify_candidates(
                 input_text + "\n\nVerification input:\n" + json.dumps(finding_input),
                 prompt_config.audit_prompts["verifier"],
                 protocol.VERIFIER_SCHEMA,
+                check_answer=lambda text: protocol.verification_problems(
+                    text, candidates, snapshot
+                ),
             )
             result, accepted = protocol.verification(answer, candidates, snapshot)
             stages["verifier"]["coverage"] = result["coverage"]
@@ -804,7 +809,14 @@ def review_with_independent_passes(
     )
 
     def run_stage(
-        name, input_text, prompt, schema, *, tools=True, experiment_session=None
+        name,
+        input_text,
+        prompt,
+        schema,
+        *,
+        tools=True,
+        experiment_session=None,
+        check_answer=None,
     ):
         if historical_context is not None and name not in {
             "historical_context",
@@ -830,6 +842,7 @@ def review_with_independent_passes(
             schema,
             tools=tools,
             experiment_session=experiment_session,
+            check_answer=check_answer,
         )
 
     def discover(name, required_test_paths=None):

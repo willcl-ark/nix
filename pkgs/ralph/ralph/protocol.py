@@ -809,6 +809,19 @@ def concept_verification(text, concept_candidate=None, blind_alternatives=None):
     return result
 
 
+def verification_problems(text, candidates, snapshot):
+    """List what verification would withhold, at most one entry per candidate."""
+    try:
+        result, _ = verification(text, candidates, snapshot)
+    except (ValueError, KeyError, TypeError) as exc:
+        return [f"{candidate['id']}: {exc}" for candidate in candidates]
+    problems = {}
+    for error in result["validation_errors"]:
+        for candidate_id in error["candidate_ids"] or ["unidentified decision"]:
+            problems.setdefault(candidate_id, error["error"])
+    return [f"{candidate_id}: {error}" for candidate_id, error in problems.items()]
+
+
 def verification(text, candidates, snapshot):
     result = json.loads(text)
     _object(result, VERIFIER_SCHEMA["properties"])
