@@ -440,7 +440,7 @@ def _reconcile_history(
             + "\n\nReconciliation input:\n"
             + json.dumps(
                 {
-                    "review_feedback": feedback_packet,
+                    "review_feedback": feedback.reconciliation_input(feedback_packet),
                     "feedback_mappings": feedback_mappings,
                     "candidate_findings": candidates,
                 }

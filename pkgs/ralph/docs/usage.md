@@ -111,6 +111,8 @@ alternatives, historical reconciliation, and backport fidelity. Each uses a smal
 shared schema and the existing verifier settings and source tools. Concept and
 history failures leave those results unresolved without discarding independently
 verified code findings. Historical author replies go only to reconciliation.
+Its input keeps each finding's last five completed assessments without their
+source excerpts; the saved record keeps the full history.
 Stored findings and report history retain their existing format.
 
 ## Context and research

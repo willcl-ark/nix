@@ -48,6 +48,8 @@ RECONCILIATION_RESPONSE_SCHEMA = object_schema(
     {"coverage": COVERAGE, "review_reconciliation": RECONCILIATION_SCHEMA}
 )
 
+MAX_PAST_ASSESSMENTS = 5
+
 
 def reconciliation_response(text):
     result = json.loads(text)
@@ -166,6 +168,25 @@ def mapping_input(packet, candidates):
             for candidate in candidates
         ],
     }
+
+
+def reconciliation_input(packet):
+    """Bound past assessments, which otherwise grow with every review of a PR."""
+    findings = []
+    for finding in packet.get("findings", []):
+        if "assessment_history" in finding:
+            # A null checked head records a failed reverification; old records lack it.
+            checked = [
+                {key: value for key, value in past.items() if key != "source_evidence"}
+                for past in finding["assessment_history"]
+                if past.get("checked_head", "unrecorded")
+            ]
+            finding = {
+                **finding,
+                "assessment_history": checked[-MAX_PAST_ASSESSMENTS:],
+            }
+        findings.append(finding)
+    return {**packet, "findings": findings}
 
 
 def mapping_schema(packet, candidates):

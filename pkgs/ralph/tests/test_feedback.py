@@ -79,6 +79,40 @@ class FeedbackTests(unittest.TestCase):
         )
         return {"citation_id": output.splitlines()[0].removeprefix("Citation: ")}
 
+    def test_reconciliation_input_bounds_history_without_changing_the_record(self):
+        past = [
+            {
+                "status": "still_present",
+                "reason": f"Reason {index}",
+                "checked_head": None if index == 7 else "a" * 40,
+                "source_evidence": [{"excerpt": "large"}],
+            }
+            for index in range(8)
+        ]
+        packet = {
+            "comments": [{"id": 1}],
+            "findings": [
+                {
+                    "key": "old",
+                    "source_evidence": [{"excerpt": "current"}],
+                    "assessment_history": past,
+                },
+                {"key": "new"},
+            ],
+        }
+        original = json.dumps(packet)
+        supplied = feedback.reconciliation_input(packet)
+        self.assertEqual(json.dumps(packet), original)
+        old, new = supplied["findings"]
+        self.assertEqual(
+            [item["reason"] for item in old["assessment_history"]],
+            [f"Reason {index}" for index in range(2, 7)],
+        )
+        self.assertNotIn("large", json.dumps(supplied))
+        self.assertEqual(old["source_evidence"], [{"excerpt": "current"}])
+        self.assertEqual(new, {"key": "new"})
+        self.assertEqual(supplied["comments"], packet["comments"])
+
     def test_mapping_uses_candidate_ids_even_when_candidates_share_an_anchor(self):
         anchor = "a2bbb37a6f624185a715fdbe8bc1c11e"
         candidate = {
