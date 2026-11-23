@@ -134,7 +134,9 @@ body in `jobs.sqlite3`. Delivery retries reuse those bytes. A timeout or restart
 can leave the remote outcome uncertain. Ralph checks bot-owned comments on both
 publication destinations and holds further writes for the PR while an earlier
 write remains unresolved, including writes from newer review generations.
-Duplicate bot markers require operator investigation.
+On GitHub, Ralph deletes a byte-identical copy of
+its own comment, keeping the oldest. Other duplicate bot markers require operator
+investigation.
 
 Stop the coordinator, independent jobs, Telegram monitor, stats and follow-up
 timers, and any other state writers before repository schema migration. Back up

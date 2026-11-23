@@ -705,13 +705,63 @@ class GitHubTests(unittest.TestCase):
         self.assertTrue(all(len(call.args) < 3 for call in request.call_args_list))
         self.assertEqual(session._record()["state"], "ready")
 
+    def test_replay_removes_only_its_own_exact_duplicate(self):
+        session = self.session()
+        comments = []
+        deleted = []
+        posts = 0
+
+        def request(token, path, method="GET", data=None):
+            nonlocal posts
+            if path == "/user":
+                return {"id": 7}
+            if method == "POST":
+                posts += 1
+                if posts == 1:
+                    raise TimeoutError()
+                # The lost write lands alongside its replay.
+                comments.extend(
+                    {"id": item, "user": {"id": user}, "body": data["body"]}
+                    for item, user in ((11, 7), (12, 7), (13, 8))
+                )
+                return {}
+            if method == "DELETE":
+                deleted.append(path)
+                return None
+            return comments if "/comments?" in path else self.pull()
+
+        def publish():
+            return github.publish_review(
+                "owner/repo",
+                "github-token",
+                42,
+                self.result(),
+                publication="major-only",
+                is_current=lambda: True,
+                expected_context=self.context(),
+                delivery=session,
+            )
+
+        with patch.object(github, "github_request", side_effect=request):
+            with self.assertRaises(delivery.DeliveryHeld):
+                publish()
+            with session.jobs._connection(write=True) as db:
+                db.execute("UPDATE deliveries SET uncertain_at = 0")
+            self.assertEqual(publish(), "created")
+        self.assertEqual(posts, 2)
+        self.assertEqual(deleted, ["/repos/owner/repo/issues/comments/12"])
+
     def test_duplicate_owned_markers_on_later_page_block_publication(self):
         own = {"id": 1, "user": {"id": 7}, "body": "<!-- ralph-major:owner/repo -->"}
         unrelated = {"id": 3, "user": {"id": 8}, "body": "Other comment"}
         with patch.object(
             github,
             "github_request",
-            side_effect=[{"id": 7}, [own] + [unrelated] * 99, [{**own, "id": 2}]],
+            side_effect=[
+                {"id": 7},
+                [own] + [unrelated] * 99,
+                [{**own, "id": 2, "body": own["body"] + " changed"}],
+            ],
         ) as request:
             with self.assertRaisesRegex(ValueError, "Multiple bot review comments"):
                 self.publish(self.result())

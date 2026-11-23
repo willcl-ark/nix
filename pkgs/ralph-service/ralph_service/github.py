@@ -40,7 +40,7 @@ def reconcile_delivery(repository, token, number, delivery):
     marker = f"{MARKER_PREFIX}{repository} -->"
     base = f"/repos/{repository}"
     user = github_request(token, "/user")
-    comment = None
+    owned = []
     page = 1
     while True:
         comments = github_request(
@@ -50,14 +50,21 @@ def reconcile_delivery(repository, token, number, delivery):
             if item.get("user", {}).get("id") == user["id"] and marker in (
                 item.get("body") or ""
             ):
-                if comment is not None:
-                    raise ValueError(
-                        "Multiple bot review comments require reconciliation"
-                    )
-                comment = item
+                owned.append(item)
         if len(comments) < 100:
             break
         page += 1
+    # A replayed write can leave an exact copy. Differing comments need an operator.
+    if len({item["body"] for item in owned}) > 1:
+        raise ValueError("Multiple bot review comments require reconciliation")
+    owned.sort(key=lambda item: item["id"])
+    for duplicate in owned[1:]:
+        try:
+            github_request(token, f"{base}/issues/comments/{duplicate['id']}", "DELETE")
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+    comment = owned[0] if owned else None
 
     def lookup(path):
         try:
@@ -248,7 +255,7 @@ def publish_review(
     body = delivery.body(lambda: neutralize_mentions(render_body()))
     if not is_current():
         return "stale"
-    return delivery.execute(
+    outcome = delivery.execute(
         "POST" if comment is None else "PATCH",
         f"{base}/issues/{number}/comments"
         if comment is None
@@ -258,3 +265,7 @@ def publish_review(
         dispatch,
         publication_current,
     )
+    if outcome == "created" and delivery.replayed():
+        # The first write may have landed as well; keep only one copy.
+        reconcile_delivery(repository, token, number, delivery)
+    return outcome
