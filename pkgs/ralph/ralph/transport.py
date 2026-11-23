@@ -28,10 +28,23 @@ class StreamError(Exception):
         self.retryable = self.error.get("retryable") is not False and (
             status == 429
             or 500 <= status < 600
-            or code in ("server_error", "rate_limit_exceeded")
+            or code in ("server_error", "rate_limit_exceeded", "server_is_overloaded")
             or self.error.get("type")
-            in ("server_error", "rate_limit_error", "overloaded_error", "api_error")
+            in (
+                "server_error",
+                "rate_limit_error",
+                "overloaded_error",
+                "api_error",
+                "service_unavailable_error",
+            )
         )
+        headers = self.error.get("headers")
+        self.retry_after = (
+            headers.get("retry-after") if isinstance(headers, dict) else None
+        )
+        # Codex overloads ask for just over five minutes; proxies may drop the header.
+        if self.retry_after is None and code == "server_is_overloaded":
+            self.retry_after = "330"
 
 
 async def _events(content):

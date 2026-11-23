@@ -32,6 +32,7 @@ MAX_HISTORY_CALLS = 8
 MAX_WEB_SEARCH_CALLS_PER_RESPONSE = 2
 REJECTED_HTTP_STATUSES = {400, 401, 403, 404, 429}
 MAX_REQUEST_ATTEMPTS = 3
+MAX_RETRY_DELAY_SECONDS = 600
 WEB_SEARCH_TOOL_TYPES = {"web_search"}
 WEB_SEARCH_TOOL = {"type": "web_search", "search_context_size": "low"}
 BACKPORT_TOOLS = [
@@ -603,9 +604,13 @@ def request_response(
             ):
                 raise
             delay = attempt + 1
-            if http_error:
+            if http_error or isinstance(exc, transport.StreamError):
                 try:
-                    retry_after = exc.headers.get("Retry-After")
+                    retry_after = (
+                        exc.headers.get("Retry-After")
+                        if http_error
+                        else exc.retry_after
+                    )
                     try:
                         provider_delay = int(retry_after)
                     except ValueError:
@@ -616,7 +621,7 @@ def request_response(
                 except (TypeError, ValueError, AttributeError, OverflowError):
                     pass
             # Stop rather than retry before the provider permits it.
-            if delay > 300:
+            if delay > MAX_RETRY_DELAY_SECONDS:
                 raise
             if deadline is not None and delay >= deadline - time.monotonic():
                 raise TimeoutError("retry wait exceeds stage deadline") from exc

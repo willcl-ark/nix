@@ -438,6 +438,38 @@ class ModelUsageTests(unittest.TestCase):
                         usage.events[-1], ("complete", "token", "finished")
                     )
 
+    def test_overloaded_stream_waits_for_the_provider_before_retrying(self):
+        for headers, expected in (
+            ({"retry-after": "308"}, 308),
+            (None, 330),
+            ({"retry-after": "601"}, None),
+        ):
+            with self.subTest(headers=headers):
+                error = model.transport.StreamError(
+                    {
+                        "type": "service_unavailable_error",
+                        "code": "server_is_overloaded",
+                        "headers": headers,
+                    }
+                )
+                result = {"id": "finished", "status": "completed", "output": []}
+                with (
+                    patch.object(
+                        model.transport, "request", side_effect=[error, result]
+                    ),
+                    patch.object(model.time, "sleep") as sleep,
+                ):
+                    if expected is None:
+                        with self.assertRaises(model.transport.StreamError):
+                            model.request_response("key", {"model": "gpt"}, "judge")
+                        sleep.assert_not_called()
+                    else:
+                        response, _, _ = model.request_response(
+                            "key", {"model": "gpt"}, "judge"
+                        )
+                        self.assertEqual(response, result)
+                        sleep.assert_called_once_with(expected)
+
     def test_refusal_stops_retryable_http_and_stream_errors(self):
         message = (
             "This content was flagged for possible cybersecurity risk; Bearer secret"
