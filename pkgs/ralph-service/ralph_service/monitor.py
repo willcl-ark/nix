@@ -98,17 +98,22 @@ class NotificationStore:
         """Observe jobs and enqueue alerts in one transaction, without changing jobs."""
         now = time.time() if now is None else now
         period_day = (datetime.fromtimestamp(now, UTC) - timedelta(hours=21)).date()
-        with closing(_readonly(Path(state_dir) / "jobs.sqlite3")) as jobs:
+        with (
+            closing(_readonly(Path(state_dir) / "jobs.sqlite3")) as jobs,
+            closing(self._connect()) as db,
+            db,
+        ):
+            # Results total gigabytes; read only those of newly completed jobs.
             rows = jobs.execute(
-                "SELECT id, generation, number, status, review_result, head, repo_id FROM jobs ORDER BY id"
+                "SELECT id, generation, number, status, review_result IS NOT NULL, "
+                "head, repo_id FROM jobs ORDER BY id"
             ).fetchall()
-        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute(
                 "SELECT value FROM metadata WHERE key = 'period_day'"
             ).fetchone()
             failed = []
-            for job_id, generation, number, status, raw_result, head, repo_id in rows:
+            for job_id, generation, number, status, has_result, head, repo_id in rows:
                 if repo_id not in repositories:
                     continue
                 repository = repositories[repo_id]
@@ -120,11 +125,18 @@ class NotificationStore:
                 if (
                     previous
                     and (old is None or old[0] != status)
-                    and (
-                        status == "failed"
-                        or (status == "complete" and raw_result is not None)
-                    )
+                    and (status == "failed" or (status == "complete" and has_result))
                 ):
+                    if status == "complete":
+                        row = jobs.execute(
+                            "SELECT review_result FROM jobs WHERE id = ? "
+                            "AND generation = ? AND status = ? "
+                            "AND review_result IS NOT NULL",
+                            (job_id, generation, status),
+                        ).fetchone()
+                        if row is None:
+                            # It changed since the listing; observe it next scan.
+                            continue
                     db.execute(
                         "INSERT OR IGNORE INTO events VALUES (?, ?, ?, ?)",
                         (job_id, generation, status, str(period_day)),
@@ -133,8 +145,8 @@ class NotificationStore:
                         failed.append(
                             (job_id, generation, number, repo_id, repository_url)
                         )
-                    elif raw_result is not None:
-                        result = json.loads(raw_result)
+                    else:
+                        result = json.loads(row[0])
                         if not result.get("run", {}).get("report_url"):
                             try:
                                 filename = report.save_report(

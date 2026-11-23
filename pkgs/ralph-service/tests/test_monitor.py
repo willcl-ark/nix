@@ -66,6 +66,31 @@ class MonitorTests(unittest.TestCase):
         with closing(sqlite3.connect(self.store.path)) as db:
             return dict(db.execute("SELECT key, text FROM outbox ORDER BY rowid"))
 
+    def test_scans_read_only_newly_completed_results(self):
+        result = {"run": {"report_url": "https://reports.example/1.html"}}
+        self.job(1, "complete", result=result)
+        self.observe()
+        reads = []
+        connect = monitor._readonly
+
+        def traced(path):
+            db = connect(path)
+            db.set_trace_callback(reads.append)
+            return db
+
+        with patch.object(monitor, "_readonly", traced):
+            self.observe()
+            self.assertEqual(len(reads), 1)
+            self.assertIn("review_result IS NOT NULL", reads.pop())
+            self.job(2, "complete", result=result)
+            with patch.object(
+                monitor.telegram, "review_message", return_value="Reviewed"
+            ):
+                self.observe()
+            self.assertEqual(len(reads), 2)
+            self.assertIn("id = 2", reads[1])
+        self.assertIn("review:2:1", self.messages())
+
     def test_feedback_reminder_is_private_and_once_per_utc_week(self):
         self.store.observe_feedback(self.root, now=self.day)
         self.assertEqual(self.messages(), {})
