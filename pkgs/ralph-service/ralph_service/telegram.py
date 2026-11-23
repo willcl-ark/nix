@@ -8,7 +8,7 @@ from http.client import HTTPException
 from urllib.parse import quote
 
 from final_comment import report_findings
-from ralph import trace
+from ralph import coverage, trace
 
 from .config import pull_request_url
 from .report import _provisional_findings, refusal_notice
@@ -82,6 +82,8 @@ def review_message(repository_url, number, result, *, repository_id):
         summary = "unavailable"
     debug = trace.current_diagnostics(result)
     notice = refusal_notice(debug)
+    if lost := coverage.lost_stages(debug.get("coverage") or {}):
+        notice = f"Stages lost: {', '.join(lost)}" + (f"\n{notice}" if notice else "")
     notice = "\n" + truncate_message(notice, 1200) if notice else ""
     provisional = _provisional_findings(debug)
     provisional_note = (

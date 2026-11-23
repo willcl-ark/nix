@@ -199,6 +199,7 @@ class NotificationStore:
                     "Counts use the period when this monitor observed completion.\n"
                     + _daily_usage(Path(state_dir), completed_day)
                 )
+                text += "\n" + _stage_losses(report_dir, now)
                 if report_base_url:
                     text += "\nReports: " + report_base_url.rstrip("/")
                 db.execute(
@@ -239,14 +240,10 @@ class NotificationStore:
     def observe_health(self, report_dir, archive_base_url, *, now=None):
         """Enqueue incident transitions from fresh stats without rescanning traces."""
         now = time.time() if now is None else now
-        try:
-            summary = json.loads((Path(report_dir) / "stats/stats.json").read_text())
-            generated = datetime.fromisoformat(summary["generated_at"]).timestamp()
-            if not 0 <= now - generated <= 600:
-                return
-            groups = summary["health"]["groups"]
-        except (OSError, ValueError, KeyError, TypeError):
+        health = _fresh_health(report_dir, now)
+        if health is None:
             return
+        groups = health["groups"]
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             for group in groups:
@@ -345,6 +342,37 @@ class NotificationStore:
         else:
             with closing(self._connect()) as db, db:
                 db.execute("UPDATE outbox SET sent = 1 WHERE key = ?", (row[0],))
+
+
+def _fresh_health(report_dir, now):
+    """Read saved stage health, or None when missing or over ten minutes old."""
+    try:
+        summary = json.loads((Path(report_dir) / "stats/stats.json").read_text())
+        generated = datetime.fromisoformat(summary["generated_at"]).timestamp()
+        if not 0 <= now - generated <= 600:
+            return None
+        health = summary["health"]
+        return health if isinstance(health["groups"], list) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _stage_losses(report_dir, now):
+    health = _fresh_health(report_dir, now)
+    if health is None or "stage_losses" not in health:
+        return "Stage results lost: unknown"
+    lost = [stage for stage in health["stage_losses"] if stage["lost"]]
+    total = sum(stage["runs"] for stage in health["stage_losses"])
+    text = f"Stage results lost: {sum(stage['lost'] for stage in lost)} of {total}"
+    if lost:
+        text += (
+            " ("
+            + ", ".join(
+                f"{stage['stage']} {stage['lost']}/{stage['runs']}" for stage in lost
+            )
+            + ")"
+        )
+    return text
 
 
 def _failure_message(failed):

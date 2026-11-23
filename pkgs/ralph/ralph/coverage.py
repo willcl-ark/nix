@@ -63,6 +63,17 @@ def _status(statuses):
     return "complete" if statuses else "unknown"
 
 
+def lost_stages(coverage):
+    """Name required stages that returned nothing usable; experiments are optional."""
+    return list(
+        dict.fromkeys(
+            issue["stage"]
+            for issue in coverage.get("issues") or []
+            if issue.get("kind") == "lost" and issue.get("category") != "experiment"
+        )
+    )
+
+
 def summarize(debug):
     """Derive coverage from recorded evidence without altering model outputs."""
     stages = debug.get("stages") or {}
@@ -77,8 +88,8 @@ def summarize(debug):
         concept.get("reason") if concept.get("disposition") == "unresolved" else None
     )
 
-    def issue(name, category, reason):
-        item = {"stage": name, "category": category, "reason": reason}
+    def issue(name, category, reason, kind="caveat"):
+        item = {"stage": name, "category": category, "kind": kind, "reason": reason}
         if item not in issues:
             issues.append(item)
 
@@ -95,7 +106,7 @@ def summarize(debug):
             state = stage.get("status")
             status = "complete" if state == "completed" else "partial"
             if state in FAILURES:
-                issue(name, "experiment", _failure(stage))
+                issue(name, "experiment", _failure(stage), "lost")
             for result in stage.get("results", []):
                 if result["outcome"] == "inconclusive":
                     issue(name, "experiment", result["reason"])
@@ -123,7 +134,7 @@ def summarize(debug):
         state = stage.get("status")
         if state in FAILURES:
             status = "failed"
-            issue(name, category, _failure(stage))
+            issue(name, category, _failure(stage), "lost")
         elif state != "completed":
             status = "unknown"
             issue(name, category, "Stage completion was not recorded.")
@@ -155,6 +166,7 @@ def summarize(debug):
                     name,
                     category,
                     f"Finding {rejected['index']} withheld: {rejected['error']}",
+                    "withheld",
                 )
                 status = "partial"
             if category == "verification":
@@ -164,7 +176,12 @@ def summarize(debug):
                         for item in issues
                         if item["stage"] == name and item["category"] == category
                     ):
-                        issue(name, category, "Finding withheld: " + error["error"])
+                        issue(
+                            name,
+                            category,
+                            "Finding withheld: " + error["error"],
+                            "withheld",
+                        )
                     status = "partial"
                 decisions = stage.get(
                     "decisions",
@@ -190,16 +207,21 @@ def summarize(debug):
             if tool.get("outcome") != "unavailable":
                 continue
             evidence = tool.get("evidence")
-            reason = f"{tool['name']}: requested evidence was unavailable."
+            kind, reason = (
+                ("limit", "tool-call limit reached.")
+                if tool.get("skipped") == "inspection_limit"
+                else ("unavailable", "requested evidence was unavailable.")
+            )
+            reason = f"{tool['name']}: {reason}"
             if evidence == "source":
-                issue(name, category, reason)
+                issue(name, category, reason, kind)
                 if status == "complete":
                     status = "partial"
             elif evidence == "context":
-                issue(name, "context", reason)
+                issue(name, "context", reason, kind)
                 contexts.append("partial")
             elif evidence == "experiment":
-                issue(name, "experiment", reason)
+                issue(name, "experiment", reason, kind)
                 experiments.append("partial")
         if category == "context":
             contexts.append(status)

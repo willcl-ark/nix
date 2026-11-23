@@ -36,6 +36,21 @@ class TelegramTests(unittest.TestCase):
             self.assertIn("https://reports.example/42.html", text)
         self.assertNotIn("⚠️", self.render(self.result()))
 
+    def test_only_lost_stages_are_named(self):
+        result = self.result()
+        result["engine"] = {"name": "current"}
+        issues = [
+            {"stage": "state", "category": "inspection", "kind": "lost"},
+            {"stage": "tests", "category": "inspection", "kind": "limit"},
+        ]
+        result["output"].update(
+            schema_version=2,
+            data={"schema_version": 2, "coverage": {"issues": issues}},
+        )
+        self.assertIn("\nStages lost: state\n", self.render(result))
+        issues.pop(0)
+        self.assertNotIn("Stages lost", self.render(result))
+
     def test_refusals_preserve_outcome_and_links_with_long_titles_and_stage_lists(self):
         result = self.result()
         result["engine"] = {"name": "current"}

@@ -76,6 +76,12 @@ TOOL_FIELDS = (
     "retrieved_at",
     "frozen",
 )
+COVERAGE_KINDS = {
+    "lost": "Stages that returned nothing usable",
+    "withheld": "Malformed findings withheld",
+    "limit": "Tool-call limit reached",
+    "unavailable": "Evidence unavailable",
+}
 COVERAGE_STATUSES = {"complete", "partial", "failed", "unknown", "not_requested"}
 COVERAGE_CATEGORIES = {"inspection", "context", "verification", "experiment"}
 CONCEPT_FIELDS = (
@@ -179,6 +185,8 @@ def _public_coverage(coverage):
         category = issue.get("category")
         if category in COVERAGE_CATEGORIES:
             public["category"] = category
+        if issue.get("kind") in COVERAGE_KINDS:
+            public["kind"] = issue["kind"]
         if isinstance(issue.get("reason"), str):
             public["reason"] = issue["reason"]
         if public:
@@ -758,6 +766,20 @@ def _summary_list(items):
     return "".join(f"<li>{_escape(item)}</li>" for item in items)
 
 
+def _coverage_causes_html(coverage):
+    stages = {}
+    for issue in coverage.get("issues") or []:
+        names = stages.setdefault(issue.get("kind"), [])
+        if issue.get("stage") and issue["stage"] not in names:
+            names.append(issue["stage"])
+    causes = [
+        f"{label}: {', '.join(stages[kind])}"
+        for kind, label in COVERAGE_KINDS.items()
+        if stages.get(kind)
+    ]
+    return f"<ul>{_summary_list(causes)}</ul>" if causes else ""
+
+
 def _coverage_html(coverage, detailed=False):
     if not isinstance(coverage, dict):
         return "<p>No coverage summary was recorded.</p>"
@@ -772,7 +794,10 @@ def _coverage_html(coverage, detailed=False):
                 f"<ul>{_summary_list(limitations)}</ul>"
             )
         return f"<p>Status: <strong>{_escape(status)}</strong>. No limitations recorded.</p>"
-    parts = [f"<p>Code review status: <strong>{_escape(status)}</strong></p>"]
+    parts = [
+        f"<p>Code review status: <strong>{_escape(status)}</strong></p>",
+        _coverage_causes_html(coverage),
+    ]
     if limitations:
         parts.append(f"<ul>{_summary_list(limitations)}</ul>")
     else:

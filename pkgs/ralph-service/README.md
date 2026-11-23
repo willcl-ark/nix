@@ -418,6 +418,12 @@ output budget, withheld malformed findings, or retained invalid coverage
 evidence after repair. Runs are
 grouped by repository, stage, model and saved engine/configuration/budget hash.
 Ordinary partial coverage and merely reaching a tool cap do not trigger alerts.
+The daily digest also reports each stage's failed and invalid results over 24
+hours, across configurations, so low rates and new engine versions stay visible.
+
+Reports name why coverage is partial: lost stages, withheld findings, tool-call
+limits or unavailable evidence. Telegram review messages name only lost stages.
+These causes do not change coverage status or publication.
 
 Each incident produces one alert, persisted across monitor restarts. Three
 fresh consecutive successful runs produce a recovery notification. A missing

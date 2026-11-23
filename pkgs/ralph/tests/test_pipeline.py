@@ -126,10 +126,55 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(
             result["issues"],
             [
-                {"stage": "verifier", "category": "verification", "reason": reason},
-                {"stage": "concept_verifier", "category": "context", "reason": reason},
+                {
+                    "stage": stage,
+                    "category": category,
+                    "kind": "caveat",
+                    "reason": reason,
+                }
+                for stage, category in (
+                    ("verifier", "verification"),
+                    ("concept_verifier", "context"),
+                )
             ],
         )
+
+    def test_issue_kinds_separate_losses_from_limits_and_caveats(self):
+        def tool(**extra):
+            return {
+                "name": "read_file",
+                "outcome": "unavailable",
+                "evidence": "source",
+                **extra,
+            }
+
+        result = coverage.summarize(
+            {
+                "stages": {
+                    "state": {"status": "failed", "error_type": "StreamError"},
+                    "write_verifier": {"status": "failed"},
+                    "tests": {
+                        "status": "completed",
+                        "coverage": {"status": "partial", "limitations": ["Unread."]},
+                        "rejected_findings": [{"index": 1, "error": "No anchor"}],
+                        "tools": [tool(skipped="inspection_limit"), tool()],
+                    },
+                }
+            }
+        )
+        self.assertEqual(
+            [(issue["stage"], issue["kind"]) for issue in result["issues"]],
+            [
+                ("state", "lost"),
+                ("write_verifier", "lost"),
+                ("tests", "caveat"),
+                ("tests", "withheld"),
+                ("tests", "limit"),
+                ("tests", "unavailable"),
+            ],
+        )
+        self.assertEqual(coverage.lost_stages(result), ["state"])
+        self.assertEqual(result["status"], "partial")
 
 
 class PipelineTests(unittest.TestCase):

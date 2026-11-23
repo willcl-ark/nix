@@ -93,6 +93,15 @@ class HealthTests(unittest.TestCase):
             self.assertEqual(messages(), [])
             add(5, False)
             summary = observe(now + 6)
+            self.assertEqual(
+                summary["health"]["stage_losses"],
+                [{"stage": "state", "runs": 5, "lost": 3}],
+            )
+            self.assertEqual(
+                monitor._stage_losses(root, now + 6),
+                "Stage results lost: 3 of 5 (state 3/5)",
+            )
+            self.assertIn("unknown", monitor._stage_losses(root, now + 900))
             self.assertEqual(len(messages()), 1)
             self.assertIn("3/5", messages()[0][0])
             self.assertIn("https://reviews.example/stats/health/", messages()[0][0])

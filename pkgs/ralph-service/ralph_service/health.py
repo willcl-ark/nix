@@ -78,6 +78,7 @@ def stage_runs(debug, result, row, report_name):
                 "number": row["number"],
                 "report_name": report_name,
                 "reasons": reasons,
+                "lost": stage["status"] in {"failed", "invalid"},
                 "rejected_assessments": len(rejected),
                 "unrepaired_assessments": unresolved,
             }
@@ -98,6 +99,7 @@ def summarize(runs, requests, now):
         if isinstance(value, (int, float)) and value <= now:
             timestamps[key] = max(timestamps.get(key, 0), value)
     groups = {}
+    stages = {}
     undated = 0
     for run in runs:
         stamp = timestamps.get(
@@ -110,6 +112,12 @@ def summarize(runs, requests, now):
             continue
         if stamp < now - 86400:
             continue
+        # Configurations change with every engine update, so rates span them.
+        stage = stages.setdefault(
+            run["stage"], {"stage": run["stage"], "runs": 0, "lost": 0}
+        )
+        stage["runs"] += 1
+        stage["lost"] += run["lost"]
         identity = {
             key: run[key]
             for key in ("repository_id", "stage", "model", "configuration")
@@ -139,6 +147,9 @@ def summarize(runs, requests, now):
                 group["model"],
                 group["key"],
             ),
+        ),
+        "stage_losses": sorted(
+            stages.values(), key=lambda stage: (-stage["lost"], stage["stage"])
         ),
         "undated_runs": undated,
         "window_hours": 24,
