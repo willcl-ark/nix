@@ -11,6 +11,7 @@ The package installs:
 - `ralph-evaluate`, frozen capture/replay, usage inspection and offline summaries.
 - `ralph-followup`, background assessment of previously published findings.
 - `ralph-telegram`, independent Telegram publication, monitoring and channel commands.
+- `ralph-post-mortem`, weekly comparison of merged pull requests with saved reviews.
 - `ralph-feedback`, local maintainer triage of anonymous finding feedback.
 
 The `ralph` command performs a local review and accepts no service flags.
@@ -319,6 +320,11 @@ Commands accept stable repository IDs, and shorthand such as `gui1049` or
 An explicit `/review` replaces a pending high request with the default profile;
 ordinary webhooks and head refreshes preserve pending high reviews. Commands
 cannot restart services.
+
+Post-mortem lessons and weekly summaries are posted to the channel, with a weekly
+reminder while lessons await a decision. `/lessons` lists them, `/approve 3` and
+`/reject 3 too broad` decide one, and `/veto 12` removes a case. The first decision
+stands.
 
 Commands are channel-only. All channel administrators may issue them. Anonymous
 posts rely on Telegram's administrator posting permissions; identified senders

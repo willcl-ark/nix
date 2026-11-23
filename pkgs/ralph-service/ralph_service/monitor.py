@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, urljoin
 
-from . import commands, config, report, telegram
+from . import commands, config, post_mortem, report, telegram
 
 LOGGER = logging.getLogger(__name__)
 
@@ -249,6 +249,68 @@ class NotificationStore:
                 (f"feedback:{year}-W{week:02}", text),
             )
 
+    def observe_lessons(self, state_dir, *, now=None):
+        """Post each pending lesson, and remind weekly until decided."""
+        path = Path(state_dir) / post_mortem.DIRECTORY / post_mortem.DATABASE
+        if not path.exists():
+            return
+        now = time.time() if now is None else now
+        with closing(_readonly(path)) as saved:
+            saved.row_factory = sqlite3.Row
+            lessons = saved.execute(
+                "SELECT * FROM lessons WHERE status = 'pending' ORDER BY id"
+            ).fetchall()
+            messages = []
+            for lesson in lessons:
+                cases = [
+                    case
+                    for case_id in json.loads(lesson["case_ids"])[:4]
+                    for case in saved.execute(
+                        "SELECT id, point, url FROM cases WHERE id = ?", (case_id,)
+                    )
+                ]
+                messages.append(
+                    (
+                        f"lesson:{lesson['id']}",
+                        post_mortem.lesson_message(lesson, cases),
+                    )
+                )
+            # A lesson sent in the last week needs no separate reminder.
+            waiting = [
+                str(lesson["id"])
+                for lesson in lessons
+                if now - lesson["created_at"] >= post_mortem.WEEK
+            ]
+            run = saved.execute(
+                "SELECT id, summary FROM runs ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        if waiting:
+            year, week, _ = datetime.fromtimestamp(now, UTC).isocalendar()
+            messages.append(
+                (
+                    f"lesson-reminder:{year}-W{week:02}",
+                    "Ralph lessons awaiting your decision: "
+                    + ", ".join(waiting)
+                    + "\n/lessons lists them; /approve <lesson> or /reject <lesson> [reason] "
+                    "decides, /veto <case> removes evidence.",
+                )
+            )
+        if run:
+            summary = json.loads(run["summary"])
+            cases = summary.pop("cases", [])
+            text = "Ralph post-mortem\n" + "\n".join(
+                f"{name.replace('_', ' ')}: {value}" for name, value in summary.items()
+            )
+            if cases:
+                text += "\nConfirmed cases (/veto <case> removes one):\n"
+                text += "\n".join(cases)
+            messages.append((f"post-mortem:{run['id']}", text))
+        with closing(self._connect()) as db, db:
+            db.executemany(
+                "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
+                [(key, telegram.truncate_message(text)) for key, text in messages],
+            )
+
     def observe_health(self, report_dir, archive_base_url, *, now=None):
         """Enqueue incident transitions from fresh stats without rescanning traces."""
         now = time.time() if now is None else now
@@ -445,6 +507,10 @@ def run_monitor(
                 store.observe_feedback(state_dir)
             except (OSError, sqlite3.Error):
                 LOGGER.warning("Telegram feedback state unavailable; will retry")
+            try:
+                store.observe_lessons(state_dir)
+            except (OSError, sqlite3.Error):
+                LOGGER.warning("Telegram lesson state unavailable; will retry")
             try:
                 store.observe_health(report_dir, archive_base_url)
                 store.deliver(token, chat_id)

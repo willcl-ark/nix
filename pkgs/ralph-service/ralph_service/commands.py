@@ -2,9 +2,14 @@
 
 import logging
 import re
+import sqlite3
 from contextlib import closing
+from pathlib import Path
 
-from . import telegram
+from . import post_mortem, telegram
+
+
+LESSON_COMMANDS = {"/lessons", "/approve", "/reject", "/veto"}
 
 
 def _command(post, configured_chat_id, bot):
@@ -25,6 +30,8 @@ def _command(post, configured_chat_id, bot):
     if separator and username.casefold() != bot.get("username", "").casefold():
         return None
     if command in {"/high", "/review"}:
+        return (command, parts[1] if len(parts) > 1 else "")
+    if command in LESSON_COMMANDS:
         return (command, parts[1] if len(parts) > 1 else "")
     return command if command in {"/status", "/help"} and len(parts) == 1 else None
 
@@ -67,6 +74,33 @@ def _admin_only(token, post, bot):
     )
 
 
+def _lesson_reply(command, argument, state_dir):
+    path = Path(state_dir) / post_mortem.DIRECTORY / post_mortem.DATABASE
+    if not path.exists():
+        return "No post-mortem has run yet."
+    if command == "/lessons":
+        with closing(sqlite3.connect(path)) as db:
+            rows = db.execute(
+                "SELECT id, agent, wording FROM lessons "
+                "WHERE status = 'pending' ORDER BY id"
+            ).fetchall()
+        return (
+            "\n\n".join(
+                f"{number} ({agent}): {wording}" for number, agent, wording in rows
+            )
+            or "No lessons await a decision."
+        )
+    number, _, note = argument.partition(" ")
+    if not re.fullmatch(r"[1-9][0-9]{0,8}", number):
+        return f"Usage: {command} <{'case' if command == '/veto' else 'lesson'} number>"
+    if command == "/veto":
+        done = post_mortem.veto_case(path, int(number))
+        return f"Case {number} " + ("removed." if done else "is not confirmed.")
+    status = "approved" if command == "/approve" else "rejected"
+    done = post_mortem.decide(path, int(number), status, note.strip())
+    return f"Lesson {number} " + (f"{status}." if done else "is not pending.")
+
+
 def poll_commands(
     store,
     token,
@@ -107,7 +141,9 @@ def poll_commands(
                 )
                 command = None
             if command:
-                if isinstance(command, tuple):
+                if isinstance(command, tuple) and command[0] in LESSON_COMMANDS:
+                    text = _lesson_reply(*command, state_dir)
+                elif isinstance(command, tuple):
                     target = _review_target(command[1], repositories)
                     if target is not None:
                         repo_id, number = target
@@ -133,6 +169,10 @@ def poll_commands(
                         "/review <repository> <PR number> - Request a fresh normal review\n"
                         "/high <repository> <PR number> - Request a fresh high review\n"
                         "Compact forms also work: /review gui1049 or bitcoin36688\n"
+                        "/lessons - Show lessons awaiting a decision\n"
+                        "/approve <lesson> - Queue a lesson for a tested prompt change\n"
+                        "/reject <lesson> [reason] - Decline a lesson\n"
+                        "/veto <case> - Remove a case from the evidence\n"
                         "/help - Show these commands\n"
                         "Post commands in this channel as an administrator.\n"
                         + "Repositories: "
