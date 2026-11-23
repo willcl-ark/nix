@@ -451,7 +451,9 @@ for cancellation and upgrade requirements.
 
 Follow-up assessments use finding-scoped evidence IDs for captured old/new source
 and diffs. Saved outcomes include resolved evidence and pinned revisions; models
-still decide whether the changes address the original finding.
+still decide whether the changes address the original finding. Every open finding
+is assessed, in batches of 12. An invalid or missing answer leaves only its own
+finding unclear, and a failed batch leaves the other batches unchanged.
 
 Historical rationale uses retrieval-issued source IDs rather than model-copied
 URLs. Document and comment attribution comes from adapters, while saved results

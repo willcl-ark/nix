@@ -85,6 +85,90 @@ class FollowupIntegrationTests(unittest.TestCase):
                 repository.file_excerpt_at(checkout, new_head, "sample.cpp", 1),
             )
 
+    def test_every_candidate_is_assessed_and_failed_batches_stay_separate(self):
+        candidates = [
+            {
+                "source_job_id": 1,
+                "source_generation": 1,
+                "finding_id": f"finding:{index}",
+                "title": "Title",
+                "path": "sample.cpp",
+                "source_head": "a" * 40,
+            }
+            for index in range(followup.BATCH_SIZE * 2 + 1)
+        ]
+        batches = []
+
+        def model_input(_checkout, _previous, _current, batch, *_args, **_kwargs):
+            batches.append(batch)
+            return json.dumps(batch), {}
+
+        def respond(_key, data, *_args, **_kwargs):
+            if len(batches) == 2:
+                raise OSError("unavailable")
+            rows = [
+                {
+                    **{
+                        field: item[field]
+                        for field in (
+                            "source_job_id",
+                            "source_generation",
+                            "finding_id",
+                        )
+                    },
+                    "status": "unclear",
+                    "reason": "Assessed.",
+                    "evidence_ids": [],
+                }
+                for item in json.loads(data["input"][0]["content"])
+            ]
+            text = json.dumps({"findings": rows})
+            return (
+                {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": text}],
+                        }
+                    ],
+                },
+                b"",
+                0,
+            )
+
+        with (
+            patch.object(followup, "_candidate_findings", return_value=candidates),
+            patch.object(followup, "_published_findings", return_value=[]),
+            patch.object(followup, "_model_input", side_effect=model_input),
+            patch.object(repository, "has_commit", return_value=True),
+            patch.object(model, "request_response", side_effect=respond),
+            patch.object(model, "response_record", return_value={}),
+        ):
+            result = followup.assess_completed_review(
+                "key",
+                Path("unused"),
+                {"head": "b" * 40},
+                [{"head": "a" * 40}],
+                {},
+                "prompt",
+                "model",
+                None,
+            )
+        self.assertEqual([len(batch) for batch in batches], [12, 12, 1])
+        self.assertEqual(
+            [item["finding_id"] for item in result["findings"]],
+            [item["finding_id"] for item in candidates],
+        )
+        self.assertEqual(
+            [item["evidence"] for item in result["findings"]],
+            [""] * 12 + ["OSError"] * 12 + [""],
+        )
+        self.assertEqual(
+            [batch.get("error_type") for batch in result["batches"]],
+            [None, "OSError", None],
+        )
+
     def test_background_assessment_reaches_stats_without_changing_review_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -309,14 +393,17 @@ class FollowupIntegrationTests(unittest.TestCase):
                 key for key, value in registry.items() if value["kind"] == "new_source"
             )
             for ids in (["invented"], [old_id], [new_id]):
-                with self.subTest(ids=ids), self.assertRaises(ValueError):
-                    followup._parse_assessments(
+                with self.subTest(ids=ids):
+                    [rejected] = followup._parse_assessments(
                         json.dumps({"findings": [{**row, "evidence_ids": ids}]}),
                         [candidate],
                         old_head,
                         new_head,
                         registry,
                     )
+                    self.assertEqual(rejected["status"], "unclear")
+                    self.assertEqual(rejected["evidence"], "invalid_assessment")
+                    self.assertNotIn("source_evidence", rejected)
             for bad_registry in (
                 {},
                 {
@@ -328,14 +415,39 @@ class FollowupIntegrationTests(unittest.TestCase):
                     for key, value in registry.items()
                 },
             ):
-                with self.assertRaises(ValueError):
-                    followup._parse_assessments(
-                        json.dumps(answer),
-                        [candidate],
+                [rejected] = followup._parse_assessments(
+                    json.dumps(answer),
+                    [candidate],
+                    old_head,
+                    new_head,
+                    bad_registry,
+                )
+                self.assertEqual(rejected["status"], "unclear")
+            siblings = [
+                candidate,
+                *({**candidate, "finding_id": name} for name in ("shared", "omitted")),
+                {**candidate, "finding_id": "repeated"},
+            ]
+            repeated = {
+                **row,
+                "finding_id": "repeated",
+                "status": "unclear",
+                "evidence_ids": [],
+            }
+            rows = [row, {**row, "finding_id": "shared"}, repeated, repeated]
+            self.assertEqual(
+                [
+                    item["status"]
+                    for item in followup._parse_assessments(
+                        json.dumps({"findings": rows}),
+                        siblings,
                         old_head,
                         new_head,
-                        bad_registry,
+                        registry,
                     )
+                ],
+                ["addressed", "unclear", "unclear", "unclear"],
+            )
 
             with patch.object(model.transport, "request") as send:
                 self.assertEqual(

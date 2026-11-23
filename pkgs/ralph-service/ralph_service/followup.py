@@ -12,7 +12,7 @@ from ralph import repository
 from ralph import model
 
 
-MAX_CANDIDATES = 12
+BATCH_SIZE = 12
 MAX_CONTENT_BYTES = 20_000
 MAX_OUTPUT_TOKENS = 3_000
 STATUSES = {"addressed", "partially_addressed", "still_present", "unclear"}
@@ -167,7 +167,6 @@ def _candidate_from_assessment(item, sources):
         "line": 1,
         "body": "",
         "source_head": item.get("old_head", ""),
-        "deferred": item.get("evidence") == "candidate_limit",
     }
     finding.update(sources.get(key, {}))
     finding["fingerprint"] = _fingerprint(finding)
@@ -225,7 +224,6 @@ def _candidate_findings(history, prior_assessments):
     return sorted(
         candidates,
         key=lambda finding: (
-            not finding.get("deferred"),
             finding["source_generation"],
             finding["source_job_id"],
             finding["finding_id"],
@@ -410,85 +408,88 @@ def _model_input(
     ), registry
 
 
-def _parse_assessments(text, candidates, assessed_from_head, new_head, registry):
-    result = json.loads(text)
-    if not isinstance(result, dict) or set(result) != {"findings"}:
-        raise ValueError("invalid addressed findings response")
-    rows = result["findings"]
-    if not isinstance(rows, list) or len(rows) != len(candidates):
-        raise ValueError("addressed findings response omitted candidates")
-    expected = {
-        (
-            candidate["source_job_id"],
-            candidate["source_generation"],
-            candidate["finding_id"],
-        ): candidate
-        for candidate in candidates
-    }
-    seen = set()
-    output = []
-    for row in rows:
-        if not isinstance(row, dict) or set(row) != set(
-            SCHEMA["properties"]["findings"]["items"]["properties"]
-        ):
-            raise ValueError("invalid addressed finding row")
-        key = (
-            row.get("source_job_id"),
-            row.get("source_generation"),
-            row.get("finding_id"),
-        )
-        if key not in expected or key in seen or row.get("status") not in STATUSES:
-            raise ValueError("unexpected addressed finding identity or status")
-        status = row["status"]
-        reason = row.get("reason")
-        evidence_ids = row.get("evidence_ids")
-        if not isinstance(reason, str) or not isinstance(evidence_ids, list):
-            raise ValueError("addressed finding requires reason and evidence IDs")
-        sources = []
-        for identifier in evidence_ids:
-            if not isinstance(identifier, str) or identifier not in registry:
-                raise ValueError("unknown follow-up evidence ID")
-            source = registry[identifier]
-            source_key = tuple(
-                source[field]
-                for field in ("source_job_id", "source_generation", "finding_id")
-            )
-            if (
-                source_key != key
-                or source["new_head"] != new_head
-                or source["old_head"]
-                != (expected[key].get("source_head") or assessed_from_head)
-            ):
-                raise ValueError(
-                    "follow-up evidence belongs to another finding or comparison"
-                )
-            sources.append(dict(source))
-        if status != "unclear" and (
-            not reason.strip()
-            or not any(
-                source["kind"] in {"new_source", "path_diff"} for source in sources
-            )
+def _assessment_record(row, candidate, assessed_from_head, new_head, registry):
+    if set(row) != set(SCHEMA["properties"]["findings"]["items"]["properties"]):
+        raise ValueError("invalid addressed finding row")
+    key = _identity(candidate)
+    status = row["status"]
+    reason = row["reason"]
+    evidence_ids = row["evidence_ids"]
+    if status not in STATUSES:
+        raise ValueError("unexpected addressed finding status")
+    if not isinstance(reason, str) or not isinstance(evidence_ids, list):
+        raise ValueError("addressed finding requires reason and evidence IDs")
+    sources = []
+    for identifier in evidence_ids:
+        if not isinstance(identifier, str) or identifier not in registry:
+            raise ValueError("unknown follow-up evidence ID")
+        source = registry[identifier]
+        if (
+            _identity(source) != key
+            or source["new_head"] != new_head
+            or source["old_head"]
+            != (candidate.get("source_head") or assessed_from_head)
         ):
             raise ValueError(
-                "definitive assessments require current evidence and a reason"
+                "follow-up evidence belongs to another finding or comparison"
             )
-        if status in {"addressed", "partially_addressed"} and not any(
-            source["kind"] in {"old_source", "path_diff"} for source in sources
-        ):
-            raise ValueError("addressed findings require original comparison evidence")
-        seen.add(key)
-        record = _output_record(
-            expected[key],
-            assessed_from_head,
-            new_head,
-            status,
-            reason,
-            "; ".join(f"{source['kind']}: {source['path']}" for source in sources),
-        )
-        record["source_evidence"] = sources
+        sources.append(dict(source))
+    if status != "unclear" and (
+        not reason.strip()
+        or not any(source["kind"] in {"new_source", "path_diff"} for source in sources)
+    ):
+        raise ValueError("definitive assessments require current evidence and a reason")
+    if status in {"addressed", "partially_addressed"} and not any(
+        source["kind"] in {"old_source", "path_diff"} for source in sources
+    ):
+        raise ValueError("addressed findings require original comparison evidence")
+    record = _output_record(
+        candidate,
+        assessed_from_head,
+        new_head,
+        status,
+        reason,
+        "; ".join(f"{source['kind']}: {source['path']}" for source in sources),
+    )
+    record["source_evidence"] = sources
+    return record
+
+
+def _identity(row):
+    return tuple(
+        row.get(field) for field in ("source_job_id", "source_generation", "finding_id")
+    )
+
+
+def _parse_assessments(text, candidates, assessed_from_head, new_head, registry):
+    result = json.loads(text)
+    if (
+        not isinstance(result, dict)
+        or set(result) != {"findings"}
+        or not isinstance(result["findings"], list)
+    ):
+        raise ValueError("invalid addressed findings response")
+    rows = [row for row in result["findings"] if isinstance(row, dict)]
+    output = []
+    for candidate in candidates:
+        key = _identity(candidate)
+        matches = [row for row in rows if _identity(row) == key]
+        # One invalid row must not erase separately valid assessments.
+        try:
+            if len(matches) != 1:
+                raise ValueError(f"expected one assessment, received {len(matches)}")
+            record = _assessment_record(
+                matches[0], candidate, assessed_from_head, new_head, registry
+            )
+        except ValueError as exc:
+            [record] = _unclear(
+                [candidate],
+                assessed_from_head,
+                new_head,
+                f"The follow-up assessment was invalid: {exc}.",
+                "invalid_assessment",
+            )
         output.append(record)
-    if seen != set(expected):
-        raise ValueError("addressed findings response repeated candidates")
     return output
 
 
@@ -538,8 +539,6 @@ def assess_completed_review(
             new_head=new_head,
         )
         return record
-    assessed = candidates[:MAX_CANDIDATES]
-    overflow = candidates[MAX_CANDIDATES:]
     if not repository.has_commit(
         checkout, assessed_from_head
     ) or not repository.has_commit(checkout, new_head):
@@ -557,75 +556,70 @@ def assess_completed_review(
             "Ralph cannot compare the old and new heads in the local checkout.",
         )
         return record
-    try:
-        input_text, evidence_registry = _model_input(
-            checkout,
-            previous,
-            current_job,
-            assessed,
-            assessed_from_head,
-            new_head,
-            submodules=submodules,
-        )
-        data = {
-            "model": stage_model,
-            "store": False,
-            "reasoning": {"effort": "low"},
-            "instructions": prompt,
-            "input": [{"role": "user", "content": input_text}],
-            "max_output_tokens": MAX_OUTPUT_TOKENS,
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "addressed_findings",
-                    "strict": True,
-                    "schema": SCHEMA,
-                }
-            },
-        }
-        result, payload, elapsed = model.request_response(
-            api_key,
-            data,
-            "addressed_findings",
-            usage=usage,
-            is_current=is_current,
-            api_base=api_base,
-        )
-        text = model.output_text(result.get("output", []))
-        record["turn"] = model.response_record(result, payload, elapsed)
-        record["raw_output"] = text
-        if result.get("status") != "completed" or not text.strip():
-            raise ValueError("addressed findings response did not complete")
-        record["findings"] = _parse_assessments(
-            text, assessed, assessed_from_head, new_head, evidence_registry
-        )
-        record.update(status="complete", old_head=assessed_from_head, new_head=new_head)
-    except model.StaleReview:
-        record.update(status="stale", old_head=assessed_from_head, new_head=new_head)
-        raise
-    except Exception as exc:
-        record.update(
-            status="complete",
-            old_head=assessed_from_head,
-            new_head=new_head,
-            error_type=type(exc).__name__,
-        )
-        record["findings"] = _unclear(
-            assessed,
-            assessed_from_head,
-            new_head,
-            "Ralph could not make a reliable follow-up assessment.",
-            type(exc).__name__,
-        )
-    record["findings"].extend(
-        _output_record(
-            candidate,
-            assessed_from_head,
-            new_head,
-            "unclear",
-            "Deferred because the follow-up candidate limit was reached.",
-            "candidate_limit",
-        )
-        for candidate in overflow
+    record.update(
+        status="complete", old_head=assessed_from_head, new_head=new_head, batches=[]
     )
+    for start in range(0, len(candidates), BATCH_SIZE):
+        batch = candidates[start : start + BATCH_SIZE]
+        batch_record = {}
+        record["batches"].append(batch_record)
+        try:
+            input_text, evidence_registry = _model_input(
+                checkout,
+                previous,
+                current_job,
+                batch,
+                assessed_from_head,
+                new_head,
+                submodules=submodules,
+            )
+            data = {
+                "model": stage_model,
+                "store": False,
+                "reasoning": {"effort": "low"},
+                "instructions": prompt,
+                "input": [{"role": "user", "content": input_text}],
+                "max_output_tokens": MAX_OUTPUT_TOKENS,
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "addressed_findings",
+                        "strict": True,
+                        "schema": SCHEMA,
+                    }
+                },
+            }
+            result, payload, elapsed = model.request_response(
+                api_key,
+                data,
+                "addressed_findings",
+                usage=usage,
+                is_current=is_current,
+                api_base=api_base,
+            )
+            text = model.output_text(result.get("output", []))
+            batch_record["turn"] = model.response_record(result, payload, elapsed)
+            batch_record["raw_output"] = text
+            if result.get("status") != "completed" or not text.strip():
+                raise ValueError("addressed findings response did not complete")
+            record["findings"].extend(
+                _parse_assessments(
+                    text, batch, assessed_from_head, new_head, evidence_registry
+                )
+            )
+        except model.StaleReview:
+            raise
+        except Exception as exc:
+            batch_record["error_type"] = type(exc).__name__
+            if isinstance(exc, ValueError):
+                batch_record["error"] = str(exc)
+            record["findings"].extend(
+                _unclear(
+                    batch,
+                    assessed_from_head,
+                    new_head,
+                    "Ralph could not make a reliable follow-up assessment.",
+                    type(exc).__name__,
+                )
+            )
     return record
