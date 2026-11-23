@@ -170,8 +170,8 @@ filter to find affected reports.
 
 The Outcome column shows one tag per review. `[cyber]` and `[refused]` mark
 provider refusals, `[provisional]` a failed judge with provisional findings on
-the report, and `[unverified]` a completed review with partial or failed
-verification. The first that applies, in that order, replaces `[completed]` or
+the report, and `[unverified]` a completed review whose verification
+failed. The first that applies, in that order, replaces `[completed]` or
 `[failed]`. The tooltip gives the review status and every cause; red tags mark
 failed reviews. The Show filter selects by tag.
 

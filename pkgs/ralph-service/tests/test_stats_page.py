@@ -120,6 +120,10 @@ class StatsPageTests(unittest.TestCase):
             ),
             (
                 "unverified",
+                {"review_status": "completed", "verification_status": "failed"},
+            ),
+            (
+                "completed",
                 {"review_status": "completed", "verification_status": "partial"},
             ),
             ("failed", {"review_status": "failed", "verification_status": "failed"}),

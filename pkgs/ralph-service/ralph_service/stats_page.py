@@ -1164,8 +1164,8 @@ def _outcome_tag(review):
     if status == "failed" and provisional:
         causes.append(("provisional", f"Provisional findings: {provisional}"))
     verification = review.get("verification_status")
-    if status == "completed" and verification in {"partial", "failed"}:
-        causes.append(("unverified", f"Verification: {verification}"))
+    if status == "completed" and verification == "failed":
+        causes.append(("unverified", "Verification failed"))
     tag = causes[0][0] if causes else status
     details = _escape(". ".join([f"Review {status}", *(text for _, text in causes)]))
     style = "failed" if status == "failed" else "caution" if causes else ""
