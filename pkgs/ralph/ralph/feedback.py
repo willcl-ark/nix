@@ -23,6 +23,7 @@ MAPPING = object_schema(
         "prior_key": STRING,
         "candidate_ids": STRINGS,
         "comment_ids": STRINGS,
+        "author_position_quote": STRING,
         "author_position": {"type": "string", "enum": list(POSITIONS)},
         "reason": STRING,
     }
@@ -221,6 +222,21 @@ def _references(value, allowed, field="feedback"):
             raise InvalidReview(f"Duplicate {field} reference: {reference}")
 
 
+def _author_words(body):
+    """Drop quoted lines, which repeat what somebody else wrote."""
+    return " ".join(
+        line for line in body.splitlines() if not line.lstrip().startswith(">")
+    )
+
+
+def _is_quoted(quote, comments):
+    words = " ".join(quote.split())
+    return bool(words) and any(
+        words in " ".join(_author_words(comment.get("body") or "").split())
+        for comment in comments
+    )
+
+
 def parse_feedback(text, packet, candidates):
     """Validate mapping references without granting comments decision authority."""
     try:
@@ -231,7 +247,7 @@ def parse_feedback(text, packet, candidates):
     if not isinstance(result["mappings"], list):
         raise InvalidReview("Invalid feedback mappings")
     prior = {entry["key"] for entry in packet.get("findings", [])}
-    comments = {str(entry["id"]) for entry in packet.get("comments", [])}
+    comments = {str(entry["id"]): entry for entry in packet.get("comments", [])}
     current = {entry["id"] for entry in candidates}
     seen = set()
     for mapping in result["mappings"]:
@@ -246,8 +262,16 @@ def parse_feedback(text, packet, candidates):
             raise InvalidReview("Invalid author position")
         if mapping["author_position"] != "none" and not mapping["comment_ids"]:
             raise InvalidReview("Author position requires an explicit comment")
+        if not isinstance(mapping["author_position_quote"], str):
+            raise InvalidReview("Invalid author position quote")
         if not isinstance(mapping["reason"], str) or not mapping["reason"].strip():
             raise InvalidReview("Feedback mapping requires a reason")
+        # One unsupported position must not erase the other mappings.
+        if mapping["author_position"] == "none" or not _is_quoted(
+            mapping["author_position_quote"],
+            [comments[comment_id] for comment_id in mapping["comment_ids"]],
+        ):
+            mapping.update(author_position="none", author_position_quote="")
     return result
 
 
@@ -359,6 +383,11 @@ def reconcile(
         )
         decision = decisions.get(entry["key"])
         mapping = mapping_by_key.get(entry["key"], {})
+        # Positions recorded before quotes were required are not repeated.
+        position = next(
+            (item for item in (mapping, entry) if "author_position_quote" in item),
+            {"author_position": "none", "author_position_quote": ""},
+        )
         # Preserve the original finding and previous assessments as audit history.
         history = entry.setdefault("assessment_history", [])
         if entry.get("status"):
@@ -370,6 +399,7 @@ def reconcile(
                         "reason",
                         "source_evidence",
                         "author_position",
+                        "author_position_quote",
                         "comment_ids",
                         "collapsed",
                         "unchanged_since_report",
@@ -398,9 +428,8 @@ def reconcile(
             duplicate_of=duplicates[entry["key"]]
             if decision
             else entry.get("duplicate_of"),
-            author_position=mapping.get(
-                "author_position", entry.get("author_position", "none")
-            ),
+            author_position=position["author_position"],
+            author_position_quote=position["author_position_quote"],
             comment_ids=mapping.get("comment_ids", entry.get("comment_ids", [])),
             collapsed=False,
         )

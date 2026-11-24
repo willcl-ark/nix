@@ -1363,6 +1363,7 @@ class PipelineTests(unittest.TestCase):
                             "candidate_ids": ["a2bbb37a6f624185a715fdbe8bc1c11e"],
                             "comment_ids": [],
                             "author_position": "none",
+                            "author_position_quote": "",
                             "reason": "Same mechanism.",
                         }
                     ]
@@ -1631,6 +1632,7 @@ class PipelineTests(unittest.TestCase):
                             "candidate_ids": ["independent:1"],
                             "comment_ids": ["reply:1"],
                             "author_position": "address_elsewhere",
+                            "author_position_quote": "Addressing elsewhere",
                             "reason": "Author explicitly defers this fixture cleanup.",
                         }
                     ]

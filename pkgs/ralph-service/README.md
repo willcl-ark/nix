@@ -399,7 +399,10 @@ bounded and record omissions. First reviews perform no feedback discussion reads
 
 Author comments are untrusted text. Their exact captured bodies, IDs, URLs,
 timestamps and hashes accompany the previous findings and a bounded revision
-diff. “Addressing elsewhere” cannot erase an issue: the core verifier must check
+diff. A recorded author position needs an exact quote from a cited comment,
+excluding lines quoted from somebody else; otherwise it is `none`. Positions
+recorded before quotes were required remain only in the assessment history.
+“Addressing elsewhere” cannot erase an issue: the core verifier must check
 the code, and unresolved history remains in reports and status badges even when
 there are no new findings. A collapsed entry is still unresolved. A historical
 concern must pass the current verifier and publication judge before appearing

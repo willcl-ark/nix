@@ -68,6 +68,7 @@ class FeedbackTests(unittest.TestCase):
                     "candidate_ids": ["review:1"],
                     "comment_ids": ["c1"],
                     "author_position": "address_elsewhere",
+                    "author_position_quote": "Addressing elsewhere.",
                     "reason": "Author explicitly promises another PR.",
                 }
             ]
@@ -186,7 +187,12 @@ class FeedbackTests(unittest.TestCase):
             self.assertEqual(properties[field]["maxItems"], 0)
             self.assertNotIn("enum", properties[field]["items"])
         mapping = self.mapping["mappings"][0]
-        mapping.update(candidate_ids=[], comment_ids=[], author_position="none")
+        mapping.update(
+            candidate_ids=[],
+            comment_ids=[],
+            author_position="none",
+            author_position_quote="",
+        )
         self.assertEqual(
             feedback.parse_feedback(json.dumps(self.mapping), self.packet, []),
             self.mapping,
@@ -345,6 +351,55 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(
             self.reconcile([self.assessment(prior_key="other-pr")])["status"], "unclear"
         )
+
+    def test_position_requires_the_authors_own_words(self):
+        mapping = self.mapping["mappings"][0]
+        self.packet["comments"] = [
+            {
+                "id": "c1",
+                "body": "> Will you fix this in a follow-up?\n"
+                "good suggestion thanks,\r\nusing `unsigned char` here",
+            },
+            {"id": "c2", "body": "This is handled in #36753"},
+        ]
+        for quote, position in (
+            ("suggestion thanks, using `unsigned char`", "address_elsewhere"),
+            ("", "none"),
+            (" ", "none"),
+            ("I will address it elsewhere", "none"),
+            ("fix this in a follow-up", "none"),
+            ("This is handled in #36753", "none"),
+        ):
+            mapping["author_position_quote"] = quote
+            with self.subTest(quote=quote):
+                parsed = feedback.parse_feedback(
+                    json.dumps(self.mapping), self.packet, self.candidates
+                )["mappings"][0]
+                self.assertEqual(parsed["author_position"], position)
+                self.assertEqual(
+                    parsed["author_position_quote"],
+                    "" if position == "none" else quote,
+                )
+                self.assertEqual(parsed["candidate_ids"], ["review:1"])
+        assessment = self.assessment(
+            unchanged=True,
+            source_evidence=[self.citation(side, 1) for side in ("base", "head")],
+        )
+        self.assertFalse(self.reconcile([assessment])["collapsed"])
+
+    def test_unquoted_previous_position_stays_only_in_history(self):
+        previous = self.packet["findings"][0]
+        previous.update(status="still_present", author_position="address_elsewhere")
+        record = self.reconcile([], {"mappings": []})
+        self.assertEqual(record["author_position"], "none")
+        self.assertEqual(
+            record["assessment_history"][0]["author_position"], "address_elsewhere"
+        )
+
+        self.packet["findings"] = [self.reconcile([self.assessment()])]
+        record = self.reconcile([], {"mappings": []})
+        self.assertEqual(record["author_position"], "address_elsewhere")
+        self.assertEqual(record["author_position_quote"], "Addressing elsewhere.")
 
     def test_feedback_cannot_cross_pr_or_revision_boundaries(self):
         source = {"repository": "bitcoin/bitcoin", "number": 123}
