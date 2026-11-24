@@ -161,4 +161,13 @@ class PromptConfig:
                 .replace("a Bitcoin Core pull request", "a GUI-QML pull request")
                 for name, prompt in prompts.items()
             }
+        tool_use = load_prompt_file(agents_dir / "shared/tool-use.md")
+        if not tool_use.strip():
+            raise ValueError("shared tool instructions must not be empty")
+        for name in (
+            *(name for name, values in configs.items() if values["tool_set"] != "none"),
+            "reconciliation",
+            "concept_verifier",
+        ):
+            prompts[name] = f"{tool_use}\n\n{prompts[name]}"
         return cls(prompts.pop("independent"), prompts, selected, high, strategy)

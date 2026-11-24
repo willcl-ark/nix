@@ -9,6 +9,7 @@ prompt, model, reasoning effort or tool limit.
 | --- | --- |
 | General first-pass review | [independent/prompt.md](agents/independent/prompt.md) |
 | Instructions shared by discovery agents | [shared/discovery.md](agents/shared/discovery.md) |
+| Tool-call batching for every agent with tools | [shared/tool-use.md](agents/shared/tool-use.md) |
 | A specialist's review | `<agent>/prompt.md`, such as [design/prompt.md](agents/design/prompt.md) |
 | Attempt to refute candidate findings | [challenger/prompt.md](agents/challenger/prompt.md) |
 | Assess which claims source supports | [verifier/prompt.md](agents/verifier/prompt.md) |
@@ -90,6 +91,9 @@ Frozen evaluations keep those saved values until explicitly given new settings.
 - [shared/finding-format.md](agents/shared/finding-format.md) is automatically
   appended to verifier and judge prompts when loading an agent directory.
   Saved reviews retain the loaded text for replay.
+- [shared/tool-use.md](agents/shared/tool-use.md) is automatically prepended to
+  the prompt of every agent with tools, and to reconciliation and concept
+  verification, which use the verifier's tools.
 - Both adversarial reviewers use [adversarial/prompt.md](agents/adversarial/prompt.md).
   Claude's config points to that file; its model and limits remain independent.
   Domain instructions live in [adversarial/domains](agents/adversarial/domains).

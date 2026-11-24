@@ -481,7 +481,10 @@ class EvaluateTests(unittest.TestCase):
         def review(case, runtime, prompts, *args, comment_format):
             self.assertEqual(prompts.profile.name, "high")
             seen.append(
-                (prompts.instructions, prompts.profile.stages["verifier"].timeout)
+                (
+                    prompts.instructions.splitlines()[-1],
+                    prompts.profile.stages["verifier"].timeout,
+                )
             )
             return pipeline.ReviewResult("High review.", [], False)
 

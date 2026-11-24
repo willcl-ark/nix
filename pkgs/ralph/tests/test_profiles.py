@@ -90,6 +90,22 @@ class StageConfigurationTests(unittest.TestCase):
                 config.PromptConfig.load(agents_dir)
             self.assertEqual(current_engine.configure(changed.config), changed.config)
 
+    def test_tool_instructions_reach_every_stage_with_tools_once(self):
+        instruction = config.load_prompt_file(
+            config.DEFAULT_AGENTS_DIR / "shared/tool-use.md"
+        )
+        for strategy in ("core", "gui"):
+            prompts = config.PromptConfig.load(strategy=strategy)
+            stages = {**prompts.audit_prompts, "independent": prompts.instructions}
+            expected = {
+                name
+                for name, settings in prompts.profile.stages.items()
+                if settings.tool_set != "none"
+            } | {"reconciliation", "concept_verifier"}
+            for name, prompt in stages.items():
+                with self.subTest(strategy=strategy, stage=name):
+                    self.assertEqual(prompt.count(instruction), name in expected)
+
     def test_stage_override_survives_high_profile_and_changes_identity(self):
         baseline = engine.load(config={"profile": "high"})
         changed = engine.load(
