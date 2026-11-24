@@ -1,16 +1,11 @@
 prompt = "prompt.md"
 tool_set = "full"
-model = "claude-haiku-5-5"
-reasoning_effort = "xhigh"
-max_output_tokens = 64000
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+max_output_tokens = 16000
 max_tool_calls = { routine = 12, standard = 24, sensitive = 96 }
 max_context_calls = 8
 max_history_calls = 8
 max_web_search_calls_per_response = 2
 timeout = 1800
 final_timeout = 1800
-
-[profiles.high]
-model = "gpt-6.1-sol"
-reasoning_effort = "high"
-max_output_tokens = 16000
