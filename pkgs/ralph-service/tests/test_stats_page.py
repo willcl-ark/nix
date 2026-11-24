@@ -508,16 +508,45 @@ class StatsPageTests(unittest.TestCase):
             ]
         }
         records = stats_page._time_series(summary)
-        cumulative = stats_page._cumulative_series(records)
-        self.assertEqual([row["reviews"] for row in cumulative], [2, 2, 6, 7])
-        self.assertEqual([row["findings"] for row in cumulative], [3, 3, 8, 8])
+        totals = {
+            field: [total for _, total in stats_page._cumulative_series(records, field)]
+            for field in ("reviews", "findings", "verified_reviews")
+        }
+        self.assertEqual(totals["reviews"], [2, 2, 6, 7])
+        self.assertEqual(totals["findings"], [3, 3, 8, 8])
+        self.assertEqual(totals["verified_reviews"], [1])
+        # 25 October is a Sunday, so it has a week of its own.
         self.assertEqual(
-            [row["verified_reviews"] for row in cumulative], [1, 1, None, None]
+            stats_page._weekly_series(records, "reviews"),
+            [["2026-10-19", 2], ["2026-10-26", 5]],
         )
-        html = stats_page._charts_section(summary)
-        self.assertIn("2026-10-27: 4", html)
-        self.assertIn("2026-10-27: 6", html)
-        self.assertIn('aria-controls="trends-cumulative"', html)
+        self.assertEqual(
+            stats_page._weekly_series(records, "verified_reviews"),
+            [["2026-10-19", 1], ["2026-10-26", None]],
+        )
+        self.assertEqual(
+            stats_page._weekly_series(records, "addressed"), [["2026-10-26", 1]]
+        )
+        self.assertIn("[&quot;2026-10-27&quot;,6]", stats_page._charts_section(summary))
+
+    def test_token_totals_are_short_with_the_exact_number_on_hover(self):
+        for value, text in (
+            (999, "999"),
+            (12_345, "12.3K"),
+            (999_999, "1M"),
+            (1_234_567_890, "1.23B"),
+        ):
+            self.assertEqual(stats_page._compact(value), text)
+        record = {
+            "tokens": {"input": 12_345, "cached": None},
+            "unknown_token_counts": {"input": 1},
+            "request_count": 2,
+        }
+        self.assertEqual(
+            stats_page._token_cell(record, "input"),
+            '<td class="numeric" title="12,345 (partial)">12.3K*</td>',
+        )
+        self.assertIn("N/A", stats_page._token_cell(record, "cached"))
 
     def test_failed_review_status_is_separate_from_completed_delivery(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -755,7 +784,7 @@ class StatsPageTests(unittest.TestCase):
             )
             html = "".join(path.read_text() for path in public.rglob("*.html"))
             self.assertNotRegex(html, r"\$\d")
-            self.assertIn("Rate limits (429)", html)
+            self.assertIn(">429s</th>", html)
             self.assertEqual(
                 stats.collect_stats(root / "empty", root / "reports")["usage"][
                     "lifetime"

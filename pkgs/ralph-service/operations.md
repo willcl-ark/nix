@@ -159,6 +159,11 @@ Verifier acceptance is not human validation or a recall measurement. Retries
 increase request counts without duplicating final findings, and summed model
 time is not elapsed review time.
 
+The Usage page at `stats/usage/` charts request records over up to 90 days, and
+weekly or cumulative production. Cumulative totals start after the last day with
+a missing count. Token totals are shortened; the exact number is on hover.
+The Usage and Trends pages share `tokens/charts.js`.
+
 The Limits page at `stats/limits/` distinguishes usage at a cap from recorded
 interruptions, with links to affected reviews. Missing telemetry remains
 uninstrumented. Reaching a cap does not establish that more allowance would

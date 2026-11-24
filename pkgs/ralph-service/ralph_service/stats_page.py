@@ -480,41 +480,70 @@ def _failed_requests(record):
     return sum(statuses.get(status, 0) for status in ("failed", "uncertain"))
 
 
-def _usage_rows(records):
+def _compact(value):
+    for size, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        # Round first, so 999,999 becomes 1M and not 1000K.
+        if float(f"{value:.3g}") >= size:
+            return f"{value / size:.3g}{suffix}"
+    return f"{value:,}"
+
+
+def _token_cell(record, name):
+    """Show a short total with the exact one on hover."""
+    exact = _fmt_tokens(record, name)
+    if exact == "N/A":
+        return '<td class="placeholder">N/A</td>'
+    partial = "*" if exact.endswith(" (partial)") else ""
+    value = _compact(_mapping(record.get("tokens")).get(name))
+    return f'<td class="numeric" title="{_escape(exact)}">{value}{partial}</td>'
+
+
+def _usage_table(records, name):
+    """List request records and tokens of each provider or model."""
     rows = []
-    for record in _record_rows(records):
-        name = record.get("name", record.get("provider", "unknown"))
-        rows.append(
-            _cells(
-                [
-                    _escape(name),
-                    _fmt_int(record.get("request_count")),
-                    _fmt_tokens(record, "input"),
-                    _fmt_tokens(record, "cached"),
-                    _fmt_tokens(record, "output"),
-                    _fmt_tokens(record, "reasoning"),
-                    _fmt_int(_failed_requests(record)),
-                    _fmt_int(record.get("rate_limit_count")),
-                    _fmt_int(record.get("unknown_usage_count")),
-                ]
-            )
+    for record in records:
+        counts = (
+            _failed_requests(record),
+            record.get("rate_limit_count"),
+            record.get("unknown_usage_count"),
         )
-    if not rows:
-        return "<p>No provider usage was recorded.</p>"
+        rows.append(
+            "<tr>"
+            + f'<td class="nowrap">{_escape(record.get(name, "unknown"))}</td>'
+            + f'<td class="numeric">{_fmt_int(record.get("request_count"))}</td>'
+            + _token_cell(record, "input")
+            + _token_cell(record, "cached")
+            + f'<td class="numeric">{_cache_rate(record)}</td>'
+            + _token_cell(record, "output")
+            + _token_cell(record, "reasoning")
+            + "".join(f'<td class="numeric">{_fmt_int(count)}</td>' for count in counts)
+            + "</tr>"
+        )
     return _data_table(
         [
-            "Provider",
-            "Records",
-            "Input tokens",
-            "Cached tokens",
-            "Output tokens",
-            "Reasoning tokens",
-            "Failed requests",
-            "Rate limits (429)",
-            "Unknown usage records",
+            name.capitalize(),
+            "Requests",
+            "Input",
+            "Cached",
+            "Cache rate",
+            "Output",
+            "Reasoning",
+            "Failed",
+            "429s",
+            "No usage",
         ],
         rows,
     )
+
+
+def _provider_table(records):
+    rows = [
+        {"provider": record.get("name", "unknown"), **record}
+        for record in _record_rows(records)
+    ]
+    if not rows:
+        return "<p>No provider usage was recorded.</p>"
+    return _usage_table(rows, "provider")
 
 
 def _usage_trends_section(summary):
@@ -529,30 +558,24 @@ def _usage_trends_section(summary):
         cards.append(
             _kpi(label, _fmt_int(period.get("request_count")), "Request records")
         )
-    charts = []
-    for key, title, description in (
-        ("days", "Daily request records · 30 days", "Request records per UTC day."),
-        (
-            "weeks",
-            "Weekly request records · 12 weeks",
-            "Request records per UTC week. Weeks start Monday.",
-        ),
-        (
-            "months",
-            "Monthly request records · 12 months",
-            "Request records per UTC month, including undated requests.",
-        ),
-    ):
-        records = _list(trends.get(key))
-        if records:
-            charts.append(
-                _chart_svg(f"usage-{key}", title, description, records, "request_count")
-            )
+    days = [
+        [record["period"], record["request_count"]]
+        for record in _list(trends.get("days"))
+    ]
+    chart = (
+        "<h3>Request records per day</h3>"
+        + _section_note(
+            "Dots are single days. The line averages the seven days up to each day, or fewer at the start, and leaves out today."
+        )
+        + f'<div data-requests="{_escape(json.dumps(days, separators=(",", ":")))}" data-height="260"></div>'
+        if days
+        else ""
+    )
     undated = _mapping(trends.get("undated"))
     note = ""
     if _number(undated.get("request_count")):
         note = _section_note(
-            f"{_fmt_int(undated.get('request_count'))} request records have no timestamp and appear only in monthly totals."
+            f"{_fmt_int(undated.get('request_count'))} request records have no timestamp and count only towards the month."
         )
     return (
         '<section id="usage-trends"><h2>Request activity</h2>'
@@ -563,31 +586,31 @@ def _usage_trends_section(summary):
         + "".join(cards)
         + "</div>"
         + note
-        + '<div class="charts">'
-        + "".join(charts)
-        + "</div></section>"
+        + chart
+        + "</section>"
     )
 
 
 def _usage_section(summary):
     usage = _mapping(summary.get("usage"))
-    current = _mapping(usage.get("current_month"))
-    lifetime = _mapping(usage.get("lifetime"))
     return (
         '<section id="requests"><h2>Review usage</h2>'
         + _section_note(
-            "Durable Ralph ledgers include retries and failed requests; duplicate response usage is counted once. "
-            "Follow-up assessments appear separately. "
-            "Token totals sum reported fields; partial means some requests omitted that field. "
-            "Reasoning tokens are part of output tokens, not an additional total. "
-            "Failed requests include timeouts and other uncertain outcomes; 429 rate limits are a subset. "
-            "Model family identifies the provider, not the account or authentication method."
+            "Review requests, without follow-up assessments. * marks totals for which some requests omitted the "
+            "field. Hover a total for the exact number."
         )
-        + '<div class="split"><div><h3>Current month</h3>'
-        + _usage_rows(current.get("providers"))
-        + "</div><div><h3>Lifetime</h3>"
-        + _usage_rows(lifetime.get("providers"))
-        + "</div></div></section>"
+        + "<h3>This month</h3>"
+        + _provider_table(_mapping(usage.get("current_month")).get("providers"))
+        + "<h3>Lifetime</h3>"
+        + _provider_table(_mapping(usage.get("lifetime")).get("providers"))
+        + '<details class="trend-notes"><summary>How usage is counted</summary>'
+        + _section_note(
+            "Durable Ralph ledgers include retries and failed requests; duplicate response usage is counted once. "
+            "Reasoning tokens are part of output tokens, not an additional total. "
+            "Failed requests include timeouts and other uncertain outcomes; 429s (rate limits) are a subset. "
+            "Provider is the model family, not the account or authentication method."
+        )
+        + "</details></section>"
     )
 
 
@@ -1062,33 +1085,15 @@ def _paired_section(summary):
 
 def _model_section(summary):
     models = _list(_mapping(summary.get("usage")).get("models"))
-    if not models:
-        body = "<p>No model usage was recorded.</p>"
-    else:
-        rows = []
-        for model in models:
-            rows.append(
-                "<tr>"
-                f"<td>{_escape(_field(model, 'provider', default='unknown'))}</td>"
-                f"<td>{_escape(_field(model, 'model', default='unknown'))}</td>"
-                f"<td>{_fmt_int(_field(model, 'request_count'))}</td>"
-                f"<td>{_fmt_tokens(model, 'input')}</td>"
-                f"<td>{_fmt_tokens(model, 'cached')}</td>"
-                f"<td>{_cache_rate(model)}</td>"
-                f"<td>{_fmt_tokens(model, 'output')}</td>"
-                f"<td>{_fmt_tokens(model, 'reasoning')}</td>"
-                f"<td>{_fmt_int(_failed_requests(model))}</td>"
-                f"<td>{_fmt_int(model.get('rate_limit_count'))}</td>"
-                "</tr>"
-            )
-        body = (
-            "<table><thead><tr><th>Provider</th><th>Model</th><th>Attempts</th>"
-            "<th>Input tokens</th><th>Cached tokens</th>"
-            "<th>Cache rate</th><th>Output tokens</th><th>Reasoning tokens</th>"
-            "<th>Failed requests</th><th>Rate limits (429)</th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>"
+    return (
+        '<section id="models"><h2>Model usage</h2>'
+        + (
+            _usage_table(models, "model")
+            if models
+            else "<p>No model usage was recorded.</p>"
         )
-    return '<section id="models"><h2>Model usage</h2>' + body + "</section>"
+        + "</section>"
+    )
 
 
 def _routing_section(summary):
@@ -1339,84 +1344,6 @@ def _time_series(summary):
     return sorted(records, key=lambda item: item["period"])
 
 
-def _chart_svg(chart_id, title, description, records, field, *, bars=False):
-    width = 280
-    height = 132
-    right = 12
-    top = 12
-    bottom = 30
-    formatter = _fmt_int
-    values = [_number(record.get(field)) for record in records]
-    max_value = max((value for value in values if value is not None), default=0) or 1
-    left = max(34, len(formatter(max_value)) * 6 + 12)
-    x_span = width - left - right
-    y_span = height - top - bottom
-    points = []
-    for index, value in enumerate(values):
-        if value is None:
-            points.append(None)
-            continue
-        x = (
-            left + x_span / 2
-            if len(records) == 1
-            else left + x_span * index / (len(records) - 1)
-        )
-        points.append((x, top + y_span * (1 - value / max_value)))
-    segments = []
-    segment = []
-    for point in points + [None]:
-        if point is None:
-            if len(segment) > 1:
-                segments.append(" ".join(f"{x:.1f},{y:.1f}" for x, y in segment))
-            segment = []
-        else:
-            segment.append(point)
-    lines = "".join(
-        f'<polyline class="chart-line" points="{segment}"></polyline>'
-        for segment in segments
-    )
-    marks = []
-    bar_width = min(12, x_span / max(len(records), 1) * 0.7)
-    for index, point in enumerate(points):
-        if point is None:
-            continue
-        record = records[index]
-        tooltip = f"{record['period']}: {formatter(record.get(field))}"
-        x, y = point
-        if bars:
-            marks.append(
-                f'<rect class="chart-bar" x="{x - bar_width / 2:.1f}" y="{y:.1f}" '
-                f'width="{bar_width:.1f}" height="{top + y_span - y:.1f}">'
-                f"<title>{_escape(tooltip)}</title></rect>"
-            )
-        else:
-            marks.append(
-                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{2 if len(records) > 30 else 3}">'
-                f"<title>{_escape(tooltip)}</title></circle>"
-            )
-    first = records[0]["period"]
-    last = records[-1]["period"]
-    title_id = f"{chart_id}-title"
-    desc_id = f"{chart_id}-desc"
-    return (
-        '<figure class="chart">'
-        f"<figcaption>{_escape(title)}</figcaption>"
-        f'<svg viewBox="0 0 {width} {height}" role="img" aria-labelledby="{title_id} {desc_id}">'
-        f'<title id="{title_id}">{_escape(title)}</title>'
-        f'<desc id="{desc_id}">{_escape(description)}</desc>'
-        f'<line class="chart-axis" x1="{left}" y1="{top + y_span}" x2="{width - right}" y2="{top + y_span}"></line>'
-        f'<line class="chart-axis" x1="{left}" y1="{top}" x2="{left}" y2="{top + y_span}"></line>'
-        + ("" if bars else lines)
-        + "".join(marks)
-        + f'<text x="{left}" y="{height - 10}">{_escape(first)}</text>'
-        + f'<text x="{width - right}" y="{height - 10}" text-anchor="end">{_escape(last)}</text>'
-        + f'<text x="{left - 6}" y="{top + 4}" text-anchor="end">{formatter(max_value)}</text>'
-        + f'<text x="{left - 6}" y="105" text-anchor="end">{formatter(0)}</text>'
-        "</svg>"
-        "</figure>"
-    )
-
-
 def _time_series_notes(summary):
     notes = [
         note
@@ -1434,19 +1361,38 @@ def _time_series_notes(summary):
     return "".join(f'<p class="note">{_escape(note)}</p>' for note in notes)
 
 
-def _cumulative_series(records):
-    totals = dict.fromkeys(("reviews", "verified_reviews", "findings", "addressed"), 0)
-    cumulative = []
+def _started(values):
+    """Drop what precedes the first recorded activity."""
+    first = next((index for index, (_, value) in enumerate(values) if value), 0)
+    return values[first:]
+
+
+def _weekly_series(records, field):
+    """Add up weeks from Monday. A week with an unknown day is unknown."""
+    weeks = {}
     for record in records:
-        for field in totals:
-            value = record[field]
-            totals[field] = (
-                totals[field] + value
-                if totals[field] is not None and value is not None
-                else None
-            )
-        cumulative.append({"period": record["period"], **totals})
-    return cumulative
+        day = datetime.fromisoformat(record["period"]).date()
+        week = weeks.setdefault((day - timedelta(days=day.weekday())).isoformat(), [])
+        week.append(record[field])
+    return _started(
+        [
+            [week, None if None in values else sum(values)]
+            for week, values in weeks.items()
+        ]
+    )
+
+
+def _cumulative_series(records, field):
+    """Add up the days after the last unknown one."""
+    total = 0
+    values = []
+    for record in records:
+        if record[field] is None:
+            total, values = 0, []
+            continue
+        total += record[field]
+        values.append([record["period"], total])
+    return _started(values)
 
 
 def _charts_section(summary):
@@ -1458,67 +1404,38 @@ def _charts_section(summary):
             + _time_series_notes(summary)
             + "</section>"
         )
-    charts = [
-        ("reviews", "Reviews", "Saved reviews", "reviews"),
-        (
-            "verified-reviews",
-            "Current-engine verified reviews",
-            "Current-engine reviews whose verifier and judge passes completed",
-            "verified_reviews",
-        ),
-        (
-            "findings",
-            "Exported findings",
-            "Findings from supported engine exports",
-            "findings",
-        ),
-        (
-            "addressed",
-            "Addressed findings",
-            "Addressed findings, dated by the assessed PR head commit",
-            "addressed",
-        ),
-    ]
-    panels = []
-    for mode, values in (
-        ("daily", records),
-        ("cumulative", _cumulative_series(records)),
+    charts = ""
+    for field, title in (
+        ("reviews", "Reviews"),
+        ("verified_reviews", "Verified reviews"),
+        ("findings", "Findings"),
+        ("addressed", "Addressed findings"),
     ):
-        description_suffix = (
-            " per UTC day." if mode == "daily" else " accumulated through each UTC day."
-        )
-        body = "".join(
-            _chart_svg(
-                f"chart-{mode}-{chart_id}",
-                title,
-                description + description_suffix,
-                values,
-                field,
-                bars=mode == "daily",
-            )
-            for chart_id, title, description, field in charts
-        )
-        note = (
-            "Daily counts, UTC. Days without recorded activity are zero."
-            if mode == "daily"
-            else "Running totals of dated records through each day, starting at the beginning of the displayed history."
-        )
-        panels.append(
-            f'<div id="trends-{mode}" data-trend-panel="{mode}"'
-            + (" hidden" if mode == "cumulative" else "")
-            + f'>{_section_note(note)}<div class="charts">{body}</div></div>'
+        data = {
+            "weekly": _weekly_series(records, field),
+            "cumulative": _cumulative_series(records, field),
+        }
+        charts += (
+            f'<figure class="chart"><figcaption>{title}</figcaption>'
+            f'<div data-production="{_escape(json.dumps(data, separators=(",", ":")))}" '
+            f'data-label="{title}" data-height="200"></div></figure>'
         )
     return (
         '<section id="trends"><div class="section-heading"><h2>Production trends</h2>'
         '<div class="chart-controls" role="group" aria-label="Production trend view" hidden>'
-        '<button type="button" data-trend-mode="daily" aria-controls="trends-daily" aria-pressed="true">Daily</button>'
-        '<button type="button" data-trend-mode="cumulative" aria-controls="trends-cumulative" aria-pressed="false">Cumulative</button>'
+        '<button type="button" data-trend-mode="weekly" aria-pressed="true">Weekly</button>'
+        '<button type="button" data-trend-mode="cumulative" aria-pressed="false">Cumulative</button>'
         "</div></div>"
-        + "".join(panels)
+        + _section_note(
+            "Weeks start on Monday, UTC, and * marks the current one. Each chart starts with its first recorded activity."
+        )
+        + f'<div class="token-charts">{charts}</div>'
         + '<details class="trend-notes"><summary>Dates and missing data</summary>'
         + _section_note(
+            "Verified reviews used the current engine and completed their verifier and judge passes. "
+            "Findings come from supported engine exports. "
             "Undated records are excluded. Addressed findings use the PR head commit date. "
-            "Missing daily counts leave gaps and prevent subsequent cumulative totals for that metric."
+            "Weeks with a missing daily count leave gaps, and cumulative totals start after the last missing day."
         )
         + _time_series_notes(summary)
         + "</details></section>"
@@ -1591,12 +1508,14 @@ td { font-variant-numeric: tabular-nums; }
 .severity.major { color: var(--amber); font-weight: 700; }
 .severity.critical { color: var(--bg); background: var(--red); font-weight: 700; }
 .numeric { text-align: right; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
 td:first-child { min-width: 5rem; }
 .key-values { display: grid; grid-template-columns: minmax(8rem, 1fr) 1fr; gap: .4rem 1rem; margin: .5rem 0; min-width: 15rem; }
 .key-values dt { color: var(--muted); }
 .key-values dt::after { content: ":"; }
 .key-values dd { margin: 0; overflow-wrap: anywhere; }
 details { margin: .2rem 0; }
+main > details { margin: 1.25rem 0; }
 details[open] > summary { margin-bottom: .75rem; }
 .list-controls, .pagination { display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; margin: 1rem 0; }
 .list-controls:first-child { margin-top: 0; }
@@ -1612,21 +1531,14 @@ a:focus-visible, summary:focus-visible, button:focus-visible, input:focus-visibl
 footer { margin-left: 15rem; padding: 0 1.2rem 2rem; color: var(--muted); font-size: .75rem; }
 footer::before { content: "-- "; }
 .preview { background: var(--amber); color: var(--bg); padding: .5rem; }
-.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
 .chart { margin: 0; padding: 1rem; background: var(--bg); border: 1px solid var(--border); }
 .chart figcaption { font-weight: 700; }
-.chart svg { display: block; width: 100%; height: auto; }
-.chart text { fill: var(--muted); font-size: 10px; font-family: var(--mono); }
-.chart-axis { stroke: var(--rule); stroke-dasharray: 2 3; }
-.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; filter: drop-shadow(0 0 3px var(--glow)); }
-.chart circle, .chart-bar { fill: var(--accent); }
 .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .section-heading h2 { margin: 0; }
 .chart-controls { display: flex; gap: 0; border: 1px solid var(--rule); }
 .chart-controls button { border: 0; background: transparent; padding: .25rem .7rem; font-size: .78rem; color: var(--muted); }
 .chart-controls button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
 .trend-notes { margin-top: 1rem; font-size: .78rem; }
-#trends figcaption { min-height: 3.1em; }
 .note { font-size: .8rem; max-width: 100ch; }
 .token-filters { margin: 0; padding: .75rem 0; background: var(--bg); border-bottom: 1px dashed var(--rule); display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .75rem; }
 .token-filters label { min-width: 0; }
@@ -1732,6 +1644,7 @@ td code { color: var(--muted); }
 .skip-link { position: fixed; top: -5rem; left: 1rem; z-index: 30; background: var(--accent); color: var(--bg); padding: .6rem; }
 .skip-link:focus { top: .5rem; }
 @media (min-width: 1800px) { main { margin-right: auto; } }
+@media (max-width: 1200px) { #requests :is(th, td), #models :is(th, td) { padding-left: .35rem; padding-right: .35rem; } }
 @media (max-width: 1000px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 750px) {
   header { position: static; width: auto; padding: 1rem; border-right: 0; border-bottom: 1px solid var(--rule); }
@@ -1803,20 +1716,6 @@ if (freshness) {
         freshness.textContent = `Refreshed: ${data.generated_at}. `;
       }
     }).catch(() => {});
-}
-const trendControls = document.querySelector('.chart-controls');
-if (trendControls) {
-  trendControls.hidden = false;
-  trendControls.querySelectorAll('[data-trend-mode]').forEach(button => {
-    button.addEventListener('click', () => {
-      trendControls.querySelectorAll('button').forEach(other => {
-        other.setAttribute('aria-pressed', String(other === button));
-      });
-      document.querySelectorAll('[data-trend-panel]').forEach(panel => {
-        panel.hidden = panel.dataset.trendPanel !== button.dataset.trendMode;
-      });
-    });
-  });
 }
 const leaderboard = document.querySelector('#leaderboard table');
 if (leaderboard) {
@@ -2362,13 +2261,14 @@ def _usage_html(summary):
         '<h1>Usage</h1><p class="subtitle">Subscription capacity, request usage and operational diagnostics.</p>'
         + _subscriptions_section(summary)
         + _usage_trends_section(summary)
+        + _charts_section(summary)
+        + "<noscript><p>Charts need JavaScript.</p></noscript>"
         + _usage_section(summary)
         + _model_section(summary)
         + "<details><summary>Routing and review distributions</summary>"
         + _routing_section(summary)
         + _distribution_section(summary)
         + "</details>"
-        + _charts_section(summary)
         + "<section><h2>Accounting and limitations</h2>"
         + "<p>"
         + _escape(_analysis(summary))
@@ -2386,8 +2286,11 @@ def _usage_html(summary):
         + "<ul>"
         + (notes or "<li>No limitations were recorded.</li>")
         + "</ul></section>"
+        + '<script type="module" src="usage.js"></script>'
     )
-    return _page("Usage", summary, body, "../", "Usage")
+    return _page("Usage", summary, body, "../", "Usage").replace(
+        "</head>", '<link rel="modulepreload" href="../tokens/charts.js"></head>', 1
+    )
 
 
 def _token_repositories(summary, repository_url):
@@ -3011,7 +2914,7 @@ def save_stats(
         + "\n",
     )
     write("stats.js", _script())
-    for name in ("tokens/charts.js", "tokens/tokens.js"):
+    for name in ("tokens/charts.js", "tokens/tokens.js", "usage/usage.js"):
         source = Path(__file__).parent / Path(name).name
         write(name, source.read_text(encoding="utf-8"))
     for month, data in (summary.get("token_months") or {}).items():

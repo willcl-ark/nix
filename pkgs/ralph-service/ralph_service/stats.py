@@ -28,7 +28,7 @@ SNAPSHOT_MODEL = re.compile(r"(.+)-\d{4}-\d{2}-\d{2}")
 # Include the retired Gemini stage when aggregating historical reviews.
 ADVERSARIAL_STAGES = ("adversarial", "adversarial_claude", "adversarial_gemini")
 PUBLIC_LIMITATION_NOTES = [
-    "Monthly trend uses request month.",
+    "This month uses request month.",
     "Model seconds are summed model turn elapsed_seconds, not wall time.",
     "Bot verification is not human validation.",
     "Shared attribution is noncausal.",
@@ -1700,32 +1700,22 @@ def _usage_trends(requests, now):
     monday = today - timedelta(days=today.weekday())
     days = _activity_periods(
         by_day,
-        [(today - timedelta(days=offset)).isoformat() for offset in range(29, -1, -1)],
+        [(today - timedelta(days=offset)).isoformat() for offset in range(89, -1, -1)],
     )
-    weeks = _activity_periods(
-        by_week,
-        [
-            (monday - timedelta(weeks=offset)).isoformat()
-            for offset in range(11, -1, -1)
-        ],
-    )
-    month_periods = []
-    for offset in range(11, -1, -1):
-        year, month = divmod(now.year * 12 + now.month - 1 - offset, 12)
-        month_periods.append(f"{year:04d}-{month + 1:02d}")
     current_month = now.strftime("%Y-%m")
     return {
         "timezone": "UTC",
         "week_start": "Monday",
         "current_day": days[-1] if days else None,
-        "current_week": weeks[-1] if weeks else None,
+        "current_week": {
+            "period": monday.isoformat(),
+            **_activity_totals(by_week.get(monday.isoformat())),
+        },
         "current_month": {
             "period": current_month,
             **_activity_totals(by_month.get(current_month)),
         },
         "days": days,
-        "weeks": weeks,
-        "months": _activity_periods(by_month, month_periods),
         "undated": _activity_totals(undated),
     }
 
