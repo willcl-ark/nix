@@ -2500,6 +2500,31 @@ def _health_html(summary, archive_base_url):
     )
 
 
+def _export(summary):
+    """Keep the totals; the pages list individual reviews and findings."""
+    export = {
+        key: value
+        for key, value in summary.items()
+        if key not in {"repositories", "reviews", "recent_reviews"}
+    }
+    if "stages" in summary:
+        export["stages"] = [
+            {
+                key: value
+                for key, value in stage.items()
+                if key not in {"findings", "challenge_tracking"}
+            }
+            for stage in summary["stages"]
+        ]
+    if "addressed_findings" in summary:
+        export["addressed_findings"] = {
+            key: value
+            for key, value in summary["addressed_findings"].items()
+            if key != "findings"
+        }
+    return export
+
+
 def save_stats(
     output_dir: Path,
     summary: dict,
@@ -2519,7 +2544,9 @@ def save_stats(
 
     write(
         "stats.json",
-        json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        json.dumps(
+            _export(summary), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
         + "\n",
     )
     write("stats.js", _script())

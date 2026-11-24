@@ -223,7 +223,9 @@ sequence requires `--full`.
 History checks report file metadata before parsing changed reports. Use `--full`
 after edits that preserve file size and modification time. Unchanged generated
 pages are not replaced; a small freshness document supplies their current update
-time. The full JSON export remains available and is refreshed each run.
+time. `stats.json` holds totals only and is refreshed each run; the pages list
+individual reviews and findings. Telegram status reads its `generated_at`,
+`health` and `subscriptions` fields.
 The stats content security policy must allow `connect-src 'self'` for the
 freshness request, in addition to the existing same-origin script permission.
 

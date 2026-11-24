@@ -92,6 +92,7 @@ class StatsCliTests(unittest.TestCase):
             )
             saved = json.loads((reports / "stats/stats.json").read_text())
             self.assertEqual(saved["subscriptions"], snapshot)
+            self.assertEqual(saved["health"]["groups"], [])
             for path in (reports / "stats").rglob("*"):
                 if path.is_file():
                     self.assertNotIn("private-management-key", path.read_text())
