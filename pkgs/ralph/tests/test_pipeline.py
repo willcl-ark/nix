@@ -1381,8 +1381,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(entry["severity"], self.published["severity"])
         self.assertEqual(entry["status"], "unclear")
         self.assertFalse(entry["collapsed"])
-        self.assertNotIn(self.published["title"], self.result.content)
-        self.assertIn("Earlier concerns remain unresolved", self.result.content)
+        self.assertNotIn(self.published["body"], self.result.content)
+        self.assertIn("Earlier concerns neither republished", self.result.content)
         self.assertNotIn("Previous findings and author responses", self.result.content)
 
         case = engine.ReviewCase(
@@ -1921,7 +1921,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.result.findings, [])
         self.assertTrue(self.result.content.startswith("Review failed"))
         self.assertNotIn(self.published["title"], self.result.content)
-        self.assertIn("Earlier concerns remain unresolved", self.result.content)
+        self.assertIn("Earlier concerns neither republished", self.result.content)
         self.assertNotIn(self.published["body"], self.result.content)
         self.assertNotIn("##### Findings", self.result.content)
         self.assertEqual(self.debug["review_memory"][0]["body"], self.published["body"])

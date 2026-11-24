@@ -51,9 +51,12 @@ ties. Additional comment findings link to the report.
 Historical concerns join the current findings only after the pipeline verifies
 the current claim and the judge approves publication. Reconciliation alone
 cannot publish a finding, and the renderer never adds findings from history.
-Unconfirmed history gets a brief notice; its original claims, author replies
-and resolved history belong in the Run archive. Failed verification suppresses
-finding bodies and retains explicit failure and incomplete-coverage notices.
+Earlier concerns that a review neither republishes nor resolves get a notice with
+their count and original severities. The Review report also lists their original
+titles with links to the reports that raised them; PR comments and failed reviews
+do not. Their explanations, author replies and resolved history belong in the Run
+archive. Failed verification suppresses finding bodies and retains explicit
+failure and incomplete-coverage notices.
 
 Change the wording instructions in the [judge prompt](../agents/judge/prompt.md).
 The judge decides publication and approves the exact wording. Keep explanations

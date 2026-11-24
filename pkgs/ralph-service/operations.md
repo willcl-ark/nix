@@ -109,8 +109,9 @@ commit hash or prefix. The archive root has the existing search form. History
 includes runs that were never posted, counts each run once, and labels reports
 unavailable until their human pages have been generated. History and the Reviews
 table count the findings shown in the Review report: the findings approved in
-that run. Earlier findings appear only when the run approves them again;
-unresolved ones stay in the archive. Agent attribution and publication metrics
+that run. Earlier findings count only when the run approves them again. Those it
+neither republishes nor resolves are listed by title with links to their original
+reports; their assessments stay in the archive. Agent attribution and publication metrics
 count exported findings. When this counting changes, bump `VERSION` in
 `stats_cache.py` so cached counts are rebuilt.
 

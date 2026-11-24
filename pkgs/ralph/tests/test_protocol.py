@@ -857,9 +857,12 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         rendered = final_comment.render_report(
             findings, review_memory=[memory], head_sha="current-revision"
         )
-        self.assertNotIn(memory["title"], rendered)
+        current, earlier = rendered.split("## Earlier concerns", 1)
+        self.assertNotIn(memory["title"], current)
+        self.assertIn(memory["title"], earlier)
+        self.assertIn(memory["source_report_url"], earlier)
         self.assertNotIn(memory["reason"], rendered)
-        self.assertIn("Earlier concerns remain unresolved", rendered)
+        self.assertIn("neither republished nor resolved: 1 major finding.", current)
         for finding in findings:
             self.assertIn(finding["title"], rendered)
 
@@ -869,7 +872,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
         )
         rendered = final_comment.render_report([], review_memory=[memory])
         self.assertNotIn("I found no actionable issues", rendered)
-        self.assertIn("Earlier concerns remain unresolved", rendered)
+        self.assertIn("neither republished nor resolved: 1 major finding.", rendered)
         self.assertNotIn(memory["body"], rendered)
         for status in ("fixed", "invalid"):
             with self.subTest(status=status):
@@ -877,7 +880,7 @@ class ReviewMemoryRenderingTests(unittest.TestCase):
                 rendered = final_comment.render_report([], review_memory=[memory])
                 self.assertIn("no actionable findings", rendered)
                 self.assertNotIn(memory["body"], rendered)
-                self.assertNotIn("remain unresolved", rendered)
+                self.assertNotIn("Earlier concerns", rendered)
 
 
 if __name__ == "__main__":

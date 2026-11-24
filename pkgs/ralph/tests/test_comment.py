@@ -264,7 +264,7 @@ class CommentTests(unittest.TestCase):
                 self.assertIn(finding["body"], report)
         for memory in example["review_memory"]:
             self.assertNotIn(memory["title"], rendered)
-            self.assertNotIn(memory["title"], report)
+            self.assertNotIn(memory["title"], report.split("## Earlier concerns", 1)[0])
         # Repeated but currently verified findings still compete for the six slots.
         example["review_memory"] = [
             {
@@ -295,15 +295,22 @@ class CommentTests(unittest.TestCase):
         for render in (final_comment.render, final_comment.render_report):
             with self.subTest(render=render.__name__):
                 rendered = render([], review_memory=history, head_sha="head")
-                self.assertNotIn(retained["title"], rendered)
+                self.assertEqual(
+                    rendered.count(retained["title"]),
+                    render is final_comment.render_report,
+                )
                 self.assertNotIn(retained["reason"], rendered)
-                self.assertIn("Earlier concerns remain unresolved", rendered)
+                self.assertIn(
+                    f"Earlier concerns neither republished nor resolved: "
+                    f"1 {retained['severity']} finding.",
+                    rendered,
+                )
                 approved = {**original, "id": "current:1"}
                 linked = [{**retained, "current_finding_ids": ["current:1"]}]
                 rendered = render([approved], review_memory=linked, head_sha="head")
                 self.assertIn(approved["title"], rendered)
                 self.assertNotIn(retained["title"], rendered)
-                self.assertNotIn("Earlier concerns remain unresolved", rendered)
+                self.assertNotIn("Earlier concerns", rendered)
         self.assertEqual(
             final_comment.report_findings([], history, head_sha="head"), []
         )
@@ -335,7 +342,7 @@ class CommentTests(unittest.TestCase):
         self.assertIn("Review coverage was incomplete", rendered)
         self.assertNotIn("I found no actionable issues", rendered)
 
-    def test_unconfirmed_history_is_only_a_notice_in_the_report(self):
+    def test_unrated_history_is_listed_only_in_the_report(self):
         history = {
             "key": "old:1",
             "title": "Historical fee conversion concern",
@@ -360,9 +367,10 @@ class CommentTests(unittest.TestCase):
         rendered = final_comment.render_report(
             [], review_memory=[history], head_sha="head"
         )
-        self.assertNotIn(history["title"], rendered)
-        self.assertIn("Earlier concerns remain unresolved", rendered)
+        self.assertIn(f"\n- {history['title']}", rendered)
+        self.assertIn("1 unrated concern.", rendered)
         self.assertNotIn("Suggestion", rendered)
+        self.assertNotIn("None", rendered)
         comment = final_comment.render([], review_memory=[history], head_sha="head")
         self.assertNotIn(history["title"], comment)
         self.assertNotIn("I found no actionable issues", comment)

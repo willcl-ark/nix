@@ -117,13 +117,58 @@ def report_findings(
     return list(findings)
 
 
+def _severity_counts(findings):
+    counts = Counter(finding["severity"] for finding in findings)
+    return " · ".join(
+        f"{counts[severity]} {severity}{' finding' if severity != 'suggestion' else ''}{'s' if counts[severity] != 1 else ''}"
+        for severity in SEVERITY_ORDER
+        if counts[severity]
+    )
+
+
 def _unconfirmed_history(memory):
-    return [
-        entry
-        for entry in memory
+    unconfirmed = {
+        entry.get("key", index): entry
+        for index, entry in enumerate(memory)
         if entry.get("status") not in {"fixed", "invalid"}
         and not entry.get("current_finding_ids")
+    }
+    return [
+        entry
+        for entry in unconfirmed.values()
+        if entry.get("duplicate_of") not in unconfirmed
     ]
+
+
+def _history_notice(entries):
+    rated = [entry for entry in entries if entry.get("severity") in SEVERITY_ORDER]
+    unrated = len(entries) - len(rated)
+    counts = [_severity_counts(rated)] if rated else []
+    if unrated:
+        counts.append(f"{unrated} unrated concern{'s' if unrated != 1 else ''}")
+    return f"Earlier concerns neither republished nor resolved: {' · '.join(counts)}."
+
+
+def _history_list(entries):
+    """Attribute titles to their reports without repeating the claims' substance."""
+    items = []
+    for entry in entries:
+        title = entry.get("presented_title") or entry.get("title")
+        if not title:
+            continue
+        item = " ".join(title.split())
+        if entry.get("severity") in SEVERITY_ORDER:
+            item = f"{severity_label(entry['severity'])}: {item}"
+        if entry.get("source_report_url"):
+            item += f" ([earlier report](<{entry['source_report_url']}>))"
+        items.append("- " + item)
+    if not items:
+        return ""
+    return (
+        "## Earlier concerns\n\n"
+        "Earlier reports raised these, with the titles and severities shown there. "
+        "This review neither republished nor resolved them.\n\n" + "\n".join(items)
+    )
 
 
 def _brief_finding(finding, comment_format, location=None):
@@ -192,10 +237,12 @@ def render(
         label = f"{count} additional verified finding{'s' if count != 1 else ''} in the Review report"
         notices.append(f"[{label}](<{report_url}>)." if report_url else label + ".")
     # Never replay unverified claims or infer that omitted history was resolved.
+    # The comment gives only counts; the Review report lists titles.
     unlinked = _unconfirmed_history(review_memory or [])
     if unlinked:
         notices.append(
-            "Earlier concerns remain unresolved; see the Run archive linked from the Review report."
+            _history_notice(unlinked)
+            + " See the Run archive linked from the Review report for their assessments."
         )
     if limitations or any(
         entry.get("status") == "unclear" for entry in review_memory or []
@@ -318,19 +365,14 @@ def render_report(
             details="\n\n" + "\n\n".join(details) if details else "",
         )
     unconfirmed = _unconfirmed_history(memory)
-    counts = Counter(finding["severity"] for finding in findings)
-    overview = [
-        f"{counts[severity]} {severity}{' finding' if severity != 'suggestion' else ''}{'s' if counts[severity] != 1 else ''}"
-        for severity in SEVERITY_ORDER
-        if counts[severity]
-    ]
-    sections["overview"] = " · ".join(overview)
+    sections["overview"] = _severity_counts(findings)
     if unconfirmed:
         sections["overview"] = "\n\n".join(
             part
             for part in (
                 sections["overview"],
-                "Earlier concerns remain unresolved; see the Run archive for their assessments.",
+                _history_notice(unconfirmed)
+                + " See the Run archive for their assessments.",
             )
             if part
         )
@@ -357,6 +399,9 @@ def render_report(
             else "Review completed with no actionable findings."
         )
     content = _render_sections(comment_format["comment"], sections)
+    earlier = "" if verification_failed else _history_list(unconfirmed)
+    if earlier:
+        content += "\n\n" + earlier
     history = _historical_context(historical_context)
     if history:
         content += "\n\n" + history

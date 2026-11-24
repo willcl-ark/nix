@@ -580,7 +580,10 @@ class StatsPageTests(unittest.TestCase):
             catalog = json.loads((reports / "history.json").read_text())
             summary = stats.collect_stats(root, reports)
             human = (reports / "reports" / name).read_text()
-        self.assertNotIn("Retained concern", human)
+        self.assertNotIn(
+            "Retained concern", human.split("<h2>Earlier concerns</h2>")[0]
+        )
+        self.assertNotIn(retained["reason"], human)
         self.assertEqual(catalog[0]["findings"], 0)
         self.assertEqual(summary["reviews"][0]["report_severities"], {})
         self.assertEqual(summary["reviews"][0]["findings"]["published"], 0)
