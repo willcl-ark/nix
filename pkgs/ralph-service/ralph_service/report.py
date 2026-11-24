@@ -827,35 +827,52 @@ def _coverage_html(coverage, detailed=False):
 def _findings_html(attribution):
     if not attribution:
         return "<p>No verified finding attribution was recorded.</p>"
-    rows = []
+    entries = []
     for finding in attribution:
         location = ""
         if finding.get("path") and finding.get("line") and finding.get("side"):
             location = f"{finding['path']}:{finding['line']} ({finding['side']})"
-        rows.append(
-            "<tr>"
-            f"<td>{_escape(finding.get('finding_id'))}</td>"
-            f"<td>{_escape_with_code(finding.get('title'))}</td>"
-            f"<td>{_escape(location)}</td>"
-            f"<td>{_escape(', '.join(finding.get('raised_by') or []))}</td>"
-            f"<td>{_escape(', '.join(finding.get('candidate_ids') or []))}</td>"
-            f"<td>{_escape(finding.get('verified_by'))}</td>"
-            f"<td>{_escape(finding.get('judged_by'))}</td>"
-            f"<td>{_escape(finding.get('edited_by'))}</td>"
-            "</tr>"
+        details = "".join(
+            f"{label}: {_escape(value)}<br>"
+            for label, value in (
+                ("Raised by", ", ".join(finding.get("raised_by") or [])),
+                ("Candidates", ", ".join(finding.get("candidate_ids") or [])),
+                ("Verified by", finding.get("verified_by")),
+                ("Judged by", finding.get("judged_by")),
+                ("Edited by", finding.get("edited_by")),
+            )
+            if value
         )
-    return (
-        "<table>"
-        "<thead><tr><th>ID</th><th>Finding</th><th>Location</th>"
-        "<th>Raised by</th><th>Candidates</th><th>Verified</th><th>Judged</th><th>Edited</th>"
-        "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody>"
-        "</table>"
-    )
+        entries.append(
+            f"<details><summary>{_escape_with_code(finding.get('title'))}"
+            f'<span class="entry-note">{_escape(finding.get("finding_id"))} '
+            f"{_escape(location)}</span></summary><p>{details}</p></details>"
+        )
+    return "".join(entries)
 
 
 def _json_html(value):
     return f"<pre>{_escape(json.dumps(value, ensure_ascii=False, indent=2))}</pre>"
+
+
+def _source_evidence_html(evidence):
+    citations = []
+    for item in evidence:
+        location = item.get("path") or "Unknown source"
+        if item.get("line") is not None:
+            location += f":{item['line']}"
+            if item.get("end_line") not in (None, item["line"]):
+                location += f"-{item['end_line']}"
+        version = " ".join(
+            part for part in (item.get("side"), (item.get("commit") or "")[:12]) if part
+        )
+        if version:
+            location += f" ({version})"
+        citations.append(
+            f"<details><summary>{_escape(location)}</summary>"
+            f"<pre>{_escape(item.get('excerpt'))}</pre></details>"
+        )
+    return "".join(citations)
 
 
 def _paragraphs(record, keys):
@@ -1071,7 +1088,7 @@ def _decisions_html(decisions):
             f"{finding_html}"
             + (
                 "<details><summary>Source evidence</summary>"
-                + _json_html(decision["source_evidence"])
+                + _source_evidence_html(decision["source_evidence"])
                 + "</details>"
                 if decision.get("source_evidence")
                 else ""
@@ -1098,42 +1115,57 @@ def _challenges_html(records):
     }
     refuted = [record for record in records if record["outcome"] == "refuted"]
     approved = sum(record.get("final_disposition") == "publish" for record in refuted)
-    rows = []
+    entries = []
     for record in records:
         location = (
             f"{record['path']}:{record.get('line', '')} ({record.get('side', '')})"
             if record.get("path")
             else ""
         )
-        cells = [
-            f"<td><strong>{_escape_with_code(record['title'])}</strong><br>"
-            f"<code>{_escape(record['candidate_id'])}</code><br>{_escape(location)}</td>"
-        ]
-        for disposition, reason, evidence in (
-            (record["outcome"], record.get("reason"), record.get("source_evidence")),
-            (record.get("verifier_disposition"), record.get("verifier_reason"), None),
-            (record.get("final_disposition"), record.get("final_reason"), None),
+        outcomes = []
+        reasons = []
+        for step, disposition, reason, evidence in (
+            (
+                "Challenger",
+                record["outcome"],
+                record.get("reason"),
+                record.get("source_evidence"),
+            ),
+            (
+                "Source verification",
+                record.get("verifier_disposition"),
+                record.get("verifier_reason"),
+                None,
+            ),
+            (
+                "Final decision",
+                record.get("final_disposition"),
+                record.get("final_reason"),
+                None,
+            ),
         ):
             label = labels.get(disposition, "Unassessed")
             if disposition == "publish" and record["outcome"] == "refuted":
                 label = "Refuted, then approved"
-            details = (
-                "<details><summary>Reason and evidence</summary>"
-                f"<p>{_escape(reason or 'No decision was recorded.')}</p>"
-                + (_json_html(evidence) if evidence else "")
-                + "</details>"
+            outcomes.append(label)
+            reasons.append(
+                f"<p><strong>{step}: {_escape(label)}.</strong> "
+                f"{_escape(reason or 'No decision was recorded.')}</p>"
+                + _source_evidence_html(evidence or [])
             )
-            cells.append(f"<td>{_escape(label)}{details}</td>")
-        rows.append("<tr>" + "".join(cells) + "</tr>")
+        entries.append(
+            f"<details><summary>{_escape_with_code(record['title'])}"
+            f'<span class="entry-note">{_escape(record["candidate_id"])} '
+            f"{_escape(location)}<br>{_escape(' → '.join(outcomes))}</span></summary>"
+            f"{''.join(reasons)}</details>"
+        )
     return (
         f"<p>{len(records)} candidates; {len(refuted)} refutations; "
         f"{approved} refutations followed by publication approval.</p>"
         "<p>Counts refer to candidates; several candidates may become one finding. "
         "Downstream decisions show agreement between agents. They do not establish "
         "correctness or confirm delivery.</p>"
-        "<table><thead><tr><th>Candidate</th><th>Challenger</th>"
-        "<th>Source verification</th><th>Final decision</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"{''.join(entries)}"
     )
 
 
@@ -1529,32 +1561,26 @@ def _export_findings_html(record):
         return "<p>This engine does not provide a findings export.</p>"
     if not findings:
         return "<p>The supported findings export is empty.</p>"
-    rows = []
+    entries = []
     for finding in findings:
         if not isinstance(finding, dict):
             continue
         location = finding.get("path", "")
         if finding.get("line") is not None:
             location = f"{location}:{finding['line']}"
-        rows.append(
-            "<tr>"
-            f"<td>{_escape(finding.get('id', ''))}</td>"
-            f"<td>{_escape(finding.get('severity', 'unknown'))}</td>"
-            f"<td>{_escape(finding.get('kind', 'unknown'))}</td>"
-            f"<td>{_escape_with_code(finding.get('presented_title') or finding.get('title', ''))}</td>"
-            f"<td><code>{_escape(location)}</code></td>"
-            f"<td>{_escape(finding.get('presented_summary') or finding.get('summary', ''))}</td>"
-            f"<td>{_escape(finding.get('presented_body') or finding.get('body', ''))}</td>"
-            "</tr>"
+        entries.append(
+            "<details><summary>"
+            f"{_escape_with_code(finding.get('presented_title') or finding.get('title', ''))}"
+            f'<span class="entry-note">{_escape(finding.get("id", ""))} '
+            f"{_escape(location)}<br>{_escape(finding.get('severity', 'unknown'))} "
+            f"{_escape(finding.get('kind', 'unknown'))}</span></summary>"
+            f"<p>{_escape(finding.get('presented_summary') or finding.get('summary', ''))}</p>"
+            f"<p>{_escape(finding.get('presented_body') or finding.get('body', ''))}</p>"
+            "</details>"
         )
-    if not rows:
+    if not entries:
         return "<p>The supported findings export contained no readable items.</p>"
-    return (
-        "<table><thead><tr><th>ID</th><th>Severity</th><th>Kind</th>"
-        "<th>Title</th><th>Location</th><th>Summary</th><th>Details</th></tr></thead><tbody>"
-        + "".join(rows)
-        + "</tbody></table>"
-    )
+    return "".join(entries)
 
 
 def _style():
@@ -1575,6 +1601,7 @@ th, td { vertical-align: top; }
 details { border-top: 1px solid var(--border); padding: .75rem 0; }
 main > details { border-top: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
 summary { font-weight: 600; }
+.entry-note { display: block; color: var(--muted); font-size: .875rem; font-weight: 400; }
 :not(pre, a) > code { background: var(--raised); border: 1px solid var(--border); padding: 0 .35ch; }
 .severity-tag { color: var(--cyan); }
 summary:has(.stage-status) { color: var(--text); }
