@@ -1628,6 +1628,40 @@ footer::before { content: "-- "; }
 .trend-notes { margin-top: 1rem; font-size: .78rem; }
 #trends figcaption { min-height: 3.1em; }
 .note { font-size: .8rem; max-width: 100ch; }
+.token-filters { position: sticky; top: 0; z-index: 4; margin: 0 0 1rem; padding: .75rem 0; background: var(--bg); border-bottom: 1px dashed var(--rule); display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .75rem; }
+.token-filters label { min-width: 0; }
+.token-filters select { width: 100%; padding: .4rem; font-size: .85rem; text-overflow: ellipsis; }
+.token-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); gap: 1.25rem; }
+.token-charts section { margin: 0; min-width: 0; }
+.token-charts section:last-child:nth-child(odd) { grid-column: 1 / -1; }
+#tokens { transition: opacity .15s; }
+#tokens.loading { opacity: .6; }
+.token-plot { position: relative; }
+.token-plot svg { display: block; max-width: 100%; touch-action: pan-y; }
+.token-plot svg:focus-visible { outline: 1px solid var(--accent); }
+.token-plot text { fill: var(--muted); font: 11px var(--mono); }
+.token-grid { stroke: var(--border); }
+.token-rule { stroke: var(--text); }
+.token-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.token-dot { stroke: var(--surface); stroke-width: 2; }
+.token-legend { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; font-size: .78rem; margin-bottom: .5rem; }
+.token-legend i, .token-tooltip i { display: inline-block; width: 1ch; height: 1ch; margin-right: .7ch; background: var(--key); }
+.token-legend i.line { width: 2ch; height: 2px; vertical-align: middle; }
+.token-legend i.dashed { background: repeating-linear-gradient(to right, var(--key) 0 5px, transparent 5px 8px); }
+.token-tooltip { position: absolute; top: .5rem; z-index: 3; max-width: 70%; padding: .5rem .7rem; background: var(--raised); border: 1px solid var(--rule); font-size: .78rem; pointer-events: none; white-space: nowrap; }
+.token-tooltip i { width: 1.6ch; height: 2px; vertical-align: middle; }
+.token-tooltip b { margin-right: 1ch; }
+.token-tooltip-title { color: var(--muted); }
+.token-stages { grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); }
+.token-stages figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: 1ch; }
+.token-stages .chart { min-width: 0; }
+.token-stages .note { font-weight: 400; white-space: nowrap; }
+.token-stage { padding: 0; border: 0; background: none; font-weight: 700; text-align: left; overflow-wrap: anywhere; }
+.token-stage[aria-pressed="true"] { color: var(--accent); }
+[data-table] td { white-space: nowrap; }
+[data-table] .review-title { max-width: 26ch; }
+.token-lower { text-transform: lowercase; }
+[data-table] th, [data-table] td { padding-left: .5rem; padding-right: .5rem; }
 #leaderboard td:first-child { width: 38%; }
 .finding-score { display: flex; align-items: center; justify-content: flex-end; gap: .8rem; font-variant-numeric: tabular-nums; }
 .finding-score meter { width: 5rem; height: .6rem; }
@@ -1689,6 +1723,7 @@ td code { color: var(--muted); }
   .cards { gap: .65rem; }
   .kpi-value { font-size: 1.8rem; }
   .finding-score meter { display: none; }
+  .token-filters { position: static; grid-template-columns: 1fr 1fr; }
   header { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .5rem 1rem; padding: .75rem 1rem; }
   .header-top { padding: 0; }
   header nav, .preview { grid-column: 1 / -1; margin: 0; }
@@ -1859,6 +1894,7 @@ def _header(summary, page_prefix="", active="Overview"):
         ("agents/", "Agents"),
         ("addressed/", "Outcomes"),
         ("usage/", "Usage"),
+        ("tokens/", "Tokens"),
         ("limits/", "Limits"),
         ("health/", "Review health"),
     ]
@@ -1868,6 +1904,7 @@ def _header(summary, page_prefix="", active="Overview"):
         "Agents": "M8 21v-3a4 4 0 0 1 8 0v3 M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M3 18v-2a4 4 0 0 1 3-4 M21 18v-2a4 4 0 0 0-3-4",
         "Reviews": "M5 3h14v18H5z M8 7h8 M8 11h8 M8 15h5",
         "Outcomes": "M4 12l5 5L20 6",
+        "Tokens": "M3 17l5-6 4 3 8-9 M3 21h18",
         "Usage": "M3 20h18 M6 16v-5 M12 16V4 M18 16V8",
         "Limits": "M4 7h16 M4 17h16 M8 4v6 M16 14v6",
     }
@@ -2325,6 +2362,173 @@ def _usage_html(summary):
     return _page("Usage", summary, body, "../", "Usage")
 
 
+def _token_repositories(summary, repository_url):
+    """Describe each repository with token data for links built by the page."""
+    names = summary.get("repository_names") or {
+        key: value.get("repository", key)
+        for key, value in (summary.get("repositories") or {}).items()
+    }
+    urls = {
+        review.get("repository_id"): review.get("repository_url") or repository_url
+        for review in _list(summary.get("reviews"))
+    }
+    result = {}
+    for key, name in names.items():
+        base = _valid_http_base(urls.get(key))
+        result[key] = {
+            "name": name,
+            "label": "bitcoin" if key == "core" else key,
+            "pull": config.pull_request_url(base, "") if base else None,
+        }
+    return result
+
+
+def _token_select(name, label, options, default=""):
+    return (
+        f'<label>{_escape(label)} <select name="{name}">'
+        + "".join(
+            f'<option value="{_escape(value)}"'
+            + (" selected" if value == default else "")
+            + f">{_escape(text)}</option>"
+            for value, text in options
+        )
+        + "</select></label>"
+    )
+
+
+def _token_table(name, label):
+    return (
+        f'<div data-table="{name}"><div class="list-controls">'
+        f'<label>Search {label} <input type="search"></label></div>'
+        "<table><thead></thead><tbody></tbody></table>"
+        '<div class="pagination"><button type="button">Previous</button>'
+        '<span role="status" aria-live="polite"></span>'
+        '<button type="button">Next</button></div></div>'
+    )
+
+
+def _tokens_html(summary, repository_url, report_base_url):
+    months = sorted(_mapping(summary.get("token_months")))
+    title = '<h1>Tokens</h1><p class="subtitle">How many tokens reviews and stages use, and how that changes.</p>'
+    if not months:
+        body = title + "<p>No token usage was recorded.</p>"
+        return _page("Tokens", summary, body, "../", "Tokens")
+    scope = summary.get("repository_id")
+    everything = [("", "All")]
+    filters = (
+        _token_select(
+            "range",
+            "Period",
+            [
+                ("14", "14 days"),
+                ("30", "30 days"),
+                ("90", "90 days"),
+                ("", "All"),
+            ],
+            "30",
+        )
+        + _token_select("group", "Group by", [("week", "Week"), ("day", "Day")])
+        + _token_select(
+            "metric",
+            "Measure",
+            [
+                ("input", "Input"),
+                ("uncached", "Uncached input"),
+                ("output", "Output"),
+                ("total", "Input + output"),
+            ],
+        )
+        + ("" if scope else _token_select("repository", "Repository", everything))
+        + _token_select("tier", "Tier", everything)
+        + _token_select("profile", "Profile", everything)
+        + _token_select("stage", "Stage", everything)
+        + _token_select("model", "Model", everything)
+    )
+    cards = "".join(
+        f'<article class="card" data-kpi="{key}"><div class="kpi-label">{label}</div>'
+        '<div class="kpi-value">–</div><div class="kpi-detail"></div></article>'
+        for key, label in (
+            ("reviews", "Completed reviews"),
+            ("median", "Median per review"),
+            ("cache", "Cache hit rate"),
+            ("lost", "Superseded or failed"),
+        )
+    )
+
+    def section(name, heading, note):
+        return (
+            f'<section><h2>{heading}</h2><p class="note">{note}</p>'
+            + f'<div data-chart="{name}"></div></section>'
+        )
+
+    metric = "<span data-metric-name>Input tokens</span>"
+    lower_metric = '<span class="token-lower" data-metric-name>Input tokens</span>'
+    subject = "<span data-subject>per review</span>"
+    body = (
+        title
+        + f'<div id="tokens" data-months="{_escape(" ".join(months))}"'
+        + f' data-root="{"../../../tokens/" if scope else ""}"'
+        + f' data-repository="{_escape(scope or "")}"'
+        + f' data-reports="{_escape(_valid_http_base(report_base_url) or "")}"'
+        + f' data-repositories="{_escape(json.dumps(_token_repositories(summary, repository_url)))}">'
+        + "<noscript><p>This page needs JavaScript. Totals are on the Usage page.</p></noscript>"
+        + '<div data-content hidden><form class="list-controls token-filters" autocomplete="off">'
+        + filters
+        + '</form><p class="preview" data-load-status hidden></p>'
+        + _section_note(
+            f"Recorded requests start on {summary.get('token_start')}. Input includes cached tokens. "
+            "Medians use completed reviews; shares and cache rates also include superseded "
+            "and failed reviews. Reviews appear once finished, under the UTC day they "
+            "started. Hollow points have fewer than five reviews or runs, and * marks a partial week. Ralph's stages, "
+            "models and limits change over time, so a step may not mean the same work cost more."
+        )
+        + f'<div class="cards usage-cards">{cards}</div><div class="token-charts">'
+        + section(
+            "reviews",
+            f"{metric} {subject}",
+            "Median and 90th percentile of completed reviews.",
+        )
+        + section(
+            "cache-mix",
+            f"Cached and uncached input {subject}",
+            "Mean of completed reviews. Output is far smaller; choose it under Measure.",
+        )
+        + section(
+            "share",
+            "Share by stage",
+            f"{metric} by stage. The four largest stages keep their colours; the rest are combined.",
+        )
+        + section(
+            "cache-rate",
+            "Cache hit rate",
+            "Cached share of input, over requests that reported both.",
+        )
+        + section(
+            "lost",
+            "Superseded or failed reviews",
+            f"Their share of {lower_metric}. Ignores the tier and profile filters, which most of these reviews never recorded.",
+        )
+        + "</div><section><h2>Per stage run</h2>"
+        + f'<p class="note">Median {lower_metric} for each stage in a completed review, retries included, '
+        + "with the change between the earlier and later half of the period. Scales differ. "
+        + "Select a stage name to filter the page.</p>"
+        + '<div class="charts token-stages" data-stage-charts></div>'
+        + '<p><button type="button" data-all-stages hidden></button></p></section>'
+        + "<section><h2>Stages</h2>"
+        + f'<p class="note">{metric} by stage and model. Runs, median and P90 cover completed reviews. '
+        + "A change needs five runs in each half of the period.</p>"
+        + _token_table("stages", "stages")
+        + "</section><section><h2>Reviews</h2>"
+        + _section_note("Usage covers the selected stage and model.")
+        + _token_table("reviews", "reviews")
+        + "</section></div></div>"
+        + '<script src="'
+        + ("../../../tokens/" if scope else "")
+        + 'tokens.js" defer></script>'
+    )
+    return _page("Tokens", summary, body, "../", "Tokens")
+
+
 def _limits_html(summary, repository_url, archive_base_url):
     limits = _mapping(summary.get("limits"))
     labels = {
@@ -2505,7 +2709,7 @@ def _export(summary):
     export = {
         key: value
         for key, value in summary.items()
-        if key not in {"repositories", "reviews", "recent_reviews"}
+        if key not in {"repositories", "reviews", "recent_reviews", "token_months"}
     }
     if "stages" in summary:
         export["stages"] = [
@@ -2550,6 +2754,17 @@ def save_stats(
         + "\n",
     )
     write("stats.js", _script())
+    write(
+        "tokens/tokens.js",
+        (Path(__file__).parent / "tokens.js").read_text(encoding="utf-8"),
+    )
+    for month, data in (summary.get("token_months") or {}).items():
+        if data is None:
+            continue  # Repository pages read the files for all repositories.
+        write(
+            f"tokens/{month}.json",
+            json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n",
+        )
     for name, render in (
         ("index.html", _html),
         ("agents/index.html", _agents_html),
@@ -2559,6 +2774,7 @@ def save_stats(
         write(name, render(summary, repository_url, report_base_url))
     write("limits/index.html", _limits_html(summary, repository_url, archive_base_url))
     write("usage/index.html", _usage_html(summary))
+    write("tokens/index.html", _tokens_html(summary, repository_url, report_base_url))
     write("health/index.html", _health_html(summary, archive_base_url))
     stage_names = set()
     for stage in _list(summary.get("stages")):
@@ -2586,7 +2802,12 @@ def save_stats(
                 raise ValueError("invalid repository key in statistics")
             save_stats(
                 output_dir / "repos" / key,
-                {**value, "repository_names": names},
+                {
+                    **value,
+                    "repository_names": names,
+                    "token_months": dict.fromkeys(summary.get("token_months") or {}),
+                    "token_start": summary.get("token_start"),
+                },
                 repository_url,
                 report_base_url,
                 archive_base_url=archive_base_url,

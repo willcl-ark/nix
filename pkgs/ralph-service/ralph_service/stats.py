@@ -19,7 +19,7 @@ from ralph import refusals
 from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
-from . import health, stats_cache
+from . import health, stats_cache, tokens
 from .report import _provisional_findings, _source_repository_url, public_limits
 from .stats_cache import TOKEN_FIELDS
 
@@ -59,6 +59,10 @@ def collect_stats(
     repositories = repositories or {}
     sources = _read_sources(state_dir, report_dir, cache)
     summary = _summarize(state_dir, report_dir, sources, repositories)
+    summary["token_months"] = tokens.months(sources["jobs"], sources["requests"])
+    summary["token_start"] = min(
+        (row["day"] for row in sources["requests"] if row["day"]), default=None
+    )
     ids = sorted(set(repositories) | set(sources["job_repositories"].values()))
     summary["repositories"] = {
         repo: _summarize(
@@ -507,6 +511,11 @@ def _review_summary(row):
         "provisional_findings": len(_provisional_findings(debug)),
         "skipped": skipped,
         "routing": routing,
+        "profile": _optional_string(
+            (debug.get("profile_selection") or {}).get("effective")
+        )
+        if debug
+        else None,
         "coverage": coverage["status"],
         "context_coverage": coverage["context_status"],
         "verification_status": coverage["verification_status"],

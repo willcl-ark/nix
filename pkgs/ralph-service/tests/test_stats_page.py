@@ -246,6 +246,31 @@ class StatsPageTests(unittest.TestCase):
             self.assertNotIn("https://forge.example/bitcoin/bitcoin/pulls/123", gui)
             self.assertIn('href="../../../index.html"', gui)
 
+            # Finished reviews appear in the month they started; every
+            # repository's Tokens page reads the same files.
+            (month,) = summary["token_months"].values()
+            stage, model = month["names"]
+            self.assertEqual((stage, model), ("tests", "test-model"))
+            self.assertEqual(
+                {
+                    month["reviews"][run[0]][1]: run[month["run_fields"].index("input")]
+                    for run in month["runs"]
+                },
+                {"core": 10, "gui": 20},
+            )
+            name = next(iter(summary["token_months"])) + ".json"
+            self.assertEqual(
+                json.loads((output / "tokens" / name).read_text())["runs"],
+                month["runs"],
+            )
+            self.assertFalse((output / "repos/gui/tokens" / name).exists())
+            page = (output / "repos/gui/tokens/index.html").read_text()
+            self.assertIn('data-root="../../../tokens/"', page)
+            unfinished = ledger.start("tests", "test-model", "pr:core:124:999:1")
+            ledger.fail(unfinished)
+            again = stats.collect_stats(root, reports, repositories=repositories)
+            self.assertEqual(again["token_months"], summary["token_months"])
+
     def test_timestamp_refresh_preserves_pages_and_removes_obsolete_agents(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
