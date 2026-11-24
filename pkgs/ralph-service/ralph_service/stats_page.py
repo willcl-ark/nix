@@ -1628,12 +1628,18 @@ footer::before { content: "-- "; }
 .trend-notes { margin-top: 1rem; font-size: .78rem; }
 #trends figcaption { min-height: 3.1em; }
 .note { font-size: .8rem; max-width: 100ch; }
-.token-filters { position: sticky; top: 0; z-index: 4; margin: 0 0 1rem; padding: .75rem 0; background: var(--bg); border-bottom: 1px dashed var(--rule); display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .75rem; }
+.token-filters { margin: 0; padding: .75rem 0; background: var(--bg); border-bottom: 1px dashed var(--rule); display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .75rem; }
 .token-filters label { min-width: 0; }
 .token-filters select { width: 100%; padding: .4rem; font-size: .85rem; text-overflow: ellipsis; }
-.token-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); gap: 1.25rem; }
+.token-charts { margin: 1.25rem 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); gap: 1.25rem; }
 .token-charts section { margin: 0; min-width: 0; }
-.token-charts section:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.token-charts section:first-child:nth-last-child(odd) { grid-column: 1 / -1; }
+#tokens form { position: sticky; top: 0; z-index: 4; margin: 0 0 1rem; background: var(--bg); }
+.token-more { align-self: end; }
+.token-more[open] { grid-column: 1 / -1; }
+.token-more summary { padding: .4rem 0; font-size: .85rem; }
+.token-more .token-filters { border: 0; padding: .5rem 0 0; }
+.token-help { margin: 0 0 1rem; }
 #tokens { transition: opacity .15s; }
 #tokens.loading { opacity: .6; }
 .token-plot { position: relative; }
@@ -1643,21 +1649,38 @@ footer::before { content: "-- "; }
 .token-grid { stroke: var(--border); }
 .token-rule { stroke: var(--text); }
 .token-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.token-change { stroke: var(--amber); stroke-dasharray: 2 4; opacity: .55; }
+.token-update { stroke: var(--muted); }
+.token-point { opacity: .5; }
+.token-ring { fill: none; stroke: var(--text); }
+.token-tabs { display: flex; flex-wrap: wrap; gap: 0 .4rem; margin: 0 0 .75rem; padding: 0; border: 0; border-bottom: 1px solid var(--rule); }
+.token-tabs label { position: relative; cursor: pointer; }
+.token-tabs input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.token-tabs span { display: block; padding: .5rem .9rem; border-bottom: 2px solid transparent; color: var(--muted); }
+.token-tabs input:checked + span { border-color: var(--accent); color: var(--text); font-weight: 700; }
+.token-tabs input:focus-visible + span { outline: 1px solid var(--accent); }
+.token-changes td:first-child { white-space: nowrap; }
+.token-day { opacity: .35; }
+.token-area { stroke: var(--surface); stroke-width: 1; }
+.token-spark { display: block; margin-left: auto; }
+.token-spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.token-spark circle { fill: var(--accent); }
+.token-moved { white-space: nowrap; font-size: .8rem; display: flex; justify-content: space-between; align-items: end; gap: 1ch; margin-top: .4rem; color: var(--text); }
+.token-expanded { padding: .5rem 0; max-width: 64rem; }
+.token-open:hover { background: none; }
 .token-dot { stroke: var(--surface); stroke-width: 2; }
 .token-legend { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; font-size: .78rem; margin-bottom: .5rem; }
 .token-legend i, .token-tooltip i { display: inline-block; width: 1ch; height: 1ch; margin-right: .7ch; background: var(--key); }
 .token-legend i.line { width: 2ch; height: 2px; vertical-align: middle; }
 .token-legend i.dashed { background: repeating-linear-gradient(to right, var(--key) 0 5px, transparent 5px 8px); }
-.token-tooltip { position: absolute; top: .5rem; z-index: 3; max-width: 70%; padding: .5rem .7rem; background: var(--raised); border: 1px solid var(--rule); font-size: .78rem; pointer-events: none; white-space: nowrap; }
+.token-tooltip { position: absolute; top: .5rem; z-index: 3; box-sizing: border-box; width: max-content; padding: .5rem .7rem; background: var(--raised); border: 1px solid var(--rule); font-size: .78rem; pointer-events: none; }
 .token-tooltip i { width: 1.6ch; height: 2px; vertical-align: middle; }
 .token-tooltip b { margin-right: 1ch; }
 .token-tooltip-title { color: var(--muted); }
-.token-stages { grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); }
-.token-stages figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: 1ch; }
-.token-stages .chart { min-width: 0; }
-.token-stages .note { font-weight: 400; white-space: nowrap; }
 .token-stage { padding: 0; border: 0; background: none; font-weight: 700; text-align: left; overflow-wrap: anywhere; }
-.token-stage[aria-pressed="true"] { color: var(--accent); }
+.token-stage[aria-expanded="true"] { color: var(--accent); }
+.token-stage::before { content: "[+] "; color: var(--muted); font-weight: 400; }
+.token-stage[aria-expanded="true"]::before { content: "[-] "; }
 [data-table] td { white-space: nowrap; }
 [data-table] .review-title { max-width: 26ch; }
 .token-lower { text-transform: lowercase; }
@@ -1723,7 +1746,12 @@ td code { color: var(--muted); }
   .cards { gap: .65rem; }
   .kpi-value { font-size: 1.8rem; }
   .finding-score meter { display: none; }
-  .token-filters { position: static; grid-template-columns: 1fr 1fr; }
+  #tokens form { position: static; }
+  #tokens .usage-cards { grid-template-columns: 1fr 1fr; gap: .6rem; }
+  #tokens .card { padding: .8rem; min-width: 0; }
+  #tokens .kpi-value { font-size: 1.5rem; }
+  .token-moved { flex-wrap: wrap; white-space: normal; }
+  .token-filters { grid-template-columns: 1fr 1fr; }
   header { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .5rem 1rem; padding: .75rem 1rem; }
   .header-top { padding: 0; }
   header nav, .preview { grid-column: 1 / -1; margin: 0; }
@@ -1894,7 +1922,7 @@ def _header(summary, page_prefix="", active="Overview"):
         ("agents/", "Agents"),
         ("addressed/", "Outcomes"),
         ("usage/", "Usage"),
-        ("tokens/", "Tokens"),
+        ("tokens/", "Trends"),
         ("limits/", "Limits"),
         ("health/", "Review health"),
     ]
@@ -1904,7 +1932,7 @@ def _header(summary, page_prefix="", active="Overview"):
         "Agents": "M8 21v-3a4 4 0 0 1 8 0v3 M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M3 18v-2a4 4 0 0 1 3-4 M21 18v-2a4 4 0 0 0-3-4",
         "Reviews": "M5 3h14v18H5z M8 7h8 M8 11h8 M8 15h5",
         "Outcomes": "M4 12l5 5L20 6",
-        "Tokens": "M3 17l5-6 4 3 8-9 M3 21h18",
+        "Trends": "M3 17l5-6 4 3 8-9 M3 21h18",
         "Usage": "M3 20h18 M6 16v-5 M12 16V4 M18 16V8",
         "Limits": "M4 7h16 M4 17h16 M8 4v6 M16 14v6",
     }
@@ -2409,10 +2437,10 @@ def _token_table(name, label):
 
 def _tokens_html(summary, repository_url, report_base_url):
     months = sorted(_mapping(summary.get("token_months")))
-    title = '<h1>Tokens</h1><p class="subtitle">How many tokens reviews and stages use, and how that changes.</p>'
+    title = '<h1>Trends</h1><p class="subtitle">How token use, findings, speed and failures change over time.</p>'
     if not months:
         body = title + "<p>No token usage was recorded.</p>"
-        return _page("Tokens", summary, body, "../", "Tokens")
+        return _page("Trends", summary, body, "../", "Trends")
     scope = summary.get("repository_id")
     everything = [("", "All")]
     filters = (
@@ -2427,7 +2455,9 @@ def _tokens_html(summary, repository_url, report_base_url):
             ],
             "30",
         )
-        + _token_select("group", "Group by", [("week", "Week"), ("day", "Day")])
+        + _token_select(
+            "group", "Points", [("rolling", "7-day line"), ("week", "Weeks")]
+        )
         + _token_select(
             "metric",
             "Measure",
@@ -2439,94 +2469,313 @@ def _tokens_html(summary, repository_url, report_base_url):
             ],
         )
         + ("" if scope else _token_select("repository", "Repository", everything))
+        + _token_select("stage", "Stage", everything)
+        + '<details class="token-more"><summary data-more>More filters</summary><div class="token-filters">'
         + _token_select("tier", "Tier", everything)
         + _token_select("profile", "Profile", everything)
-        + _token_select("stage", "Stage", everything)
         + _token_select("model", "Model", everything)
+        + "</div></details>"
     )
-    cards = "".join(
-        f'<article class="card" data-kpi="{key}"><div class="kpi-label">{label}</div>'
-        '<div class="kpi-value">–</div><div class="kpi-detail"></div></article>'
-        for key, label in (
+    tabs = [
+        ("use", "Use"),
+        ("findings", "Findings"),
+        ("efficiency", "Efficiency"),
+        ("time", "Time"),
+        ("failures", "Failures"),
+    ]
+    tab_controls = "".join(
+        f'<label><input type="radio" name="tab" value="{key}"'
+        + (" checked" if key == "use" else "")
+        + f"> <span>{label}</span></label>"
+        for key, label in tabs
+    )
+    metric = "<span data-metric-name>Input tokens</span>"
+    lower_metric = '<span class="token-lower" data-metric-name>Input tokens</span>'
+    subject = "<span data-subject>per review</span>"
+    data_root = "../../../tokens/" if scope else ""
+    body = (
+        title
+        + f'<div id="tokens" data-months="{_escape(" ".join(months))}"'
+        + f' data-root="{data_root}"'
+        + f' data-repository="{_escape(scope or "")}"'
+        + f' data-reports="{_escape(_valid_http_base(report_base_url) or "")}"'
+        + f' data-changes="{_escape(json.dumps(_list(summary.get("token_changes")), separators=(",", ":")))}"'
+        + f' data-repositories="{_escape(json.dumps(_token_repositories(summary, repository_url)))}">'
+        + "<noscript><p>This page needs JavaScript. Totals are on the Usage page.</p></noscript>"
+        + '<div data-content hidden><form autocomplete="off">'
+        + f'<fieldset class="token-tabs" aria-label="View">{tab_controls}</fieldset>'
+        + f'<div class="list-controls token-filters">{filters}</div></form>'
+        + '<p class="preview" data-load-status hidden></p>'
+        + '<details class="token-help"><summary>How to read this</summary><p class="note">'
+        + f"Recorded requests start on {summary.get('token_start')}. Input includes cached tokens. "
+        "Lines cover the seven days up to each day, or fewer at the start of the records, and stop where those days "
+        "have fewer than five samples. Faint dots are single days, hollow when above the scale. With weeks, hollow points have fewer than "
+        "five samples and * marks a partial week.</p>"
+        '<p class="note">Medians use completed reviews; shares and cache rates also include superseded '
+        "and failed reviews. Reviews appear once finished, under the UTC day they started. "
+        "Cards compare the earlier and later half of the period. Dashed vertical lines mark a new stage or a model "
+        "change. Ticks below the axis mark days with an engine or config update.</p></details>"
+        + _token_use_panel(metric, lower_metric, subject)
+        + _token_findings_panel(metric, lower_metric)
+        + _token_efficiency_panel(metric, lower_metric)
+        + _token_time_panel()
+        + _token_failures_panel()
+        + '<section><details class="token-changes"><summary>Model and engine changes</summary>'
+        + '<p class="note">Dated by the first review that used them. Updates count new engine code or '
+        + "configuration versions, which may not affect every stage.</p><table><thead><tr>"
+        + "<th>Day</th><th>Updates</th><th>Model changes</th></tr></thead><tbody data-changes></tbody></table>"
+        + "</details></section></div></div>"
+        + f'<script src="{data_root}tokens.js" defer></script>'
+    )
+    # Filters start with the last 30 days, which the two newest files cover.
+    preload = "".join(
+        f'<link rel="preload" as="fetch" crossorigin href="{data_root}{month}.json">'
+        for month in months[-2:]
+    )
+    return _page("Trends", summary, body, "../", "Trends").replace(
+        "</head>", preload + "</head>", 1
+    )
+
+
+def _token_panel(tab, cards, charts, rest):
+    """Show the cards, one main chart, smaller supporting charts and tables."""
+
+    def section(name, heading, note, height):
+        return (
+            f'<section><h2>{heading}</h2><p class="note">{note}</p>'
+            f'<div data-chart="{name}" data-height="{height}"></div></section>'
+        )
+
+    main, *supporting = charts
+    return (
+        f'<div data-tab="{tab}" hidden><div class="cards usage-cards">'
+        + "".join(
+            f'<article class="card" data-kpi="{key}"><div class="kpi-label">{label}</div>'
+            '<div class="kpi-value">–</div><div class="kpi-detail"></div></article>'
+            for key, label in cards
+        )
+        + "</div>"
+        + section(*main, 300)
+        + '<div class="token-charts">'
+        + "".join(section(*chart, 200) for chart in supporting)
+        + f"</div>{rest}</div>"
+    )
+
+
+def _token_stage_table(name, heading, note):
+    return (
+        f'<section><h2>{heading}</h2><p class="note">{note}</p>'
+        + _token_table(name, "stages")
+        + "</section>"
+    )
+
+
+def _token_use_panel(metric, lower_metric, subject):
+    return _token_panel(
+        "use",
+        [
             ("reviews", "Completed reviews"),
             ("median", "Median per review"),
             ("cache", "Cache hit rate"),
             ("lost", "Superseded or failed"),
+        ],
+        [
+            (
+                "reviews",
+                f"{metric} {subject}",
+                "Median and 90th percentile of completed reviews.",
+            ),
+            (
+                "cache-mix",
+                f"Cached and uncached input {subject}",
+                "Mean of completed reviews. Output is far smaller; choose it under Measure.",
+            ),
+            (
+                "share",
+                "Share by stage",
+                f"{metric} by stage. The four largest stages keep their colours; the rest are combined.",
+            ),
+            (
+                "cache-rate",
+                "Cache hit rate",
+                "Cached share of input, over requests that reported both.",
+            ),
+            (
+                "lost",
+                "Superseded or failed reviews",
+                f"Their share of {lower_metric}. Ignores the tier and profile filters, which most of these reviews never recorded.",
+            ),
+        ],
+        _token_stage_table(
+            "stages",
+            "Stages",
+            f"{metric} of each stage, retries included. Runs, median, P90 and trend cover completed reviews. "
+            "Open a stage for its chart and models.",
         )
-    )
-
-    def section(name, heading, note):
-        return (
-            f'<section><h2>{heading}</h2><p class="note">{note}</p>'
-            + f'<div data-chart="{name}"></div></section>'
-        )
-
-    metric = "<span data-metric-name>Input tokens</span>"
-    lower_metric = '<span class="token-lower" data-metric-name>Input tokens</span>'
-    subject = "<span data-subject>per review</span>"
-    body = (
-        title
-        + f'<div id="tokens" data-months="{_escape(" ".join(months))}"'
-        + f' data-root="{"../../../tokens/" if scope else ""}"'
-        + f' data-repository="{_escape(scope or "")}"'
-        + f' data-reports="{_escape(_valid_http_base(report_base_url) or "")}"'
-        + f' data-repositories="{_escape(json.dumps(_token_repositories(summary, repository_url)))}">'
-        + "<noscript><p>This page needs JavaScript. Totals are on the Usage page.</p></noscript>"
-        + '<div data-content hidden><form class="list-controls token-filters" autocomplete="off">'
-        + filters
-        + '</form><p class="preview" data-load-status hidden></p>'
+        + "<section><h2>Reviews</h2>"
         + _section_note(
-            f"Recorded requests start on {summary.get('token_start')}. Input includes cached tokens. "
-            "Medians use completed reviews; shares and cache rates also include superseded "
-            "and failed reviews. Reviews appear once finished, under the UTC day they "
-            "started. Hollow points have fewer than five reviews or runs, and * marks a partial week. Ralph's stages, "
-            "models and limits change over time, so a step may not mean the same work cost more."
+            "Usage covers the selected stage and model. Findings and PR size cover the whole review."
         )
-        + f'<div class="cards usage-cards">{cards}</div><div class="token-charts">'
-        + section(
-            "reviews",
-            f"{metric} {subject}",
-            "Median and 90th percentile of completed reviews.",
-        )
-        + section(
-            "cache-mix",
-            f"Cached and uncached input {subject}",
-            "Mean of completed reviews. Output is far smaller; choose it under Measure.",
-        )
-        + section(
-            "share",
-            "Share by stage",
-            f"{metric} by stage. The four largest stages keep their colours; the rest are combined.",
-        )
-        + section(
-            "cache-rate",
-            "Cache hit rate",
-            "Cached share of input, over requests that reported both.",
-        )
-        + section(
-            "lost",
-            "Superseded or failed reviews",
-            f"Their share of {lower_metric}. Ignores the tier and profile filters, which most of these reviews never recorded.",
-        )
-        + "</div><section><h2>Per stage run</h2>"
-        + f'<p class="note">Median {lower_metric} for each stage in a completed review, retries included, '
-        + "with the change between the earlier and later half of the period. Scales differ. "
-        + "Select a stage name to filter the page.</p>"
-        + '<div class="charts token-stages" data-stage-charts></div>'
-        + '<p><button type="button" data-all-stages hidden></button></p></section>'
-        + "<section><h2>Stages</h2>"
-        + f'<p class="note">{metric} by stage and model. Runs, median and P90 cover completed reviews. '
-        + "A change needs five runs in each half of the period.</p>"
-        + _token_table("stages", "stages")
-        + "</section><section><h2>Reviews</h2>"
-        + _section_note("Usage covers the selected stage and model.")
         + _token_table("reviews", "reviews")
-        + "</section></div></div>"
-        + '<script src="'
-        + ("../../../tokens/" if scope else "")
-        + 'tokens.js" defer></script>'
+        + "</section>",
     )
-    return _page("Tokens", summary, body, "../", "Tokens")
+
+
+def _token_findings_panel(metric, lower_metric):
+    return _token_panel(
+        "findings",
+        [
+            ("findings", "Findings"),
+            ("per-finding", "Per finding"),
+            ("found", "Reviews with findings"),
+            ("alone", "Found alone"),
+        ],
+        [
+            (
+                "per-finding",
+                f"{metric} per published finding",
+                "All tokens of completed reviews divided by their findings, so reviews that found nothing count too.",
+            ),
+            (
+                "finding-rate",
+                "Findings per review",
+                "Mean published findings in a completed review.",
+            ),
+            (
+                "finding-sources",
+                "Raised by one stage or several",
+                "Share of findings. Another stage might have raised a finding had the first not run, so this is not proof of need.",
+            ),
+        ],
+        _token_stage_table(
+            "findings",
+            "Stages that raise findings",
+            f"Trend and per alone divide the {lower_metric} of a stage by the published findings only it raised; "
+            "kept is the published share of what it raised. Reconciliation raises earlier concerns again, so its "
+            "figures compare poorly with the rest. Stages that only check, plan or assess design are left out, "
+            "but their tokens count in the charts above.",
+        ),
+    )
+
+
+def _token_efficiency_panel(metric, lower_metric):
+    return _token_panel(
+        "efficiency",
+        [
+            ("turns", "Turns per review"),
+            ("tools", "Tool calls per turn"),
+            ("turn-input", "Input per request"),
+            ("size", "PR size"),
+        ],
+        [
+            (
+                "size-bands",
+                f"{metric} by PR size",
+                "Median per completed review. A rise within a band is not explained by larger pull requests.",
+            ),
+            (
+                "size-tokens",
+                f"{metric} against PR size",
+                "One point per completed review, on logarithmic scales.",
+            ),
+            (
+                "size",
+                "Pull request size",
+                "Median size of the description, commits and patch given to the router. "
+                "Reviews that skip the router, such as those with very large patches, have none.",
+            ),
+            (
+                "tools-turn",
+                "Tool calls per turn",
+                "Higher means more calls are batched into each model turn.",
+            ),
+            (
+                "input-turn",
+                "Input per request",
+                "Mean input tokens, cached or not, over requests that reported usage.",
+            ),
+            ("turns", "Turns per review", "Mean model turns in a completed review."),
+        ],
+        _token_stage_table(
+            "efficiency",
+            "Stages",
+            "Turns and tool calls come from saved stage results of completed reviews. The trend shows tool "
+            "calls per turn. Open a stage for its chart and models.",
+        ),
+    )
+
+
+def _token_time_panel():
+    return _token_panel(
+        "time",
+        [
+            ("wall", "Elapsed time"),
+            ("wall-p90", "Slow reviews"),
+            ("model-time", "Model time"),
+            ("latency", "Request time"),
+        ],
+        [
+            (
+                "wall",
+                "Elapsed time <span data-subject>per review</span>",
+                "From the first model request to the last completed one. Time in the queue is not included.",
+            ),
+            (
+                "model-time",
+                "Model time <span data-subject>per review</span>",
+                "Mean time waiting for completed requests, added across stages that ran in parallel.",
+            ),
+            (
+                "request-time",
+                "Request time",
+                "Mean completed request, including the time to generate its answer.",
+            ),
+        ],
+        '<section><h2>Models</h2><p class="note">Request time depends on effort and the length of the answer. '
+        "Open a model for its chart and stages.</p>"
+        + _token_table("models", "models")
+        + "</section>"
+        + _token_stage_table(
+            "time",
+            "Stages",
+            "From a stage's first request to its last in completed reviews. Open a stage for its chart and models.",
+        ),
+    )
+
+
+def _token_failures_panel():
+    return _token_panel(
+        "failures",
+        [
+            ("stage-runs", "Stage runs"),
+            ("lost-runs", "Lost"),
+            ("refused", "Refused"),
+            ("affected", "Reviews affected"),
+        ],
+        [
+            (
+                "losses",
+                "Stage runs lost",
+                "Share of stage runs that failed, returned invalid output or were refused by the provider.",
+            ),
+            (
+                "affected",
+                "Reviews that lost a stage",
+                "Reviews without saved results are not included.",
+            ),
+            (
+                "loss-provider",
+                "Lost by provider",
+                "Share of each provider's stage runs that were lost.",
+            ),
+        ],
+        _token_stage_table(
+            "failures",
+            "Stages",
+            "Saved results of finished reviews. Lost adds failed, invalid and refused. "
+            "Earlier and later are the halves of the period, and need five runs each. Open a stage for its chart and models.",
+        ),
+    )
 
 
 def _limits_html(summary, repository_url, archive_base_url):
@@ -2709,7 +2958,14 @@ def _export(summary):
     export = {
         key: value
         for key, value in summary.items()
-        if key not in {"repositories", "reviews", "recent_reviews", "token_months"}
+        if key
+        not in {
+            "repositories",
+            "reviews",
+            "recent_reviews",
+            "token_months",
+            "token_changes",
+        }
     }
     if "stages" in summary:
         export["stages"] = [
@@ -2807,6 +3063,7 @@ def save_stats(
                     "repository_names": names,
                     "token_months": dict.fromkeys(summary.get("token_months") or {}),
                     "token_start": summary.get("token_start"),
+                    "token_changes": summary.get("token_changes"),
                 },
                 repository_url,
                 report_base_url,

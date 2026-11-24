@@ -165,7 +165,7 @@ uninstrumented. Reaching a cap does not establish that more allowance would
 improve a review. Usage totals describe Ralph's requests; subscription quotas
 also include other tools using the same accounts.
 
-The Tokens page at `stats/tokens/` charts review request usage by review and
+The Trends page at `stats/tokens/` charts review request usage by review and
 stage, filtered in the browser. It reads one `tokens/YYYY-MM.json` file per month,
 grouped by the UTC day a review started; repository pages read the same files.
 A month is rewritten only when its reviews change. Reviews appear once complete,
@@ -173,6 +173,20 @@ superseded or failed. Medians cover completed reviews, and shares and cache rate
 cover all of them. Reviews that ended early record no tier or profile, so those
 filters exclude them from everything except the superseded-or-failed chart.
 Follow-up requests are not included.
+
+Its tabs share those filters. Findings divides tokens by published findings; a
+finding is found alone when no other stage raised it in that review, which does
+not show that others would have missed it. Efficiency compares tool calls and
+input per model turn, and tokens with pull request size. Size is the router's
+input, because other stages also receive historical context. Time runs from a
+review's first request to its last completed one. Failures counts saved stage
+results, so reviews that saved none are missing.
+
+Lines cover the seven days up to each day, with single days as faint dots. Ratios
+divide totals over those days. Charts mark the first review that recorded a new
+stage or used a changed stage model, and days with a new engine code or
+configuration version. Configurations differ between repositories; a repository's
+first one is not a change.
 
 The Overview page counts saved reviews with explicit provider cyber refusals once
 per review, even when several stages fail. On the Reviews page, select **Cyber
