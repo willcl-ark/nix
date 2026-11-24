@@ -1,8 +1,8 @@
 prompt = "prompt.md"
 tool_set = "full"
-model = "gpt-6.1-sol"
+model = "claude-opus-5-5"
 reasoning_effort = "high"
-max_output_tokens = 12000
+max_output_tokens = 64000
 max_tool_calls = { routine = 48, standard = 48, sensitive = 48 }
 max_context_calls = 8
 max_history_calls = 8
