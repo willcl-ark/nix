@@ -13,7 +13,7 @@ from urllib.parse import quote
 TOKEN_FIELDS = ("input", "output", "cached", "cache_write", "reasoning")
 
 # Bump whenever extraction or cached summary interpretation changes.
-VERSION = 10
+VERSION = 11
 
 USAGE_KEYS = (
     "review_id",
@@ -36,6 +36,8 @@ USAGE_SUMS = (
     "web_search_calls",
     "unknown_web_search",
     "cache_input",
+    "timed",
+    "seconds",
     *TOKEN_FIELDS,
     *(f"unknown_{name}" for name in TOKEN_FIELDS),
 )

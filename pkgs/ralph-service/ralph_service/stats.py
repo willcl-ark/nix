@@ -60,6 +60,7 @@ def collect_stats(
     sources = _read_sources(state_dir, report_dir, cache)
     summary = _summarize(state_dir, report_dir, sources, repositories)
     summary["token_months"] = tokens.months(sources["jobs"], sources["requests"])
+    summary["token_changes"] = tokens.changes(sources["jobs"], sources["requests"])
     summary["token_start"] = min(
         (row["day"] for row in sources["requests"] if row["day"]), default=None
     )
@@ -373,6 +374,9 @@ def _review_summary(row):
     stages = defaultdict(_new_stage)
     limit_runs = []
     health_runs = []
+    stage_runs = []
+    stage_names = []
+    models = {}
     routing_tiers = Counter()
     review_records = []
     review_time_records = []
@@ -399,6 +403,12 @@ def _review_summary(row):
             "stages": list(stages.values()),
             "limits": limit_runs,
             "health": health_runs,
+            "stage_runs": stage_runs,
+            "engine": {
+                **_engine_versions(result),
+                "models": models,
+                "stages": stage_names,
+            },
             "routing": dict(routing_tiers),
             "reviews": review_records,
             "review_times": review_time_records,
@@ -448,6 +458,9 @@ def _review_summary(row):
     report_name = _report_name(None, row, result)
     _collect_limit_runs(limit_runs, debug, result, row, report_name)
     health_runs.extend(health.stage_runs(debug, result, row, report_name))
+    stage_runs.extend(_stage_runs(debug))
+    stage_names.extend(sorted((debug or {}).get("stages") or {}))
+    models.update(_configured_models(result))
 
     if not skipped:
         overview["saved_reviews"] += 1
@@ -765,6 +778,10 @@ def _ledger_record(provider, row):
     if not counted:
         tokens = dict.fromkeys(TOKEN_FIELDS)
         searches = None
+    times = (row["requested_at"], row["completed_at"])
+    timed = row["status"] == "completed" and all(
+        isinstance(time, (int, float)) for time in times
+    )
     return {
         "provider": provider,
         "repository_id": _review_repository(row["review_id"]),
@@ -786,6 +803,8 @@ def _ledger_record(provider, row):
         "web_search_calls": searches if _is_nonnegative_int(searches) else None,
         "unknown_web_search": int(counted and not _is_nonnegative_int(searches)),
         "cache_input": tokens["input"] if tokens["cached"] is not None else None,
+        "timed": int(timed),
+        "seconds": times[1] - times[0] if timed else None,
         **tokens,
         **{
             f"unknown_{name}": int(counted and value is None)
@@ -1820,6 +1839,57 @@ def _stage_findings(debug, name, stage, row, report_name):
             }
         )
     return records
+
+
+def _stage_runs(debug):
+    """Describe each stage that ran, for the Trends page."""
+    if not debug:
+        return []
+    metrics = core_trace.stage_metrics(debug)
+    runs = []
+    for name, stage in (debug.get("stages") or {}).items():
+        if not isinstance(stage, dict) or stage.get("status") not in {
+            "completed",
+            "failed",
+            "invalid",
+        }:
+            continue
+        lost = stage["status"] != "completed"
+        size = stage.get("review_input_bytes")
+        runs.append(
+            {
+                "stage": name,
+                "model": _normalize_model(stage.get("model") or "unknown"),
+                "status": stage["status"],
+                "refused": bool(lost and refusals.failure_kind(stage)),
+                "turns": metrics[name]["model_turns"],
+                "tools": metrics[name]["tool_calls"],
+                "candidates": sum(metrics[name]["candidate_counts"].values()),
+                "accepted": metrics[name]["accepted_findings"],
+                "sole": metrics[name]["sole_source_findings"],
+                "input_bytes": size if _is_nonnegative_int(size) else None,
+            }
+        )
+    return runs
+
+
+def _engine_versions(result):
+    engine = (result or {}).get("engine")
+    engine = engine if isinstance(engine, dict) else {}
+    return {name: engine.get(name) for name in ("code_sha256", "config_sha256")}
+
+
+def _configured_models(result):
+    """Return the model and effort configured for each profile's stages."""
+    config = ((result.get("engine") or {}).get("config")) or {}
+    models = {}
+    for name in ("profile", "high_profile"):
+        profile = config.get(name) or {}
+        models[profile.get("name") or name] = {
+            stage: [settings.get("model"), settings.get("reasoning_effort")]
+            for stage, settings in (profile.get("stages") or {}).items()
+        }
+    return models
 
 
 def _add_stage_results(stages, debug, row, report_name):
