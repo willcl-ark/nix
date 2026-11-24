@@ -182,6 +182,16 @@ class SubmoduleTests(unittest.TestCase):
         self.assertEqual(set(snapshot.head_files), {"api.h"})
         self.assertFalse((fork / "bitcoin").exists())
 
+    def test_review_input_names_pins_without_listing_dependency_commits(self):
+        with patch.object(
+            repository, "bounded_git", wraps=repository.bounded_git
+        ) as read:
+            review, skip = repository.build_review_input(self.snapshot())
+        self.assertIsNone(skip)
+        self.assertIn(self.base_pin, review)
+        self.assertIn(self.head_pin, review)
+        self.assertEqual({call.args[0] for call in read.call_args_list}, {self.repo})
+
     def test_symlink_checkout_and_remote_change_are_rejected(self):
         (self.repo / "bitcoin").symlink_to(self.upstream, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "escapes"):

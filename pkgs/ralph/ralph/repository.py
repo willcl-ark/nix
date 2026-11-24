@@ -1313,24 +1313,6 @@ def build_review_input(snapshot, title="", description=""):
             f"Read its files and changed-file diffs under {dependency.path}/. "
             "read_pr_commit accepts dependency commits in this pinned range.\n"
         )
-        if (
-            dependency.base_sha
-            and dependency.head_sha
-            and dependency.base_sha != dependency.head_sha
-        ):
-            summary = bounded_git(
-                dependency.checkout,
-                "log",
-                "--oneline",
-                "--max-count=30",
-                f"{dependency.base_sha}..{dependency.head_sha}",
-                max_bytes=4000,
-            ).decode(errors="replace")
-            prelude += (
-                "Dependency commit summary (at most 30 commits, 4000 bytes):\n"
-                + summary
-                + "\n"
-            )
     patch = bounded_git(
         checkout,
         "diff",
