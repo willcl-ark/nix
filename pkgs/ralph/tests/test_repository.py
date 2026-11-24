@@ -289,6 +289,84 @@ class LocalRepositoryTests(unittest.TestCase):
         self.assertIn(f"/blob/{self.ancestor}/code.txt#L1", parent_link)
         self.assertIn(f"parent of {self.head[:12]}", parent_link)
 
+    def test_merged_code_finding_drops_commit_citations(self):
+        snapshot = repository.snapshot_repository(self.repo, self.ancestor, self.head)
+        repository.read_diff(
+            self.repo,
+            snapshot.changed_paths,
+            snapshot.diff_base_sha,
+            snapshot.head_sha,
+            "code.txt",
+            1,
+            anchors=snapshot.anchors,
+        )
+        anchor = next(
+            key for key, value in snapshot.anchors.items() if value["side"] == "head"
+        )
+        location = {"path": "code.txt", "line": 1}
+        head = self.citation(snapshot, {**location, "side": "head"})
+        commit = self.citation(
+            snapshot,
+            {
+                **location,
+                "side": "commit",
+                "commit": self.head,
+                "parent": self.ancestor,
+            },
+        )
+        candidates = [
+            {"id": "script:1", "side": "head"},
+            {"id": "commit_flow:1", "side": "commit"},
+        ]
+        wording = dict.fromkeys(("title", "summary", "body"), "Redundant copy")
+        coverage = {"status": "complete", "limitations": []}
+
+        def verify(*evidence):
+            finding = {
+                "kind": "design",
+                "severity": "suggestion",
+                "anchor_id": anchor,
+                "security": {"classification": "non_security", "reason": "Cost"},
+                **wording,
+                "source_evidence": list(evidence),
+            }
+            decision = {
+                "candidate_ids": ["script:1", "commit_flow:1"],
+                "disposition": "supported",
+                "reason": "Same root cause",
+                "finding": finding,
+            }
+            return protocol.verification(
+                json.dumps({"coverage": coverage, "decisions": [decision]}),
+                candidates,
+                snapshot,
+            )[1]
+
+        def judge(*evidence):
+            decision = {
+                "finding_id": "finding:1",
+                "disposition": "publish",
+                "reason": "Useful",
+                **wording,
+                "source_evidence": list(evidence),
+            }
+            return protocol.judgment(
+                json.dumps(
+                    {"coverage": coverage, "concept": None, "decisions": [decision]}
+                ),
+                accepted,
+                None,
+                snapshot,
+            )[1]
+
+        accepted = verify(commit, head)
+        self.assertEqual(
+            [item["side"] for item in accepted[0]["source_evidence"]], ["head"]
+        )
+        self.assertEqual(len(judge(head, commit)), 1)
+        self.assertEqual(verify(commit), [])
+        self.assertEqual(judge(commit), [])
+
     def citation(self, snapshot, location):
         output = repository.cite_file(
             snapshot,

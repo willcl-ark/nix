@@ -589,7 +589,7 @@ def tests_discovery(text, snapshot, required_paths, *, stage="tests"):
     return result
 
 
-def _source_evidence(evidence, snapshot, *, allow_commit=False):
+def _source_evidence(evidence, snapshot, *, allow_commit=False, drop_commit=False):
     if not isinstance(evidence, list) or not evidence:
         raise InvalidReview("Finding must include source evidence")
     resolved = []
@@ -600,8 +600,12 @@ def _source_evidence(evidence, snapshot, *, allow_commit=False):
         if source is None:
             raise InvalidReview("Unknown source citation for this review")
         if source["side"] == "commit" and not allow_commit:
+            if drop_commit:
+                continue
             raise InvalidReview("Invalid source evidence side")
         resolved.append(dict(source))
+    if not resolved:
+        raise InvalidReview("Invalid source evidence side")
     return resolved
 
 
@@ -836,8 +840,13 @@ def _verified_finding(finding, snapshot, *, allow_commit=False):
     ):
         raise InvalidReview("Invalid security classification")
     _text(security, ("reason",))
+    # A commit-flow candidate merged with code candidates can contribute commit
+    # citations that cannot support a claim about the final tree.
     finding["source_evidence"] = _source_evidence(
-        finding["source_evidence"], snapshot, allow_commit=allow_commit
+        finding["source_evidence"],
+        snapshot,
+        allow_commit=allow_commit,
+        drop_commit=True,
     )
 
 
@@ -1214,6 +1223,7 @@ def judgment(text, verified_findings, verified_concept, snapshot):
                         source.get("side") == "commit"
                         for source in original.get("source_evidence", [])
                     ),
+                    drop_commit=True,
                 )
         except InvalidReview as exc:
             errors.append({"finding_id": identifier, "error": str(exc)})
