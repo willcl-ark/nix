@@ -88,11 +88,40 @@ class StatsCacheTests(unittest.TestCase):
             )
             equivalent()
 
-            # No-change cycles never parse historical result payloads.
-            with patch.object(
-                stats, "_review_summary", side_effect=AssertionError("historical read")
+            # No-change cycles never parse historical result payloads or requests.
+            with (
+                patch.object(
+                    stats,
+                    "_review_summary",
+                    side_effect=AssertionError("historical read"),
+                ),
+                patch.object(
+                    stats,
+                    "_ledger_record",
+                    side_effect=AssertionError("historical read"),
+                ),
             ):
                 collect()
+
+            # A request in one review recounts only that review, and deleting it
+            # recounts everything.
+            other = ledger.start("judge", "test-model", "pr:core:43:99:1")
+            ledger.fail(other, http_status=429)
+            with patch.object(
+                stats, "_ledger_record", wraps=stats._ledger_record
+            ) as recount:
+                lifetime = collect()["usage"]["lifetime"]
+            self.assertEqual(
+                [call.args[1]["review_id"] for call in recount.call_args_list],
+                ["pr:core:43:99:1"],
+            )
+            self.assertEqual(lifetime["request_count"], 2)
+            self.assertEqual(lifetime["rate_limit_count"], 1)
+            self.assertEqual(lifetime["tokens"]["input"], 10)
+            equivalent()
+            with closing(sqlite3.connect(root / "usage.sqlite3")) as db, db:
+                db.execute("DELETE FROM requests WHERE token=?", (other,))
+            self.assertEqual(equivalent()["usage"]["lifetime"]["request_count"], 1)
             with closing(sqlite3.connect(cache_dir / "cache.sqlite3")) as db, db:
                 summary = db.execute(
                     "SELECT summary FROM records WHERE source LIKE '%:jobs'"

@@ -215,12 +215,12 @@ def recorded_usage(state_dir, now, *, include_month=True):
             if row["status"] == "duplicate":
                 continue
             reported = {
-                key: value for key, value in row["tokens"].items() if value is not None
+                key: row[key] for key in stats.TOKEN_FIELDS if row[key] is not None
             }
             tokens.update(reported)
             known_fields.update(reported)
-            unknown += row["usage_unknown"]
-            partial += row["usage_incomplete"] and not row["usage_unknown"]
+            unknown += row["unknown_usage"]
+            partial += row["incomplete_usage"] and not row["unknown_usage"]
         token_summary = " · ".join(
             f"{name} {tokens[name]:,}" if name in known_fields else f"{name} unknown"
             for name in ("input", "output", "cached")

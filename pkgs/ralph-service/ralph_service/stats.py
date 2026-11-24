@@ -6,9 +6,10 @@ import os
 import re
 import sqlite3
 import subprocess
+import tempfile
 from collections import Counter, defaultdict
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
@@ -18,8 +19,9 @@ from ralph import refusals
 from ralph import coverage as core_coverage
 from ralph import trace as core_trace
 
-from . import health
+from . import health, stats_cache
 from .report import _provisional_findings, _source_repository_url, public_limits
+from .stats_cache import TOKEN_FIELDS
 
 
 SNAPSHOT_MODEL = re.compile(r"(.+)-\d{4}-\d{2}-\d{2}")
@@ -38,55 +40,106 @@ SHA = re.compile(r"[0-9a-fA-F]{40}")
 TRACE_FILENAME = re.compile(r"(\d+)-([0-9a-fA-F]{40})-(\d+)\.json")
 ADDRESSED_STATUSES = ("addressed", "partially_addressed", "still_present", "unclear")
 COVERAGE_STATUSES = ("complete", "partial", "failed", "unknown")
-TOKEN_FIELDS = ("input", "output", "cached", "cache_write", "reasoning")
 
 
 def collect_stats(
-    state_dir: Path,
-    report_dir: Path,
-    *,
-    cache=None,
-    repositories=None,
-    repository_id=None,
+    state_dir: Path, report_dir: Path, *, cache=None, repositories=None
 ) -> dict:
     """Return public JSON-compatible aggregate review statistics."""
+    if cache is None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            stats_cache.Cache(directory) as cache,
+        ):
+            return collect_stats(
+                state_dir, report_dir, cache=cache, repositories=repositories
+            )
     state_dir = Path(state_dir)
     report_dir = Path(report_dir)
-    now = datetime.now(timezone.utc)
-    current_month = now.strftime("%Y-%m")
+    repositories = repositories or {}
+    sources = _read_sources(state_dir, report_dir, cache)
+    summary = _summarize(state_dir, report_dir, sources, repositories)
+    ids = sorted(set(repositories) | set(sources["job_repositories"].values()))
+    summary["repositories"] = {
+        repo: _summarize(
+            state_dir,
+            report_dir,
+            _repository_sources(sources, repo),
+            repositories,
+            repository_id=repo,
+        )
+        for repo in ids
+    }
+    return summary
+
+
+def _read_sources(state_dir, report_dir, cache):
     jobs, jobs_missing = _job_summaries(state_dir / "jobs.sqlite3", cache)
     followup_dir = state_dir / "followup"
     followups, followups_missing, malformed_followups = _followup_rows(
         followup_dir / "assessments.sqlite3", cache
     )
-    requests, ledger_missing = _ledger_rows(state_dir, cache)
-    followup_requests, followup_ledger_missing = _provider_ledger_rows(
+    requests, ledger_missing = _ledger_usage(
+        "openai", state_dir / "usage.sqlite3", cache
+    )
+    followup_requests, followup_ledger_missing = _ledger_usage(
         "followup", followup_dir / "usage.sqlite3", cache
     )
-    repositories = repositories or {}
     job_repositories = {item["row"]["id"]: item["row"]["repo_id"] for item in jobs}
     for request in requests + followup_requests:
         request["repository_id"] = job_repositories.get(
-            request.get("job_id"), request.get("repository_id")
+            request["job_id"], request["repository_id"]
         )
-    if repository_id is not None:
-        jobs = [item for item in jobs if item["row"]["repo_id"] == repository_id]
-        followups = [
+    for contribution in jobs:
+        _refresh_report_links(contribution, report_dir)
+    return {
+        "jobs": jobs,
+        "followups": followups,
+        "requests": requests,
+        "followup_requests": followup_requests,
+        "job_repositories": job_repositories,
+        "malformed_followups": malformed_followups,
+        "missing": {
+            "jobs_db": jobs_missing,
+            "followup_assessments": followups_missing,
+            "followup_ledger": followup_ledger_missing,
+            "review_ledger": ledger_missing,
+            "report_dir": not report_dir.exists(),
+        },
+    }
+
+
+def _repository_sources(sources, repository_id):
+    job_repositories = sources["job_repositories"]
+    return {
+        **sources,
+        "jobs": [
+            item for item in sources["jobs"] if item["row"]["repo_id"] == repository_id
+        ],
+        "followups": [
             item
-            for item in followups
+            for item in sources["followups"]
             if job_repositories.get(item.get("job_id")) == repository_id
-        ]
-        requests = [
-            item for item in requests if item.get("repository_id") == repository_id
-        ]
-        followup_requests = [
-            item
-            for item in followup_requests
-            if item.get("repository_id") == repository_id
-        ]
+        ],
+        **{
+            name: [
+                item for item in sources[name] if item["repository_id"] == repository_id
+            ]
+            for name in ("requests", "followup_requests")
+        },
+    }
+
+
+def _summarize(state_dir, report_dir, sources, repositories, *, repository_id=None):
+    now = datetime.now(timezone.utc)
+    current_month = now.strftime("%Y-%m")
+    jobs = sources["jobs"]
+    followups = sources["followups"]
+    requests = sources["requests"]
+    followup_requests = sources["followup_requests"]
+    job_repositories = sources["job_repositories"]
     usage = _usage_summary(requests, current_month)
 
-    report_dir_missing = not report_dir.exists()
     inventory = {
         "jobs_total": len(jobs),
         "jobs_by_status": dict(
@@ -99,17 +152,11 @@ def collect_stats(
         ),
         "skipped_results": 0,
         "malformed_results": 0,
-        "malformed_followups": malformed_followups,
+        "malformed_followups": sources["malformed_followups"],
         "recorded_failed_attempts": sum(
             max(0, int(item["row"]["attempts"] or 0)) for item in jobs
         ),
-        "missing_sources": {
-            "jobs_db": jobs_missing,
-            "followup_assessments": followups_missing,
-            "followup_ledger": followup_ledger_missing,
-            "review_ledger": ledger_missing["openai"],
-            "report_dir": report_dir_missing,
-        },
+        "missing_sources": sources["missing"],
     }
     overview = {
         "saved_reviews": 0,
@@ -155,7 +202,6 @@ def collect_stats(
 
     for contribution in jobs:
         row = contribution["row"]
-        _refresh_report_links(contribution, report_dir)
         _merge_totals(inventory, contribution["inventory"])
         _merge_totals(overview, contribution["overview"])
         for stage in contribution["stages"]:
@@ -278,18 +324,6 @@ def collect_stats(
                 identify(child)
 
     identify(summary)
-    if repository_id is None:
-        ids = sorted(set(repositories) | set(job_repositories.values()))
-        summary["repositories"] = {
-            repo: collect_stats(
-                state_dir,
-                report_dir,
-                cache=cache,
-                repositories=repositories,
-                repository_id=repo,
-            )
-            for repo in ids
-        }
     return summary
 
 
@@ -663,28 +697,13 @@ def _connect_readonly(path):
 def _job_summaries(path, cache):
     if not path.exists():
         return [], True
-    if cache is not None:
-        return cache.rows(path, "jobs", "id", _review_summary), False
-    with closing(_connect_readonly(path)) as db:
-        return [
-            _review_summary(dict(row))
-            for row in db.execute("SELECT * FROM jobs ORDER BY id")
-        ], False
+    return cache.rows(path, "jobs", "id", _review_summary), False
 
 
-def _followup_rows(path, cache=None):
+def _followup_rows(path, cache):
     if not path.exists():
         return [], True, 0
-    if cache is not None:
-        records = cache.rows(path, "assessments", "job_id", _assessment_record)
-    else:
-        with closing(_connect_readonly(path)) as db:
-            records = [
-                _assessment_record(row)
-                for row in db.execute(
-                    "SELECT job_id, result FROM assessments ORDER BY job_id"
-                )
-            ]
+    records = cache.rows(path, "assessments", "job_id", _assessment_record)
     return (
         [row for row in records if isinstance(row, dict)],
         False,
@@ -702,18 +721,14 @@ def _assessment_record(row):
     return {"job_id": job_id, "result": result}
 
 
-def _ledger_rows(state_dir, cache=None):
-    rows, missing = _provider_ledger_rows("openai", state_dir / "usage.sqlite3", cache)
+def _ledger_rows(state_dir):
+    rows, missing = _provider_ledger_rows("openai", state_dir / "usage.sqlite3")
     return rows, {"openai": missing}
 
 
-def _provider_ledger_rows(provider, path, cache=None):
+def _provider_ledger_rows(provider, path):
     if not path.exists():
         return [], True
-    if cache is not None:
-        return cache.rows(
-            path, "requests", "token", lambda row: _ledger_record(provider, row)
-        ), False
     with closing(_connect_readonly(path)) as db:
         return [
             _ledger_record(provider, row)
@@ -721,13 +736,26 @@ def _provider_ledger_rows(provider, path, cache=None):
         ], False
 
 
+def _ledger_usage(provider, path, cache):
+    if not path.exists():
+        return [], True
+    return cache.usage(path, lambda row: _ledger_record(provider, row)), False
+
+
 def _ledger_record(provider, row):
+    """Describe one request with the fields that usage rows group and add up."""
     usage = _parse_json(row["usage_json"])
-    tokens, usage_unknown, usage_incomplete, missing = _usage_metrics(usage)
+    tokens, usage_unknown, usage_incomplete = _usage_metrics(usage)
     parsed = _parse_review_id(row["review_id"])
     model = _normalize_model(row["model"] or "unknown")
     if provider == "openai" and model.startswith("claude-"):
         provider = "claude"
+    searches = usage.get("web_search_calls") if isinstance(usage, dict) else None
+    # A duplicate attempt counts as a request, but its usage was already counted.
+    counted = row["status"] != "duplicate"
+    if not counted:
+        tokens = dict.fromkeys(TOKEN_FIELDS)
+        searches = None
     return {
         "provider": provider,
         "repository_id": _review_repository(row["review_id"]),
@@ -738,18 +766,29 @@ def _ledger_record(provider, row):
         "stage": row["stage"] or "unknown",
         "model": model,
         "month": row["month"] or "unknown",
+        "day": _utc_day(row["requested_at"]),
         "requested_at": row["requested_at"],
-        "status": row["status"] or "unknown",
         "completed_at": row["completed_at"],
-        "http_status": row["http_status"],
-        "web_search_calls": (
-            usage.get("web_search_calls") if isinstance(usage, dict) else None
-        ),
-        "tokens": tokens,
-        "usage_unknown": usage_unknown,
-        "usage_incomplete": usage_incomplete,
-        "missing_token_fields": missing,
+        "status": row["status"] or "unknown",
+        "http_status": row["http_status"] if counted else None,
+        "requests": 1,
+        "unknown_usage": int(counted and usage_unknown),
+        "incomplete_usage": int(counted and usage_incomplete),
+        "web_search_calls": searches if _is_nonnegative_int(searches) else None,
+        "unknown_web_search": int(counted and not _is_nonnegative_int(searches)),
+        **tokens,
+        **{
+            f"unknown_{name}": int(counted and value is None)
+            for name, value in tokens.items()
+        },
     }
+
+
+def _utc_day(timestamp):
+    try:
+        return datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+    except (OverflowError, OSError, TypeError, ValueError):
+        return None
 
 
 def _parse_json(text):
@@ -771,9 +810,8 @@ def _usage_metrics(usage):
         name: value if _is_nonnegative_int(value) else None
         for name, value in fields.items()
     }
-    missing = [name for name, value in tokens.items() if value is None]
     unknown = tokens["input"] is None or tokens["output"] is None
-    return tokens, unknown, bool(missing), missing
+    return tokens, unknown, None in tokens.values()
 
 
 def _parse_review_id(review_id):
@@ -1503,31 +1541,28 @@ def _new_provider_totals():
 
 
 def _add_request(record, request):
-    record["request_count"] += 1
-    record["status_counts"][request["status"]] += 1
-    if "providers" in record and request.get("provider") is not None:
+    """Add one usage row: the totals of requests sharing every key field."""
+    count = request["requests"]
+    record["request_count"] += count
+    record["status_counts"][request["status"]] += count
+    if "providers" in record and request["provider"] is not None:
         _add_request(
             record["providers"][request["provider"]], {**request, "provider": None}
         )
-    if request["status"] == "duplicate":
-        return
-    if request["usage_unknown"]:
-        record["unknown_usage_count"] += 1
-    if request["usage_incomplete"]:
-        record["incomplete_usage_count"] += 1
-    if request.get("http_status") is not None:
-        record["http_status_counts"][str(request["http_status"])] += 1
-    record["rate_limit_count"] += request.get("http_status") == 429
-    searches = request.get("web_search_calls")
-    if _is_nonnegative_int(searches):
-        record["web_search_calls"] = (record["web_search_calls"] or 0) + searches
-    else:
-        record["unknown_web_search_count"] += 1
-    for key, value in request["tokens"].items():
-        if value is not None:
-            record["tokens"][key] = (record["tokens"][key] or 0) + value
-    for key in request.get("missing_token_fields", []):
-        record["unknown_token_counts"][key] += 1
+    record["unknown_usage_count"] += request["unknown_usage"]
+    record["incomplete_usage_count"] += request["incomplete_usage"]
+    if request["http_status"] is not None:
+        record["http_status_counts"][str(request["http_status"])] += count
+        record["rate_limit_count"] += count * (request["http_status"] == 429)
+    record["unknown_web_search_count"] += request["unknown_web_search"]
+    if request["web_search_calls"] is not None:
+        record["web_search_calls"] = (record["web_search_calls"] or 0) + request[
+            "web_search_calls"
+        ]
+    for key in TOKEN_FIELDS:
+        if request[key] is not None:
+            record["tokens"][key] = (record["tokens"][key] or 0) + request[key]
+        record["unknown_token_counts"][key] += request[f"unknown_{key}"]
 
 
 def _final_request_totals(record):
@@ -1623,11 +1658,10 @@ def _usage_trends(requests, now):
     undated = _new_provider_totals()
     for request in requests:
         _add_request(by_month[request["month"]], request)
-        try:
-            day = datetime.fromtimestamp(request["requested_at"], timezone.utc).date()
-        except (OverflowError, OSError, TypeError, ValueError):
+        if request["day"] is None:
             _add_request(undated, request)
             continue
+        day = date.fromisoformat(request["day"])
         monday = day - timedelta(days=day.weekday())
         _add_request(by_day[day.isoformat()], request)
         _add_request(by_week[monday.isoformat()], request)

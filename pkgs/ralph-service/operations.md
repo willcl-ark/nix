@@ -202,12 +202,14 @@ refused stages and the work left incomplete, without exposing request payloads.
 ## Rebuilding statistics
 
 Stats updates are incremental by default. A private cache in `stateDir/stats`
-holds compact review summaries and source checkpoints. Database triggers record
-inserts, updates and deletions transactionally, so retries and completed requests
-invalidate their earlier summaries. Stores without change tracking are read in
-full until their writer initializes tracking. Aggregate calculations and live
-subscription usage still refresh each run; the cache never substitutes for the
-authoritative review and usage databases.
+holds compact review summaries, request totals and source checkpoints. Request
+totals are kept per review, stage, model and day; a change recounts only the
+reviews whose requests changed. Database triggers record inserts, updates and
+deletions transactionally, so retries and completed requests invalidate their
+earlier summaries. Stores without change tracking are read in full until their
+writer initializes tracking. Aggregate calculations and live subscription usage
+still refresh each run; the cache never substitutes for the authoritative review
+and usage databases.
 
 To rebuild after a backfill or manual restore, run the same `ralph-evaluate stats`
 command and arguments as the service with `--full` added, as the service user.
