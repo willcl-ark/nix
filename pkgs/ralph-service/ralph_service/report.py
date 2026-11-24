@@ -953,7 +953,7 @@ def _concept_assessment_html(assessment):
         brief.get("alternatives") if isinstance(brief.get("alternatives"), list) else []
     )
     if alternatives:
-        rows = []
+        entries = []
         for alternative in alternatives:
             if not isinstance(alternative, dict):
                 continue
@@ -969,19 +969,13 @@ def _concept_assessment_html(assessment):
                         f"<p><strong>{_escape(label)}:</strong> "
                         f"{_concept_value_html(alternative[key])}</p>"
                     )
-            rows.append(
-                "<tr>"
-                f"<td>{_escape(alternative.get('name'))}</td>"
-                f"<td>{_escape(alternative.get('provenance'))}</td>"
-                f"<td>{''.join(details)}</td>"
-                "</tr>"
+            entries.append(
+                f"<details><summary>{_escape(alternative.get('name'))}"
+                f'<span class="entry-note">{_escape(alternative.get("provenance"))}'
+                f"</span></summary>{''.join(details)}</details>"
             )
-        if rows:
-            body += (
-                "<h3>Alternatives</h3><table><thead><tr><th>Concept</th>"
-                "<th>Provenance</th><th>Assessment</th></tr></thead>"
-                f"<tbody>{''.join(rows)}</tbody></table>"
-            )
+        if entries:
+            body += f"<h3>Alternatives</h3>{''.join(entries)}"
     sources = brief.get("citations") if isinstance(brief.get("citations"), list) else []
     links = []
     for source in sources:
