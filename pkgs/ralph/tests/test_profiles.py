@@ -90,6 +90,20 @@ class StageConfigurationTests(unittest.TestCase):
                 config.PromptConfig.load(agents_dir)
             self.assertEqual(current_engine.configure(changed.config), changed.config)
 
+    def test_limitation_instructions_reach_assessment_stages_once(self):
+        instruction = config.load_prompt_file(
+            config.DEFAULT_AGENTS_DIR / "shared/limitations.md"
+        )
+        for strategy in ("core", "gui"):
+            prompts = config.PromptConfig.load(strategy=strategy)
+            stages = {**prompts.audit_prompts, "independent": prompts.instructions}
+            for name, prompt in stages.items():
+                with self.subTest(strategy=strategy, stage=name):
+                    self.assertEqual(
+                        prompt.count(instruction),
+                        name in {"challenger", "verifier", "judge"},
+                    )
+
     def test_tool_instructions_reach_every_stage_with_tools_once(self):
         instruction = config.load_prompt_file(
             config.DEFAULT_AGENTS_DIR / "shared/tool-use.md"

@@ -161,6 +161,11 @@ class PromptConfig:
                 .replace("a Bitcoin Core pull request", "a GUI-QML pull request")
                 for name, prompt in prompts.items()
             }
+        limitations = load_prompt_file(agents_dir / "shared/limitations.md")
+        if not limitations.strip():
+            raise ValueError("shared limitation instructions must not be empty")
+        for name in ("challenger", "verifier", "judge"):
+            prompts[name] = f"{limitations}\n\n{prompts[name]}"
         tool_use = load_prompt_file(agents_dir / "shared/tool-use.md")
         if not tool_use.strip():
             raise ValueError("shared tool instructions must not be empty")

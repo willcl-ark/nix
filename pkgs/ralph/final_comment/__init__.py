@@ -210,7 +210,7 @@ def render(
         and not verification_failed
     ):
         sections["empty"] = (
-            "No verified findings are available from this review."
+            "No findings were published from this review."
             if limitations or unlinked
             else "I found no actionable issues in this static review."
         )
@@ -352,7 +352,7 @@ def render_report(
         and not verification_failed
     ):
         sections["empty"] = (
-            "The review is inconclusive; no findings were verified."
+            "The review is inconclusive; no findings were published."
             if limitations or unconfirmed
             else "Review completed with no actionable findings."
         )
