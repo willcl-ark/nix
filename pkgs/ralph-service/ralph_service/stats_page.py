@@ -2525,13 +2525,14 @@ def _tokens_html(summary, repository_url, report_base_url):
         + "configuration versions, which may not affect every stage.</p><table><thead><tr>"
         + "<th>Day</th><th>Updates</th><th>Model changes</th></tr></thead><tbody data-changes></tbody></table>"
         + "</details></section></div></div>"
-        + f'<script src="{data_root}tokens.js" defer></script>'
+        + f'<script type="module" src="{data_root}tokens.js"></script>'
     )
     # Filters start with the last 30 days, which the two newest files cover.
     preload = "".join(
         f'<link rel="preload" as="fetch" crossorigin href="{data_root}{month}.json">'
         for month in months[-2:]
     )
+    preload += f'<link rel="modulepreload" href="{data_root}charts.js">'
     return _page("Trends", summary, body, "../", "Trends").replace(
         "</head>", preload + "</head>", 1
     )
@@ -3010,10 +3011,9 @@ def save_stats(
         + "\n",
     )
     write("stats.js", _script())
-    write(
-        "tokens/tokens.js",
-        (Path(__file__).parent / "tokens.js").read_text(encoding="utf-8"),
-    )
+    for name in ("tokens/charts.js", "tokens/tokens.js"):
+        source = Path(__file__).parent / Path(name).name
+        write(name, source.read_text(encoding="utf-8"))
     for month, data in (summary.get("token_months") or {}).items():
         if data is None:
             continue  # Repository pages read the files for all repositories.
