@@ -776,6 +776,7 @@ def _ledger_record(provider, row):
         "incomplete_usage": int(counted and usage_incomplete),
         "web_search_calls": searches if _is_nonnegative_int(searches) else None,
         "unknown_web_search": int(counted and not _is_nonnegative_int(searches)),
+        "cache_input": tokens["input"] if tokens["cached"] is not None else None,
         **tokens,
         **{
             f"unknown_{name}": int(counted and value is None)
@@ -1535,6 +1536,7 @@ def _new_provider_totals():
         "rate_limit_count": 0,
         "web_search_calls": None,
         "unknown_web_search_count": 0,
+        "cache_input": None,
         "tokens": dict.fromkeys(TOKEN_FIELDS),
         "unknown_token_counts": dict.fromkeys(TOKEN_FIELDS, 0),
     }
@@ -1555,10 +1557,9 @@ def _add_request(record, request):
         record["http_status_counts"][str(request["http_status"])] += count
         record["rate_limit_count"] += count * (request["http_status"] == 429)
     record["unknown_web_search_count"] += request["unknown_web_search"]
-    if request["web_search_calls"] is not None:
-        record["web_search_calls"] = (record["web_search_calls"] or 0) + request[
-            "web_search_calls"
-        ]
+    for key in ("web_search_calls", "cache_input"):
+        if request[key] is not None:
+            record[key] = (record[key] or 0) + request[key]
     for key in TOKEN_FIELDS:
         if request[key] is not None:
             record["tokens"][key] = (record["tokens"][key] or 0) + request[key]
@@ -1575,6 +1576,7 @@ def _final_request_totals(record):
         "rate_limit_count": record["rate_limit_count"],
         "web_search_calls": record["web_search_calls"],
         "unknown_web_search_count": record["unknown_web_search_count"],
+        "cache_input": record["cache_input"],
         "tokens": dict(record["tokens"]),
         "unknown_token_counts": dict(record["unknown_token_counts"]),
     }

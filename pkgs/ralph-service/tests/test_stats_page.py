@@ -716,7 +716,7 @@ class StatsPageTests(unittest.TestCase):
             self.assertEqual(totals["providers"]["openai"]["request_count"], 4)
             self.assertFalse(summary["inventory"]["missing_sources"]["review_ledger"])
             self.assertEqual(stats_page._fmt_tokens(totals, "input"), "300 (partial)")
-            self.assertEqual(stats_page._cache_rate(totals), "N/A")
+            self.assertEqual(stats_page._cache_rate(totals), "50.0%")
             self.assertEqual(
                 stats_page._fmt_tokens(totals["providers"]["claude"], "cached"), "N/A"
             )

@@ -82,11 +82,10 @@ def _fmt_tokens(record, name):
 
 
 def _cache_rate(record):
-    missing = _mapping(record.get("unknown_token_counts"))
-    if any(missing.get(name) for name in ("input", "cached")):
-        return "N/A"
-    tokens = _mapping(record.get("tokens"))
-    return _fmt_percent(tokens.get("cached"), tokens.get("input"))
+    """Cached share of input, over requests that reported both."""
+    return _fmt_percent(
+        _mapping(record.get("tokens")).get("cached"), record.get("cache_input")
+    )
 
 
 def _generated_at(summary):

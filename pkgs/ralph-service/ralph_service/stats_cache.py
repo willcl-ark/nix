@@ -35,6 +35,7 @@ USAGE_SUMS = (
     "incomplete_usage",
     "web_search_calls",
     "unknown_web_search",
+    "cache_input",
     *TOKEN_FIELDS,
     *(f"unknown_{name}" for name in TOKEN_FIELDS),
 )
