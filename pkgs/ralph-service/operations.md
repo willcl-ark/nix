@@ -212,8 +212,10 @@ refusals are included even when the review completes. The derived stats cache
 reclassifies retained historical diagnostics without rewriting saved outcomes or
 public snapshots; missing historical diagnostics remain unclassified.
 
-Provider refusals stop the affected request without automatic retry, model
-switching or prompt rewriting. Transient transport failures retain their usual
+Provider refusals stop the affected request without automatic retry or prompt
+rewriting. A stage with `refusal_model` then runs once more from its original
+input on that model; only the judge sets one. The refused attempt stays in the
+stage's private trace as `refused_attempt` and still counts as a refusal. Transient transport failures retain their usual
 retries. Reports, health monitoring and review notifications identify the
 refused stages and the work left incomplete, without exposing request payloads.
 
@@ -224,7 +226,7 @@ refused stages and the work left incomplete, without exposing request payloads.
 | Research, concept verification, feedback or reconciliation | Conservative context fallback; independently verified findings remain usable. |
 | Experimental verifier | Experiments incomplete; static verification continues. |
 | Source verifier | Candidates remain unverified in the archive; no provisional or approved findings. |
-| Final judge | Failed review; already source-verified findings shown provisionally on the report. |
+| Final judge, after its refusal model also fails | Failed review; already source-verified findings shown provisionally on the report. |
 | Backport assessment | Assessment unavailable; no completed fidelity verdict. |
 
 ## Rebuilding statistics

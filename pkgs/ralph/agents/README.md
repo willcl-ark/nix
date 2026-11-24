@@ -173,7 +173,8 @@ findings, resurrect ineligible candidates, or change kind, severity, security,
 or location. It may also approve and summarize an eligible concept objection.
 No model edits its approved wording afterward.
 
-Failed verification withholds unsupported findings. A failed or invalid judge
+If the provider refuses the judge, it runs once more on the `refusal_model` in its
+config. Failed verification withholds unsupported findings. A failed or invalid judge
 response withholds pending findings; there is no wording fallback. The
 [comment templates](../final_comment/README.md) render approved output and
 coverage limitations. The shared [finding format](shared/finding-format.md)

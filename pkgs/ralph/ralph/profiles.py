@@ -47,6 +47,8 @@ class StageSettings:
     max_web_search_calls_per_response: int = 2
     timeout: int = 1800
     final_timeout: int = 1800
+    refusal_model: str | None = None
+    refusal_max_output_tokens: int | None = None
 
     def __post_init__(self):
         if not isinstance(self.model, str) or not self.model.strip():
@@ -78,6 +80,15 @@ class StageSettings:
             raise ValueError(
                 "Stage limits must be nonnegative integers with positive output tokens"
             )
+        if self.refusal_model is None and self.refusal_max_output_tokens is None:
+            return
+        if not isinstance(self.refusal_model, str) or not self.refusal_model.strip():
+            raise ValueError("Refusal model must be a nonempty string")
+        if (
+            type(self.refusal_max_output_tokens) is not int
+            or self.refusal_max_output_tokens <= 0
+        ):
+            raise ValueError("Refusal output tokens must be a positive integer")
 
 
 @dataclass(frozen=True)

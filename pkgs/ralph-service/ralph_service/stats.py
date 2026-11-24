@@ -335,10 +335,12 @@ def _summarize(state_dir, report_dir, sources, repositories, *, repository_id=No
 def _refusals(debug, kind):
     """Identify explicit provider refusals, not review prose or other errors."""
     return [
-        {"stage": name, "model": stage.get("model")}
+        {"stage": name, "model": attempt.get("model")}
         for name, stage in (debug.get("stages") or {}).items()
-        if stage.get("status") in {"failed", "invalid"}
-        and refusals.failure_kind(stage) == kind
+        for attempt in (stage.get("refused_attempt"), stage)
+        if attempt is not None
+        and attempt.get("status") in {"failed", "invalid"}
+        and refusals.failure_kind(attempt) == kind
     ]
 
 

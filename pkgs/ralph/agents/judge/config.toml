@@ -9,6 +9,8 @@ max_history_calls = 8
 max_web_search_calls_per_response = 2
 timeout = 1800
 final_timeout = 1800
+refusal_model = "claude-opus-5-5"
+refusal_max_output_tokens = 64000
 
 [profiles.high]
 reasoning_effort = "xhigh"

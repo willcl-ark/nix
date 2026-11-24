@@ -59,7 +59,9 @@ max_output_tokens = 16000
 The existing files also spell out discussion, history and web-search allowances
 and request timeouts. `max_tool_calls` must name all three review tiers. Profile
 overrides replace a whole setting, including that table. Output tokens are per
-response; timeouts are in seconds. The web-search allowance is advisory because
+response; timeouts are in seconds. Optional `refusal_model` and
+`refusal_max_output_tokens`, set together, rerun a stage once on another model
+when the provider refuses it. The web-search allowance is advisory because
 the provider may return more searches than requested.
 
 The supported tool sets are:

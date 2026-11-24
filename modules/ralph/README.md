@@ -280,8 +280,8 @@ stages refused, including optional stages on otherwise completed reviews. Generi
 refusals have distinct wording in diagnostics and notices; they do not enter
 the cyber-refusal count. Reports, monitoring and Telegram notices identify
 refused stages and the work
-left incomplete. Explicit refusals are not automatically retried or sent to a
-different model; approved finding counts and verification gates are unchanged.
+left incomplete. Explicit refusals are not automatically retried, except that the
+judge runs once more on its configured `refusal_model`; approved finding counts and verification gates are unchanged.
 
 To refresh statistics immediately:
 

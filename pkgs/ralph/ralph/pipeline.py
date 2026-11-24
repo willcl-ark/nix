@@ -6,7 +6,16 @@ from dataclasses import dataclass, replace
 
 from final_comment import render_report as render
 
-from . import coverage, experiments, feedback, model, progress, protocol, routing
+from . import (
+    coverage,
+    experiments,
+    feedback,
+    model,
+    progress,
+    protocol,
+    refusals,
+    routing,
+)
 from .repository import audit_developer_notes, focused_review_input
 
 # Discovery stages never read each other's output and share a bounded pool.
@@ -88,6 +97,7 @@ def _run_stage(
     tools=True,
     experiment_session=None,
     check_answer=None,
+    refused_attempt=None,
 ):
     debug = runtime.debug
     stages = debug["stages"]
@@ -102,8 +112,16 @@ def _run_stage(
             "reconciliation": "verifier",
         }.get(name, name)
     ]
+    if refused_attempt is not None:
+        settings = replace(
+            settings,
+            model=settings.refusal_model,
+            max_output_tokens=settings.refusal_max_output_tokens,
+        )
     stage_model = settings.model
     record = {"model": stage_model, "status": "running", "turns": [], "tools": []}
+    if refused_attempt is not None:
+        record["refused_attempt"] = refused_attempt
     stages[name] = record
     if name == "historical_context":
         record["historical_research"] = plan["historical_research"]
@@ -179,6 +197,24 @@ def _run_stage(
     except Exception as exc:
         record["status"] = "failed"
         record["error_type"] = type(exc).__name__
+        if (
+            refused_attempt is None
+            and settings.refusal_model is not None
+            and refusals.failure_kind(record)
+        ):
+            return _run_stage(
+                runtime,
+                prompt_config,
+                plan,
+                name,
+                input_text,
+                prompt,
+                schema,
+                tools=tools,
+                experiment_session=experiment_session,
+                check_answer=check_answer,
+                refused_attempt=record,
+            )
         if record.get("raw_output"):
             outputs[name] = record["raw_output"]
         raise

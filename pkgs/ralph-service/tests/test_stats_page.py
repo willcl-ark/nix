@@ -10,6 +10,25 @@ from ralph_service import history, jobs, report, stats, stats_page
 
 
 class StatsPageTests(unittest.TestCase):
+    def test_refusal_recovered_by_another_model_is_counted(self):
+        debug = {
+            "stages": {
+                "judge": {
+                    "model": "fallback",
+                    "status": "completed",
+                    "refused_attempt": {
+                        "model": "primary",
+                        "status": "failed",
+                        "failure_kind": "cyber_refusal",
+                    },
+                }
+            }
+        }
+        self.assertEqual(
+            stats._refusals(debug, "cyber_refusal"),
+            [{"stage": "judge", "model": "primary"}],
+        )
+
     def test_cyber_refusals_count_reviews_and_link_filterable_reports(self):
         refusal = "This content was flagged for possible cybersecurity risk."
         with tempfile.TemporaryDirectory() as directory:

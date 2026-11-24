@@ -755,6 +755,47 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.debug["stages"]["write_verifier"]["status"], "stale")
         self.assertNotIn("judge", self.debug["stages"])
 
+    def test_refused_judge_is_retried_once_on_its_refusal_model(self):
+        self.tier, self.audits = "routine", []
+        settings = self.prompts.profile.stages["judge"]
+        fallback = (settings.refusal_model, settings.refusal_max_output_tokens)
+        for failure, recovers, expected in (
+            (refuse_review, True, [settings.model, fallback[0]]),
+            (refuse_review, False, [settings.model, fallback[0]]),
+            (TimeoutError("Judge unavailable"), False, [settings.model]),
+        ):
+            with self.subTest(failure=failure, recovers=recovers):
+                self.debug = {}
+                calls = []
+
+                def judge(
+                    *args, calls=calls, failure=failure, recovers=recovers, **kwargs
+                ):
+                    calls.append((kwargs["model"], kwargs["max_output_tokens"]))
+                    if len(calls) == 2 and recovers:
+                        return self.judge(*args, **kwargs)
+                    if isinstance(failure, Exception):
+                        raise failure
+                    return failure(*args, **kwargs)
+
+                self.run_review(self.major_review, judge=judge)
+                stage = self.debug["stages"]["judge"]
+                self.assertEqual([name for name, _ in calls], expected)
+                self.assertEqual(stage["model"], expected[-1])
+                if len(calls) == 2:
+                    self.assertEqual(calls[1], fallback)
+                    self.assertEqual(stage["refused_attempt"]["model"], settings.model)
+                    self.assertEqual(
+                        stage["refused_attempt"]["failure_kind"], "cyber_refusal"
+                    )
+                if recovers:
+                    self.assertEqual(
+                        self.result.findings[0]["judged_by_model"], fallback[0]
+                    )
+                    self.assertEqual(self.debug["coverage"]["status"], "complete")
+                else:
+                    self.assertEqual(self.result.findings, [])
+
     def test_judge_failure_withholds_all_supported_findings(self):
         self.tier, self.audits = "routine", []
 

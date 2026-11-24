@@ -187,7 +187,8 @@ For example, to reduce verification reasoning to high:
 Pass this file with `--engine-config`. Unspecified settings retain their
 resolved defaults. Supported settings also include `timeout`, `final_timeout`,
 `max_tool_calls`, `max_context_calls`, `max_history_calls`,
-`max_web_search_calls_per_response` and `tool_set`. `max_tool_calls` names all three tiers,
+`max_web_search_calls_per_response`, `tool_set`, `refusal_model` and
+`refusal_max_output_tokens`. `max_tool_calls` names all three tiers,
 `routine`, `standard` and `sensitive`. Unknown stages and fields are rejected;
 model IDs must be nonempty. Ralph records the resolved settings in
 the profile snapshot and hash, including timeouts, for retries and evaluation.
