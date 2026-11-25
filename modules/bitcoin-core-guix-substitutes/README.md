@@ -114,5 +114,8 @@ When `builder.publisherHosts` is non-empty, the worker marks each completed job
 for publication. A root-owned post-build step copies its profile closures to
 each SSH host and creates remote GC roots before recording publication.
 
+The daily cleanup removes expired jobs with their profiles, then deletes the
+indirect GC roots in `/var/guix/gcroots/auto` that pointed to those profiles.
+
 Guix manages its store directory and permissions. The publisher does not apply
 tmpfiles permissions to the store, which NixOS mounts read-only.

@@ -283,11 +283,15 @@ in
 
     systemd.services.guix-bitcoin-build-cleanup = {
       description = "Clean old Bitcoin Core Guix source builder state";
+      # An unmounted data directory would make every root look broken.
+      unitConfig.RequiresMountsFor = cfg.dataDir;
       serviceConfig = {
         Type = "oneshot";
         User = builder.buildUser;
         Group = builder.buildGroup;
         ExecStartPre = prepareDirectories;
+        # The indirect roots are owned by root, unlike the profiles they track.
+        ExecStartPost = "+${pkgs.findutils}/bin/find /var/guix/gcroots/auto -mindepth 1 -maxdepth 1 -xtype l -lname '${profilesRoot}/*' -delete";
       };
       path = [
         pkgs.bash
