@@ -4,6 +4,7 @@ import io
 import json
 import unittest
 import urllib.error
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from ralph_service import proxy_usage
@@ -174,6 +175,36 @@ class ProxyUsageTests(unittest.TestCase):
         with patch.object(proxy_usage, "_MAX_RESPONSE_BYTES", 1):
             result, _ = self.collect(Response({"files": []}))
         self.assertEqual(result["status"], "unavailable")
+
+    def test_login_state_distinguishes_lost_logins_from_rate_limits(self):
+        fresh = datetime.now(UTC)
+        stale = fresh - timedelta(hours=6)
+        for provider, refreshed, status, message, expected in (
+            ("claude", fresh, "active", "", "ok"),
+            ("claude", stale, "active", "", "overdue"),
+            ("claude", stale, "error", "invalid grant (retrying)", "failed"),
+            ("claude", fresh, "error", "quota exhausted", "ok"),
+            ("codex", stale, "active", "", "ok"),
+            ("codex", fresh, "error", "unauthorized", "failed"),
+            ("claude", None, "active", "", "ok"),
+        ):
+            with self.subTest(provider=provider, status=status, message=message):
+                result, _ = self.collect(
+                    Response(
+                        {
+                            "files": [
+                                observation(
+                                    provider,
+                                    {},
+                                    status=status,
+                                    status_message=message,
+                                    last_refresh=refreshed and refreshed.isoformat(),
+                                )
+                            ]
+                        }
+                    )
+                )
+                self.assertEqual(result["accounts"][0]["login"], expected)
 
 
 if __name__ == "__main__":

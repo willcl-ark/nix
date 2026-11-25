@@ -15,6 +15,13 @@ from urllib.parse import quote, urljoin
 from . import commands, config, post_mortem, report, telegram
 
 LOGGER = logging.getLogger(__name__)
+LOGIN_MESSAGES = {
+    "ok": "login restored\nReviews that failed meanwhile are not retried. "
+    "Request them again with /review.",
+    "overdue": "login is not refreshing\nLog in to CLIProxyAPI again before its "
+    "access token expires and reviews start failing.",
+    "failed": "login has failed\nReviews fail until you log in to CLIProxyAPI again.",
+}
 
 
 def _readonly(path):
@@ -382,6 +389,41 @@ class NotificationStore:
                     (key, json.dumps(incident)),
                 )
 
+    def observe_logins(self, report_dir, *, now=None):
+        """Enqueue subscription login transitions from fresh stats."""
+        now = time.time() if now is None else now
+        summary = _fresh_stats(report_dir, now)
+        if summary is None:
+            return
+        severity = list(LOGIN_MESSAGES)
+        logins = {}
+        for account in summary.get("subscriptions", {}).get("accounts", []):
+            provider, login = account["provider"], account.get("login")
+            if login in LOGIN_MESSAGES:
+                logins[provider] = max(
+                    logins.get(provider, "ok"), login, key=severity.index
+                )
+        with closing(self._connect()) as db, db:
+            for provider, login in logins.items():
+                key = "login:" + provider
+                row = db.execute(
+                    "SELECT value FROM metadata WHERE key = ?", (key,)
+                ).fetchone()
+                previous = row[0] if row else "ok"
+                # A proxy restart forgets a failure until its next refresh attempt.
+                if login == previous or (previous, login) == ("failed", "overdue"):
+                    continue
+                db.execute(
+                    "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
+                    (
+                        f"{key}:{login}:{summary['generated_at']}",
+                        f"Ralph: {provider.title()} {LOGIN_MESSAGES[login]}",
+                    ),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO metadata VALUES (?, ?)", (key, login)
+                )
+
     def deliver(self, token, chat_id, *, now=None, commands_only=False):
         """Prioritize command replies while honoring backoff across all messages."""
         now = time.time() if now is None else now
@@ -417,16 +459,22 @@ class NotificationStore:
                 db.execute("UPDATE outbox SET sent = 1 WHERE key = ?", (row[0],))
 
 
-def _fresh_health(report_dir, now):
-    """Read saved stage health, or None when missing or over ten minutes old."""
+def _fresh_stats(report_dir, now):
+    """Read saved statistics, or None when missing or over ten minutes old."""
     try:
         summary = json.loads((Path(report_dir) / "stats/stats.json").read_text())
         generated = datetime.fromisoformat(summary["generated_at"]).timestamp()
-        if not 0 <= now - generated <= 600:
-            return None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return summary if 0 <= now - generated <= 600 else None
+
+
+def _fresh_health(report_dir, now):
+    summary = _fresh_stats(report_dir, now)
+    try:
         health = summary["health"]
         return health if isinstance(health["groups"], list) else None
-    except (OSError, ValueError, KeyError, TypeError):
+    except (KeyError, TypeError):
         return None
 
 
@@ -512,6 +560,7 @@ def run_monitor(
             except (OSError, sqlite3.Error):
                 LOGGER.warning("Telegram lesson state unavailable; will retry")
             try:
+                store.observe_logins(report_dir)
                 store.observe_health(report_dir, archive_base_url)
                 store.deliver(token, chat_id)
             except (OSError, sqlite3.Error):

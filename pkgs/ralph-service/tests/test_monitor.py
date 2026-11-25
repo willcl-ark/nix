@@ -275,6 +275,46 @@ class MonitorTests(unittest.TestCase):
             self.store.deliver("secret", "channel", now=300)
             self.assertEqual(send.call_count, 3)
 
+    def test_login_transitions_alert_once_and_ignore_stale_or_missing_state(self):
+        stats = self.root / "stats/stats.json"
+        stats.parent.mkdir()
+
+        def observe(minute, *logins, age=0):
+            now = self.day + minute * 60
+            stats.write_text(
+                json.dumps(
+                    {
+                        "generated_at": datetime.fromtimestamp(
+                            now - age, UTC
+                        ).isoformat(),
+                        "subscriptions": {
+                            "accounts": [
+                                {"provider": "claude", "login": login}
+                                for login in logins
+                            ]
+                        },
+                    }
+                )
+            )
+            self.store.observe_logins(self.root, now=now)
+            return [text.splitlines()[0] for text in self.messages().values()]
+
+        self.assertEqual(observe(0, "ok"), [])
+        self.assertEqual(observe(1, "failed", age=601), [])
+        self.assertEqual(observe(2, None), [])
+        expected = ["Ralph: Claude login is not refreshing"]
+        self.assertEqual(observe(3, "overdue"), expected)
+        self.store = monitor.NotificationStore(self.store.path)
+        self.assertEqual(observe(4, "overdue"), expected)
+        expected.append("Ralph: Claude login has failed")
+        self.assertEqual(observe(5, "failed", "ok"), expected)
+        self.assertEqual(observe(6, "overdue"), expected)
+        self.assertEqual(observe(7), expected)
+        expected.append("Ralph: Claude login restored")
+        self.assertEqual(observe(8, "ok"), expected)
+        expected.append("Ralph: Claude login has failed")
+        self.assertEqual(observe(9, "failed"), expected)
+
     def test_digest_counts_recorded_usage_between_utc_21_hour_boundaries(self):
         path = self.root / "followup/usage.sqlite3"
         path.parent.mkdir()

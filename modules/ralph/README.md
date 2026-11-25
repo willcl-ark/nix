@@ -310,8 +310,8 @@ credential; the review daemon and Telegram monitor do not receive it.
 
 Stats polls upstream usage through the management API every five minutes,
 without running inference or draining the proxy's temporary usage queue. Public
-snapshots contain provider, plan when available, separate quota windows, reset
-times and optional credit balances. Account identities, OAuth tokens, credential
+snapshots contain provider, login state, plan when available, separate quota
+windows, reset times and optional credit balances. Account identities, OAuth tokens, credential
 paths and management keys are excluded. Failures are shown as unavailable, never
 as unused capacity. Snapshot time is visible. Provider credit balances are not
 converted into dollars, and subscription fees are not supplied by these endpoints.

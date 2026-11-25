@@ -306,6 +306,11 @@ The monitor reads review state and recorded usage, publishes completed reviews, 
 grouped terminal failure alerts, and delivers a daily digest at 21:00 UTC.
 It continues running when the review daemon stops.
 
+With subscription usage configured, the monitor also posts when a Claude or
+Codex login fails and when it is restored. For Claude it warns earlier, once the
+proxy is an hour late refreshing the login, usually about three hours before
+reviews start failing.
+
 Each review notification contains the PR title, current finding counts by severity,
 and links to the PR and Review report. Review bodies are never included. Long
 titles are shortened to fit Telegram's 4,096 UTF-16 code unit limit while

@@ -18,6 +18,16 @@ _TRANSPORT_ERRORS = (
     OverflowError,
 )
 _PLANS = {"free", "plus", "pro", "team", "business", "enterprise", "edu"}
+_LOGIN_FAILURES = {
+    "invalid grant (retrying)",
+    "invalid_grant",
+    "token expired",
+    "unauthorized",
+    "unauthorized (refresh token invalid)",
+}
+# CLIProxy refreshes Claude's eight-hour access token every four hours, and
+# reports a failed refresh only once that token expires.
+_CLAUDE_REFRESH_OVERDUE = timedelta(hours=5)
 
 
 def _request(base_url, management_key):
@@ -136,6 +146,23 @@ def _claude(account, signals):
         )
 
 
+def _login(credential):
+    if (
+        credential.get("status") == "error"
+        and credential.get("status_message") in _LOGIN_FAILURES
+    ):
+        return "failed"
+    refreshed = _reset(credential.get("last_refresh"))
+    if (
+        credential["provider"] == "claude"
+        and refreshed is not None
+        and datetime.now(UTC) - datetime.fromisoformat(refreshed)
+        > _CLAUDE_REFRESH_OVERDUE
+    ):
+        return "overdue"
+    return "ok"
+
+
 def collect_usage(base_url: str, management_key: str) -> dict:
     """Return allowlisted cached observations, retaining their original timestamps."""
     snapshot = {
@@ -158,6 +185,7 @@ def collect_usage(base_url: str, management_key: str) -> dict:
         account = {
             "provider": provider,
             "status": "unavailable",
+            "login": _login(credential),
             "plan": None,
             "observed_at": None,
             "windows": [],
