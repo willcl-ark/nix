@@ -433,9 +433,15 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(record["key"], "1:1:review:1")
         self.assertEqual(record["body"], self.packet["findings"][0]["body"])
         self.packet["findings"] = [record]
-        record = self.reconcile([])
-        self.assertEqual(record["status"], "unclear")
-        self.assertEqual(record["assessment_history"][-1]["status"], "fixed")
+        self.assertEqual(feedback.reconciliation_input(self.packet)["findings"], [])
+        errors = []
+        (carried,) = feedback.reconcile(
+            self.packet, [], self.candidates, self.snapshot, validation_errors=errors
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(carried["status"], "fixed")
+        self.assertEqual(carried["assessment_history"], record["assessment_history"])
+        self.assertEqual(carried["current_candidate_ids"], [])
 
     def test_duplicate_history_keeps_provenance_across_unavailable_rechecks(self):
         original = self.packet["findings"][0]

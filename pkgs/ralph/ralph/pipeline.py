@@ -280,7 +280,7 @@ def _verify_candidates(
     blind_alternatives=None,
 ):
     stages = debug["stages"]
-    if feedback_packet is not None:
+    if feedback_packet is not None and feedback.open_findings(feedback_packet):
         _reconcile_history(
             run_stage,
             input_text,
@@ -294,7 +294,7 @@ def _verify_candidates(
     else:
         stages["reconciliation"] = {
             "status": "skipped",
-            "reason": "No previous findings",
+            "reason": "No open previous findings",
         }
     history_candidates = feedback.publication_candidates(
         debug.get("review_memory", []), snapshot

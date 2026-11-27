@@ -44,6 +44,7 @@ ASSESSMENT = object_schema(
         "source_evidence": {"type": "array", "items": REVIEW_EVIDENCE},
     }
 )
+CLOSED_STATUSES = {"fixed", "invalid"}
 RECONCILIATION_SCHEMA = {"type": "array", "items": ASSESSMENT}
 RECONCILIATION_RESPONSE_SCHEMA = object_schema(
     {"coverage": COVERAGE, "review_reconciliation": RECONCILIATION_SCHEMA}
@@ -171,10 +172,19 @@ def mapping_input(packet, candidates):
     }
 
 
+def open_findings(packet):
+    """Source-checked fixes and disproofs are not reverified on later revisions."""
+    return [
+        finding
+        for finding in packet.get("findings", [])
+        if finding.get("status") not in CLOSED_STATUSES
+    ]
+
+
 def reconciliation_input(packet):
     """Bound past assessments, which otherwise grow with every review of a PR."""
     findings = []
-    for finding in packet.get("findings", []):
+    for finding in open_findings(packet):
         if "assessment_history" in finding:
             # A null checked head records a failed reverification; old records lack it.
             checked = [
@@ -280,14 +290,13 @@ def reconcile(
 ):
     """Retain every historical finding; incomplete or invalid checks fail open."""
     entries = copy.deepcopy(packet.get("findings", []))
-    prior = {entry["key"]: entry for entry in entries}
+    prior = {entry["key"]: entry for entry in open_findings({"findings": entries})}
     current = {entry["id"] for entry in candidates}
     decisions = {}
     errors = validation_errors if validation_errors is not None else []
     if not isinstance(assessments, list):
         errors.extend(
-            {"prior_key": entry["key"], "error": "Missing reconciliation"}
-            for entry in entries
+            {"prior_key": key, "error": "Missing reconciliation"} for key in prior
         )
         assessments = []
     counts = Counter(
@@ -378,6 +387,10 @@ def reconcile(
         str(comment["id"]): comment for comment in packet.get("comments", [])
     }
     for entry in entries:
+        if entry["key"] not in prior:
+            # Candidate IDs are per review; stale ones would link unrelated findings.
+            entry.update(current_candidate_ids=[], current_finding_ids=[])
+            continue
         entry.setdefault(
             "original_source_evidence", copy.deepcopy(entry.get("source_evidence", []))
         )
