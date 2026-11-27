@@ -29,6 +29,7 @@ in
               "main"
               "test"
               "testnet4"
+              "testnet5"
               "signet"
             ];
             description = "Bitcoin network to connect to.";

@@ -227,6 +227,70 @@ in
       description = "Signet DNS seed settings.";
     };
 
+    testnet5 = lib.mkOption {
+      type = lib.types.submodule {
+        options = {
+          enable = lib.mkEnableOption "testnet5 DNS seed";
+
+          chain = lib.mkOption {
+            type = lib.types.str;
+            default = "testnet5";
+            description = "dnsseedrs chain identifier.";
+          };
+
+          seedDomain = lib.mkOption {
+            type = lib.types.str;
+            default = "seed.testnet5.bitcoin.fish.foo";
+            description = "DNS name served by the testnet5 seed.";
+          };
+
+          dnsPort = lib.mkOption {
+            type = lib.types.port;
+            default = 5555;
+            description = "Local dnsseedrs DNS port for CoreDNS to forward to.";
+          };
+
+          seedNodes = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = "Initial Bitcoin peer addresses used by dnsseedrs.";
+          };
+
+          threads = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 6;
+            description = "Crawler thread count.";
+          };
+
+          crawlRate = lib.mkOption {
+            type = lib.types.nullOr lib.types.ints.positive;
+            default = null;
+            description = "Maximum aggregate crawl attempts to start per second; unset derives a rate from threads.";
+          };
+
+          dbFile = lib.mkOption {
+            type = lib.types.str;
+            default = "sqlite.db";
+            description = "dnsseedrs database file name.";
+          };
+
+          dumpFile = lib.mkOption {
+            type = lib.types.str;
+            default = "seeds.txt";
+            description = "dnsseedrs seed dump file name.";
+          };
+
+          dnssecKeyFiles = lib.mkOption {
+            type = lib.types.listOf lib.types.path;
+            default = [ ];
+            description = "Sops-encrypted DNSSEC key files for the testnet5 seed.";
+          };
+        };
+      };
+      default = { };
+      description = "Testnet5 DNS seed settings.";
+    };
+
     proxies = {
       manageLocal = lib.mkOption {
         type = lib.types.bool;
@@ -288,6 +352,12 @@ in
         default = "signet.bitcoin.fish.foo";
         description = "Public HTTP host for signet seed dumps.";
       };
+
+      testnet5Domain = lib.mkOption {
+        type = lib.types.str;
+        default = "testnet5.bitcoin.fish.foo";
+        description = "Public HTTP host for testnet5 seed dumps.";
+      };
     };
   };
 
@@ -300,6 +370,10 @@ in
       {
         assertion = !cfg.signet.enable || cfg.signet.dnssecKeyFiles != [ ];
         message = "services.bitcoinDnsSeed.signet.dnssecKeyFiles must be set when signet is enabled.";
+      }
+      {
+        assertion = !cfg.testnet5.enable || cfg.testnet5.dnssecKeyFiles != [ ];
+        message = "services.bitcoinDnsSeed.testnet5.dnssecKeyFiles must be set when testnet5 is enabled.";
       }
     ];
 
@@ -323,7 +397,8 @@ in
 
     sops.secrets =
       mkDnssecSecrets "mainnet" cfg.mainnet.dnssecKeyFiles
-      // mkDnssecSecrets "signet" cfg.signet.dnssecKeyFiles;
+      // mkDnssecSecrets "signet" cfg.signet.dnssecKeyFiles
+      // mkDnssecSecrets "testnet5" cfg.testnet5.dnssecKeyFiles;
 
     services.tor = lib.mkIf cfg.proxies.manageLocal {
       enable = true;
@@ -341,10 +416,13 @@ in
     };
 
     services.caddy.virtualHosts = lib.mkIf cfg.caddy.enable (
-      builtins.listToAttrs [
-        (mkDumpVhost "mainnet" cfg.caddy.mainnetDomain)
-        (mkDumpVhost "signet" cfg.caddy.signetDomain)
-      ]
+      builtins.listToAttrs (
+        [
+          (mkDumpVhost "mainnet" cfg.caddy.mainnetDomain)
+          (mkDumpVhost "signet" cfg.caddy.signetDomain)
+        ]
+        ++ lib.optional cfg.testnet5.enable (mkDumpVhost "testnet5" cfg.caddy.testnet5Domain)
+      )
     );
 
     services.coredns = lib.mkIf cfg.coredns.enable {
@@ -353,6 +431,8 @@ in
         ${mkCorednsZone cfg.mainnet}
 
         ${mkCorednsZone cfg.signet}
+
+        ${lib.optionalString cfg.testnet5.enable (mkCorednsZone cfg.testnet5)}
 
         .:53 {
           bind ${lib.concatStringsSep " " cfg.coredns.bindAddresses}
@@ -367,6 +447,7 @@ in
     services.dnsseedrs = {
       mainnet = mkDnsseedrsInstance "mainnet" cfg.mainnet;
       signet = mkDnsseedrsInstance "signet" cfg.signet;
+      testnet5 = mkDnsseedrsInstance "testnet5" cfg.testnet5;
     };
 
     systemd.services.dnsseedrs-mainnet = lib.mkIf cfg.mainnet.enable {
@@ -374,6 +455,10 @@ in
       wants = [ "sops-install-secrets.service" ];
     };
     systemd.services.dnsseedrs-signet = lib.mkIf cfg.signet.enable {
+      after = [ "sops-install-secrets.service" ];
+      wants = [ "sops-install-secrets.service" ];
+    };
+    systemd.services.dnsseedrs-testnet5 = lib.mkIf cfg.testnet5.enable {
       after = [ "sops-install-secrets.service" ];
       wants = [ "sops-install-secrets.service" ];
     };

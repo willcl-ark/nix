@@ -57,10 +57,11 @@ systemd ordering details.
 - `services.bitcoinDnsSeed.soaRname`
 - `services.bitcoinDnsSeed.mainnet.*`
 - `services.bitcoinDnsSeed.signet.*`
+- `services.bitcoinDnsSeed.testnet5.*`
 - `services.bitcoinDnsSeed.proxies.*`
 - `services.bitcoinDnsSeed.coredns.*`
 - `services.bitcoinDnsSeed.caddy.*`
 
-The `mainnet.crawlRate` and `signet.crawlRate` options cap aggregate crawl
-attempts per second. Leave them unset to use dnsseedrs' adaptive default based
-on the configured thread count.
+The `mainnet.crawlRate`, `signet.crawlRate` and `testnet5.crawlRate` options
+cap aggregate crawl attempts per second. Leave them unset to use dnsseedrs'
+adaptive default based on the configured thread count.
