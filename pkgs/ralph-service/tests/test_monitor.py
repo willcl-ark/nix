@@ -320,14 +320,13 @@ class MonitorTests(unittest.TestCase):
         stats.parent.mkdir()
         observed = datetime(2026, 11, 26, 2, tzinfo=UTC)
 
-        def observe(used, days_to_reset, *, window_seconds=604800):
+        def observe(used, days_to_reset, *, window_seconds=604800, days_later=0):
+            now = (observed + timedelta(days=days_later)).timestamp()
             reset = observed + timedelta(days=days_to_reset)
             stats.write_text(
                 json.dumps(
                     {
-                        "generated_at": datetime.fromtimestamp(
-                            self.day, UTC
-                        ).isoformat(),
+                        "generated_at": datetime.fromtimestamp(now, UTC).isoformat(),
                         "subscriptions": {
                             "accounts": [
                                 {
@@ -347,7 +346,7 @@ class MonitorTests(unittest.TestCase):
                     }
                 )
             )
-            self.store.observe_quotas(self.root, now=self.day)
+            self.store.observe_quotas(self.root, now=now)
             return list(self.messages().values())
 
         self.assertEqual(observe(40, 3), [])
@@ -358,6 +357,7 @@ class MonitorTests(unittest.TestCase):
             "80% used. At this window's average rate it runs out around "
             "Fri 02:00 UTC, 48 hours before the reset at Sun 02:00 UTC."
         )
+        self.assertEqual(observe(80, 3, days_later=1.5), [])
         self.assertEqual(observe(80, 3), [alert])
         self.assertEqual(observe(90, 3), [alert])
         self.assertEqual(len(observe(90, 4)), 2)

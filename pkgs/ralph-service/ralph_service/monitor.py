@@ -437,7 +437,8 @@ class NotificationStore:
             for account in summary.get("subscriptions", {}).get("accounts", []):
                 for window in account.get("windows", []):
                     exhausted = _quota_exhaustion(account, window)
-                    if exhausted is None:
+                    # A stale observation can project a time that has already passed.
+                    if exhausted is None or exhausted.timestamp() <= now:
                         continue
                     reset = datetime.fromisoformat(window["resets_at"])
                     hours = (reset - exhausted) / timedelta(hours=1)
