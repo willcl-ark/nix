@@ -28,7 +28,6 @@ ADVERSARIAL_PROFILES = ("consensus", "wallet", "p2p")
 SHARED_PROMPTS = {
     "common": "shared/discovery.md",
     "backport": "shared/backport.md",
-    "reconciliation": "verifier/reconciliation.md",
     "concept_verifier": "verifier/concept.md",
     **{name: f"adversarial/domains/{name}.md" for name in ADVERSARIAL_PROFILES},
 }
@@ -171,7 +170,6 @@ class PromptConfig:
             raise ValueError("shared tool instructions must not be empty")
         for name in (
             *(name for name, values in configs.items() if values["tool_set"] != "none"),
-            "reconciliation",
             "concept_verifier",
         ):
             prompts[name] = f"{tool_use}\n\n{prompts[name]}"

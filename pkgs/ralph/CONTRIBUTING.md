@@ -104,7 +104,7 @@ Frozen evaluations keep those saved values until explicitly given new settings.
   Claude's config points to that file; its model and limits remain independent.
   Domain instructions live in [adversarial/domains](agents/adversarial/domains).
 - [shared/backport.md](agents/shared/backport.md) supplements stages reviewing backports.
-- [verifier/reconciliation.md](agents/verifier/reconciliation.md) covers earlier findings.
+- [reconciliation/prompt.md](agents/reconciliation/prompt.md) covers earlier findings.
 - [feedback](agents/feedback) maps earlier findings to author replies before verification.
 - [challenger](agents/challenger) returns attempted refutations of supplied
   candidates. It cannot add or suppress findings. Every original candidate and

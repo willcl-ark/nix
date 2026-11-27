@@ -1925,16 +1925,16 @@ class PipelineTests(unittest.TestCase):
                     for stage in ("verifier", "concept_verifier"):
                         self.assertNotIn("PRIVATE_AUTHOR_REPLY", calls[stage][0])
                     self.assertIn("PRIVATE_AUTHOR_REPLY", calls["reconciliation"][0])
-                    for stage in ("concept_verifier", "reconciliation"):
-                        for setting in (
-                            "model",
-                            "reasoning_effort",
-                            "max_output_tokens",
-                            "max_tool_calls",
-                        ):
-                            self.assertEqual(
-                                calls[stage][1][setting], calls["verifier"][1][setting]
-                            )
+                    for setting in (
+                        "model",
+                        "reasoning_effort",
+                        "max_output_tokens",
+                        "max_tool_calls",
+                    ):
+                        self.assertEqual(
+                            calls["concept_verifier"][1][setting],
+                            calls["verifier"][1][setting],
+                        )
 
     def test_failed_verifier_retains_history_in_diagnostics_and_fails_run(self):
         self.tier, self.audits = "routine", []

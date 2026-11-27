@@ -109,7 +109,6 @@ def _run_stage(
             "tests_followup": "tests",
             "backport_assessment": "verifier",
             "concept_verifier": "verifier",
-            "reconciliation": "verifier",
         }.get(name, name)
     ]
     if refused_attempt is not None:

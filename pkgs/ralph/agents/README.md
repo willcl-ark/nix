@@ -149,7 +149,7 @@ The [verifier](verifier/prompt.md) assesses every candidate against immutable
 source. Its code decisions are `supported`, `refuted`, or `unresolved`.
 Supported findings become eligible for the judge. It assigns their kind,
 severity, security assessment, location, and supporting evidence. Concept
-assessment remains separate. [Reconciliation](verifier/reconciliation.md)
+assessment remains separate. [Reconciliation](reconciliation/prompt.md)
 checks earlier findings against current source when supplied.
 
 The [write-verifier](write_verifier/prompt.md) may attempt reproduction of

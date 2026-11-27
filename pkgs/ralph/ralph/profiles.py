@@ -30,6 +30,7 @@ STAGE_NAMES = (
     "challenger",
     "feedback",
     "verifier",
+    "reconciliation",
     "write_verifier",
     "judge",
 )
