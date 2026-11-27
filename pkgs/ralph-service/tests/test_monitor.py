@@ -3,7 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -314,6 +314,53 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(observe(8, "ok"), expected)
         expected.append("Ralph: Claude login has failed")
         self.assertEqual(observe(9, "failed"), expected)
+
+    def test_quota_alerts_once_when_weekly_rate_exhausts_before_reset(self):
+        stats = self.root / "stats/stats.json"
+        stats.parent.mkdir()
+        observed = datetime(2026, 11, 26, 2, tzinfo=UTC)
+
+        def observe(used, days_to_reset, *, window_seconds=604800):
+            reset = observed + timedelta(days=days_to_reset)
+            stats.write_text(
+                json.dumps(
+                    {
+                        "generated_at": datetime.fromtimestamp(
+                            self.day, UTC
+                        ).isoformat(),
+                        "subscriptions": {
+                            "accounts": [
+                                {
+                                    "provider": "claude",
+                                    "observed_at": observed.isoformat(),
+                                    "windows": [
+                                        {
+                                            "name": "Weekly",
+                                            "used_percent": used,
+                                            "resets_at": reset.isoformat(),
+                                            "window_seconds": window_seconds,
+                                        }
+                                    ],
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            self.store.observe_quotas(self.root, now=self.day)
+            return list(self.messages().values())
+
+        self.assertEqual(observe(40, 3), [])
+        self.assertEqual(observe(50, 6.6), [])
+        self.assertEqual(observe(100, 1, window_seconds=18000), [])
+        alert = (
+            "Ralph: Claude Weekly quota will run out before it resets\n"
+            "80% used. At this window's average rate it runs out around "
+            "Fri 02:00 UTC, 48 hours before the reset at Sun 02:00 UTC."
+        )
+        self.assertEqual(observe(80, 3), [alert])
+        self.assertEqual(observe(90, 3), [alert])
+        self.assertEqual(len(observe(90, 4)), 2)
 
     def test_digest_counts_recorded_usage_between_utc_21_hour_boundaries(self):
         path = self.root / "followup/usage.sqlite3"

@@ -412,6 +412,9 @@ reviewer downtime. Preserve `stateDir/telegram.sqlite3` with the other state.
 The monitor also reminds maintainers once per UTC calendar week when finding
 feedback awaits triage. Reminders contain a count and local command; private
 explanations stay off Telegram. See [feedback triage](../../pkgs/ralph-service/operations.md#finding-feedback).
+With subscription quotas configured, it warns once per weekly window when that
+window's average rate so far would use it up before it resets. It waits until a
+window is a day old, so one early burst of reviews does not trigger it.
 See [Telegram operations](../../pkgs/ralph-service/README.md#telegram) for
 publication, command authorization and delivery behavior.
 

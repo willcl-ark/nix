@@ -22,6 +22,9 @@ LOGIN_MESSAGES = {
     "access token expires and reviews start failing.",
     "failed": "login has failed\nReviews fail until you log in to CLIProxyAPI again.",
 }
+WEEK = timedelta(days=7)
+# A rate taken over the first hours of a window mostly reflects one review burst.
+QUOTA_MIN_ELAPSED = timedelta(days=1)
 
 
 def _readonly(path):
@@ -424,6 +427,34 @@ class NotificationStore:
                     "INSERT OR REPLACE INTO metadata VALUES (?, ?)", (key, login)
                 )
 
+    def observe_quotas(self, report_dir, *, now=None):
+        """Warn once per weekly window whose average rate exhausts it before reset."""
+        now = time.time() if now is None else now
+        summary = _fresh_stats(report_dir, now)
+        if summary is None:
+            return
+        with closing(self._connect()) as db, db:
+            for account in summary.get("subscriptions", {}).get("accounts", []):
+                for window in account.get("windows", []):
+                    exhausted = _quota_exhaustion(account, window)
+                    if exhausted is None:
+                        continue
+                    reset = datetime.fromisoformat(window["resets_at"])
+                    hours = (reset - exhausted) / timedelta(hours=1)
+                    db.execute(
+                        "INSERT OR IGNORE INTO outbox (key, text) VALUES (?, ?)",
+                        (
+                            f"quota:{account['provider']}:{window['name']}:"
+                            f"{window['resets_at']}",
+                            f"Ralph: {account['provider'].title()} {window['name']} "
+                            "quota will run out before it resets\n"
+                            f"{window['used_percent']:.0f}% used. At this window's "
+                            f"average rate it runs out around "
+                            f"{exhausted:%a %H:%M} UTC, {hours:.0f} hours before "
+                            f"the reset at {reset:%a %H:%M} UTC.",
+                        ),
+                    )
+
     def deliver(self, token, chat_id, *, now=None, commands_only=False):
         """Prioritize command replies while honoring backoff across all messages."""
         now = time.time() if now is None else now
@@ -467,6 +498,23 @@ def _fresh_stats(report_dir, now):
     except (OSError, ValueError, KeyError, TypeError):
         return None
     return summary if 0 <= now - generated <= 600 else None
+
+
+def _quota_exhaustion(account, window):
+    """Return when a weekly window runs out at its average rate, if before reset."""
+    try:
+        observed = datetime.fromisoformat(account["observed_at"])
+        reset = datetime.fromisoformat(window["resets_at"])
+        used = float(window["used_percent"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if window.get("window_seconds") != WEEK.total_seconds() or used <= 0:
+        return None
+    elapsed = observed - (reset - WEEK)
+    if elapsed < QUOTA_MIN_ELAPSED:
+        return None
+    exhausted = observed + elapsed * (100 - used) / used
+    return exhausted if exhausted < reset else None
 
 
 def _fresh_health(report_dir, now):
@@ -561,6 +609,7 @@ def run_monitor(
                 LOGGER.warning("Telegram lesson state unavailable; will retry")
             try:
                 store.observe_logins(report_dir)
+                store.observe_quotas(report_dir)
                 store.observe_health(report_dir, archive_base_url)
                 store.deliver(token, chat_id)
             except (OSError, sqlite3.Error):
